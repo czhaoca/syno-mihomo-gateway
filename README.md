@@ -25,7 +25,7 @@ A simple, "git-pull-and-run" solution to deploy **Mihomo (Clash Meta)** on Synol
 SSH into your NAS and navigate to your docker folder:
 ```bash
 cd /volume1/docker
-git clone [https://github.com/YOUR_USERNAME/syno-mihomo-gateway.git](https://github.com/YOUR_USERNAME/syno-mihomo-gateway.git)
+git clone https://github.com/czhaoca/syno-mihomo-gateway.git
 cd syno-mihomo-gateway
 
 ```
