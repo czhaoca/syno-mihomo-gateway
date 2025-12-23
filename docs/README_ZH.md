@@ -1,6 +1,6 @@
 # Syno-Mihomo-Gateway (群晖 DSM 透明网关)
 
-[English Docs](README.md)
+[English Docs](../README.md)
 
 这是一个基于 Docker 的 **Mihomo (Clash Meta)** 透明网关一键部署方案，专为群晖 (Synology DSM) 设计。
 通过此方案，你可以让家中的任何设备（Apple TV, iPhone, PS5, Switch）通过简单的网关设置实现科学上网，无需在每个设备上安装软件。
