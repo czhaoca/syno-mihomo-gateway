@@ -1,0 +1,44 @@
+# Mihomo Core Configuration Template
+# This file is processed by docker-compose to inject the subscription URL.
+
+port: 7890
+socks-port: 7891
+redir-port: 7892
+tproxy-port: 7893
+mixed-port: 7894
+
+dns:
+  enable: true
+  listen: 0.0.0.0:53
+  enhanced-mode: redir-host
+  default-nameserver:
+    - 114.114.114.114
+    - 223.5.5.5
+  nameserver:
+    - 114.114.114.114
+    - 223.5.5.5
+  fallback:
+    - 8.8.8.8
+    - 8.8.4.4
+  fallback-filter:
+    geoip: true
+
+log-level: info
+
+# Proxy Providers
+proxy-providers:
+  my-airport:
+    type: http
+    url: "{{AIRPORT_URL}}"
+    interval: 3600
+    health-check:
+      enable: true
+      interval: 600
+      url: "http://www.gstatic.com/generate_204"
+
+# Basic rules - adjust as needed
+rules:
+  - 'GEOSITE,CN,DIRECT'
+  - 'GEOIP,CN,DIRECT'
+  - 'MATCH,my-airport'
+

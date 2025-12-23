@@ -1,0 +1,4 @@
+# Format: Name=URL
+# The script currently uses the FIRST valid line found.
+# Example:
+MyAirport=https://your-airport-url.com/api/v1/subscribe?token=xyz

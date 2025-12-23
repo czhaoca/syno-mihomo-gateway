@@ -1,0 +1,58 @@
+version: '3.9'
+
+services:
+  mihomo:
+    image: ${MIHOMO_IMAGE:-metacubex/mihomo:latest}
+    container_name: mihomo
+    restart: always
+    networks:
+      tproxy_network:
+        ipv4_address: ${MIHOMO_IP}
+    privileged: true
+    volumes:
+      - ./config:/root/.config/mihomo
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    sysctls:
+      - net.ipv4.ip_forward=1
+    environment:
+      - TZ=${TZ}
+    
+    # Smart Entrypoint:
+    # 1. Reads subscription.txt (supports Name=URL format, takes URL part)
+    # 2. Injects URL into config.template.yaml
+    # 3. Starts Mihomo
+    entrypoint: 
+      - /bin/sh
+      - -c
+      - |
+        if [ -f /root/.config/mihomo/subscription.txt ]; then
+          # Extract the URL from the first line (ignoring "Name=")
+          export SUB_URL=$$(grep -v '^#' /root/.config/mihomo/subscription.txt | head -n 1 | awk -F'=' '{print $$NF}' | tr -d '\n\r')
+          
+          if [ -z "$$SUB_URL" ]; then
+             echo "WARNING: subscription.txt found but URL is empty."
+          else
+             echo "Using Subscription URL: $$SUB_URL"
+             sed "s|{{AIRPORT_URL}}|$$SUB_URL|g" /root/.config/mihomo/config.template.yaml > /root/.config/mihomo/config.yaml
+          fi
+        else
+          echo "ERROR: subscription.txt not found!"
+        fi
+        /mihomo
+
+  metacubexd:
+    image: ${METACUBEXD_IMAGE:-ghcr.io/metacubex/metacubexd:latest}
+    container_name: mihomo-ui
+    restart: always
+    network_mode: bridge
+    ports:
+      - "${WEB_UI_PORT}:80"
+    depends_on:
+      - mihomo
+
+networks:
+  tproxy_network:
+    external: true
+
