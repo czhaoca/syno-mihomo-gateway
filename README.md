@@ -2,123 +2,87 @@
 
 [中文文档 (Chinese Docs)](docs/README_ZH.md)
 
-A simple, "git-pull-and-run" solution to deploy **Mihomo (Clash Meta)** on Synology NAS as a transparent gateway. This setup allows any device in your home (Apple TV, iPhone, Gaming Consoles) to bypass censorship by simply setting their Gateway/Router IP to this container.
+A "git-pull-and-run" way to deploy **Mihomo (Clash Meta)** on a Synology NAS as a transparent
+gateway. Any device at home (Apple TV, iPhone, consoles) can route through it just by setting its
+gateway/DNS to the container's LAN IP — no client software. **MetaCubeXD** provides a web
+dashboard. Built for **mainland China**: image updates flow Docker Hub/ghcr → Alibaba ACR →
+your NAS, and a DSM-scheduled job keeps everything current and safely self-healing.
 
 ## Features
-- 🚀 **Automated Setup:** Script auto-detects your Synology network interface (supports `eth0` and `ovs_eth0` automatically).
-- 🛡️ **Safe & Isolated:** Uses Docker Macvlan. Does not mess with your NAS's host networking.
-- 🔧 **Easy Config:** Simple `.env` file for IP, Subnet, and Port settings.
-- 🔁 **Decoupled Subscription:** Keeps your config safe; just update the URL in a text file.
+- 🚀 **Automated setup** — auto-detects the Synology interface (`eth0` / `ovs_eth0`).
+- 🛡️ **Safe & isolated** — Docker macvlan; its own LAN IP, doesn't disturb host networking.
+- 🔧 **Everything in `.env`** — IPs, ports, DNS, registry; no secrets or DNS hardcoded in the repo.
+- 🔁 **Decoupled subscription** — your provider URL lives in one gitignored file.
+- 🤖 **Safe auto-updates** — pulls from Alibaba ACR, digest-detected, health-gated with
+  auto-rollback; blue-green for an external cloudflared (tunnel token preserved).
+
+## Documentation
+
+| Guide | What's inside |
+|---|---|
+| [Architecture](docs/architecture.md) | components, the mirror→pull pipeline, the macvlan model, the safety model |
+| [Installation](docs/installation.md) | full DSM walkthrough (SSH, network, first run, dashboard) |
+| [Configuration](docs/configuration.md) | **complete `.env` reference**, template, subscription, rules |
+| [Auto-Update](docs/auto-update.md) | ACR setup, the run sequence, health-gate/rollback, cloudflared blue-green, exit codes |
+| [Operations](docs/operations.md) | runbook: scheduling, dry-run, kill-switch, logs, notifications, rollback |
+| [Troubleshooting](docs/troubleshooting.md) | FAQ + exit codes + concrete failure fixes |
+| [Development](docs/development.md) | internals (scripts, renderer, CI), coding rules, how to extend |
 
 ---
 
-## Prerequisites
-1.  **Synology NAS** with Container Manager (Docker) installed.
-2.  **SSH Access** enabled (Control Panel -> Terminal & SNMP).
-3.  **Root/Sudo access** (needed to create network interface).
+## Quick Start
 
----
+> Condensed; see [Installation](docs/installation.md) for the detailed walkthrough and
+> [Configuration](docs/configuration.md) for every setting.
 
-## Quick Start Guide
-
-### 1. Clone the Repository
-SSH into your NAS and navigate to your docker folder:
 ```bash
+# 1. Clone (on the NAS, over SSH)
 cd /volume1/docker
 git clone https://github.com/czhaoca/syno-mihomo-gateway.git
 cd syno-mihomo-gateway
 
+# 2. Configure (.env holds secrets)
+cp .env.example .env && chmod 600 .env && vi .env       # set ROUTER_IP, MIHOMO_IP, DNS, (China) ACR creds + image refs
+
+# 3. Subscription (gitignored; token never committed)
+cp config/subscription.txt.example config/subscription.txt && vi config/subscription.txt
+
+# 4. Network + TUN (root)
+sudo chmod +x scripts/setup_network.sh && sudo ./scripts/setup_network.sh
+
+# 5. Start
+sudo docker compose up -d
 ```
 
-### 2. Configuration
+**Dashboard:** from a LAN device *other than the NAS*, open `http://<NAS_IP>:<WEB_UI_PORT>` and add
+backend `Host=<MIHOMO_IP>`, `Port=<CONTROLLER_PORT>` (default `9090`), `Secret=<CONTROLLER_SECRET>`.
 
-Copy the template and edit your settings:
+> **macvlan note:** the NAS host can't reach its own macvlan container IP — use another device for
+> the dashboard and tests. See [Architecture](docs/architecture.md#network-model-macvlan).
 
-```bash
-cp .env.example .env
-vi .env
+## Client setup
 
-```
+- **Single device:** set its Router/Gateway and DNS to `MIHOMO_IP`.
+- **Whole home:** announce `MIHOMO_IP` as the gateway in your router's DHCP. ⚠️ If the container
+  stops, those devices lose internet.
 
-* **ROUTER_IP:** Your router's IP (e.1. `192.168.1.1`).
-* **MIHOMO_IP:** The new IP for this proxy (e.g., `192.168.1.100`, must be unused).
+## Automatic updates
 
-*   **DOCKER_REGISTRY (Optional):** If you are in an environment where Docker Hub is restricted (e.g., China) or using a private registry, set this to your registry's address (e.g., `registry.cn-shenzhen.aliyuncs.com`).
-*   **DOCKER_USERNAME (Optional):** Your Docker registry username. The setup script will prompt you for it if left empty and `DOCKER_REGISTRY` is set.
-*   **MIHOMO_IMAGE (Optional):** Full image path for Mihomo (e.g., `registry.cn-shenzhen.aliyuncs.com/your_name/mihomo:latest`). Defaults to `metacubex/mihomo:latest`.
-*   **METACUBEXD_IMAGE (Optional):** Full image path for Metacubexd UI (e.g., `registry.cn-shenzhen.aliyuncs.com/your_name/metacubexd:latest`). Defaults to `ghcr.io/metacubex/metacubexd:latest`.
-
-### 3. Add Subscription
-
-Edit the subscription file:
-
-```bash
-vi config/subscription.txt
-
-```
-
-Paste your Airport/Provider URL in this format:
-
-```text
-Default=[https://your-provider.com/api/v1/subscribe?token=123](https://your-provider.com/api/v1/subscribe?token=123)...
-
-```
-
-### 4. Run the Setup Script
-
-This script fixes TUN permissions, creates the necessary Macvlan network, and optionally handles Docker registry login and image pulling if `DOCKER_REGISTRY` is configured in your `.env` file.
-
-```bash
-sudo chmod +x scripts/setup_network.sh
-sudo ./scripts/setup_network.sh
-
-```
-
-### 5. Start the Container
-
-```bash
-sudo docker-compose up -d
-
-```
-
-### 6. Access Dashboard
-
-* Open browser: `http://YOUR_NAS_IP:8080` (Use your NAS IP, not the Mihomo IP)
-* Add Backend:
-* **Host:** `YOUR_MIHOMO_IP` (e.g., `192.168.1.100`)
-* **Port:** `9090`
-
-
-
----
-
-## Client Setup (How to use it)
-
-### Option A: Single Device (Recommended)
-
-On your iPhone, Apple TV, or PC:
-
-1. Go to Network Settings.
-2. Set **Router / Gateway** to `192.168.1.100` (Your Mihomo IP).
-3. Set **DNS** to `192.168.1.100`.
-
-### Option B: Whole Home (Advanced)
-
-Update your Router's DHCP settings to announce `192.168.1.100` as the default gateway. **Warning:** If the container stops, your home internet goes down.
-
----
+Because Docker Hub/ghcr are blocked in China, [`docker-china-sync`](../docker-china-sync) mirrors
+images to Alibaba ACR nightly, and `scripts/auto_update.sh` (run by DSM Task Scheduler) pulls +
+redeploys only what changed — `docker compose up -d` for mihomo/metacubexd with a health-gate and
+auto-rollback, blue-green for an external cloudflared. Print the scheduler settings with
+`sh scripts/install_scheduler.sh` and dry-run with `sh scripts/auto_update.sh --dry-run`.
+Full details: [Auto-Update](docs/auto-update.md) · [Operations](docs/operations.md).
 
 ## Maintenance
 
-**Update Subscription:**
-
-1. Update `config/subscription.txt`.
-2. Restart container: `docker-compose restart mihomo`.
-
-**Update Mihomo Core:**
-
 ```bash
-docker-compose pull
-docker-compose up -d
+# update subscription
+vi config/subscription.txt && docker compose up -d mihomo
 
+# update the repo
+git pull && docker compose up -d
 ```
+
+See [Operations](docs/operations.md) for the full runbook.

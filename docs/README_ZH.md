@@ -2,124 +2,83 @@
 
 [English Docs](../README.md)
 
-这是一个基于 Docker 的 **Mihomo (Clash Meta)** 透明网关一键部署方案，专为群晖 (Synology DSM) 设计。
-通过此方案，你可以让家中的任何设备（Apple TV, iPhone, PS5, Switch）通过简单的网关设置实现科学上网，无需在每个设备上安装软件。
+在群晖 NAS 上"拉取即用"地部署 **Mihomo (Clash Meta)** 透明网关。家中任意设备（Apple TV、iPhone、
+游戏机）只需把网关/DNS 指向该容器的局域网 IP 即可科学上网，无需安装客户端。**MetaCubeXD** 提供
+网页管理面板。为**中国大陆**设计：镜像更新走 Docker Hub/ghcr → 阿里云 ACR → 你的 NAS 的流水线，
+并由群晖计划任务保持自动、安全、可自愈地更新。
 
 ## 功能特点
-- 🚀 **自动化脚本:** 自动检测群晖网络接口（完美支持 Open vSwitch `ovs_eth0` 环境）。
-- 🛡️ **安全隔离:** 使用 Docker Macvlan 模式，拥有独立 IP，不干扰群晖宿主机网络。
-- 🔧 **配置简单:** 通过 `.env` 文件即可配置 IP、子网和端口。
-- 🔁 **订阅分离:** 订阅链接保存在独立的文本文件中，更新订阅无需修改复杂配置文件。
+- 🚀 **自动化脚本** — 自动检测群晖网络接口（`eth0` / `ovs_eth0`）。
+- 🛡️ **安全隔离** — 使用 Docker macvlan；拥有独立局域网 IP，不干扰宿主机网络。
+- 🔧 **配置集中在 `.env`** — IP、端口、DNS、镜像仓库；仓库内不硬编码任何密钥或 DNS。
+- 🔁 **订阅分离** — 机场订阅链接保存在单独的 gitignore 文件中。
+- 🤖 **安全自动更新** — 从阿里云 ACR 拉取，按摘要检测变化，带健康检查与自动回滚；外部 cloudflared
+  采用蓝绿部署（保留隧道令牌）。
 
----
+## 文档
 
-## 准备工作
-1.  **群晖 NAS** (需支持 Docker/Container Manager)。
-2.  **开启 SSH** (控制面板 -> 终端机和 SNMP)。
-3.  **Root 权限** (需要 sudo 权限来创建网络接口)。
+| 指南 | 内容 |
+|---|---|
+| [架构](zh/architecture.md) | 组件、镜像同步→拉取流水线、macvlan 网络模型、安全模型 |
+| [安装](zh/installation.md) | 完整的群晖部署流程（SSH、网络、首次启动、面板） |
+| [配置](zh/configuration.md) | **完整 `.env` 参考**、模板、订阅、规则 |
+| [自动更新](zh/auto-update.md) | ACR 配置、运行流程、健康检查/回滚、cloudflared 蓝绿、退出码 |
+| [运维](zh/operations.md) | 运维手册：计划任务、试运行、开关、日志、通知、回滚 |
+| [故障排查](zh/troubleshooting.md) | FAQ + 退出码 + 具体故障处理 |
+| [开发](zh/development.md) | 内部实现（脚本、渲染器、CI）、编码规范、如何扩展 |
 
 ---
 
 ## 快速开始
 
-### 1. 下载代码仓库
-SSH 登录群晖，进入 Docker 目录：
+> 精简版；详见[安装](zh/installation.md)，每个配置项见[配置](zh/configuration.md)。
+
 ```bash
+# 1. 下载（在群晖上，通过 SSH）
 cd /volume1/docker
 git clone https://github.com/czhaoca/syno-mihomo-gateway.git
 cd syno-mihomo-gateway
 
+# 2. 配置（.env 含密钥）
+cp .env.example .env && chmod 600 .env && vi .env       # 设置 ROUTER_IP、MIHOMO_IP、DNS、（中国）ACR 凭证与镜像地址
+
+# 3. 订阅（gitignore，令牌不会被提交）
+cp config/subscription.txt.example config/subscription.txt && vi config/subscription.txt
+
+# 4. 网络 + TUN（root）
+sudo chmod +x scripts/setup_network.sh && sudo ./scripts/setup_network.sh
+
+# 5. 启动
+sudo docker compose up -d
 ```
 
-### 2. 修改配置
+**面板：** 用**群晖以外**的局域网设备打开 `http://<群晖IP>:<WEB_UI_PORT>`，添加后端
+`Host=<MIHOMO_IP>`、`Port=<CONTROLLER_PORT>`（默认 `9090`）、`Secret=<CONTROLLER_SECRET>`。
 
-复制模板文件并修改：
+> **macvlan 注意：** 群晖宿主机无法访问自己 macvlan 容器的 IP——请用其它设备打开面板与测试。
+> 详见[架构](zh/architecture.md#网络模型-macvlan)。
+
+## 客户端设置
+
+- **单设备：** 把该设备的网关与 DNS 设为 `MIHOMO_IP`。
+- **全屋：** 在路由器 DHCP 中将默认网关设为 `MIHOMO_IP`。⚠️ 容器停止时这些设备将断网。
+
+## 自动更新
+
+由于中国大陆封锁 Docker Hub/ghcr，[`docker-china-sync`](../../docker-china-sync) 每晚把镜像同步到
+阿里云 ACR，`scripts/auto_update.sh`（由群晖任务计划运行）只拉取并重新部署有变化的镜像——
+mihomo/metacubexd 走 `docker compose up -d`（带健康检查与自动回滚），外部 cloudflared 走蓝绿部署。
+用 `sh scripts/install_scheduler.sh` 打印计划任务设置，用 `sh scripts/auto_update.sh --dry-run`
+试运行。详见[自动更新](zh/auto-update.md) · [运维](zh/operations.md)。
+
+## 维护
 
 ```bash
-cp .env.example .env
-vi .env
+# 更新订阅
+vi config/subscription.txt && docker compose up -d mihomo
 
+# 更新仓库
+git pull && docker compose up -d
 ```
 
-* **ROUTER_IP:** 你的主路由器 IP (例如 `192.168.1.1`)。
-* **MIHOMO_IP:** 你想给旁路由分配的 IP (例如 `192.168.1.100`, 必须是空闲 IP)。
-
-*   **DOCKER_REGISTRY (可选):** 如果您在 Docker Hub 访问受限的环境中（例如中国大陆）或使用私有仓库，请将其设置为您的镜像仓库地址（例如 `registry.cn-shenzhen.aliyuncs.com`）。
-*   **DOCKER_USERNAME (可选):** 您的 Docker 镜像仓库用户名。如果此项留空且 `DOCKER_REGISTRY` 已设置，安装脚本将提示您输入。
-*   **MIHOMO_IMAGE (可选):** Mihomo 的完整镜像路径（例如 `registry.cn-shenzhen.aliyuncs.com/your_name/mihomo:latest`）。默认值为 `metacubex/mihomo:latest`。
-*   **METACUBEXD_IMAGE (可选):** Metacubexd UI 的完整镜像路径（例如 `registry.cn-shenzhen.aliyuncs.com/your_name/metacubexd:latest`）。默认值为 `ghcr.io/metacubex/metacubexd:latest`。
-
-### 3. 添加订阅
-
-编辑订阅文件：
-
-```bash
-vi config/subscription.txt
-
-```
-
-填入你的机场订阅链接 (格式: `名字=链接`，目前脚本仅读取第一行链接):
-
-```text
-Default=[https://your-provider.com/api/v1/subscribe?token=123](https://your-provider.com/api/v1/subscribe?token=123)...
-
-```
-
-### 4. 运行初始化脚本
-
-此脚本会自动开启 TUN 权限、创建 Macvlan 网络，并根据您的 `.env` 配置，选择性地处理 Docker 镜像仓库登录和镜像拉取。
-
-```bash
-sudo chmod +x scripts/setup_network.sh
-sudo ./scripts/setup_network.sh
-
-```
-
-### 5. 启动容器
-
-```bash
-sudo docker-compose up -d
-
-```
-
-### 6. 进入后台管理
-
-* 浏览器访问: `http://群晖IP:8080` (注意是群晖的 IP)
-* 添加后端 (Backend):
-* **Host:** `你的MIHOMO_IP` (例如 `192.168.1.100`)
-* **Port:** `9090`
-
-
-
----
-
-## 客户端设置 (如何使用)
-
-### 方法 A: 单设备模式 (推荐)
-
-在 iPhone, Apple TV 或 电脑的网络设置中：
-
-1. 将 **路由器 / 网关 (Router/Gateway)** 修改为 `192.168.1.100`。
-2. 将 **DNS** 修改为 `192.168.1.100`。
-
-### 方法 B: 全屋模式 (进阶)
-
-在主路由器的 DHCP 设置中，将默认网关修改为 `192.168.1.100`。
-**注意:** 如果容器停止运行，全屋网络将中断。
-
----
-
-## 维护与更新
-
-**更新订阅:**
-
-1. 修改 `config/subscription.txt`。
-2. 重启容器: `docker-compose restart mihomo`。
-
-**更新内核:**
-
-```bash
-docker-compose pull
-docker-compose up -d
-
-```
+完整运维见[运维手册](zh/operations.md)。

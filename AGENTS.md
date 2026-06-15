@@ -19,13 +19,31 @@
 
 ## Deploy
 
-- **Entrypoint**: `docker-compose.yml`
+- **Entrypoint**: `docker-compose.yml` (mihomo on macvlan + metacubexd on bridge).
+- **Config**: rendered at container start by `scripts/render_config.sh` from
+  `config/config.template.yaml` + gitignored `.env` / `config/subscription.txt`.
 - **Note**: This runs on Synology DSM, not on Proxmox. Registered in Nimbus for CIDR tracking only.
+
+## Auto-Update (China / Alibaba ACR)
+
+- **Push side**: sibling repo `docker-china-sync` mirrors images to Alibaba ACR (GitHub Actions).
+- **Pull side**: `scripts/auto_update.sh` (DSM Task Scheduler, root) pulls from ACR, detects
+  digest changes, and redeploys safely: `docker compose up -d` for mihomo/metacubexd with a
+  health-gate + auto-rollback; **blue-green** for an **external** `cloudflared` (managed by name,
+  tunnel token preserved). Reports via `synodsmnotify` + `logs/auto-update.log`.
+- **Config**: `UPDATE_*`, `ACR_*`, `CF_*`, `EXPECTED_ARCH` in `.env` (see docs/configuration.md).
 
 ## CI/CD
 
 - **Platform**: Woodpecker CI (on-premise)
-- **Pipeline**: `.woodpecker.yml` (config validation only)
+- **Pipeline**: `.woodpecker.yml` — compose/YAML validation, config render check
+  (`scripts/ci/render_check.py`, also enforces the no-hardcoded-DNS rule), and `shellcheck`.
+  Triggers on `main` and `master`.
+
+## Documentation
+
+- Operator + developer manual: `docs/` (English) and `docs/zh/` (中文); indexes at
+  `README.md` / `docs/README_ZH.md`.
 
 ## Safety
 
