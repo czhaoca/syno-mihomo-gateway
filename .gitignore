@@ -1,0 +1,19 @@
+# Secrets & user configuration — NEVER commit (see CLAUDE.md)
+.env
+.env.*
+!.env.example
+
+# Rendered/generated runtime config (built from config.template.yaml at container start)
+config/config.yaml
+
+# Real subscription (holds provider token). Ship subscription.txt.example instead.
+config/subscription.txt
+
+# Auto-update orchestrator runtime state & logs
+logs/
+*.log
+.update_state
+
+# Editor / OS noise
+.DS_Store
+.ruff_cache/

@@ -1,0 +1,6 @@
+# Format: Name=URL
+# Copy this file to config/subscription.txt and paste your real Airport/Provider URL.
+# config/subscription.txt is gitignored so your token never gets committed.
+# The mihomo entrypoint uses the FIRST valid (non-#) line found.
+# Example:
+MyAirport=https://your-airport-url.com/api/v1/subscribe?token=xyz
