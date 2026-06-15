@@ -1,8 +1,16 @@
 #!/bin/bash
 
-# Load environment variables
-if [ -f .env ]; then
-  export $(cat .env | grep -v '#' | xargs)
+# Load environment variables.
+# Source (don't `export $(... xargs)`): xargs mangles values with spaces/special
+# chars such as UPDATE_IMAGES="a b c". `set -a` auto-exports everything sourced.
+SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
+REPO_ROOT="$(CDPATH='' cd -- "$SCRIPT_DIR/.." && pwd)"
+ENV_FILE="$REPO_ROOT/.env"
+if [ -f "$ENV_FILE" ]; then
+  set -a
+  # shellcheck disable=SC1090
+  . "$ENV_FILE"
+  set +a
 else
   echo "Error: .env file not found. Please copy .env.example to .env and configure it."
   exit 1
@@ -24,7 +32,7 @@ echo "      Done."
 # 2. Detect Active Interface
 echo "[2/3] Auto-detecting active network interface..."
 # Logic: Find the interface that routes to the Router IP
-PARENT_INTERFACE=$(ip route get $ROUTER_IP | grep -oP 'dev \K\S+')
+PARENT_INTERFACE=$(ip route get "$ROUTER_IP" | grep -oP 'dev \K\S+')
 
 if [ -z "$PARENT_INTERFACE" ]; then
     # Fallback method
@@ -46,13 +54,11 @@ if docker network ls | grep -q "tproxy_network"; then
     docker network rm tproxy_network > /dev/null
 fi
 
-docker network create -d macvlan \
-  --subnet=$SUBNET_CIDR \
-  --gateway=$ROUTER_IP \
-  -o parent=$PARENT_INTERFACE \
-  tproxy_network
-
-if [ $? -eq 0 ]; then
+if docker network create -d macvlan \
+  --subnet="$SUBNET_CIDR" \
+  --gateway="$ROUTER_IP" \
+  -o parent="$PARENT_INTERFACE" \
+  tproxy_network; then
     echo "      Success! Network created."
     echo "========================================"
     echo "Ready to deploy! Run: docker-compose up -d"
@@ -71,14 +77,22 @@ if [ -n "$DOCKER_REGISTRY" ]; then
     if [[ $REPLY =~ ^[Yy]$ ]]; then
         # Login
         if [ -z "$DOCKER_USERNAME" ]; then
-             read -p "      Enter Docker Username: " DOCKER_USERNAME
+             read -r -p "      Enter Docker Username: " DOCKER_USERNAME
         fi
         
         echo "      Logging in to $DOCKER_REGISTRY..."
-        # Interactive password input is handled by docker login automatically
-        docker login $DOCKER_REGISTRY -u "$DOCKER_USERNAME"
-        
-        if [ $? -eq 0 ]; then
+        # Prefer non-interactive login (shared with the auto-update orchestrator):
+        # password via stdin so it never lands in the process list / shell history.
+        if [ -n "$ACR_PASSWORD" ]; then
+            printf '%s' "$ACR_PASSWORD" | docker login "$DOCKER_REGISTRY" -u "$DOCKER_USERNAME" --password-stdin
+            login_rc=$?
+        else
+            # Fall back to interactive prompt when ACR_PASSWORD is not set in .env.
+            docker login "$DOCKER_REGISTRY" -u "$DOCKER_USERNAME"
+            login_rc=$?
+        fi
+
+        if [ "$login_rc" -eq 0 ]; then
             # Pull
             echo "      Pulling Mihomo Image: $MIHOMO_IMAGE..."
             docker pull "$MIHOMO_IMAGE"
