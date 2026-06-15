@@ -1,5 +1,9 @@
 # Mihomo Core Configuration Template
-# This file is processed by docker-compose to inject the subscription URL.
+# Processed by the mihomo container entrypoint, which substitutes the placeholder
+# tokens below from environment variables / subscription.txt and writes config.yaml.
+#
+# NOTE: per CLAUDE.md, no DNS servers / network addresses are hardcoded here —
+# they come from .env (gitignored). Edit values in .env, not in this file.
 
 port: 7890
 socks-port: 7891
@@ -7,19 +11,20 @@ redir-port: 7892
 tproxy-port: 7893
 mixed-port: 7894
 
+# RESTful controller used by the MetaCubeXD dashboard.
+# Bound to 0.0.0.0 so LAN clients reach it at ${MIHOMO_IP}:${CONTROLLER_PORT}
+# across the macvlan network. Leave secret empty in .env for no auth.
+external-controller: 0.0.0.0:{{CONTROLLER_PORT}}
+secret: "{{CONTROLLER_SECRET}}"
+
 dns:
   enable: true
   listen: 0.0.0.0:53
   enhanced-mode: redir-host
-  default-nameserver:
-    - 114.114.114.114
-    - 223.5.5.5
-  nameserver:
-    - 114.114.114.114
-    - 223.5.5.5
-  fallback:
-    - 8.8.8.8
-    - 8.8.4.4
+  # DNS servers are injected from .env as comma-separated lists -> YAML flow sequences.
+  default-nameserver: [ {{DNS_DEFAULT_NAMESERVER}} ]
+  nameserver: [ {{DNS_NAMESERVER}} ]
+  fallback: [ {{DNS_FALLBACK}} ]
   fallback-filter:
     geoip: true
 
@@ -41,4 +46,3 @@ rules:
   - 'GEOSITE,CN,DIRECT'
   - 'GEOIP,CN,DIRECT'
   - 'MATCH,my-airport'
-
