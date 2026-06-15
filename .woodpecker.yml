@@ -1,7 +1,7 @@
-# Syno Mihomo Gateway CI — Docker config validation
+# Syno Mihomo Gateway CI
 when:
   event: [push, pull_request]
-  branch: main
+  branch: [main, master]
 
 steps:
   - name: validate-compose
@@ -13,6 +13,20 @@ steps:
   - name: validate-yaml
     image: python:3.12-slim
     commands:
-      - pip install pyyaml
+      - pip install --quiet pyyaml
       - python -c "import yaml; yaml.safe_load(open('docker-compose.yml'))"
       - echo "YAML validation passed"
+
+  - name: render-config
+    image: python:3.12-slim
+    commands:
+      # Renders config.template.yaml with .env.example, validates structure, and
+      # enforces the CLAUDE.md "no hardcoded DNS/network address" rule.
+      - pip install --quiet pyyaml
+      - python scripts/ci/render_check.py
+
+  - name: shellcheck
+    image: koalaman/shellcheck-alpine:stable
+    commands:
+      # -x follows the sourced lib/*.sh in-context (so cross-file vars resolve).
+      - shellcheck -x scripts/auto_update.sh scripts/install_scheduler.sh scripts/setup_network.sh scripts/render_config.sh
