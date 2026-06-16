@@ -68,11 +68,11 @@ wizard_env() {
   done
   env_set CONTROLLER_SECRET "$CONTROLLER_SECRET"
 
-  ui_ask DNS_DEFAULT_NAMESERVER "$(msg q_dns_bootstrap)" "$(env_get DNS_DEFAULT_NAMESERVER || echo 114.114.114.114,223.5.5.5)"
+  ui_ask DNS_DEFAULT_NAMESERVER "$(msg q_dns_bootstrap)" "$(env_get DNS_DEFAULT_NAMESERVER || echo 1.1.1.1)"
   env_set DNS_DEFAULT_NAMESERVER "$DNS_DEFAULT_NAMESERVER"
-  ui_ask DNS_NAMESERVER "$(msg q_dns_domestic)" "$(env_get DNS_NAMESERVER || echo 114.114.114.114,223.5.5.5)"
+  ui_ask DNS_NAMESERVER "$(msg q_dns_domestic)" "$(env_get DNS_NAMESERVER || echo 1.1.1.1)"
   env_set DNS_NAMESERVER "$DNS_NAMESERVER"
-  ui_ask DNS_FALLBACK "$(msg q_dns_fallback)" "$(env_get DNS_FALLBACK || echo 8.8.8.8,8.8.4.4)"
+  ui_ask DNS_FALLBACK "$(msg q_dns_fallback)" "$(env_get DNS_FALLBACK || echo 1.1.1.1)"
   env_set DNS_FALLBACK "$DNS_FALLBACK"
 
   ui_ask TZ "$(msg q_tz)" "$(env_get TZ || echo Asia/Shanghai)"

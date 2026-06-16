@@ -17,6 +17,18 @@ _show_log_tail() {
   ui_say ""
 }
 
+# _clear_stale_containers - remove this app's named containers (mihomo, mihomo-ui)
+# left by a prior/partial/renamed deploy, so `compose up` can't hit a
+# "container name already in use" conflict. Idempotent. INSTALLER-ONLY: the
+# auto-updater calls compose_up directly and must NOT force-recreate.
+_clear_stale_containers() {
+  # shellcheck disable=SC2086  # COMPOSE_CMD may be two words ("docker compose")
+  ( cd "$REPO_ROOT" && $COMPOSE_CMD --env-file "$ENV_FILE" down --remove-orphans ) >>"${LOG_FILE:-/dev/null}" 2>&1
+  for _c in "$MIHOMO_CONTAINER" "$METACUBEXD_CONTAINER"; do
+    [ -n "$_c" ] && "$DOCKER_BIN" rm -f "$_c" >>"${LOG_FILE:-/dev/null}" 2>&1 || true
+  done
+}
+
 deploy_stack() {
   ui_step "$(msg step_deploy_stack)"
   if [ "${REGISTRY_MODE:-acr}" = "acr" ]; then
@@ -85,6 +97,9 @@ flow_deploy() {
   pf_docker         || return 1
   pf_arch
 
+  # Clear stale mihomo/mihomo-ui BEFORE recreating the macvlan: a still-attached
+  # stale container would make `docker network rm` (in create_network) fail.
+  _clear_stale_containers
   create_network    || return 1             # root: TUN + macvlan (final IP guard inside)
   load_env
 

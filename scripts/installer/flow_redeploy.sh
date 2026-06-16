@@ -26,22 +26,27 @@ flow_redeploy() {
 
   ui_menu_select _r "$(msg redeploy_what)" \
     "$(msg redeploy_asis)" \
+    "$(msg redeploy_edit)" \
     "$(msg redeploy_change_ip)" \
     "$(msg redeploy_repick)" \
     "$(msg modify_back)"
   case "$UI_MENU_INDEX" in
     1) : ;;
-    2) while :; do
+    2) wizard_env && load_env ;;
+    3) while :; do
          ui_ask_validated MIHOMO_IP "$(msg q_new_mihomo_ip)" "${MIHOMO_IP:-192.168.1.100}" is_ipv4
          check_ip_conflict "$MIHOMO_IP" && break
        done
        env_set MIHOMO_IP "$MIHOMO_IP"; load_env ;;
-    3) scan_and_prefill || return 1; load_env ;;
-    4) return 0 ;;
+    4) scan_and_prefill || return 1; load_env ;;
+    5) return 0 ;;
   esac
 
   pf_docker || return 1
   pf_arch
+  # Clear stale mihomo/mihomo-ui BEFORE recreating the macvlan (a still-attached
+  # stale container would make create_network's `docker network rm` fail).
+  _clear_stale_containers
   create_network || return 1     # root: TUN + macvlan (re-runs the final IP guard)
   load_env
   deploy_stack || return 1

@@ -32,13 +32,13 @@ _msg_en() {
     title)            printf '%s' 'Mihomo Gateway - guided installer' ;;
     menu_action)      printf '%s' 'Select an action' ;;
     menu_deploy)      printf '%s' 'Deploy the gateway (first run, end-to-end)' ;;
-    menu_redeploy)    printf '%s' 'Redeploy (reuse saved settings; fix a conflicting IP)' ;;
+    menu_redeploy)    printf '%s' 'Deploy with the saved .env (edit settings or deploy as-is)' ;;
     menu_cron)        printf '%s' 'Set up automatic updates (cron)' ;;
     menu_modify)      printf '%s' 'Modify an existing deployment' ;;
     menu_quit)        printf '%s' 'Quit' ;;
     bye)              printf '%s' 'Bye.' ;;
     warn_deploy_unfinished)   printf '%s' 'deploy did not finish - fix the issue above, then choose Deploy again' ;;
-    warn_redeploy_unfinished) printf '%s' 'redeploy did not finish - see the message above' ;;
+    warn_redeploy_unfinished) printf '%s' 'deploy did not finish - see the message above' ;;
     warn_cron_unfinished)     printf '%s' 'cron setup did not finish' ;;
     step_installer)   printf '%s' 'Mihomo Gateway installer' ;;
     info_check_loc)   printf '%s' "checking this folder's location..." ;;
@@ -237,7 +237,7 @@ _msg_en() {
     modify_back)      printf '%s' 'Back to main menu' ;;
 
     # --- flow_redeploy.sh ---
-    step_redeploy)    printf '%s' 'Redeploy (reuse saved configuration)' ;;
+    step_redeploy)    printf '%s' 'Deploy with the saved .env' ;;
     diag_no_env_redeploy) printf '%s' '.env not found - nothing to redeploy' ;;
     redeploy_current) printf '%s' 'Current configuration:' ;;
     redeploy_iface)   printf '%s' '  interface : %s' ;;
@@ -247,9 +247,10 @@ _msg_en() {
     redeploy_mihomo)  printf '%s' '  mihomo IP : %s' ;;
     redeploy_images)  printf '%s' '  images    : %s' ;;
     redeploy_what)    printf '%s' 'What do you want to do?' ;;
-    redeploy_asis)    printf '%s' 'Redeploy as-is' ;;
-    redeploy_change_ip) printf '%s' "Change mihomo's LAN IP, then redeploy" ;;
-    redeploy_repick)  printf '%s' 'Re-pick the network interface, then redeploy' ;;
+    redeploy_asis)    printf '%s' 'Deploy now (use the saved .env as-is)' ;;
+    redeploy_edit)    printf '%s' 'Edit settings (network / DNS / ports), then deploy' ;;
+    redeploy_change_ip) printf '%s' "Change mihomo's LAN IP, then deploy" ;;
+    redeploy_repick)  printf '%s' 'Re-pick the network interface, then deploy' ;;
     q_new_mihomo_ip)  printf '%s' 'New static LAN IP for mihomo (must be unused)' ;;
 
     *)                printf '%s' "$1" ;;
@@ -268,13 +269,13 @@ _msg_zh() {
     title)            printf '%s' 'Mihomo 网关 - 引导式安装程序' ;;
     menu_action)      printf '%s' '请选择操作' ;;
     menu_deploy)      printf '%s' '部署网关（首次运行，端到端）' ;;
-    menu_redeploy)    printf '%s' '重新部署（沿用已保存的设置；修复冲突的 IP）' ;;
+    menu_redeploy)    printf '%s' '使用已保存的 .env 部署（可编辑设置或按原样部署）' ;;
     menu_cron)        printf '%s' '设置自动更新（cron）' ;;
     menu_modify)      printf '%s' '修改现有部署' ;;
     menu_quit)        printf '%s' '退出' ;;
     bye)              printf '%s' '再见。' ;;
     warn_deploy_unfinished)   printf '%s' '部署未完成 - 请修复上面的问题后再次选择"部署"' ;;
-    warn_redeploy_unfinished) printf '%s' '重新部署未完成 - 请查看上面的提示' ;;
+    warn_redeploy_unfinished) printf '%s' '部署未完成 - 请查看上面的提示' ;;
     warn_cron_unfinished)     printf '%s' 'cron 设置未完成' ;;
     step_installer)   printf '%s' 'Mihomo 网关安装程序' ;;
     info_check_loc)   printf '%s' '正在检查此文件夹的位置...' ;;
@@ -473,7 +474,7 @@ _msg_zh() {
     modify_back)      printf '%s' '返回主菜单' ;;
 
     # --- flow_redeploy.sh ---
-    step_redeploy)    printf '%s' '重新部署（沿用已保存的配置）' ;;
+    step_redeploy)    printf '%s' '使用已保存的 .env 部署' ;;
     diag_no_env_redeploy) printf '%s' '找不到 .env - 没有可重新部署的内容' ;;
     redeploy_current) printf '%s' '当前配置：' ;;
     redeploy_iface)   printf '%s' '  接口     ：%s' ;;
@@ -483,9 +484,10 @@ _msg_zh() {
     redeploy_mihomo)  printf '%s' '  mihomo IP：%s' ;;
     redeploy_images)  printf '%s' '  镜像     ：%s' ;;
     redeploy_what)    printf '%s' '你想做什么？' ;;
-    redeploy_asis)    printf '%s' '按原样重新部署' ;;
-    redeploy_change_ip) printf '%s' '更改 mihomo 的 LAN IP，然后重新部署' ;;
-    redeploy_repick)  printf '%s' '重新选择网络接口，然后重新部署' ;;
+    redeploy_asis)    printf '%s' '立即部署（按原样使用 .env）' ;;
+    redeploy_edit)    printf '%s' '编辑设置（网络 / DNS / 端口），然后部署' ;;
+    redeploy_change_ip) printf '%s' '更改 mihomo 的 LAN IP，然后部署' ;;
+    redeploy_repick)  printf '%s' '重新选择网络接口，然后部署' ;;
     q_new_mihomo_ip)  printf '%s' 'mihomo 的新静态 LAN IP（必须未被占用）' ;;
 
     *)                printf '%s' "$1" ;;
