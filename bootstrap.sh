@@ -10,7 +10,7 @@
 #   2. restores the executable bit the .zip extraction drops from scripts,
 #   3. prints the next steps (which YOU run).
 #
-# POSIX /bin/sh, ASCII only. See docs/release-packaging.md.
+# POSIX /bin/sh, ASCII only. For the full guided setup, run: sh ./install.sh
 
 DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
 cd "$DIR" || { echo "FATAL: cannot cd to $DIR" >&2; exit 1; }
@@ -42,15 +42,18 @@ fi
 # 3. Next steps - YOU run these (network, privileged, and the image mirror are your call).
 cat <<'EOF'
 
-Next steps:
-  1. Edit .env                      ROUTER_IP, MIHOMO_IP, DNS; (China) ACR creds + image refs
-  2. Edit config/subscription.txt   your real subscription URL
-  3. Images: make sure they are mirrored to your Alibaba ACR via docker-china-sync,
-     and that MIHOMO_IMAGE / METACUBEXD_IMAGE in .env point at that ACR.
-     (No GitHub/registry access is needed on the NAS once images are in your ACR.)
-  4. sudo ./scripts/setup_network.sh
-  5. sudo docker compose up -d
-  6. (optional) sh scripts/install_scheduler.sh   # DSM auto-update task
+Setup is guided. Run the interactive installer (recommended):
 
-Full guide: docs/release-packaging.md
+    sudo sh ./install.sh
+
+It walks you through configuration, the network, the image source, and start-up.
+
+Prefer to configure by hand? The manual steps are:
+  1. Edit .env                      ROUTER_IP, MIHOMO_IP, DNS, registry + image settings
+  2. Edit config/subscription.txt   your real subscription URL
+  3. sudo ./scripts/setup_network.sh
+  4. sudo docker compose up -d
+  5. (optional) sh scripts/install_scheduler.sh   # auto-update schedule
+
+See the START-HERE and INSTALL guides in docs/ for details.
 EOF
