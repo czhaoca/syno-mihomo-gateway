@@ -25,6 +25,14 @@ steps:
       - pip install --quiet pyyaml
       - python scripts/ci/render_check.py
 
+  - name: compose-policy
+    image: python:3.12-slim
+    commands:
+      # Enforce ACR-only images: the gateway must never silently fall back to a direct
+      # Docker Hub / ghcr.io pull (blocked in China). See docs/configuration.md.
+      - pip install --quiet pyyaml
+      - python scripts/ci/compose_policy_check.py
+
   - name: package-check
     image: python:3.12-slim
     commands:

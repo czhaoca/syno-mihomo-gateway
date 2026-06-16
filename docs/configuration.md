@@ -58,6 +58,10 @@ The auto-updater maps each `UPDATE_IMAGES` entry to a deploy target by an **exac
 against these three vars — on the ACR path, set them to your ACR refs (see
 [Auto-Update](auto-update.md#image-refs)).
 
+> **ACR-only, fail-closed.** `MIHOMO_IMAGE` and `METACUBEXD_IMAGE` are required: `docker compose
+> up` **fails** if either is unset — it never falls back to a direct Docker Hub / ghcr.io pull
+> (blocked in China). Always set them to your ACR mirror.
+
 | Key | Req | Description | Example |
 |---|:--:|---|---|
 | `MIHOMO_IMAGE` | ✅ | mihomo image ref (point at your ACR mirror in China). | `registry.cn-shenzhen.aliyuncs.com/myns/mihomo:latest` |
@@ -68,7 +72,7 @@ against these three vars — on the ACR path, set them to your ACR refs (see
 
 | Key | Upd | Sec | Description | Example |
 |---|:--:|:--:|---|---|
-| `DOCKER_REGISTRY` | ✅ | | ACR registry host. Empty = assume public images, skip login. | `registry.cn-shenzhen.aliyuncs.com` |
+| `DOCKER_REGISTRY` | ✅ | | ACR registry host (used for `docker login`). Empty skips the login step; the gateway still requires MIHOMO_IMAGE/METACUBEXD_IMAGE to be ACR refs. | `registry.cn-shenzhen.aliyuncs.com` |
 | `DOCKER_USERNAME` | ✅ | | ACR username (shared by setup + updater). | `your_acr_user` |
 | `ACR_PASSWORD` | ✅ | 🔒 | ACR password / access token (non-interactive `--password-stdin`). | `…` |
 | `ACR_NAMESPACE` | | | ACR namespace (the `ALIYUN_NAME_SPACE` from docker-china-sync). Reference only. | `myns` |

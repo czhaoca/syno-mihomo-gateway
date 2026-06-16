@@ -58,6 +58,10 @@
 映射到对应的部署目标——在 ACR 路径下，请将它们设置为你的 ACR 引用（参见
 [自动更新](auto-update.md)）。
 
+> **仅用 ACR、缺失即失败。** `MIHOMO_IMAGE` 和 `METACUBEXD_IMAGE` 为必填：若任一未设置，
+> `docker compose up` 会**直接失败**——绝不会回退到直接拉取 Docker Hub / ghcr.io（中国大陆被屏蔽）。
+> 请始终将它们设置为你的 ACR 镜像源。
+
 | 键 | Req | 说明 | 示例 |
 |---|:--:|---|---|
 | `MIHOMO_IMAGE` | ✅ | mihomo 镜像引用（指向你在中国的 ACR 镜像源）。 | `registry.cn-shenzhen.aliyuncs.com/myns/mihomo:latest` |
@@ -68,7 +72,7 @@
 
 | 键 | Upd | Sec | 说明 | 示例 |
 |---|:--:|:--:|---|---|
-| `DOCKER_REGISTRY` | ✅ | | ACR 镜像仓库主机。留空 = 视为公开镜像，跳过登录。 | `registry.cn-shenzhen.aliyuncs.com` |
+| `DOCKER_REGISTRY` | ✅ | | ACR 镜像仓库主机（用于 `docker login`）。留空则跳过登录步骤；网关仍要求 MIHOMO_IMAGE/METACUBEXD_IMAGE 为 ACR 引用。 | `registry.cn-shenzhen.aliyuncs.com` |
 | `DOCKER_USERNAME` | ✅ | | ACR 用户名（由初始化脚本与更新器共用）。 | `your_acr_user` |
 | `ACR_PASSWORD` | ✅ | 🔒 | ACR 密码/访问令牌（用于非交互式 `--password-stdin`）。 | `…` |
 | `ACR_NAMESPACE` | | | ACR 命名空间（即 docker-china-sync 中的 `ALIYUN_NAME_SPACE`）。仅供参考。 | `myns` |

@@ -82,6 +82,7 @@ compose (+health-gate/rollback) → apply cloudflared (blue-green) → prune →
 | `validate-compose` | `docker compose config --quiet` |
 | `validate-yaml` | `yaml.safe_load(docker-compose.yml)` |
 | `render-config` | `python scripts/ci/render_check.py` —— 针对一个带 `Name=` 前缀及 `&` 参数的夹具 URL 运行**真实的**渲染器，并断言该 URL 能精确地往返还原；同时强制执行“不硬编码 DNS”规则 |
+| `compose-policy` | `python scripts/ci/compose_policy_check.py` —— 断言网关镜像**仅来自 ACR**：`docker-compose.yml` 中不得有直接 Docker Hub/ghcr 回退，`.env.example` 的镜像引用须指向私有仓库 |
 | `package-check` | `python scripts/ci/package_check.py` —— 在临时仓库中构建发布 zip，证明**任何密钥都不会被打包**（植入的 `.env`/订阅/`config.yaml` 不在两种压缩包的文件名*和*字节中），校验和正确，各项守卫生效，且 `bootstrap.sh` 往返正常 |
 | `shellcheck` | 对入口点脚本运行 `shellcheck -x`（lib/*.sh 在上下文中被一并检查） |
 
@@ -122,6 +123,9 @@ cp .env.example .env && docker compose config -q && rm -f .env
 
 # release packaging safeguard (hermetic; builds in a temp repo, needs git)
 python3 scripts/ci/package_check.py
+
+# ACR-only image policy (no direct Docker Hub/ghcr fallback)
+python3 scripts/ci/compose_policy_check.py
 ```
 
 ## 如何扩展

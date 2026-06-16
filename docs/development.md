@@ -86,6 +86,7 @@ Runs on push/PR to `main` and `master`:
 | `validate-compose` | `docker compose config --quiet` |
 | `validate-yaml` | `yaml.safe_load(docker-compose.yml)` |
 | `render-config` | `python scripts/ci/render_check.py` — runs the **real** renderer against a fixture URL with a `Name=` prefix + `&` params and asserts the URL round-trips exactly; also enforces the no-hardcoded-DNS rule |
+| `compose-policy` | `python scripts/ci/compose_policy_check.py` — asserts gateway images are **ACR-only**: no direct Docker Hub/ghcr fallback in `docker-compose.yml`, and `.env.example` image refs target a private registry |
 | `package-check` | `python scripts/ci/package_check.py` — builds the release zip in a throwaway repo and proves **no secret can ship** (planted `.env`/subscription/`config.yaml` absent from both archives' names *and* bytes), checksums verify, the guards fire, and `bootstrap.sh` round-trips |
 | `shellcheck` | `shellcheck -x` on the entry-point scripts (lib/*.sh followed in-context) |
 
@@ -126,6 +127,9 @@ cp .env.example .env && docker compose config -q && rm -f .env
 
 # release packaging safeguard (hermetic; builds in a temp repo, needs git)
 python3 scripts/ci/package_check.py
+
+# ACR-only image policy (no direct Docker Hub/ghcr fallback)
+python3 scripts/ci/compose_policy_check.py
 ```
 
 ## How to extend
