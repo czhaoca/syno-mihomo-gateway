@@ -28,25 +28,30 @@ steps:
   - name: compose-policy
     image: python:3.12-slim
     commands:
-      # Enforce ACR-only images: the gateway must never silently fall back to a direct
-      # Docker Hub / ghcr.io pull (blocked in China). See docs/configuration.md.
+      # Image-ref policy: every compose image is a fail-closed env ref (never a
+      # hardcoded ref or default fallback), and .env.example ships REGISTRY_MODE=acr
+      # (ACR is the default; 'docker' upstream is an explicit opt-in). The acr-vs-docker
+      # choice itself lives in the gitignored .env. See docs/configuration.md.
       - pip install --quiet pyyaml
       - python scripts/ci/compose_policy_check.py
 
   - name: package-check
     image: python:3.12-slim
     commands:
-      # Hermetic safeguard test: builds the release zip in a throwaway repo and proves it
-      # can never ship a secret (.env / subscription / config.yaml), the guards fire, and
-      # bootstrap.sh round-trips. Needs git to run the real packager.
+      # Hermetic safeguard test: builds BOTH the dev and the enduser release bundles in
+      # throwaway repos and proves neither can ship a secret (.env / subscription /
+      # config.yaml); the enduser bundle also prunes every developer/.md/CI file, ships
+      # the installer + .txt guides, contains no identity string, and its leak-gate fails
+      # closed on an injected leak. Needs git to run the real packager.
       - apt-get update -qq && apt-get install -y -qq --no-install-recommends git >/dev/null
       - python scripts/ci/package_check.py
 
   - name: shellcheck
     image: koalaman/shellcheck-alpine:stable
     commands:
-      # -x follows the sourced lib/*.sh in-context (so cross-file vars resolve).
-      # package.sh / bootstrap.sh are build-host + offline-install helpers (see
-      # docs/release-packaging.md); the release zip itself is cut by `sh scripts/package.sh`
-      # on a machine with GitHub access, not in CI.
-      - shellcheck -x scripts/auto_update.sh scripts/install_scheduler.sh scripts/setup_network.sh scripts/render_config.sh scripts/package.sh bootstrap.sh
+      # First parse-check every shell script, then lint the entry points with -x so the
+      # sourced modules are analyzed in context: install.sh pulls in scripts/installer/*.sh
+      # + scripts/lib/*.sh; auto_update.sh + setup_network.sh pull in their libs.
+      # setup_network.sh is now POSIX /bin/sh (no more bash exception).
+      - 'for f in $(find . -path ./.git -prune -o -name "*.sh" -print); do sh -n "$f" || exit 1; done'
+      - shellcheck -x install.sh scripts/auto_update.sh scripts/install_scheduler.sh scripts/setup_network.sh scripts/render_config.sh scripts/package.sh bootstrap.sh
