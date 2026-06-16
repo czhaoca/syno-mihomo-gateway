@@ -175,7 +175,7 @@ _msg_en() {
     diag_compose_up_fix) printf '%s' 'review the output above and %s; verify the macvlan network and .env image refs' ;;
     ok_mihomo_healthy) printf '%s' 'mihomo is running and healthy' ;;
     diag_unhealthy)   printf '%s' 'mihomo did not become healthy' ;;
-    diag_unhealthy_fix) printf '%s' "inspect 'docker logs mihomo'; a bad subscription URL or DNS in .env is the usual cause" ;;
+    diag_unhealthy_fix) printf '%s' "see the mihomo log above; a bad subscription URL, DNS, or a blocked geo-data download (geox-url in config.template.yaml) is the usual cause" ;;
     step_deploy_done) printf '%s' 'Deployment complete' ;;
     ok_gateway_up)    printf '%s' 'The gateway is up.' ;;
     rep_dashboard)    printf '%s' 'Dashboard (open from a LAN device that is NOT the NAS):' ;;
@@ -414,7 +414,7 @@ _msg_zh() {
     diag_compose_up_fix) printf '%s' '请查看上面的输出以及 %s；核对 macvlan 网络和 .env 中的镜像引用' ;;
     ok_mihomo_healthy) printf '%s' 'mihomo 正在运行且健康' ;;
     diag_unhealthy)   printf '%s' 'mihomo 未能进入健康状态' ;;
-    diag_unhealthy_fix) printf '%s' "请检查 'docker logs mihomo'；通常是 .env 中订阅链接或 DNS 错误所致" ;;
+    diag_unhealthy_fix) printf '%s' "请查看上面的 mihomo 日志；通常是订阅链接、DNS，或 geo 数据下载被阻断（config.template.yaml 中的 geox-url）所致" ;;
     step_deploy_done) printf '%s' '部署完成' ;;
     ok_gateway_up)    printf '%s' '网关已启动。' ;;
     rep_dashboard)    printf '%s' '仪表盘（请从非 NAS 的 LAN 设备打开）：' ;;

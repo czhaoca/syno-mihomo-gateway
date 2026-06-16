@@ -30,6 +30,18 @@ dns:
 
 log-level: info
 
+# Geo databases (needed by the GEOSITE/GEOIP rules below). Mihomo downloads these
+# on first start; its default source is the big public Git host, which is blocked
+# in mainland China, so the download hangs and the proxy never finishes starting.
+# Point at a CDN mirror that is reachable there. The files are cached under the
+# config dir after the first fetch, so later starts are instant. If this mirror is
+# blocked for you, replace the hosts below.
+geo-auto-update: false
+geox-url:
+  geoip: "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geoip.dat"
+  geosite: "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geosite.dat"
+  mmdb: "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/country.mmdb"
+
 # Proxy Providers
 proxy-providers:
   my-airport:
