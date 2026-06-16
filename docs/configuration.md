@@ -31,7 +31,8 @@ Legend — **Req**: required for the gateway to run · **Upd**: required for aut
 |---|:--:|---|---|
 | `ROUTER_IP` | ✅ | Your router/gateway IP. Used to auto-detect the macvlan parent interface. | `192.168.1.1` |
 | `SUBNET_CIDR` | ✅ | Your LAN subnet for the macvlan network. | `192.168.1.0/24` |
-| `MIHOMO_IP` | ✅ | Static LAN IP assigned to the mihomo container. **Must be unused.** | `192.168.1.100` |
+| `MIHOMO_IP` | ✅ | Static LAN IP assigned to the mihomo container. **Must be unused** (the installer checks for a conflict). | `192.168.1.100` |
+| `PARENT_INTERFACE` | | Macvlan parent NIC. The installer fills this from the interface scan; blank = auto-detect (the boot-up self-heal task auto-detects too). | `eth0` |
 
 ### Ports & controller
 
@@ -89,7 +90,7 @@ against the three resolved refs (see [Auto-Update](auto-update.md#image-refs)).
 |---|---|---|
 | `UPDATE_ENABLED` | Master kill-switch. `false` makes a run exit immediately (unless `--force`). | `true` |
 | `UPDATE_IMAGES` | Space-separated image refs to check/pull. Recommended: inherit the three image vars. | `"${MIHOMO_IMAGE} ${METACUBEXD_IMAGE} ${CF_IMAGE}"` |
-| `UPDATE_SCHEDULE` | Cron expr — source of truth for the DSM task / fallback crontab. **Quote it.** | `"0 9 * * *"` |
+| `UPDATE_SCHEDULE` | Cron expr — source of truth for the DSM task / fallback crontab. **Quote it.** The installer sets it from a daily HH:MM prompt. | `"0 2 * * *"` |
 | `UPDATE_TZ` | Timezone the schedule runs in (the script exports it as `TZ`). | `Asia/Shanghai` |
 | `EXPECTED_ARCH` | Guard against the amd64-only mirror landing on an ARM NAS. `amd64`/`arm64`. | `amd64` |
 
@@ -110,6 +111,7 @@ against the three resolved refs (see [Auto-Update](auto-update.md#image-refs)).
 | `UPDATE_LOG` | Orchestrator log path (relative resolves under the repo). | `./logs/auto-update.log` |
 | `LOG_KEEP` | Rotated log generations to keep. | `7` |
 | `TZ` | Container timezone. | `Asia/Shanghai` |
+| `INSTALLER_LANG` | Language of the `install.sh` UI (`en` or `zh`). The installer's first screen sets it; saved here so re-runs skip the prompt. | `en` |
 
 ### Advanced tunables (optional `.env` overrides)
 

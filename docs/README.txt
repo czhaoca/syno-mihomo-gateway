@@ -32,18 +32,31 @@ Quick start (5 lines)
 1. Place this folder inside your Docker shared folder (typically
    /volume1/docker; your volume number may differ).
 2. Open a terminal there and run:   sudo sh ./install.sh
-3. Choose "1) Deploy the gateway", then follow the prompts.
-4. From ANOTHER device, open the dashboard at http://<NAS-IP>:<WEB_UI_PORT>.
-5. Point a test client's gateway and DNS at <MIHOMO_IP> to route it.
+3. Pick a language (1 English / 2 Chinese) the first time you run it.
+4. Choose "1) Deploy the gateway", then follow the prompts.
+5. From ANOTHER device, open the dashboard at http://<NAS-IP>:<WEB_UI_PORT>,
+   and point a test client's gateway and DNS at <MIHOMO_IP> to route it.
+
+Language
+--------
+The first time you run install.sh it asks for a language:
+
+      1) English   2) Chinese
+
+The whole installer then runs in that language. Your choice is saved (as
+INSTALLER_LANG in .env), so later runs go straight to the menu.
 
 The installer menu
 ------------------
-Running install.sh opens an interactive menu:
+After the language step, install.sh opens an interactive menu:
 
-  1) Deploy the gateway (end-to-end)
-  2) Set up automatic updates (cron)
-  3) Modify an existing deployment
-  4) Quit
+  1) Deploy the gateway (first run, end-to-end)
+  2) Redeploy (reuse saved settings; fix a conflicting IP)
+  3) Set up automatic updates (cron)
+  4) Modify an existing deployment
+  5) Quit
+
+You can press Ctrl-D at any prompt or menu to quit the installer cleanly.
 
 Before you start
 ----------------

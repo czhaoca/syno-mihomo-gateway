@@ -31,7 +31,8 @@
 |---|:--:|---|---|
 | `ROUTER_IP` | ✅ | 你的路由器/网关 IP。用于自动探测 macvlan 的父接口。 | `192.168.1.1` |
 | `SUBNET_CIDR` | ✅ | 用于 macvlan 网络的局域网子网。 | `192.168.1.0/24` |
-| `MIHOMO_IP` | ✅ | 分配给 mihomo 容器的静态局域网 IP。**必须是未被占用的地址。** | `192.168.1.100` |
+| `MIHOMO_IP` | ✅ | 分配给 mihomo 容器的静态局域网 IP。**必须是未被占用的地址**（安装器会检测冲突）。 | `192.168.1.100` |
+| `PARENT_INTERFACE` | | macvlan 父接口（局域网网卡）。安装器会从接口扫描结果填入；留空则自动检测（开机自愈任务也会自动检测）。 | `eth0` |
 
 ### 端口与控制器
 
@@ -89,7 +90,7 @@
 |---|---|---|
 | `UPDATE_ENABLED` | 总开关。设为 `false` 时，运行会立即退出（除非使用 `--force`）。 | `true` |
 | `UPDATE_IMAGES` | 以空格分隔、需要检查/拉取的镜像引用。推荐：直接沿用上述三个镜像变量。 | `"${MIHOMO_IMAGE} ${METACUBEXD_IMAGE} ${CF_IMAGE}"` |
-| `UPDATE_SCHEDULE` | Cron 表达式——DSM 计划任务/后备 crontab 的可信来源。**请加引号。** | `"0 9 * * *"` |
+| `UPDATE_SCHEDULE` | Cron 表达式——DSM 计划任务/后备 crontab 的可信来源。**请加引号。** 安装器会根据每日 HH:MM 提示生成。 | `"0 2 * * *"` |
 | `UPDATE_TZ` | 计划任务运行所在的时区（脚本会将其导出为 `TZ`）。 | `Asia/Shanghai` |
 | `EXPECTED_ARCH` | 防止仅 amd64 的镜像源被装到 ARM 架构的 NAS 上。可选 `amd64`/`arm64`。 | `amd64` |
 
@@ -110,6 +111,7 @@
 | `UPDATE_LOG` | 编排器日志路径（相对路径在仓库下解析）。 | `./logs/auto-update.log` |
 | `LOG_KEEP` | 保留的轮转日志代数。 | `7` |
 | `TZ` | 容器时区。 | `Asia/Shanghai` |
+| `INSTALLER_LANG` | `install.sh` 界面语言（`en` 或 `zh`）。由安装器首屏设置并保存于此，重运行时跳过该提示。 | `en` |
 
 ### 高级可调项（可选的 `.env` 覆盖项）
 

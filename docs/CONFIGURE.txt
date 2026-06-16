@@ -7,22 +7,36 @@ config/subscription.txt.
 
 You normally set these through the installer prompts. This file documents what
 each value means so you can review or hand-edit .env if needed. After editing
-.env by hand, apply changes with "3) Modify an existing deployment" so the
+.env by hand, apply changes with "4) Modify an existing deployment" so the
 containers are redeployed with the health-gated rollback.
 
 --------------------------------------------------------------------------
 Network settings
 --------------------------------------------------------------------------
   ROUTER_IP
-      Your router / gateway IP address.
+      Your router / gateway IP address. The installer auto-fills this from the
+      chosen interface during deploy; you confirm it.
 
   SUBNET_CIDR
-      Your home LAN subnet in CIDR form, e.g. 192.168.1.0/24.
+      Your home LAN subnet in CIDR form, e.g. 192.168.1.0/24. Auto-filled from
+      the chosen interface during deploy; you confirm it.
 
   MIHOMO_IP
       A FREE static LAN IP for the gateway. It must be on your LAN subnet and
       not used by any other device. Clients point their gateway and DNS here
-      to be routed.
+      to be routed. During deploy the installer warns if this IP is already
+      answering on the LAN.
+
+  PARENT_INTERFACE
+      The macvlan parent NIC the installer saved from the interface scan.
+      Blank = auto-detect.
+
+--------------------------------------------------------------------------
+Installer
+--------------------------------------------------------------------------
+  INSTALLER_LANG
+      The installer UI language: en or zh. Saved from the first-run language
+      prompt so later runs skip it.
 
 --------------------------------------------------------------------------
 Dashboard / controller
@@ -91,10 +105,10 @@ Automatic updates
       Turns scheduled auto-updates on or off.
 
   UPDATE_SCHEDULE
-      A cron expression for when updates run.
+      A cron expression for when updates run. Default is 02:00 daily.
 
   UPDATE_TZ
-      Timezone used for the update schedule.
+      Timezone used for the update schedule. Default Asia/Shanghai.
 
   EXPECTED_ARCH
       The expected CPU architecture: amd64 or arm64. Set this to match your

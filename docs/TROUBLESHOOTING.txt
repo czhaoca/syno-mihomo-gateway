@@ -39,14 +39,33 @@ docker or docker compose "command not found"
          /dev/net/tun. If it still fails, confirm you are root.
 
 --------------------------------------------------------------------------
+The mihomo IP is already taken / deploy failed on a conflicting IP
+--------------------------------------------------------------------------
+  Symptom: the installer warns that the IP you picked for mihomo is already
+           answering on the LAN, or a deploy failed because that IP was taken.
+  Cause:   another device (often DHCP-assigned) already uses MIHOMO_IP.
+  Fix:     use Redeploy (menu option 2). It reuses everything saved in .env -
+           router, DNS, ports, subscription, image settings - so you do NOT
+           re-enter them. Choose "change mihomo's LAN IP, then redeploy" and
+           pick a free IP. This is the recommended fix for an IP conflict.
+
+--------------------------------------------------------------------------
+Cannot quit the installer / stuck at a prompt
+--------------------------------------------------------------------------
+  Symptom: you want to exit but are at a prompt or menu.
+  Fix:     press Ctrl-D at any prompt or menu to quit the installer cleanly.
+           You can also choose the Quit menu item.
+
+--------------------------------------------------------------------------
 macvlan parent / interface mismatch
 --------------------------------------------------------------------------
   Symptom: the network fails to create, or clients cannot reach the gateway
            IP.
   Cause:   the macvlan network was bound to the wrong NAS interface.
-  Fix:     re-run the network setup from the menu (option 3 -> re-run network
-           setup) and pick the correct LAN interface. The installer lists each
-           interface with its IPv4 and marks the recommended one.
+  Fix:     re-run the deploy and re-pick the LAN interface, or use Redeploy
+           (menu option 2 -> re-pick the interface, then redeploy). The
+           installer lists each interface with its IPv4 and marks the
+           recommended one.
 
 --------------------------------------------------------------------------
 Cannot open the dashboard from the NAS
@@ -63,7 +82,7 @@ Image pull fails
   Cause A: wrong registry credentials in acr mode -> updater/login may report
            exit code 5 (registry login failed).
   Fix A:   re-check DOCKER_REGISTRY, DOCKER_USERNAME, ACR_PASSWORD, and
-           ACR_NAMESPACE (option 3 -> image source), then retry.
+           ACR_NAMESPACE (option 4 -> image source), then retry.
   Cause B: using "docker" mode behind a blocking firewall (e.g. mainland
            China), where the public registries are unreachable.
   Fix B:   switch to "acr" mode and pull from your own private image mirror.
@@ -74,14 +93,14 @@ Architecture mismatch
   Symptom: containers fail to start or the wrong binary runs.
   Cause:   the image architecture does not match the NAS CPU.
   Fix:     set EXPECTED_ARCH in .env to amd64 or arm64 to match your NAS, then
-           redeploy (option 3 -> apply changes).
+           redeploy (option 4 -> apply changes).
 
 --------------------------------------------------------------------------
 Dashboard port already in use
 --------------------------------------------------------------------------
   Symptom: containers will not start because the port is taken.
   Cause:   another service already uses WEB_UI_PORT (default 8080).
-  Fix:     change WEB_UI_PORT in .env to a free port (option 3 -> apply
+  Fix:     change WEB_UI_PORT in .env to a free port (option 4 -> apply
            changes), then open http://<NAS-IP>:<new-port>.
 
 --------------------------------------------------------------------------
@@ -108,4 +127,4 @@ Where to look
   * Install log:     under the logs/ folder.
   * Auto-update log: under the logs/ folder.
   * Settings:        .env (see CONFIGURE.txt) and config/subscription.txt.
-  * To change and redeploy: install.sh -> 3) Modify an existing deployment.
+  * To change and redeploy: install.sh -> 4) Modify an existing deployment.

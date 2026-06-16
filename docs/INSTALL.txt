@@ -8,7 +8,7 @@ Overview of the steps
 ---------------------
   1. Transfer this folder to the NAS.
   2. Place it under the Docker shared folder.
-  3. Run install.sh and choose "Deploy".
+  3. Run install.sh, pick a language, and choose "Deploy".
   4. Answer the deploy prompts.
   5. Verify from another device on the LAN.
 
@@ -47,14 +47,24 @@ re-run with:
 
       sudo sh ./install.sh
 
+The FIRST time you run it, the installer asks for a language before anything
+else:
+
+      1) English   2) Chinese
+
+The whole installer then runs in that language. The choice is saved (as
+INSTALLER_LANG in .env), so later runs skip this prompt and go straight to
+the menu. You can press Ctrl-D at any prompt or menu to quit cleanly.
+
 You will see the menu:
 
-      1) Deploy the gateway (end-to-end)
-      2) Set up automatic updates (cron)
-      3) Modify an existing deployment
-      4) Quit
+      1) Deploy the gateway (first run, end-to-end)
+      2) Redeploy (reuse saved settings; fix a conflicting IP)
+      3) Set up automatic updates (cron)
+      4) Modify an existing deployment
+      5) Quit
 
-Choose 1.
+Choose 1 for a first install.
 
 --------------------------------------------------------------------------
 4. The deploy flow (option 1)
@@ -62,16 +72,23 @@ Choose 1.
 Deploy walks through these steps in order:
 
   1.  Prepare config files - seeds .env and config/subscription.txt.
-  2.  Network & DNS settings - your router IP, LAN subnet, gateway IP, DNS.
-  3.  Image source - choose where images are pulled from (see below).
-  4.  Subscription URL - the proxy subscription that feeds your rules.
-  5.  Checks - validates prerequisites.
-  6.  Create the network - you pick the LAN interface.
-  7.  Log in to the registry - in "acr" image mode.
-  8.  Pull images.
-  9.  Start the containers.
-  10. Health check.
-  11. Summary - prints the dashboard URL and the values you need.
+  2.  Scan the network interface FIRST - you pick the LAN interface from the
+      scanned list (or type one). The installer then AUTO-FILLS the router /
+      gateway IP and the LAN subnet (CIDR) from that interface, so you just
+      confirm them rather than typing them.
+  3.  Gateway IP & DNS - set mihomo's LAN IP and the DNS servers. When you set
+      mihomo's IP, the installer checks whether that IP is already answering
+      on the LAN (e.g. a DHCP-assigned device) and warns you before
+      deploying. You can pick another IP or override the warning.
+  4.  Image source - choose where images are pulled from (see below).
+  5.  Subscription URL - the proxy subscription that feeds your rules.
+  6.  Checks - validates prerequisites.
+  7.  Create the network.
+  8.  Log in to the registry - in "acr" image mode.
+  9.  Pull images.
+  10. Start the containers.
+  11. Health check.
+  12. Summary - prints the dashboard URL and the values you need.
 
 Image source (asked during deploy)
   * acr (DEFAULT, recommended in mainland China): pulls from YOUR private
@@ -81,10 +98,33 @@ Image source (asked during deploy)
     internet. The installer warns and asks you to confirm. Behind a blocking
     firewall this mode will fail.
 
-Interface selection (network step)
+Interface selection (scanned first)
   The installer scans the NAS network interfaces, shows each with its IPv4,
   marks the auto-detected LAN interface as recommended, and lets you pick a
-  number or type an interface name manually.
+  number or type an interface name manually. The interface you pick drives the
+  auto-filled router IP and subnet, and is saved as PARENT_INTERFACE in .env.
+
+IP-conflict check (when you set mihomo's IP)
+  The installer probes the LAN to see if the IP you chose for mihomo is
+  already in use. If something answers, it warns you so a silent conflict does
+  not break the deploy. Choose a free IP, or override to keep the one you
+  entered. If a deploy still fails because the IP was taken, use Redeploy
+  (menu item 2, below) to re-apply with a different IP without re-entering
+  everything.
+
+--------------------------------------------------------------------------
+4b. Redeploy (menu option 2)
+--------------------------------------------------------------------------
+Redeploy reuses everything already saved in .env - router, DNS, ports,
+subscription, and image settings - so you do NOT re-enter them. Use it when a
+deploy failed because the chosen IP was taken, or when you just want to
+re-apply. It offers:
+
+  * Redeploy as-is.
+  * Change mihomo's LAN IP, then redeploy.
+  * Re-pick the network interface, then redeploy.
+
+This is the recommended fix for an IP conflict.
 
 --------------------------------------------------------------------------
 5. Verify from ANOTHER device (important)

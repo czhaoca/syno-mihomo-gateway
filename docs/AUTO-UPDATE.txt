@@ -8,7 +8,14 @@ automatically ROLLS BACK if the new image turns out to be unhealthy.
 You set this up from the installer:
 
       sudo sh ./install.sh
-      -> 2) Set up automatic updates (cron)
+      -> 3) Set up automatic updates (cron)
+
+--------------------------------------------------------------------------
+Choosing the time and timezone
+--------------------------------------------------------------------------
+The cron setup asks for a daily time as HH:MM. The default schedule is 02:00
+daily. It then lets you pick the timezone from a menu (Asia/Shanghai is the
+default, plus other common zones, or type your own).
 
 --------------------------------------------------------------------------
 Recommended: DSM Task Scheduler (survives system upgrades)
@@ -19,28 +26,42 @@ user-defined script in DSM:
       Control Panel -> Task Scheduler -> Create -> Scheduled Task
                     -> User-defined script
 
-Run it as root. When you choose option 2, the installer prints the EXACT
-settings to enter (the command line, schedule, and user). Copy those into the
-Task Scheduler task.
+Run it as root. When you choose the DSM web UI method, the installer prints
+the EXACT settings to enter (the command line, schedule, and user). Copy those
+into the Task Scheduler task.
 
 Why the GUI task is preferred: a crontab line may be overwritten by DSM during
 a system upgrade. The Task Scheduler task persists across upgrades.
 
 --------------------------------------------------------------------------
-Options offered by "Set up automatic updates"
+How to schedule (an explicit choice)
 --------------------------------------------------------------------------
-  * Print the exact DSM Task Scheduler settings (recommended path).
-  * Run a DRY-RUN: validates the whole update pipeline but changes nothing.
-    Use this to confirm everything is wired up before trusting the schedule.
-  * Optionally install a FALLBACK crontab line. This works, but DSM may
-    overwrite it on a system upgrade, so the GUI task is preferred.
+After you pick the time and timezone, the installer offers HOW to schedule:
+
+  1) Set it up via the DSM web UI (Task Scheduler) - RECOMMENDED, and
+     upgrade-persistent. The installer prints the exact Control Panel ->
+     Task Scheduler settings to enter.
+  2) Install a crontab entry now via CLI - quick, but may be overwritten by a
+     DSM system upgrade.
+  3) Just run a DRY-RUN to validate - validates the whole update pipeline but
+     changes nothing. Use this to confirm everything is wired up before
+     trusting the schedule.
+
+--------------------------------------------------------------------------
+IMPORTANT: timezone vs actual trigger time
+--------------------------------------------------------------------------
+The timezone you chose labels the in-job log timestamps. For a CRONTAB entry,
+the actual trigger time follows the NAS SYSTEM timezone, not the timezone you
+picked; a DSM Task Scheduler task triggers on DSM's own Regional Options time.
+Either way, set the NAS time correctly so the job runs when you expect.
 
 --------------------------------------------------------------------------
 Related .env settings
 --------------------------------------------------------------------------
   UPDATE_ENABLED    - turns scheduled updates on/off.
-  UPDATE_SCHEDULE   - a cron expression for when updates run.
-  UPDATE_TZ         - timezone used for the schedule.
+  UPDATE_SCHEDULE   - a cron expression for when updates run (default 02:00
+                      daily).
+  UPDATE_TZ         - timezone used for the schedule (default Asia/Shanghai).
   EXPECTED_ARCH     - amd64 or arm64; set to match your NAS.
 
 See CONFIGURE.txt for the full settings reference.
