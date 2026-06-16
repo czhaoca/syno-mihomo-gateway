@@ -24,10 +24,10 @@ have_sudo() { command -v sudo >/dev/null 2>&1; }
 sudo_rerun_hint() {
   _cmd="sh ./install.sh"
   if have_sudo; then
-    ui_say "      Re-run as root:  ${C_BOLD}sudo $_cmd${C_RESET}"
+    ui_say "      $(msgf rerun_root_sudo "$C_BOLD" "$_cmd" "$C_RESET")"
   else
-    ui_say "      Re-run as the root user (no sudo found): ${C_BOLD}$_cmd${C_RESET}"
-    ui_say "      On DSM: enable SSH, log in, then 'sudo -i' (admin) before running."
+    ui_say "      $(msgf rerun_root_nosudo "$C_BOLD" "$_cmd" "$C_RESET")"
+    ui_say "      $(msg rerun_dsm_hint)"
   fi
 }
 
@@ -58,35 +58,35 @@ path_under() {
 # check_location - the req #3 gate. Returns 0 to proceed, non-zero to abort.
 check_location() {
   _self="$(CDPATH='' cd -- "${REPO_ROOT:-.}" 2>/dev/null && pwd -P)"
-  [ -n "$_self" ] || { diagnose "cannot resolve the installer's own folder" "re-extract the bundle and run 'sh ./install.sh' from inside it"; return 1; }
+  [ -n "$_self" ] || { diagnose "$(msg diag_resolve_self)" "$(msg diag_resolve_self_fix)"; return 1; }
 
   if ! _root="$(find_docker_root)"; then
-    diagnose "could not find a Docker shared folder (looked for /volume*/docker)" \
-      "In DSM, install Container Manager (or Docker) so the 'docker' shared folder exists, then move this folder into it. Override the path with DOCKER_ROOT=/path sh ./install.sh"
+    diagnose "$(msg diag_no_docker_root)" \
+      "$(msg diag_no_docker_root_fix)"
     return 1
   fi
-  ui_ok "Docker shared folder: $_root"
+  ui_ok "$(msgf ok_docker_root "$_root")"
 
   if ! path_under "$_self" "$_root"; then
-    ui_error "this folder is NOT under the Docker shared folder."
-    ui_say "      here:   $_self"
-    ui_say "      docker: $_root"
-    ui_say "      Move it there, then re-run from the new location:"
+    ui_error "$(msg err_not_under)"
+    ui_say "      $(msgf loc_here "$_self")"
+    ui_say "      $(msgf loc_docker "$_root")"
+    ui_say "      $(msg loc_move_hint)"
     ui_say "        ${C_BOLD}sudo mv \"$_self\" \"$_root/\"${C_RESET}"
     ui_say "        ${C_BOLD}cd \"$_root/$(basename "$_self")\" && sh ./install.sh${C_RESET}"
-    ui_say "      Or in File Station: move this folder into the 'docker' shared folder, then re-open it here."
+    ui_say "      $(msg loc_move_fs)"
     return 1
   fi
 
   if [ ! -w "$_self" ]; then
-    ui_error "this folder is not writable by the current user ($(id -un 2>/dev/null))."
-    ui_say "      Fix ownership/permissions, e.g.:"
+    ui_error "$(msgf err_not_writable "$(id -un 2>/dev/null)")"
+    ui_say "      $(msg loc_fix_perm)"
     ui_say "        ${C_BOLD}sudo chown -R \"$(id -un 2>/dev/null)\" \"$_self\"${C_RESET}"
     sudo_rerun_hint
     return 1
   fi
 
-  ui_ok "location OK: $_self"
+  ui_ok "$(msgf ok_location "$_self")"
   return 0
 }
 
@@ -95,11 +95,11 @@ check_location() {
 # via registry.sh:detect_compose). Diagnose on failure.
 pf_docker() {
   if detect_compose; then
-    ui_ok "docker + compose detected"
+    ui_ok "$(msg ok_docker_compose)"
     return 0
   fi
-  diagnose "Docker or docker compose is not available" \
-    "Install/enable Container Manager (DSM) and make sure 'docker' is on PATH; if docker needs root, re-run with sudo"
+  diagnose "$(msg diag_no_docker)" \
+    "$(msg diag_no_docker_fix)"
   return 1
 }
 
@@ -107,9 +107,9 @@ pf_docker() {
 pf_arch() {
   _h="$(host_arch)"
   if [ "$_h" != "${EXPECTED_ARCH:-amd64}" ]; then
-    ui_warn "this NAS is '$_h' but EXPECTED_ARCH=${EXPECTED_ARCH:-amd64} - mirror matching-arch images, or set EXPECTED_ARCH=$_h in .env"
+    ui_warn "$(msgf warn_arch "$_h" "${EXPECTED_ARCH:-amd64}" "$_h")"
   else
-    ui_ok "architecture: $_h"
+    ui_ok "$(msgf ok_arch "$_h")"
   fi
   return 0
 }

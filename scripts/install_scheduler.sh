@@ -14,14 +14,20 @@ if [ -f "$ENV_FILE" ]; then
   . "$ENV_FILE"
   set +a
 fi
-: "${UPDATE_SCHEDULE:=0 9 * * *}"
+: "${UPDATE_SCHEDULE:=0 2 * * *}"
 : "${UPDATE_TZ:=Asia/Shanghai}"
 
-CMD="cd $REPO_ROOT && /bin/sh scripts/auto_update.sh >> logs/auto-update.log 2>&1"
+# mkdir -p logs FIRST: the '>>' redirect is opened by the shell before
+# auto_update.sh can create logs/, so a fresh install would otherwise fail.
+CMD="cd $REPO_ROOT && mkdir -p logs && /bin/sh scripts/auto_update.sh >> logs/auto-update.log 2>&1"
 
 # Parse the cron "minute hour" fields into a friendly daily time for the GUI.
 MIN="$(echo "$UPDATE_SCHEDULE" | awk '{print $1}')"
 HOUR="$(echo "$UPDATE_SCHEDULE" | awk '{print $2}')"
+case "$MIN$HOUR" in
+  ''|*[!0-9]*) SCHED_DESC="Custom schedule (cron: $UPDATE_SCHEDULE) - set the DSM trigger to match" ;;
+  *)           SCHED_DESC="Daily, first run time $(printf '%02d:%02d' "$HOUR" "$MIN")" ;;
+esac
 
 cat <<EOF
 ========================================================================
@@ -31,9 +37,10 @@ Recommended (persists across DSM upgrades, runs as root):
 
   Control Panel -> Task Scheduler -> Create -> Scheduled Task -> User-defined script
    General  : Task = "mihomo-auto-update"   User = root
-   Schedule : Daily, first run time ${HOUR:-9}:${MIN:-00}  (timezone: $UPDATE_TZ
-              -> set Control Panel > Regional Options > Time to $UPDATE_TZ,
-                 or rely on UPDATE_TZ which the script exports as TZ)
+   Schedule : $SCHED_DESC
+              (DSM fires the task in the NAS Regional Options timezone; set
+               Control Panel > Regional Options > Time accordingly. UPDATE_TZ=$UPDATE_TZ
+               only labels the in-job log timestamps.)
    Task Settings -> Run command -> User-defined script:
 
      $CMD
@@ -45,8 +52,9 @@ Recommended (persists across DSM upgrades, runs as root):
 ------------------------------------------------------------------------
 Fallback (raw crontab - may be wiped by DSM updates; DSM cron has a user column):
 
-  $MIN $HOUR $(echo "$UPDATE_SCHEDULE" | awk '{print $3, $4, $5}')	root	TZ=$UPDATE_TZ $CMD
+  $MIN $HOUR $(echo "$UPDATE_SCHEDULE" | awk '{print $3, $4, $5}')	root	$CMD
 
   Then reload: synoservice --restart crond   (older DSM: synoservice -restart crond)
+  Note: BusyBox crond fires in the NAS SYSTEM timezone (it ignores a per-line TZ=).
 ========================================================================
 EOF

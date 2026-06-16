@@ -10,22 +10,25 @@
 # if absent (never clobber a configured file), and restore +x on scripts. Folds
 # bootstrap.sh's behavior so the operator only ever runs install.sh.
 seed_config() {
-  ui_step "Preparing configuration files"
+  ui_step "$(msg step_seed)"
   if [ -f "$ENV_FILE" ]; then
-    ui_ok ".env exists - keeping your settings"
+    ui_ok "$(msg ok_env_keep)"
   elif [ -f "$REPO_ROOT/.env.example" ]; then
     cp "$REPO_ROOT/.env.example" "$ENV_FILE" && chmod 600 "$ENV_FILE" \
-      && ui_ok "created .env from the template (chmod 600)" \
-      || { diagnose "could not create .env" "check write permission on this folder"; return 1; }
+      && ui_ok "$(msg ok_env_created)" \
+      || { diagnose "$(msg diag_env_create)" "$(msg diag_env_create_fix)"; return 1; }
   else
-    diagnose ".env.example is missing" "re-extract the release bundle"
+    diagnose "$(msg diag_no_example)" "$(msg diag_no_example_fix)"
     return 1
   fi
+
+  # Persist the language picked on the first screen so the saved .env reflects it.
+  env_set INSTALLER_LANG "${INSTALLER_LANG:-en}"
 
   _sub="$REPO_ROOT/config/subscription.txt"
   if [ ! -f "$_sub" ] && [ -f "$REPO_ROOT/config/subscription.txt.example" ]; then
     cp "$REPO_ROOT/config/subscription.txt.example" "$_sub" \
-      && ui_ok "created config/subscription.txt from the template"
+      && ui_ok "$(msg ok_sub_created)"
   fi
 
   if [ -d "$REPO_ROOT/scripts" ]; then
@@ -37,81 +40,84 @@ seed_config() {
 
 # wizard_env - prompt + persist the network / DNS / port / secret settings.
 wizard_env() {
-  ui_step "Network & DNS configuration"
-  ui_ask_validated ROUTER_IP "Router / Gateway IP" "$(env_get ROUTER_IP || echo 192.168.1.1)" is_ipv4
+  ui_step "$(msg step_env)"
+  ui_ask_validated ROUTER_IP "$(msg q_router)" "$(env_get ROUTER_IP || echo 192.168.1.1)" is_ipv4
   env_set ROUTER_IP "$ROUTER_IP"
-  ui_ask_validated SUBNET_CIDR "Home LAN subnet (CIDR)" "$(env_get SUBNET_CIDR || echo 192.168.1.0/24)" is_cidr
+  ui_ask_validated SUBNET_CIDR "$(msg q_subnet)" "$(env_get SUBNET_CIDR || echo 192.168.1.0/24)" is_cidr
   env_set SUBNET_CIDR "$SUBNET_CIDR"
-  ui_ask_validated MIHOMO_IP "Static LAN IP for mihomo (must be unused)" "$(env_get MIHOMO_IP || echo 192.168.1.100)" is_ipv4
+  while :; do
+    ui_ask_validated MIHOMO_IP "$(msg q_mihomo_ip)" "$(env_get MIHOMO_IP || echo 192.168.1.100)" is_ipv4
+    check_ip_conflict "$MIHOMO_IP" && break
+  done
   env_set MIHOMO_IP "$MIHOMO_IP"
 
-  ui_ask_validated WEB_UI_PORT "Dashboard port (published on the NAS)" "$(env_get WEB_UI_PORT || echo 8080)" is_port
+  ui_ask_validated WEB_UI_PORT "$(msg q_web_port)" "$(env_get WEB_UI_PORT || echo 8080)" is_port
   env_set WEB_UI_PORT "$WEB_UI_PORT"
   if [ "$(pf_port_free "$WEB_UI_PORT"; echo $?)" = "1" ]; then
-    ui_warn "port $WEB_UI_PORT looks already in use - pick another if the dashboard fails to start"
+    ui_warn "$(msgf warn_port_in_use "$WEB_UI_PORT")"
   fi
-  ui_ask_validated CONTROLLER_PORT "Mihomo controller port" "$(env_get CONTROLLER_PORT || echo 9090)" is_port
+  ui_ask_validated CONTROLLER_PORT "$(msg q_controller_port)" "$(env_get CONTROLLER_PORT || echo 9090)" is_port
   env_set CONTROLLER_PORT "$CONTROLLER_PORT"
 
   while :; do
-    ui_ask_secret CONTROLLER_SECRET "Controller secret (Enter for no auth)"
+    ui_ask_secret CONTROLLER_SECRET "$(msg q_controller_secret)"
     case "$CONTROLLER_SECRET" in
-      *"|"*) ui_warn "the secret must not contain a '|' character" ;;
+      *"|"*) ui_warn "$(msg warn_secret_pipe)" ;;
       *) break ;;
     esac
   done
   env_set CONTROLLER_SECRET "$CONTROLLER_SECRET"
 
-  ui_ask DNS_DEFAULT_NAMESERVER "Bootstrap DNS (comma-separated)" "$(env_get DNS_DEFAULT_NAMESERVER || echo 114.114.114.114,223.5.5.5)"
+  ui_ask DNS_DEFAULT_NAMESERVER "$(msg q_dns_bootstrap)" "$(env_get DNS_DEFAULT_NAMESERVER || echo 114.114.114.114,223.5.5.5)"
   env_set DNS_DEFAULT_NAMESERVER "$DNS_DEFAULT_NAMESERVER"
-  ui_ask DNS_NAMESERVER "Domestic DNS (comma-separated)" "$(env_get DNS_NAMESERVER || echo 114.114.114.114,223.5.5.5)"
+  ui_ask DNS_NAMESERVER "$(msg q_dns_domestic)" "$(env_get DNS_NAMESERVER || echo 114.114.114.114,223.5.5.5)"
   env_set DNS_NAMESERVER "$DNS_NAMESERVER"
-  ui_ask DNS_FALLBACK "Overseas / fallback DNS (comma-separated)" "$(env_get DNS_FALLBACK || echo 8.8.8.8,8.8.4.4)"
+  ui_ask DNS_FALLBACK "$(msg q_dns_fallback)" "$(env_get DNS_FALLBACK || echo 8.8.8.8,8.8.4.4)"
   env_set DNS_FALLBACK "$DNS_FALLBACK"
 
-  ui_ask TZ "Timezone" "$(env_get TZ || echo Asia/Shanghai)"
+  ui_ask TZ "$(msg q_tz)" "$(env_get TZ || echo Asia/Shanghai)"
   env_set TZ "$TZ"
-  ui_ok "saved network & DNS settings to .env"
+  ui_ok "$(msg ok_env_saved)"
   return 0
 }
 
 # wizard_images - pick the image source (REGISTRY_MODE), collect registry creds
 # + tags, and derive the image refs (req #4).
 wizard_images() {
-  ui_step "Container image source"
-  _sel=""; _mode=""
-  ui_say "Where should the gateway pull its container images from?"
-  ui_menu_select _sel "Choose" \
-    "Alibaba ACR mirror (recommended for mainland China)" \
-    "Docker Hub / ghcr upstream (BLOCKED in mainland China)"
-  case "$_sel" in
-    Alibaba*) _mode=acr ;;
-    *)        _mode=docker ;;
+  ui_step "$(msg step_images)"
+  _mode=""
+  ui_say "$(msg images_where)"
+  ui_menu_select _sel "$(msg images_choose)" \
+    "$(msg images_opt_acr)" \
+    "$(msg images_opt_docker)"
+  case "$UI_MENU_INDEX" in
+    1) _mode=acr ;;
+    *) _mode=docker ;;
   esac
 
   if [ "$_mode" = docker ]; then
-    ui_warn "Docker Hub and ghcr.io are unreachable behind the mainland-China firewall."
-    if ! ui_yesno "Does this NAS have UNFILTERED internet (not behind the GFW)?" n; then
-      ui_warn "keeping the ACR mirror as the image source"
+    ui_warn "$(msg warn_docker_blocked)"
+    if ! ui_yesno "$(msg ask_unfiltered)" n; then
+      ui_warn "$(msg warn_keep_acr)"
       _mode=acr
     fi
   fi
   REGISTRY_MODE="$_mode"
 
   if [ "$_mode" = acr ]; then
-    ui_ask DOCKER_REGISTRY "ACR registry host (e.g. registry.cn-shenzhen.aliyuncs.com)" "$(env_get DOCKER_REGISTRY || echo '')"
+    ui_ask DOCKER_REGISTRY "$(msg q_acr_host)" "$(env_get DOCKER_REGISTRY || echo '')"
     env_set DOCKER_REGISTRY "$DOCKER_REGISTRY"
-    ui_ask ACR_NAMESPACE "ACR namespace" "$(env_get ACR_NAMESPACE || echo '')"
+    ui_ask ACR_NAMESPACE "$(msg q_acr_namespace)" "$(env_get ACR_NAMESPACE || echo '')"
     env_set ACR_NAMESPACE "$ACR_NAMESPACE"
-    ui_ask DOCKER_USERNAME "ACR username" "$(env_get DOCKER_USERNAME || echo '')"
+    ui_ask DOCKER_USERNAME "$(msg q_acr_username)" "$(env_get DOCKER_USERNAME || echo '')"
     env_set DOCKER_USERNAME "$DOCKER_USERNAME"
-    ui_ask_secret ACR_PASSWORD "ACR password / access token (Enter to keep existing)"
+    ui_ask_secret ACR_PASSWORD "$(msg q_acr_password)"
     [ -n "$ACR_PASSWORD" ] && env_set ACR_PASSWORD "$ACR_PASSWORD"
   fi
 
-  ui_ask MIHOMO_TAG "mihomo image tag" "$(env_get MIHOMO_TAG || echo latest)"
+  ui_ask MIHOMO_TAG "$(msg q_mihomo_tag)" "$(env_get MIHOMO_TAG || echo latest)"
   env_set MIHOMO_TAG "$MIHOMO_TAG"
-  ui_ask METACUBEXD_TAG "metacubexd image tag" "$(env_get METACUBEXD_TAG || echo latest)"
+  ui_ask METACUBEXD_TAG "$(msg q_metacubexd_tag)" "$(env_get METACUBEXD_TAG || echo latest)"
   env_set METACUBEXD_TAG "$METACUBEXD_TAG"
 
   # refresh the shell vars derive_images reads, then resolve + persist refs.
@@ -121,18 +127,18 @@ wizard_images() {
   MIHOMO_TAG="$(env_get MIHOMO_TAG || echo latest)"
   METACUBEXD_TAG="$(env_get METACUBEXD_TAG || echo latest)"
   export REGISTRY_MODE DOCKER_REGISTRY ACR_NAMESPACE MIHOMO_TAG METACUBEXD_TAG
-  derive_images || { diagnose "could not derive image references" "ACR mode needs the registry host AND namespace set"; return 1; }
-  ui_ok "images: $MIHOMO_IMAGE"
-  ui_ok "        $METACUBEXD_IMAGE"
+  derive_images || { diagnose "$(msg diag_derive_images)" "$(msg diag_derive_images_fix)"; return 1; }
+  ui_ok "$(msgf ok_images "$MIHOMO_IMAGE")"
+  ui_ok "$(msgf ok_images_cont "$METACUBEXD_IMAGE")"
 
-  if ui_yesno "Also manage a cloudflared tunnel container? (advanced, optional)" n; then
-    ui_ask CF_TAG "cloudflared image tag" "$(env_get CF_TAG || echo latest)"
+  if ui_yesno "$(msg ask_cloudflared)" n; then
+    ui_ask CF_TAG "$(msg q_cf_tag)" "$(env_get CF_TAG || echo latest)"
     env_set CF_TAG "$CF_TAG"
     if CF_IMAGE="$(derive_ref cloudflared "$CF_TAG")"; then
       env_set CF_IMAGE "$CF_IMAGE"
-      ui_ok "cloudflared image: $CF_IMAGE"
+      ui_ok "$(msgf ok_cf_image "$CF_IMAGE")"
     fi
-    ui_ask_secret CF_TUNNEL_TOKEN "cloudflared tunnel token (Enter to reuse the running one)"
+    ui_ask_secret CF_TUNNEL_TOKEN "$(msg q_cf_token)"
     [ -n "$CF_TUNNEL_TOKEN" ] && env_set CF_TUNNEL_TOKEN "$CF_TUNNEL_TOKEN"
   fi
   return 0
@@ -141,7 +147,7 @@ wizard_images() {
 # wizard_subscription - capture the airport/subscription URL into
 # config/subscription.txt (never silently overwrite a real one).
 wizard_subscription() {
-  ui_step "Airport / subscription URL"
+  ui_step "$(msg step_sub)"
   _sub="$REPO_ROOT/config/subscription.txt"
   _example="$REPO_ROOT/config/subscription.txt.example"
   _cur=""
@@ -153,21 +159,21 @@ wizard_subscription() {
     fi
   fi
   if [ -n "$_cur" ]; then
-    ui_say "current: $_cur"
-    ui_yesno "replace the existing subscription URL?" n || { ui_ok "kept the existing subscription"; return 0; }
+    ui_say "$(msgf sub_current "$_cur")"
+    ui_yesno "$(msg ask_replace_sub)" n || { ui_ok "$(msg ok_sub_kept)"; return 0; }
   fi
   while :; do
-    ui_ask _url "Subscription URL" ""
+    ui_ask _url "$(msg q_sub_url)" ""
     case "$_url" in
       http://*|https://*) break ;;
-      '') ui_warn "a subscription URL is required" ;;
-      *) ui_warn "the URL must start with http:// or https://" ;;
+      '') ui_warn "$(msg warn_sub_required)" ;;
+      *) ui_warn "$(msg warn_sub_scheme)" ;;
     esac
   done
   if printf '%s\n' "$_url" > "$_sub"; then
-    ui_ok "subscription saved"
+    ui_ok "$(msg ok_sub_saved)"
     return 0
   fi
-  diagnose "could not write $_sub" "check that this folder is writable"
+  diagnose "$(msgf diag_sub_write "$_sub")" "$(msg diag_sub_write_fix)"
   return 1
 }

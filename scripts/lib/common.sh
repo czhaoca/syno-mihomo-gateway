@@ -36,6 +36,7 @@ load_env() {
   set +a
 
   # Defaults for optional tunables (keeps .env lean).
+  : "${INSTALLER_LANG:=en}"
   : "${UPDATE_ENABLED:=true}"
   : "${EXPECTED_ARCH:=amd64}"
   : "${CONTROLLER_PORT:=9090}"

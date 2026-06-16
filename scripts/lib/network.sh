@@ -94,6 +94,56 @@ detect_parent_interface() {
   printf '%s' "$_parent"
 }
 
+# detect_gateway - print the default-route gateway (router) IPv4, or empty.
+detect_gateway() {
+  command -v ip >/dev/null 2>&1 || return 0
+  ip route show default 2>/dev/null | sed -n 's/.*via \([0-9.]*\).*/\1/p' | head -n1
+}
+
+# iface_cidr IFACE - print the connected IPv4 subnet CIDR for IFACE (e.g.
+# 192.168.1.0/24), read straight from the kernel route table (no netmask
+# bit-math). Rejects a host route (/32) or an implausibly wide mask (<8) and
+# prints nothing then, so callers fall back to a typed default.
+iface_cidr() {
+  _if="$1"; [ -n "$_if" ] || return 0
+  command -v ip >/dev/null 2>&1 || return 0
+  _c="$(ip route show dev "$_if" scope link 2>/dev/null | sed -n 's#^\([0-9.]*/[0-9][0-9]*\) .*#\1#p' | head -n1)"
+  [ -n "$_c" ] || _c="$(ip route show dev "$_if" 2>/dev/null | sed -n 's#^\([0-9.]*/[0-9][0-9]*\) .*#\1#p' | head -n1)"
+  case "$_c" in */*) _m="${_c#*/}" ;; *) return 0 ;; esac
+  case "$_m" in ''|*[!0-9]*) return 0 ;; esac
+  { [ "$_m" -lt 8 ] || [ "$_m" -ge 32 ]; } && return 0
+  printf '%s' "$_c"
+}
+
+# ip_in_use IP - best-effort "does this IP already answer on the LAN" probe.
+# 3-tier: arping (L2) -> ping (use -W, which BusyBox honors; NOT -w) -> unknown.
+# Returns 0 = in use, 1 = free, 2 = cannot determine. NEVER hard-blocks; callers
+# warn + allow override. Must run BEFORE the macvlan container exists (the NAS
+# cannot reach its OWN macvlan IP once deployed - see mihomo_owns_ip).
+ip_in_use() {
+  _ip="$1"; [ -n "$_ip" ] || return 2
+  if command -v arping >/dev/null 2>&1; then
+    _pi="${PARENT_INTERFACE:-$(detect_parent_interface "${ROUTER_IP:-}")}"
+    [ -n "$_pi" ] && arping -c 1 -w 2 -I "$_pi" "$_ip" >/dev/null 2>&1 && return 0
+  fi
+  if command -v ping >/dev/null 2>&1; then
+    ping -c 1 -W 1 "$_ip" >/dev/null 2>&1 && return 0
+    return 1
+  fi
+  return 2
+}
+
+# mihomo_owns_ip IP - 0 if the existing 'mihomo' container already holds IP, so
+# a re-deploy never flags its own IP as a conflict. Checks the configured
+# IPAMConfig AND the live IPAddress across its networks (guards a nil IPAMConfig).
+mihomo_owns_ip() {
+  _ip="$1"; [ -n "$_ip" ] || return 1
+  _d="$(_net_docker)"
+  _have="$("$_d" inspect -f '{{range .NetworkSettings.Networks}}{{if .IPAMConfig}}{{.IPAMConfig.IPv4Address}}{{end}} {{.IPAddress}} {{end}}' mihomo 2>/dev/null)"
+  case " $_have " in *" $_ip "*) return 0 ;; esac
+  return 1
+}
+
 # interface_exists IFACE - 0 if the interface is present on the host.
 interface_exists() {
   _if="$1"; [ -n "$_if" ] || return 1

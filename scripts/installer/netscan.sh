@@ -1,14 +1,15 @@
 #!/bin/sh
-# netscan.sh - the interactive network wizard (req #5): scan the host's LAN
-# interfaces, let the operator pick a scanned one or type their own, then drive
-# scripts/lib/network.sh to create the TUN device + macvlan.
+# netscan.sh - the interactive network wizard: scan the host's LAN interfaces,
+# let the operator pick a scanned one or type their own, derive the macvlan
+# parameters from it, and (with root) create the TUN device + macvlan.
 #
-# The auto-detected parent (the interface that routes to ROUTER_IP) is marked as
-# the recommended choice and used as the default for manual entry, so it agrees
-# with registry.sh:check_network's later parent verification.
+# Two phases so the deploy flow can scan FIRST (pre-filling ROUTER_IP/SUBNET_CIDR
+# before the env wizard) and create the network LAST (after config):
+#   scan_and_prefill   - no root: choose interface + derive/persist net params
+#   create_network     - root: TUN device + macvlan
+# setup_network_interactive runs both (used by the modify flow).
 #
-# Requires ui.sh, network.sh, preflight.sh (is_root/sudo_rerun_hint) sourced.
-# POSIX /bin/sh, BusyBox-safe.
+# Requires ui.sh, network.sh, envedit.sh, preflight.sh sourced. POSIX /bin/sh.
 
 # choose_interface - sets global CHOSEN_IFACE. Returns non-zero if none chosen.
 choose_interface() {
@@ -17,7 +18,7 @@ choose_interface() {
   _scan="$(scan_interfaces)"
 
   ui_say ""
-  ui_say "Network interfaces on this host:"
+  ui_say "$(msg net_ifaces)"
   _names=""; _n=0
   _oldifs="$IFS"; IFS='
 '
@@ -27,17 +28,17 @@ choose_interface() {
     _n=$((_n + 1))
     _names="$_names $_name"
     _mark=""
-    [ -n "$_auto" ] && [ "$_name" = "$_auto" ] && _mark="  <- auto-detected (recommended)"
+    [ -n "$_auto" ] && [ "$_name" = "$_auto" ] && _mark="$(msg net_auto_mark)"
     printf '  %s) %-12s ip=%s%s\n' "$_n" "$_name" "$_ip" "$_mark" >&2
   done
   IFS="$_oldifs"
   _manual=$((_n + 1))
-  printf '  %s) (type an interface name manually)\n' "$_manual" >&2
+  printf '  %s) %s\n' "$_manual" "$(msg net_manual_entry)" >&2
 
   while :; do
-    printf 'Choose the LAN interface for mihomo [1-%s]: ' "$_manual" >&2
-    IFS= read -r _c </dev/tty || _c=""
-    case "$_c" in ''|*[!0-9]*) ui_warn "enter a number 1-$_manual"; continue ;; esac
+    printf '%s [1-%s]: ' "$(msg net_choose)" "$_manual" >&2
+    _read_line _c
+    case "$_c" in ''|*[!0-9]*) ui_warn "$(msg warn_num)"; continue ;; esac
     if [ "$_c" -ge 1 ] && [ "$_c" -le "$_n" ]; then
       _i=0
       for _nm in $_names; do
@@ -46,43 +47,83 @@ choose_interface() {
       done
       break
     elif [ "$_c" = "$_manual" ]; then
-      ui_ask CHOSEN_IFACE "Interface name" "$_auto"
+      ui_ask CHOSEN_IFACE "$(msg net_iface_name)" "$_auto"
       if [ -n "$CHOSEN_IFACE" ] && ! interface_exists "$CHOSEN_IFACE"; then
-        ui_warn "interface '$CHOSEN_IFACE' is not present on this host right now"
-        ui_yesno "use it anyway?" n || { CHOSEN_IFACE=""; continue; }
+        ui_warn "$(msgf warn_iface_absent "$CHOSEN_IFACE")"
+        ui_yesno "$(msg ask_use_anyway)" n || { CHOSEN_IFACE=""; continue; }
       fi
       break
     fi
-    ui_warn "out of range (1-$_manual)"
+    ui_warn "$(msg warn_range)"
   done
 
-  [ -n "$CHOSEN_IFACE" ] || { diagnose "no interface chosen" "re-run and pick a number, or type a valid interface name"; return 1; }
-  ui_ok "interface: $CHOSEN_IFACE"
+  [ -n "$CHOSEN_IFACE" ] || { diagnose "$(msg diag_no_iface)" "$(msg diag_no_iface_fix)"; return 1; }
+  ui_ok "$(msgf ok_iface "$CHOSEN_IFACE")"
   return 0
 }
 
-# setup_network_interactive - the full network step: root check, TUN, pick
-# interface, (re)create macvlan. Returns 0 on success.
-setup_network_interactive() {
-  ui_step "Network setup (TUN device + macvlan)"
+# check_ip_conflict IP - returns 0 if it's safe to use IP (free, ours, or the
+# operator overrode the warning), 1 if the operator wants to choose another.
+check_ip_conflict() {
+  _ip="$1"
+  mihomo_owns_ip "$_ip" && return 0          # our own container already holds it
+  ip_in_use "$_ip"
+  case "$?" in
+    0) ui_warn "$(msgf warn_ip_taken "$_ip")"
+       ui_yesno "$(msgf ask_use_ip "$_ip")" n ;;   # yes -> 0 (ok), no -> 1 (re-choose)
+    2) ui_info "$(msgf info_ip_unverified "$_ip")"; return 0 ;;
+    *) return 0 ;;                            # free
+  esac
+}
+
+# scan_and_prefill - choose the interface and derive + persist ROUTER_IP /
+# SUBNET_CIDR / PARENT_INTERFACE from it (so wizard_env pre-fills). No root.
+scan_and_prefill() {
+  ui_step "$(msg step_net_iface)"
+  choose_interface || return 1
+  env_set PARENT_INTERFACE "$CHOSEN_IFACE"
+  _gw="$(detect_gateway)"
+  _cidr="$(iface_cidr "$CHOSEN_IFACE")"
+  if [ -n "$_gw" ]; then env_set ROUTER_IP "$_gw"; ui_ok "$(msgf ok_router_gw "$_gw")"; fi
+  if [ -n "$_cidr" ]; then env_set SUBNET_CIDR "$_cidr"; ui_ok "$(msgf ok_lan_subnet "$_cidr")"; fi
+  [ -n "$_gw" ] && [ -n "$_cidr" ] \
+    || ui_info "$(msg info_net_partial)"
+  return 0
+}
+
+# create_network - root step: ensure the TUN device + (re)create the macvlan.
+create_network() {
+  ui_step "$(msg step_create_net)"
   if ! is_root; then
-    ui_warn "creating /dev/net/tun and the macvlan network requires root."
+    ui_warn "$(msg warn_net_need_root)"
     sudo_rerun_hint
     return 1
   fi
   if [ -z "${ROUTER_IP:-}" ] || [ -z "${SUBNET_CIDR:-}" ]; then
-    diagnose "ROUTER_IP / SUBNET_CIDR not set" "run the configuration step first (the network is created from them)"
+    diagnose "$(msg diag_no_net_params)" "$(msg diag_no_net_params_fix)"
     return 1
   fi
+  _pi="${CHOSEN_IFACE:-$(env_get PARENT_INTERFACE 2>/dev/null || detect_parent_interface "${ROUTER_IP:-}")}"
+  [ -n "$_pi" ] || { diagnose "$(msg diag_no_iface_sel)" "$(msg diag_no_iface_sel_fix)"; return 1; }
 
-  ensure_tun_device || { diagnose "could not prepare /dev/net/tun" "run the installer as root (sudo)"; return 1; }
-  choose_interface || return 1
+  # Final conflict guard (the IP could have been taken since the wizard ran).
+  if [ -n "${MIHOMO_IP:-}" ]; then
+    check_ip_conflict "$MIHOMO_IP" || { diagnose "$(msgf diag_ip_in_use "$MIHOMO_IP")" "$(msg diag_ip_in_use_fix)"; return 1; }
+  fi
 
-  if recreate_macvlan "$CHOSEN_IFACE"; then
-    ui_ok "macvlan network ready (parent=$CHOSEN_IFACE)"
+  ensure_tun_device || { diagnose "$(msg diag_tun_fail)" "$(msg diag_tun_fail_fix)"; return 1; }
+  if recreate_macvlan "$_pi"; then
+    ui_ok "$(msgf ok_macvlan "$_pi")"
     return 0
   fi
-  diagnose "failed to create the macvlan network on '$CHOSEN_IFACE'" \
-    "confirm ROUTER_IP/SUBNET_CIDR in .env match this LAN, that '$CHOSEN_IFACE' is the LAN-facing NIC, and that no container still holds the old network"
+  diagnose "$(msgf diag_macvlan_fail "$_pi")" \
+    "$(msgf diag_macvlan_fail_fix "$_pi")"
   return 1
+}
+
+# setup_network_interactive - scan + create in one go (used by the modify flow).
+setup_network_interactive() {
+  scan_and_prefill || return 1
+  load_env                       # refresh derived ROUTER_IP/SUBNET_CIDR
+  create_network
 }

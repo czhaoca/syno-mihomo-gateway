@@ -27,6 +27,8 @@ INST="$REPO_ROOT/scripts/installer"
 . "$LIB/common.sh"
 # shellcheck source=scripts/installer/ui.sh
 . "$INST/ui.sh"
+# shellcheck source=scripts/installer/i18n.sh
+. "$INST/i18n.sh"
 # shellcheck source=scripts/lib/notify.sh
 . "$LIB/notify.sh"
 # shellcheck source=scripts/lib/registry.sh
@@ -47,6 +49,8 @@ INST="$REPO_ROOT/scripts/installer"
 . "$INST/wizards.sh"
 # shellcheck source=scripts/installer/flow_deploy.sh
 . "$INST/flow_deploy.sh"
+# shellcheck source=scripts/installer/flow_redeploy.sh
+. "$INST/flow_redeploy.sh"
 # shellcheck source=scripts/installer/flow_cron.sh
 . "$INST/flow_cron.sh"
 # shellcheck source=scripts/installer/flow_modify.sh
@@ -70,38 +74,44 @@ if [ ! -r /dev/tty ]; then
 fi
 
 main_menu() {
-  _choice=""
   while :; do
     ui_say ""
-    ui_say "${C_BOLD}Mihomo Gateway - guided installer${C_RESET}"
-    ui_menu_select _choice "Select an action" \
-      "Deploy the gateway (end-to-end)" \
-      "Set up automatic updates (cron)" \
-      "Modify an existing deployment" \
-      "Quit"
-    case "$_choice" in
-      "Deploy"*)            flow_deploy || ui_warn "deploy did not finish - fix the issue above, then choose Deploy again" ;;
-      "Set up automatic"*)  flow_cron   || ui_warn "cron setup did not finish" ;;
-      "Modify"*)            flow_modify ;;
-      "Quit"*)              ui_say "Bye."; return 0 ;;
+    ui_say "${C_BOLD}$(msg title)${C_RESET}"
+    ui_menu_select _choice "$(msg menu_action)" \
+      "$(msg menu_deploy)" \
+      "$(msg menu_redeploy)" \
+      "$(msg menu_cron)" \
+      "$(msg menu_modify)" \
+      "$(msg menu_quit)"
+    case "$UI_MENU_INDEX" in
+      1) flow_deploy   || ui_warn "$(msg warn_deploy_unfinished)" ;;
+      2) flow_redeploy || ui_warn "$(msg warn_redeploy_unfinished)" ;;
+      3) flow_cron     || ui_warn "$(msg warn_cron_unfinished)" ;;
+      4) flow_modify ;;
+      5) ui_say "$(msg bye)"; return 0 ;;
     esac
   done
 }
 
 # --- entry --------------------------------------------------------------------
-ui_step "Mihomo Gateway installer"
+# Language selection is the FIRST screen, so every message below (including
+# location errors) renders in the chosen language. env_get/env_set (envedit.sh)
+# and ENV_FILE (common.sh) are already sourced above.
+choose_language
+
+ui_step "$(msg step_installer)"
 
 # req #3: the bundle can be unpacked anywhere, but it must live under the Docker
 # shared folder. Check that FIRST and stop with guidance if it doesn't.
-ui_info "checking this folder's location..."
+ui_info "$(msg info_check_loc)"
 if ! check_location; then
-  ui_error "cannot continue until the folder location is fixed (see above)."
+  ui_error "$(msg err_loc_blocked)"
   exit "${EXIT_CONFIG:-3}"
 fi
 
 if ! is_root; then
-  ui_warn "you are not root. The deploy and network steps need root"
-  ui_warn "(create /dev/net/tun, the macvlan network, and run docker)."
+  ui_warn "$(msg warn_not_root)"
+  ui_warn "$(msg warn_not_root2)"
   sudo_rerun_hint
 fi
 

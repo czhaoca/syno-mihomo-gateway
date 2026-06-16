@@ -29,9 +29,10 @@ echo "========================================"
 echo "[1/3] TUN device (/dev/net/tun)..."
 ensure_tun_device || exit "$EXIT_CONFIG"
 
-# 2. Auto-detect the macvlan parent (interface that routes to ROUTER_IP).
-echo "[2/3] Detecting LAN interface (routes to ${ROUTER_IP:-?})..."
-PARENT_INTERFACE="$(detect_parent_interface "${ROUTER_IP:-}")"
+# 2. Macvlan parent: prefer the interface the installer saved in .env
+#    (PARENT_INTERFACE), else auto-detect the one that routes to ROUTER_IP.
+echo "[2/3] Selecting LAN interface..."
+PARENT_INTERFACE="${PARENT_INTERFACE:-$(detect_parent_interface "${ROUTER_IP:-}")}"
 if [ -z "$PARENT_INTERFACE" ]; then
   log_error "could not auto-detect the LAN interface."
   log_error "Run the guided installer to pick/enter it:  sh ./install.sh"

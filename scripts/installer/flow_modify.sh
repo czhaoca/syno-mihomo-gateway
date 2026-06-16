@@ -10,11 +10,11 @@
 # `docker compose up -d` re-runs the entrypoint renderer (picking up new DNS /
 # subscription / secret) and pulls any image whose ref changed.
 apply_changes() {
-  ui_step "Apply changes (redeploy)"
+  ui_step "$(msg step_apply)"
   load_env
   pf_docker || return 1
   if [ "$(stack_state)" = "fresh" ]; then
-    ui_warn "nothing is deployed yet - use the end-to-end deploy (main menu option 1) instead"
+    ui_warn "$(msg warn_nothing_deployed)"
     return 1
   fi
 
@@ -22,50 +22,49 @@ apply_changes() {
   _x_old="$(running_image_id mihomo-ui 2>/dev/null)"
 
   if [ "${REGISTRY_MODE:-acr}" = "acr" ]; then
-    acr_login || ui_warn "ACR login failed - a changed image may fail to pull"
+    acr_login || ui_warn "$(msg warn_acr_login_soft)"
   fi
 
-  ui_info "redeploying (docker compose up -d; re-renders config, pulls changed images)"
+  ui_info "$(msg info_redeploying)"
   if compose_up && health_gate; then
-    ui_ok "applied + healthy"
+    ui_ok "$(msg ok_applied)"
     return 0
   fi
 
-  ui_warn "health gate failed - rolling back to the last-good images"
+  ui_warn "$(msg warn_health_rollback)"
   if rollback_compose "$_m_old" "$_x_old" && health_gate; then
-    ui_warn "rolled back to last-good (now healthy) - your change was NOT applied"
+    ui_warn "$(msg warn_rolled_back)"
   else
-    diagnose "redeploy failed AND rollback incomplete" "inspect 'docker ps -a' and 'docker logs mihomo'; manual recovery may be needed"
+    diagnose "$(msg diag_rollback_fail)" "$(msg diag_rollback_fail_fix)"
   fi
   return 1
 }
 
 flow_modify() {
-  ui_step "Modify existing configuration"
+  ui_step "$(msg step_modify)"
   if [ ! -f "$ENV_FILE" ]; then
-    diagnose ".env not found" "run the end-to-end deploy first (main menu option 1)"
+    diagnose "$(msg diag_no_env)" "$(msg diag_no_env_fix)"
     return 1
   fi
   load_env
-  ui_info "current stack state: $(stack_state)"
+  ui_info "$(msgf info_stack_state "$(stack_state)")"
 
-  _sel=""
   while :; do
     ui_say ""
-    ui_menu_select _sel "What do you want to change?" \
-      "Network & DNS settings (.env wizard)" \
-      "Image source / registry / tags" \
-      "Subscription URL" \
-      "Re-run network setup (interface / macvlan)" \
-      "Apply changes now (redeploy with rollback)" \
-      "Back to main menu"
-    case "$_sel" in
-      "Network & DNS"*)       wizard_env && load_env ;;
-      "Image source"*)        wizard_images && load_env ;;
-      "Subscription"*)        wizard_subscription ;;
-      "Re-run network"*)      setup_network_interactive ;;
-      "Apply changes"*)       apply_changes ;;
-      "Back"*)                return 0 ;;
+    ui_menu_select _sel "$(msg modify_what)" \
+      "$(msg modify_net)" \
+      "$(msg modify_images)" \
+      "$(msg modify_sub)" \
+      "$(msg modify_rerun_net)" \
+      "$(msg modify_apply)" \
+      "$(msg modify_back)"
+    case "$UI_MENU_INDEX" in
+      1) wizard_env && load_env ;;
+      2) wizard_images && load_env ;;
+      3) wizard_subscription ;;
+      4) setup_network_interactive ;;
+      5) apply_changes ;;
+      6) return 0 ;;
     esac
   done
 }

@@ -50,8 +50,24 @@ try() {
 }
 
 # --- prompts ------------------------------------------------------------------
+# _read_line VARNAME - read one line from the controlling terminal into VARNAME.
+# Distinguishes EOF (Ctrl-D) from an empty line (Enter): on a pure EOF it QUITS
+# the installer cleanly (Ctrl-D = quit, the expected behavior), restoring the
+# terminal via the EXIT trap. An empty line returns 0 with an empty value so
+# callers can apply their default. A partial (unterminated) line typed before
+# EOF is accepted, not discarded. install.sh guarantees /dev/tty is readable.
+_read_line() {
+  _rl=""
+  if IFS= read -r _rl </dev/tty; then eval "$1=\$_rl"; return 0; fi
+  [ -n "$_rl" ] && { eval "$1=\$_rl"; return 0; }   # partial line before EOF
+  printf '\n' >&2
+  stty echo </dev/tty 2>/dev/null
+  ui_say "$(msg quit 2>/dev/null || echo 'Quit.')"
+  exit "${EXIT_OK:-0}"
+}
+
 # ui_ask VARNAME PROMPT [DEFAULT] - read a line into VARNAME, offering DEFAULT
-# (Enter accepts it). Reads from /dev/tty so it works even if stdin is piped.
+# (Enter accepts it). Ctrl-D quits (via _read_line).
 ui_ask() {
   _var="$1"; _prompt="$2"; _def="${3:-}"
   if [ -n "$_def" ]; then
@@ -59,25 +75,21 @@ ui_ask() {
   else
     printf '%s: ' "$_prompt" >&2
   fi
-  IFS= read -r _ans </dev/tty || _ans=""
+  _read_line _ans
   [ -n "$_ans" ] || _ans="$_def"
-  # Assign to the named variable without eval-injecting the value.
   eval "$_var=\$_ans"
 }
 
 # ui_ask_secret VARNAME PROMPT - read a line with echo OFF (passwords/tokens).
-# Restores the terminal echo even if interrupted (trap in the caller / install.sh).
+# Ctrl-D quits (via _read_line, which restores echo first). install.sh guarantees
+# /dev/tty is readable.
 ui_ask_secret() {
   _var="$1"; _prompt="$2"
   printf '%s: ' "$_prompt" >&2
-  if [ -t 0 ] || [ -r /dev/tty ]; then
-    stty -echo </dev/tty 2>/dev/null
-    IFS= read -r _ans </dev/tty || _ans=""
-    stty echo </dev/tty 2>/dev/null
-    printf '\n' >&2
-  else
-    IFS= read -r _ans || _ans=""
-  fi
+  stty -echo </dev/tty 2>/dev/null
+  _read_line _ans
+  stty echo </dev/tty 2>/dev/null
+  printf '\n' >&2
   eval "$_var=\$_ans"
 }
 
@@ -87,20 +99,23 @@ ui_yesno() {
   case "$_def" in y|Y) _hint="Y/n" ;; *) _hint="y/N" ;; esac
   while :; do
     printf '%s [%s]: ' "$_prompt" "$_hint" >&2
-    IFS= read -r _a </dev/tty || _a=""
+    _read_line _a
     [ -n "$_a" ] || _a="$_def"
     case "$_a" in
       y|Y|yes|YES|Yes) return 0 ;;
       n|N|no|NO|No)    return 1 ;;
-      *) ui_warn "please answer y or n" ;;
+      *) ui_warn "$(msg warn_yn 2>/dev/null || echo 'please answer y or n')" ;;
     esac
   done
 }
 
-# ui_menu_select VARNAME PROMPT ITEM1 [ITEM2 ...] - print a numbered menu and
-# read a choice into VARNAME (the chosen item text). Returns 0 on a valid pick.
+# ui_menu_select VARNAME PROMPT ITEM1 [ITEM2 ...] - print a numbered menu, read a
+# choice, set VARNAME to the chosen item text AND the global UI_MENU_INDEX to the
+# 1-based index. Callers dispatch on UI_MENU_INDEX (stable under i18n, since the
+# item TEXT is localized but the index is not). Returns 0 on a valid pick.
 ui_menu_select() {
   _var="$1"; _prompt="$2"; shift 2
+  UI_MENU_INDEX=0
   _n=0
   for _it in "$@"; do
     _n=$((_n + 1))
@@ -108,18 +123,19 @@ ui_menu_select() {
   done
   while :; do
     printf '%s [1-%s]: ' "$_prompt" "$_n" >&2
-    IFS= read -r _c </dev/tty || _c=""
+    _read_line _c
     case "$_c" in
-      ''|*[!0-9]*) ui_warn "enter a number 1-$_n"; continue ;;
+      ''|*[!0-9]*) ui_warn "$(msg warn_num 2>/dev/null || echo "enter a number 1-$_n")"; continue ;;
     esac
     if [ "$_c" -ge 1 ] && [ "$_c" -le "$_n" ]; then
+      UI_MENU_INDEX="$_c"
       _i=0
       for _it in "$@"; do
         _i=$((_i + 1))
         [ "$_i" = "$_c" ] && { eval "$_var=\$_it"; return 0; }
       done
     fi
-    ui_warn "out of range"
+    ui_warn "$(msg warn_range 2>/dev/null || echo 'out of range')"
   done
 }
 
@@ -156,6 +172,16 @@ is_port() {
   [ "$1" -ge 1 ] && [ "$1" -le 65535 ]
 }
 
+# is_hhmm HH:MM - 0 if a valid 24h clock time (00:00 .. 23:59). Accepts H:MM too.
+is_hhmm() {
+  case "$1" in
+    [0-9][0-9]:[0-9][0-9]|[0-9]:[0-9][0-9]) : ;;
+    *) return 1 ;;
+  esac
+  _h="${1%%:*}"; _m="${1#*:}"
+  [ "$_h" -ge 0 ] && [ "$_h" -le 23 ] && [ "$_m" -ge 0 ] && [ "$_m" -le 59 ]
+}
+
 # ui_ask_validated VARNAME PROMPT DEFAULT VALIDATOR - re-prompt until VALIDATOR
 # (a function name taking the value) accepts the input.
 ui_ask_validated() {
@@ -163,6 +189,6 @@ ui_ask_validated() {
   while :; do
     ui_ask _tmp "$_p" "$_d"
     if "$_check" "$_tmp"; then eval "$_v=\$_tmp"; return 0; fi
-    ui_warn "invalid value: '$_tmp'"
+    ui_warn "$(msgf invalid_value "$_tmp")"
   done
 }
