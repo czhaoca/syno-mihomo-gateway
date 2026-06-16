@@ -54,28 +54,34 @@ renderer fails loudly if any is empty — no DNS is hardcoded in the repo).
 
 ### Container images
 
-The auto-updater maps each `UPDATE_IMAGES` entry to a deploy target by an **exact match**
-against these three vars — on the ACR path, set them to your ACR refs (see
-[Auto-Update](auto-update.md#image-refs)).
+The three image refs are **derived** by `install.sh` from `REGISTRY_MODE` + the registry host +
+namespace + the per-component tag, so you enter the registry/namespace **once** instead of per
+image. The auto-updater maps each `UPDATE_IMAGES` entry to a deploy target by an **exact match**
+against the three resolved refs (see [Auto-Update](auto-update.md#image-refs)).
 
-> **ACR-only, fail-closed.** `MIHOMO_IMAGE` and `METACUBEXD_IMAGE` are required: `docker compose
-> up` **fails** if either is unset — it never falls back to a direct Docker Hub / ghcr.io pull
-> (blocked in China). Always set them to your ACR mirror.
+> **Fail-closed, ACR by default.** `docker-compose.yml` reads `${MIHOMO_IMAGE:?}` /
+> `${METACUBEXD_IMAGE:?}`, so `docker compose up` **fails loudly** if a ref is unset rather than
+> pulling something unexpected. `REGISTRY_MODE` ships as `acr` (the safe default for mainland China,
+> where the public registries are blocked); set `docker` only on a NAS with unfiltered internet.
 
 | Key | Req | Description | Example |
 |---|:--:|---|---|
-| `MIHOMO_IMAGE` | ✅ | mihomo image ref (point at your ACR mirror in China). | `registry.cn-shenzhen.aliyuncs.com/myns/mihomo:latest` |
-| `METACUBEXD_IMAGE` | ✅ | metacubexd image ref. | `registry.cn-shenzhen.aliyuncs.com/myns/metacubexd:latest` |
-| `CF_IMAGE` | Upd | cloudflared image ref (ACR-mirrored). Leave blank if not managing cloudflared. | `registry.cn-shenzhen.aliyuncs.com/myns/cloudflared:latest` |
+| `REGISTRY_MODE` | ✅ | `acr` (default; your private mirror) or `docker` (upstream public; needs unfiltered internet). | `acr` |
+| `MIHOMO_TAG` | | Tag used to derive the mihomo ref. | `latest` |
+| `METACUBEXD_TAG` | | Tag used to derive the metacubexd ref. | `latest` |
+| `CF_TAG` | | Tag used to derive the optional cloudflared ref. | `latest` |
+| `MIHOMO_IMAGE` | ✅ | Resolved mihomo image ref (the installer rewrites it from the above). | `registry.cn-shenzhen.aliyuncs.com/myns/mihomo:latest` |
+| `METACUBEXD_IMAGE` | ✅ | Resolved metacubexd image ref. | `registry.cn-shenzhen.aliyuncs.com/myns/metacubexd:latest` |
+| `CF_IMAGE` | Upd | Resolved cloudflared ref. Blank if not managing cloudflared. | `registry.cn-shenzhen.aliyuncs.com/myns/cloudflared:latest` |
 
-### Alibaba ACR (China mirror — pull side)
+### Private registry / Alibaba ACR (used when `REGISTRY_MODE=acr`)
 
 | Key | Upd | Sec | Description | Example |
 |---|:--:|:--:|---|---|
-| `DOCKER_REGISTRY` | ✅ | | ACR registry host (used for `docker login`). Empty skips the login step; the gateway still requires MIHOMO_IMAGE/METACUBEXD_IMAGE to be ACR refs. | `registry.cn-shenzhen.aliyuncs.com` |
-| `DOCKER_USERNAME` | ✅ | | ACR username (shared by setup + updater). | `your_acr_user` |
-| `ACR_PASSWORD` | ✅ | 🔒 | ACR password / access token (non-interactive `--password-stdin`). | `…` |
-| `ACR_NAMESPACE` | | | ACR namespace (the `ALIYUN_NAME_SPACE` from docker-china-sync). Reference only. | `myns` |
+| `DOCKER_REGISTRY` | ✅ | | Registry host (used for `docker login` and to derive the refs). In `docker` mode the installer clears it so login is skipped. | `registry.cn-shenzhen.aliyuncs.com` |
+| `DOCKER_USERNAME` | ✅ | | Registry username (shared by the installer + updater). | `your_registry_user` |
+| `ACR_PASSWORD` | ✅ | 🔒 | Registry password / access token (non-interactive `--password-stdin`). | `…` |
+| `ACR_NAMESPACE` | ✅ | | Registry namespace your images live under (combined with the host + tag to derive the refs). | `myns` |
 
 ### Auto-update orchestrator
 

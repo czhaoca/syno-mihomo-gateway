@@ -1,9 +1,9 @@
 services:
   mihomo:
-    # Image MUST resolve to your Alibaba ACR mirror via .env. The ':?' form makes
-    # `docker compose up` FAIL if MIHOMO_IMAGE is unset, so the gateway never silently
-    # pulls a direct (blocked-in-China) Docker Hub image. Mirror via docker-china-sync.
-    image: ${MIHOMO_IMAGE:?set MIHOMO_IMAGE in .env to your Alibaba ACR ref (never a direct Docker Hub image)}
+    # Resolved from .env (the installer sets it from REGISTRY_MODE). The ':?' form
+    # makes `docker compose up` FAIL if MIHOMO_IMAGE is unset, so the gateway never
+    # silently pulls an unexpected image.
+    image: ${MIHOMO_IMAGE:?set MIHOMO_IMAGE in .env - run ./install.sh}
     container_name: mihomo
     restart: always
     networks:
@@ -42,8 +42,8 @@ services:
       - sh /scripts/render_config.sh && exec /mihomo
 
   metacubexd:
-    # Same policy as mihomo: ACR-only via .env, fail-closed if unset (never direct ghcr).
-    image: ${METACUBEXD_IMAGE:?set METACUBEXD_IMAGE in .env to your Alibaba ACR ref (never a direct ghcr image)}
+    # Same as mihomo: resolved from .env, fail-closed if unset.
+    image: ${METACUBEXD_IMAGE:?set METACUBEXD_IMAGE in .env - run ./install.sh}
     container_name: mihomo-ui
     restart: always
     network_mode: bridge

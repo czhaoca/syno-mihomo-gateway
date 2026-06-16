@@ -25,8 +25,12 @@ On the NAS, set in `.env`: `DOCKER_REGISTRY`, `DOCKER_USERNAME`, `ACR_PASSWORD`,
 
 ## Image refs
 
-The deploy dispatch matches each `UPDATE_IMAGES` entry **exactly** against `MIHOMO_IMAGE`,
-`METACUBEXD_IMAGE`, `CF_IMAGE`. Keep `UPDATE_IMAGES` inheriting those three vars:
+`MIHOMO_IMAGE` / `METACUBEXD_IMAGE` / `CF_IMAGE` are **derived** by `install.sh` from
+`REGISTRY_MODE` (`acr` default, or `docker` for upstream public images) + `DOCKER_REGISTRY` +
+`ACR_NAMESPACE` + the `*_TAG` values — see [Configuration › Container images](configuration.md).
+Whichever mode is active, the three resolved refs are written to `.env`, and the deploy dispatch
+matches each `UPDATE_IMAGES` entry **exactly** against them. Keep `UPDATE_IMAGES` inheriting those
+three vars:
 
 ```dotenv
 UPDATE_IMAGES="${MIHOMO_IMAGE} ${METACUBEXD_IMAGE} ${CF_IMAGE}"

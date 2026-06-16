@@ -54,28 +54,34 @@
 
 ### 容器镜像
 
-自动更新器会将每个 `UPDATE_IMAGES` 条目，通过与下面这三个变量的**精确匹配**，
-映射到对应的部署目标——在 ACR 路径下，请将它们设置为你的 ACR 引用（参见
+三个镜像引用由 `install.sh` 根据 `REGISTRY_MODE` + 仓库主机 + 命名空间 + 各组件的标签**推导**得出，
+因此你只需输入一次仓库/命名空间，而不必为每个镜像重复输入。自动更新器会将每个 `UPDATE_IMAGES`
+条目，通过与这三个推导引用的**精确匹配**，映射到对应的部署目标（参见
 [自动更新](auto-update.md)）。
 
-> **仅用 ACR、缺失即失败。** `MIHOMO_IMAGE` 和 `METACUBEXD_IMAGE` 为必填：若任一未设置，
-> `docker compose up` 会**直接失败**——绝不会回退到直接拉取 Docker Hub / ghcr.io（中国大陆被屏蔽）。
-> 请始终将它们设置为你的 ACR 镜像源。
+> **缺失即失败，默认 ACR。** `docker-compose.yml` 使用 `${MIHOMO_IMAGE:?}` / `${METACUBEXD_IMAGE:?}`，
+> 若引用未设置，`docker compose up` 会**直接报错失败**，而不会拉取意外的镜像。`REGISTRY_MODE` 默认
+> 随发行包发布为 `acr`（中国大陆的安全默认值，因为公共镜像仓库被屏蔽）；仅当 NAS 拥有不受限的外网访问
+> 时才设为 `docker`。
 
 | 键 | Req | 说明 | 示例 |
 |---|:--:|---|---|
-| `MIHOMO_IMAGE` | ✅ | mihomo 镜像引用（指向你在中国的 ACR 镜像源）。 | `registry.cn-shenzhen.aliyuncs.com/myns/mihomo:latest` |
-| `METACUBEXD_IMAGE` | ✅ | metacubexd 镜像引用。 | `registry.cn-shenzhen.aliyuncs.com/myns/metacubexd:latest` |
-| `CF_IMAGE` | Upd | cloudflared 镜像引用（ACR 镜像）。如果不管理 cloudflared 可留空。 | `registry.cn-shenzhen.aliyuncs.com/myns/cloudflared:latest` |
+| `REGISTRY_MODE` | ✅ | `acr`（默认；你的私有镜像源）或 `docker`（上游公共仓库；需要不受限外网）。 | `acr` |
+| `MIHOMO_TAG` | | 用于推导 mihomo 引用的标签。 | `latest` |
+| `METACUBEXD_TAG` | | 用于推导 metacubexd 引用的标签。 | `latest` |
+| `CF_TAG` | | 用于推导可选的 cloudflared 引用的标签。 | `latest` |
+| `MIHOMO_IMAGE` | ✅ | 推导出的 mihomo 镜像引用（安装器会据上面的值改写它）。 | `registry.cn-shenzhen.aliyuncs.com/myns/mihomo:latest` |
+| `METACUBEXD_IMAGE` | ✅ | 推导出的 metacubexd 镜像引用。 | `registry.cn-shenzhen.aliyuncs.com/myns/metacubexd:latest` |
+| `CF_IMAGE` | Upd | 推导出的 cloudflared 引用。不管理 cloudflared 时留空。 | `registry.cn-shenzhen.aliyuncs.com/myns/cloudflared:latest` |
 
-### 阿里云 ACR（中国镜像源 —— 拉取侧）
+### 私有镜像仓库 / 阿里云 ACR（当 `REGISTRY_MODE=acr` 时使用）
 
 | 键 | Upd | Sec | 说明 | 示例 |
 |---|:--:|:--:|---|---|
-| `DOCKER_REGISTRY` | ✅ | | ACR 镜像仓库主机（用于 `docker login`）。留空则跳过登录步骤；网关仍要求 MIHOMO_IMAGE/METACUBEXD_IMAGE 为 ACR 引用。 | `registry.cn-shenzhen.aliyuncs.com` |
-| `DOCKER_USERNAME` | ✅ | | ACR 用户名（由初始化脚本与更新器共用）。 | `your_acr_user` |
-| `ACR_PASSWORD` | ✅ | 🔒 | ACR 密码/访问令牌（用于非交互式 `--password-stdin`）。 | `…` |
-| `ACR_NAMESPACE` | | | ACR 命名空间（即 docker-china-sync 中的 `ALIYUN_NAME_SPACE`）。仅供参考。 | `myns` |
+| `DOCKER_REGISTRY` | ✅ | | 镜像仓库主机（用于 `docker login` 并推导引用）。`docker` 模式下安装器会清空它以跳过登录。 | `registry.cn-shenzhen.aliyuncs.com` |
+| `DOCKER_USERNAME` | ✅ | | 镜像仓库用户名（安装器与更新器共用）。 | `your_registry_user` |
+| `ACR_PASSWORD` | ✅ | 🔒 | 镜像仓库密码/访问令牌（用于非交互式 `--password-stdin`）。 | `…` |
+| `ACR_NAMESPACE` | ✅ | | 你的镜像所在的仓库命名空间（与主机 + 标签组合以推导引用）。 | `myns` |
 
 ### 自动更新编排器
 

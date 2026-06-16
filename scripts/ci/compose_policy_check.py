@@ -1,19 +1,23 @@
 #!/usr/bin/env python3
-"""Enforce the ACR-only image policy.
+"""Enforce the gateway's image-reference policy on the two committed files.
 
-The gateway must ALWAYS pull its container images from the operator's Alibaba ACR
-(private) mirror, NEVER directly from a public registry (Docker Hub / ghcr.io / etc.),
-which are blocked or unreliable in mainland China. Two committed files are gated:
+The gateway pulls its container images from a registry chosen by REGISTRY_MODE in
+.env:  acr (the operator's private Alibaba ACR mirror — the default, required in
+mainland China where Docker Hub / ghcr.io are blocked) or docker (upstream public
+images, for a NAS with unfiltered internet). REGISTRY_MODE and the resolved image
+refs live in the gitignored, per-host .env, which this check never inspects.
 
-  * docker-compose.yml - parsed structurally (YAML, so inline-map services and
-    comments can't hide a bad image). Every service `image:` must be a single env
-    reference, exactly `${VAR}` or `${VAR:?msg}` - never a default-value fallback
+What it DOES enforce on the committed files:
+
+  * docker-compose.yml — every service `image:` must be a single env reference,
+    exactly `${VAR}` or `${VAR:?msg}` — never a default-value fallback
     (`${VAR:-ref}` / `${VAR:=ref}`) and never a hardcoded ref. An unset var then
-    FAILS the deploy instead of silently pulling a direct image.
-  * .env.example - every `*IMAGE*` assignment with a literal value (not a ${...}
-    composition) must be a PRIVATE-registry ref: a real registry host that is not a
-    known public registry. MIHOMO_IMAGE / METACUBEXD_IMAGE are required + non-empty;
-    CF_IMAGE and others may be blank.
+    FAILS the deploy loudly instead of silently pulling something unexpected. This
+    is orthogonal to acr-vs-docker and stays enforced regardless of REGISTRY_MODE.
+  * .env.example — MIHOMO_IMAGE / METACUBEXD_IMAGE must be defined and non-empty
+    (their value is an illustrative default; the installer rewrites it from
+    REGISTRY_MODE), and REGISTRY_MODE must be present and SHIP as `acr` so a fresh
+    copy defaults to the safe China path (operators opt into `docker` explicitly).
 
 Mirrors scripts/ci/render_check.py: fail() -> exit 1, print OK: on pass. Needs PyYAML.
 """
@@ -28,16 +32,9 @@ COMPOSE = REPO / "docker-compose.yml"
 ENV_EXAMPLE = REPO / ".env.example"
 
 # The ONLY accepted compose image forms: a single env ref, optionally with a `:?`
-# required-guard (which fails closed). Defaults (:- / :=), concatenations, and
-# hardcoded refs are rejected.
+# required-guard (which fails closed). Defaults (:- / :=) and hardcoded refs are
+# rejected so an unset var can never silently pull an unexpected image.
 ALLOWED_IMAGE = re.compile(r"^\$\{[A-Za-z_][A-Za-z0-9_]*(:\?[^}]*)?\}$")
-
-# Known PUBLIC registries (lowercased hosts). A gateway image ref must NOT live here.
-PUBLIC_HOSTS = {
-    "docker.io", "index.docker.io", "registry-1.docker.io", "registry.hub.docker.com",
-    "ghcr.io", "quay.io", "gcr.io", "k8s.gcr.io", "registry.k8s.io",
-    "public.ecr.aws", "mcr.microsoft.com",
-}
 REQUIRED_VARS = ("MIHOMO_IMAGE", "METACUBEXD_IMAGE")
 
 
@@ -60,55 +57,42 @@ def check_compose():
         seen.append(img)
         if ":-" in img or ":=" in img:
             fail(f"{COMPOSE.name}: service '{name}' image {img!r} has a default-value fallback - "
-                 f"drop it so an unset var FAILS instead of pulling direct (use ${{VAR:?message}})")
+                 f"drop it so an unset var FAILS instead of pulling silently (use ${{VAR:?message}})")
         if not ALLOWED_IMAGE.match(img):
             fail(f"{COMPOSE.name}: service '{name}' image {img!r} must be a bare env ref "
-                 f"(${{VAR}} or ${{VAR:?msg}}) resolving to your ACR mirror - no hardcoded registry")
+                 f"(${{VAR}} or ${{VAR:?msg}}) - no hardcoded registry, no fallback")
     return seen
 
 
-def classify_ref(val):
-    """Docker-reference registry detection. Returns (ok, reason).
-
-    A ref carries a registry host only if it contains a '/' AND the first path
-    segment looks like a host (has a '.', a ':port', or is 'localhost'). Otherwise
-    it is a Docker Hub ref (direct). A real registry host must not be a public one.
-    """
-    first = val.split("/", 1)[0]
-    has_registry = ("/" in val) and ("." in first or ":" in first or first == "localhost")
-    if not has_registry:
-        return False, "bare Docker Hub ref (no registry host)"
-    host = first.lower()
-    host_noport = host.split(":", 1)[0]
-    if host in PUBLIC_HOSTS or host_noport in PUBLIC_HOSTS:
-        return False, f"public/direct registry '{host}'"
-    return True, None
+def env_values():
+    """Parse KEY=VALUE assignments from .env.example (one layer of quotes stripped)."""
+    found = {}
+    for m in re.finditer(r"^([A-Z0-9_]+)=(.*)$", ENV_EXAMPLE.read_text(), re.MULTILINE):
+        found[m.group(1)] = m.group(2).strip().strip('"').strip("'")
+    return found
 
 
 def check_env_example():
-    text = ENV_EXAMPLE.read_text()
-    found = {}
-    for m in re.finditer(r"^([A-Z0-9_]*IMAGE[A-Z0-9_]*)=(.*)$", text, re.MULTILINE):
-        found[m.group(1)] = m.group(2).strip().strip('"').strip("'")
+    found = env_values()
     for req in REQUIRED_VARS:
         if req not in found:
             fail(f"{ENV_EXAMPLE.name}: {req} is not defined")
         if not found[req]:
-            fail(f"{ENV_EXAMPLE.name}: {req} is empty - it must be set to your ACR ref")
-    for var, val in found.items():
-        if not val or "${" in val:
-            continue  # blank (optional, e.g. CF_IMAGE) or a ${...} composition (UPDATE_IMAGES)
-        ok, reason = classify_ref(val)
-        if not ok:
-            fail(f"{ENV_EXAMPLE.name}: {var}={val!r} is a {reason} - use your Alibaba ACR ref, "
-                 f"e.g. registry.cn-...aliyuncs.com/<namespace>/<image>:latest")
+            fail(f"{ENV_EXAMPLE.name}: {req} is empty - give it an illustrative default ref")
+    mode = found.get("REGISTRY_MODE")
+    if mode is None:
+        fail(f"{ENV_EXAMPLE.name}: REGISTRY_MODE is not defined (it must ship defaulting to 'acr')")
+    if mode != "acr":
+        fail(f"{ENV_EXAMPLE.name}: REGISTRY_MODE ships as {mode!r}; it must ship as 'acr' "
+             f"(the safe mainland-China default - operators opt into 'docker' explicitly)")
 
 
 def main():
     imgs = check_compose()
     check_env_example()
-    print("OK: docker-compose images are ACR-only env refs with no direct fallback "
-          f"({', '.join(imgs)}); every .env.example *IMAGE* literal targets a private registry.")
+    print("OK: docker-compose images are fail-closed env refs "
+          f"({', '.join(imgs)}); .env.example defines MIHOMO_IMAGE/METACUBEXD_IMAGE "
+          "and REGISTRY_MODE ships as 'acr'.")
 
 
 if __name__ == "__main__":
