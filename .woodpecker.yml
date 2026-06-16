@@ -29,4 +29,7 @@ steps:
     image: koalaman/shellcheck-alpine:stable
     commands:
       # -x follows the sourced lib/*.sh in-context (so cross-file vars resolve).
-      - shellcheck -x scripts/auto_update.sh scripts/install_scheduler.sh scripts/setup_network.sh scripts/render_config.sh
+      # package.sh / bootstrap.sh are build-host + offline-install helpers (see
+      # docs/release-packaging.md); the release zip itself is cut by `sh scripts/package.sh`
+      # on a machine with GitHub access, not in CI.
+      - shellcheck -x scripts/auto_update.sh scripts/install_scheduler.sh scripts/setup_network.sh scripts/render_config.sh scripts/package.sh bootstrap.sh

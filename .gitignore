@@ -14,6 +14,9 @@ logs/
 *.log
 .update_state
 
+# Release artifacts (scripts/package.sh output)
+dist/
+
 # Editor / OS noise
 .DS_Store
 .ruff_cache/
