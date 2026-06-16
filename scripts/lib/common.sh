@@ -50,6 +50,7 @@ load_env() {
   : "${PULL_RETRY_DELAY:=10}"
   : "${HEALTH_RETRIES:=6}"
   : "${HEALTH_INTERVAL:=10}"
+  : "${HEALTH_MAX_RESTARTS:=3}"
   : "${LOCK_DIR:=/tmp/syno-mihomo-update.lock}"
 
   # Normalize UPDATE_LOG to an absolute path under the repo when relative.

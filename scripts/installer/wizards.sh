@@ -177,3 +177,19 @@ wizard_subscription() {
   diagnose "$(msgf diag_sub_write "$_sub")" "$(msg diag_sub_write_fix)"
   return 1
 }
+
+# ensure_subscription - guarantee config/subscription.txt holds a real URL before
+# deploy. The container entrypoint (render_config.sh) HARD-FAILS without it, which
+# crash-loops mihomo. Prompts via wizard_subscription if missing, still the shipped
+# placeholder, or lacking an http(s) line. Returns non-zero if the operator declines.
+ensure_subscription() {
+  _sub="$REPO_ROOT/config/subscription.txt"
+  _example="$REPO_ROOT/config/subscription.txt.example"
+  if [ ! -f "$_sub" ] \
+     || { [ -f "$_example" ] && cmp -s "$_sub" "$_example"; } \
+     || ! grep -v '^#' "$_sub" 2>/dev/null | grep -q 'https\{0,1\}://'; then
+    ui_warn "$(msg warn_no_sub)"
+    wizard_subscription || return 1
+  fi
+  return 0
+}

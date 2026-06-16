@@ -29,8 +29,21 @@ _clear_stale_containers() {
   done
 }
 
+# _show_mihomo_logs - print the tail of `docker logs mihomo` so the operator sees
+# the container's OWN crash reason (the install log only holds compose's output).
+_show_mihomo_logs() {
+  [ -n "${DOCKER_BIN:-}" ] || return 0
+  ui_say ""
+  ui_say "$(msg info_mihomo_logs)"
+  "$DOCKER_BIN" logs --tail 30 "$MIHOMO_CONTAINER" 2>&1 | tail -n 30 >&2 || true
+  ui_say ""
+}
+
 deploy_stack() {
   ui_step "$(msg step_deploy_stack)"
+  # render_config.sh (the container entrypoint) hard-fails without a real
+  # subscription URL, which crash-loops mihomo - guarantee one before deploying.
+  ensure_subscription || return 1
   if [ "${REGISTRY_MODE:-acr}" = "acr" ]; then
     try "$(msg diag_acr_login)" "$(msg diag_acr_login_fix)" -- acr_login || { _show_log_tail; return 1; }
   else
@@ -59,7 +72,7 @@ deploy_stack() {
     ui_ok "$(msg ok_mihomo_healthy)"
     return 0
   fi
-  _show_log_tail
+  _show_mihomo_logs
   diagnose "$(msg diag_unhealthy)" "$(msg diag_unhealthy_fix)"
   return 1
 }

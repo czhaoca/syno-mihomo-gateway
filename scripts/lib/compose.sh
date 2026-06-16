@@ -29,6 +29,10 @@ mihomo_controller_probe() {
 # and (when possible) that its controller answers. metacubexd is checked but only warned on.
 health_gate() {
   _try=0
+  # Restart count when the gate started: a single stable interval is NOT proof of
+  # health if the container has been crash-looping (and only momentarily paused).
+  _rc_start="$("$DOCKER_BIN" inspect -f '{{.RestartCount}}' "$MIHOMO_CONTAINER" 2>/dev/null)"
+  _rc_start="${_rc_start:-0}"
   while [ "$_try" -lt "$HEALTH_RETRIES" ]; do
     _try=$((_try+1))
     _running="$("$DOCKER_BIN" inspect -f '{{.State.Running}}' "$MIHOMO_CONTAINER" 2>/dev/null)"
@@ -43,6 +47,12 @@ health_gate() {
     _running="$("$DOCKER_BIN" inspect -f '{{.State.Running}}' "$MIHOMO_CONTAINER" 2>/dev/null)"
     if [ "$_running" != "true" ] || [ "${_rc1:-0}" != "${_rc2:-0}" ]; then
       log_warn "health[$_try/$HEALTH_RETRIES]: $MIHOMO_CONTAINER unstable (running=$_running restarts $_rc1->$_rc2)"
+      continue
+    fi
+    # Even if stable across THIS interval, reject a container that has restarted
+    # repeatedly since the gate started - it is crash-looping, not healthy.
+    if [ "$(( ${_rc2:-0} - _rc_start ))" -ge "${HEALTH_MAX_RESTARTS:-3}" ]; then
+      log_warn "health[$_try/$HEALTH_RETRIES]: $MIHOMO_CONTAINER crash-looping (restarted $(( ${_rc2:-0} - _rc_start ))x since deploy)"
       continue
     fi
     # Stable. Now the controller probe (in-container).
