@@ -57,6 +57,11 @@ load_env() {
     /*) LOG_FILE="$UPDATE_LOG" ;;
     *)  LOG_FILE="$REPO_ROOT/${UPDATE_LOG#./}" ;;
   esac
+  # Under the interactive installer, send all library output (compose up, image
+  # pull, ACR login) to the install log so the on-screen "Details: <file>"
+  # pointer actually points at the file that holds the error. The cron/boot path
+  # never sets INSTALL_LOG, so it keeps logging to UPDATE_LOG.
+  [ -n "${INSTALL_LOG:-}" ] && LOG_FILE="$INSTALL_LOG"
   LOG_DIR="$(dirname "$LOG_FILE")"
   mkdir -p "$LOG_DIR" 2>/dev/null || true
 }

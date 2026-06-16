@@ -168,6 +168,7 @@ _msg_en() {
     diag_arch_mismatch) printf '%s' 'image arch mismatch for %s' ;;
     diag_arch_mismatch_fix) printf '%s' "mirror a %s image, or set EXPECTED_ARCH to this NAS's arch in .env" ;;
     info_starting)    printf '%s' 'starting containers (docker compose up -d)' ;;
+    info_log_tail)    printf '%s' '--- last lines of the deploy log (the actual error) ---' ;;
     diag_compose_up)  printf '%s' 'docker compose up -d failed' ;;
     diag_compose_up_fix) printf '%s' 'review the output above and %s; verify the macvlan network and .env image refs' ;;
     ok_mihomo_healthy) printf '%s' 'mihomo is running and healthy' ;;
@@ -403,6 +404,7 @@ _msg_zh() {
     diag_arch_mismatch) printf '%s' '%s 的镜像架构不匹配' ;;
     diag_arch_mismatch_fix) printf '%s' '请镜像一个 %s 架构的镜像，或在 .env 中将 EXPECTED_ARCH 设为此 NAS 的架构' ;;
     info_starting)    printf '%s' '正在启动容器（docker compose up -d）' ;;
+    info_log_tail)    printf '%s' '--- 部署日志的最后几行（真正的错误）---' ;;
     diag_compose_up)  printf '%s' 'docker compose up -d 失败' ;;
     diag_compose_up_fix) printf '%s' '请查看上面的输出以及 %s；核对 macvlan 网络和 .env 中的镜像引用' ;;
     ok_mihomo_healthy) printf '%s' 'mihomo 正在运行且健康' ;;

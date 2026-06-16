@@ -6,10 +6,21 @@
 # Requires the full installer module set sourced (see install.sh). POSIX /bin/sh.
 
 # deploy_stack - bring the compose services up and health-gate them.
+# _show_log_tail - print the tail of the deploy log so the operator sees the
+# actual docker/compose error INLINE, not only in a file (LOG_FILE == the install
+# log under the installer; see common.sh load_env).
+_show_log_tail() {
+  [ -n "${LOG_FILE:-}" ] && [ -f "$LOG_FILE" ] || return 0
+  ui_say ""
+  ui_say "$(msg info_log_tail)"
+  tail -n 25 "$LOG_FILE" >&2 2>/dev/null
+  ui_say ""
+}
+
 deploy_stack() {
   ui_step "$(msg step_deploy_stack)"
   if [ "${REGISTRY_MODE:-acr}" = "acr" ]; then
-    try "$(msg diag_acr_login)" "$(msg diag_acr_login_fix)" -- acr_login || return 1
+    try "$(msg diag_acr_login)" "$(msg diag_acr_login_fix)" -- acr_login || { _show_log_tail; return 1; }
   else
     ui_info "$(msg info_skip_login)"
   fi
@@ -19,7 +30,7 @@ deploy_stack() {
   for _img in "$MIHOMO_IMAGE" "$METACUBEXD_IMAGE"; do
     [ -n "$_img" ] || continue
     ui_info "$(msgf info_pulling "$_img")"
-    try "$(msgf diag_pull_fail "$_img")" "$(msg diag_pull_fail_fix)" -- pull_image "$_img" || return 1
+    try "$(msgf diag_pull_fail "$_img")" "$(msg diag_pull_fail_fix)" -- pull_image "$_img" || { _show_log_tail; return 1; }
     if ! arch_ok "$_img"; then
       diagnose "$(msgf diag_arch_mismatch "$_img")" "$(msgf diag_arch_mismatch_fix "${EXPECTED_ARCH:-amd64}")"
       return 1
@@ -28,6 +39,7 @@ deploy_stack() {
 
   ui_info "$(msg info_starting)"
   if ! compose_up; then
+    _show_log_tail
     diagnose "$(msg diag_compose_up)" "$(msgf diag_compose_up_fix "$INSTALL_LOG")"
     return 1
   fi
@@ -35,6 +47,7 @@ deploy_stack() {
     ui_ok "$(msg ok_mihomo_healthy)"
     return 0
   fi
+  _show_log_tail
   diagnose "$(msg diag_unhealthy)" "$(msg diag_unhealthy_fix)"
   return 1
 }
