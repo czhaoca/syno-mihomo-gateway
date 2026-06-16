@@ -62,6 +62,8 @@ EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 ENDUSER_MUST_INCLUDE = [
     PREFIX + "install.sh",
     PREFIX + "scripts/installer/ui.sh",
+    PREFIX + "scripts/installer/i18n.sh",
+    PREFIX + "scripts/installer/flow_redeploy.sh",
     PREFIX + "scripts/lib/network.sh",
     PREFIX + "scripts/lib/common.sh",
     PREFIX + "docs/README.txt",
@@ -270,7 +272,7 @@ def build_enduser_fixture(root: Path):
     (root / "config" / "config.template.yaml").write_text("mixed-port: 7894\n")
     (root / "config" / "subscription.txt.example").write_text(
         "Default=https://example.com/sub?token=REPLACE_ME\n")
-    for s in ("ui.sh", "flow_deploy.sh"):
+    for s in ("ui.sh", "i18n.sh", "flow_redeploy.sh", "flow_deploy.sh"):
         (root / "scripts" / "installer" / s).write_text("#!/bin/sh\n:\n")
     for s in ("common.sh", "network.sh", "registry.sh", "compose.sh"):
         (root / "scripts" / "lib" / s).write_text("#!/bin/sh\n:\n")
