@@ -82,6 +82,7 @@ compose (+health-gate/rollback) → apply cloudflared (blue-green) → prune →
 | `validate-compose` | `docker compose config --quiet` |
 | `validate-yaml` | `yaml.safe_load(docker-compose.yml)` |
 | `render-config` | `python scripts/ci/render_check.py` —— 针对一个带 `Name=` 前缀及 `&` 参数的夹具 URL 运行**真实的**渲染器，并断言该 URL 能精确地往返还原；同时强制执行“不硬编码 DNS”规则 |
+| `package-check` | `python scripts/ci/package_check.py` —— 在临时仓库中构建发布 zip，证明**任何密钥都不会被打包**（植入的 `.env`/订阅/`config.yaml` 不在两种压缩包的文件名*和*字节中），校验和正确，各项守卫生效，且 `bootstrap.sh` 往返正常 |
 | `shellcheck` | 对入口点脚本运行 `shellcheck -x`（lib/*.sh 在上下文中被一并检查） |
 
 ## 制作发布版本
@@ -100,6 +101,8 @@ sh scripts/package.sh --version 1.2.0 # 覆盖 VERSION 文件
   请在**干净的工作区**运行 —— 除非加 `--allow-dirty`，否则它会拒绝有未提交改动的工作区。
 - 仅含源码：不打包容器镜像。镜像通过 `docker-china-sync` 的 ACR 镜像到达 NAS
   （见[与 docker-china-sync 的关系](#与-docker-china-sync-的关系)）。
+- 安全保障：若有密钥路径被 git 跟踪，`package.sh` 会拒绝构建；CI 的 `package-check`
+  （`scripts/ci/package_check.py`）在每次推送时证明压缩包不含任何密钥。
 
 ## 推送前的本地检查
 
@@ -116,6 +119,9 @@ docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck-alpine:stable \
 
 # compose renders (needs a throwaway .env)
 cp .env.example .env && docker compose config -q && rm -f .env
+
+# release packaging safeguard (hermetic; builds in a temp repo, needs git)
+python3 scripts/ci/package_check.py
 ```
 
 ## 如何扩展

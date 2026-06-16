@@ -20,3 +20,4 @@ dist/
 # Editor / OS noise
 .DS_Store
 .ruff_cache/
+__pycache__/

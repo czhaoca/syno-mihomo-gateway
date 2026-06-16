@@ -86,6 +86,7 @@ Runs on push/PR to `main` and `master`:
 | `validate-compose` | `docker compose config --quiet` |
 | `validate-yaml` | `yaml.safe_load(docker-compose.yml)` |
 | `render-config` | `python scripts/ci/render_check.py` — runs the **real** renderer against a fixture URL with a `Name=` prefix + `&` params and asserts the URL round-trips exactly; also enforces the no-hardcoded-DNS rule |
+| `package-check` | `python scripts/ci/package_check.py` — builds the release zip in a throwaway repo and proves **no secret can ship** (planted `.env`/subscription/`config.yaml` absent from both archives' names *and* bytes), checksums verify, the guards fire, and `bootstrap.sh` round-trips |
 | `shellcheck` | `shellcheck -x` on the entry-point scripts (lib/*.sh followed in-context) |
 
 ## Cutting a release
@@ -104,6 +105,8 @@ sh scripts/package.sh --version 1.2.0 # override the VERSION file
   `dist/`. Run from a **clean checkout** — it refuses a dirty tree unless `--allow-dirty`.
 - Source-only: container images are not bundled. They reach the NAS via the `docker-china-sync`
   ACR mirror (see [Relationship to docker-china-sync](#relationship-to-docker-china-sync)).
+- Safeguards: `package.sh` refuses to build if a secret path is tracked, and CI's `package-check`
+  (`scripts/ci/package_check.py`) proves the archive ships no secret on every push.
 
 ## Local checks before pushing
 
@@ -120,6 +123,9 @@ docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck-alpine:stable \
 
 # compose renders (needs a throwaway .env)
 cp .env.example .env && docker compose config -q && rm -f .env
+
+# release packaging safeguard (hermetic; builds in a temp repo, needs git)
+python3 scripts/ci/package_check.py
 ```
 
 ## How to extend

@@ -89,6 +89,17 @@ if ! git -C "$REPO_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   exit "$EXIT_CONFIG"
 fi
 
+# --- guard: refuse to build if a secret path is TRACKED (git archive would ship it).
+# This is the root invariant behind the leak-proof guarantee: secrets stay out of the
+# bundle only because they are untracked. If one was ever `git add`ed, fail loudly. ---
+_tracked_secrets="$(git -C "$REPO_ROOT" ls-files -- .env config/subscription.txt config/config.yaml 'logs/*')"
+if [ -n "$_tracked_secrets" ]; then
+  log_error "refusing to build: secret path(s) are tracked by git and would ship in the archive:"
+  printf '%s\n' "$_tracked_secrets" >&2
+  log_error "untrack them first (e.g. git rm --cached <path>) - see .gitignore."
+  exit "$EXIT_CONFIG"
+fi
+
 # --- resolve version: --version > ./VERSION > git describe > 0.0.0 ---
 VERSION=""
 if [ -n "$VERSION_OVERRIDE" ]; then

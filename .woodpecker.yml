@@ -25,6 +25,15 @@ steps:
       - pip install --quiet pyyaml
       - python scripts/ci/render_check.py
 
+  - name: package-check
+    image: python:3.12-slim
+    commands:
+      # Hermetic safeguard test: builds the release zip in a throwaway repo and proves it
+      # can never ship a secret (.env / subscription / config.yaml), the guards fire, and
+      # bootstrap.sh round-trips. Needs git to run the real packager.
+      - apt-get update -qq && apt-get install -y -qq --no-install-recommends git >/dev/null
+      - python scripts/ci/package_check.py
+
   - name: shellcheck
     image: koalaman/shellcheck-alpine:stable
     commands:
