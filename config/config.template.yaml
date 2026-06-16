@@ -53,8 +53,36 @@ proxy-providers:
       interval: 600
       url: "http://www.gstatic.com/generate_204"
 
+# Proxy Groups
+# Rules can only target a proxy or a proxy-group (NEVER a proxy-provider), which is
+# why the catch-all `MATCH,my-airport` crash-looped: `my-airport` is a proxy-provider,
+# not a routable target. These groups consume that provider via `use:`; the MATCH rule
+# below targets the PROXY group instead.
+proxy-groups:
+  # auto: lowest-latency node pulled from the provider, re-tested on an interval.
+  # tolerance (ms) avoids flapping between near-equal nodes.
+  - name: auto
+    type: url-test
+    use:
+      - my-airport
+    url: "http://www.gstatic.com/generate_204"
+    interval: 300
+    tolerance: 50
+
+  # PROXY: dashboard-facing selector and the rule target. Defaults to `auto`; an
+  # operator can pin a specific provider node (surfaced via use:), force DIRECT
+  # (bypass), or REJECT (block) from MetaCubeXD.
+  - name: PROXY
+    type: select
+    proxies:
+      - auto
+      - DIRECT
+      - REJECT
+    use:
+      - my-airport
+
 # Basic rules - adjust as needed
 rules:
   - 'GEOSITE,CN,DIRECT'
   - 'GEOIP,CN,DIRECT'
-  - 'MATCH,my-airport'
+  - 'MATCH,PROXY'

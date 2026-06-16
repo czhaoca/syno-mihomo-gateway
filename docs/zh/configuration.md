@@ -135,11 +135,13 @@
 | `{{CONTROLLER_PORT}}` / `{{CONTROLLER_SECRET}}` | `.env` |
 | `{{DNS_DEFAULT_NAMESERVER}}` / `{{DNS_NAMESERVER}}` / `{{DNS_FALLBACK}}` | `.env` |
 
-代理**规则**、`proxy-providers` 块、端口等请直接在模板中编辑（它们
+代理**规则**、`proxy-groups` / `proxy-providers` 块、端口等请直接在模板中编辑（它们
 未做参数化）。编辑后，通过重建 mihomo 重新渲染
 （`docker compose up -d mihomo`）。如需自定义路由，请编辑 `rules:` 列表——默认值
-为 `GEOSITE,CN,DIRECT` / `GEOIP,CN,DIRECT` / `MATCH,my-airport`（国内流量直连，其余
-全部走机场）。
+为 `GEOSITE,CN,DIRECT` / `GEOIP,CN,DIRECT` / `MATCH,PROXY`（国内流量直连，其余
+全部走 `PROXY` 组）。`PROXY` 是一个可选择的代理组，默认指向 `auto`（订阅中延迟最低的
+节点），同时提供 `DIRECT` / `REJECT`；规则只能指向**代理组**（如 `PROXY`），不能直接
+指向 `proxy-provider`。
 
 ## 订阅格式
 

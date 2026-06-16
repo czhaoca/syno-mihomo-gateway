@@ -135,11 +135,13 @@ Holds the Mihomo config with placeholders the renderer fills:
 | `{{CONTROLLER_PORT}}` / `{{CONTROLLER_SECRET}}` | `.env` |
 | `{{DNS_DEFAULT_NAMESERVER}}` / `{{DNS_NAMESERVER}}` / `{{DNS_FALLBACK}}` | `.env` |
 
-Edit proxy **rules**, the `proxy-providers` block, ports, etc. directly in the template (they
-are not parameterized). After editing, re-render by recreating mihomo
+Edit proxy **rules**, the `proxy-groups` / `proxy-providers` blocks, ports, etc. directly in the
+template (they are not parameterized). After editing, re-render by recreating mihomo
 (`docker compose up -d mihomo`). To customize routing, edit the `rules:` list — the defaults
-are `GEOSITE,CN,DIRECT` / `GEOIP,CN,DIRECT` / `MATCH,my-airport` (CN traffic direct, everything
-else through the airport).
+are `GEOSITE,CN,DIRECT` / `GEOIP,CN,DIRECT` / `MATCH,PROXY` (CN traffic direct, everything
+else through the `PROXY` group). `PROXY` is a selectable group that defaults to `auto` (the
+fastest node from your subscription) and also offers `DIRECT` / `REJECT`; rules must target a
+**proxy-group** (e.g. `PROXY`), never a `proxy-provider` directly.
 
 ## Subscription format
 
