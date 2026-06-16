@@ -1,0 +1,117 @@
+Configuration Reference (.env)
+==============================
+
+The gateway reads its settings from a .env file that the installer seeds for
+you during the deploy flow. The proxy subscription URL lives separately in
+config/subscription.txt.
+
+You normally set these through the installer prompts. This file documents what
+each value means so you can review or hand-edit .env if needed. After editing
+.env by hand, apply changes with "3) Modify an existing deployment" so the
+containers are redeployed with the health-gated rollback.
+
+--------------------------------------------------------------------------
+Network settings
+--------------------------------------------------------------------------
+  ROUTER_IP
+      Your router / gateway IP address.
+
+  SUBNET_CIDR
+      Your home LAN subnet in CIDR form, e.g. 192.168.1.0/24.
+
+  MIHOMO_IP
+      A FREE static LAN IP for the gateway. It must be on your LAN subnet and
+      not used by any other device. Clients point their gateway and DNS here
+      to be routed.
+
+--------------------------------------------------------------------------
+Dashboard / controller
+--------------------------------------------------------------------------
+  WEB_UI_PORT
+      The dashboard port published on the NAS. Default 8080. Open the
+      dashboard at http://<NAS-IP>:<WEB_UI_PORT>.
+
+  CONTROLLER_PORT
+      The proxy controller port. Default 9090. Used when adding a backend in
+      the dashboard.
+
+  CONTROLLER_SECRET
+      Optional dashboard auth secret. If set, enter it as the backend Secret.
+      It must NOT contain a '|' character.
+
+--------------------------------------------------------------------------
+DNS settings
+--------------------------------------------------------------------------
+  DNS_DEFAULT_NAMESERVER
+  DNS_NAMESERVER
+  DNS_FALLBACK
+      Comma-separated lists of DNS servers. These control how the gateway
+      resolves names. A bad DNS configuration can leave the gateway
+      unhealthy after deploy.
+
+--------------------------------------------------------------------------
+General
+--------------------------------------------------------------------------
+  TZ
+      Timezone for the containers, e.g. Asia/Shanghai.
+
+--------------------------------------------------------------------------
+Image source
+--------------------------------------------------------------------------
+  REGISTRY_MODE
+      Where images are pulled from:
+        acr    - (DEFAULT) pulls from YOUR private image mirror. Recommended
+                 in mainland China where the big public registries are
+                 blocked.
+        docker - upstream public registries. Only works on a NAS with
+                 unfiltered internet.
+
+  MIHOMO_TAG / METACUBEXD_TAG / CF_TAG
+      Image tags for each component. Default "latest".
+
+  DOCKER_REGISTRY
+      Your registry host (used in acr mode).
+
+  DOCKER_USERNAME
+      Your registry username (used in acr mode).
+
+  ACR_PASSWORD
+      Your registry password (used in acr mode).
+
+  ACR_NAMESPACE
+      Your registry namespace (used in acr mode).
+
+  In acr mode you provide host + namespace + username + password once and the
+  installer derives the full image references for you.
+
+--------------------------------------------------------------------------
+Automatic updates
+--------------------------------------------------------------------------
+  UPDATE_ENABLED
+      Turns scheduled auto-updates on or off.
+
+  UPDATE_SCHEDULE
+      A cron expression for when updates run.
+
+  UPDATE_TZ
+      Timezone used for the update schedule.
+
+  EXPECTED_ARCH
+      The expected CPU architecture: amd64 or arm64. Set this to match your
+      NAS to catch architecture mismatches early.
+
+--------------------------------------------------------------------------
+Optional / advanced: tunnel
+--------------------------------------------------------------------------
+  CF_* settings
+      A tunnel component is optional and advanced. Leave the CF_* settings at
+      their defaults unless you specifically need a tunnel.
+
+--------------------------------------------------------------------------
+Subscription URL
+--------------------------------------------------------------------------
+  The proxy subscription URL is NOT in .env. It lives in:
+        config/subscription.txt
+  The installer seeds this file and asks for the URL during deploy. A bad or
+  unreachable subscription URL is a common reason the gateway is unhealthy
+  after deploy.

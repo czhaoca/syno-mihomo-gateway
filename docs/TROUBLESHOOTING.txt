@@ -1,0 +1,111 @@
+Troubleshooting
+===============
+
+Each entry below is: SYMPTOM -> likely CAUSE -> FIX. Logs are written under the
+logs/ folder: an install log, and (once scheduled) an auto-update log. Check
+them first when something fails.
+
+--------------------------------------------------------------------------
+Installer refuses to run / asks you to move the folder
+--------------------------------------------------------------------------
+  Cause: the folder is not under the Docker shared folder. The Docker daemon
+         bind-mounts files from where docker-compose.yml lives, so it must be
+         under the docker folder (typically /volume1/docker; volume number may
+         differ).
+  Fix:   move it, e.g.   sudo mv "<here>" "/volume1/docker/"   then re-run
+         install.sh from the new location. You can also drag it into the
+         "docker" shared folder in File Station.
+
+--------------------------------------------------------------------------
+"Permission denied" / steps fail that need privileges
+--------------------------------------------------------------------------
+  Cause: not running as root. Deploy needs root to create /dev/net/tun, create
+         the macvlan network, and run docker.
+  Fix:   re-run with   sudo sh ./install.sh
+
+--------------------------------------------------------------------------
+docker or docker compose "command not found"
+--------------------------------------------------------------------------
+  Cause: the Container Manager / Docker package is not installed or not
+         enabled on the NAS.
+  Fix:   install and start the container package from the DSM Package Center,
+         then re-run install.sh.
+
+--------------------------------------------------------------------------
+/dev/net/tun is missing
+--------------------------------------------------------------------------
+  Cause: the TUN device has not been created. The gateway needs it.
+  Fix:   re-run the deploy as root (sudo). The deploy flow creates
+         /dev/net/tun. If it still fails, confirm you are root.
+
+--------------------------------------------------------------------------
+macvlan parent / interface mismatch
+--------------------------------------------------------------------------
+  Symptom: the network fails to create, or clients cannot reach the gateway
+           IP.
+  Cause:   the macvlan network was bound to the wrong NAS interface.
+  Fix:     re-run the network setup from the menu (option 3 -> re-run network
+           setup) and pick the correct LAN interface. The installer lists each
+           interface with its IPv4 and marks the recommended one.
+
+--------------------------------------------------------------------------
+Cannot open the dashboard from the NAS
+--------------------------------------------------------------------------
+  Cause: host-isolation. With macvlan, the NAS host cannot reach the gateway's
+         own LAN IP (MIHOMO_IP).
+  Fix:   open the dashboard at http://<NAS-IP>:<WEB_UI_PORT> (this IS
+         reachable from the NAS). To test the proxy or the gateway IP, use a
+         DIFFERENT device on the LAN.
+
+--------------------------------------------------------------------------
+Image pull fails
+--------------------------------------------------------------------------
+  Cause A: wrong registry credentials in acr mode -> updater/login may report
+           exit code 5 (registry login failed).
+  Fix A:   re-check DOCKER_REGISTRY, DOCKER_USERNAME, ACR_PASSWORD, and
+           ACR_NAMESPACE (option 3 -> image source), then retry.
+  Cause B: using "docker" mode behind a blocking firewall (e.g. mainland
+           China), where the public registries are unreachable.
+  Fix B:   switch to "acr" mode and pull from your own private image mirror.
+
+--------------------------------------------------------------------------
+Architecture mismatch
+--------------------------------------------------------------------------
+  Symptom: containers fail to start or the wrong binary runs.
+  Cause:   the image architecture does not match the NAS CPU.
+  Fix:     set EXPECTED_ARCH in .env to amd64 or arm64 to match your NAS, then
+           redeploy (option 3 -> apply changes).
+
+--------------------------------------------------------------------------
+Dashboard port already in use
+--------------------------------------------------------------------------
+  Symptom: containers will not start because the port is taken.
+  Cause:   another service already uses WEB_UI_PORT (default 8080).
+  Fix:     change WEB_UI_PORT in .env to a free port (option 3 -> apply
+           changes), then open http://<NAS-IP>:<new-port>.
+
+--------------------------------------------------------------------------
+Gateway is "unhealthy" after deploy
+--------------------------------------------------------------------------
+  Cause: usually a bad/unreachable subscription URL, or a bad DNS setting.
+  Fix:   check config/subscription.txt (the subscription URL) and the
+         DNS_DEFAULT_NAMESERVER / DNS_NAMESERVER / DNS_FALLBACK values, then
+         redeploy. The deploy and auto-update flows health-gate the new image
+         and roll back automatically if it stays unhealthy.
+
+--------------------------------------------------------------------------
+Auto-update reported a non-zero exit code
+--------------------------------------------------------------------------
+  0  Success / no-op.
+  2  Partial failure - check the auto-update log under logs/.
+  3  Config / preflight error - review .env and prerequisites.
+  4  Another run is in progress - wait and check again.
+  5  Registry login failed - re-check your registry credentials.
+
+--------------------------------------------------------------------------
+Where to look
+--------------------------------------------------------------------------
+  * Install log:     under the logs/ folder.
+  * Auto-update log: under the logs/ folder.
+  * Settings:        .env (see CONFIGURE.txt) and config/subscription.txt.
+  * To change and redeploy: install.sh -> 3) Modify an existing deployment.

@@ -1,0 +1,110 @@
+Installing the Mihomo Gateway
+=============================
+
+This guide walks you through installing the gateway on a Synology NAS from
+this release bundle.
+
+Overview of the steps
+---------------------
+  1. Transfer this folder to the NAS.
+  2. Place it under the Docker shared folder.
+  3. Run install.sh and choose "Deploy".
+  4. Answer the deploy prompts.
+  5. Verify from another device on the LAN.
+
+--------------------------------------------------------------------------
+1. Transfer this folder to the NAS
+--------------------------------------------------------------------------
+Copy this unpacked folder onto the NAS using File Station, an SMB share, or
+scp. You can put it anywhere at first; the installer will tell you if it needs
+to move.
+
+--------------------------------------------------------------------------
+2. Place it under the Docker shared folder (required)
+--------------------------------------------------------------------------
+The folder MUST live under the Docker shared folder (typically
+/volume1/docker; your volume number may differ). This is because the Docker
+daemon bind-mounts files from wherever docker-compose.yml lives.
+
+The installer checks this FIRST. If the folder is in the wrong place, it
+prints exact instructions, for example:
+
+      sudo mv "<here>" "/volume1/docker/"
+
+Then re-run install.sh from the new location. You can also move it in File
+Station by dragging it into the "docker" shared folder.
+
+--------------------------------------------------------------------------
+3. Run the installer
+--------------------------------------------------------------------------
+Open a terminal in the folder and run:
+
+      sudo sh ./install.sh
+
+Root is required because deployment creates /dev/net/tun, creates the macvlan
+network, and runs docker. If you forget sudo, the installer asks you to
+re-run with:
+
+      sudo sh ./install.sh
+
+You will see the menu:
+
+      1) Deploy the gateway (end-to-end)
+      2) Set up automatic updates (cron)
+      3) Modify an existing deployment
+      4) Quit
+
+Choose 1.
+
+--------------------------------------------------------------------------
+4. The deploy flow (option 1)
+--------------------------------------------------------------------------
+Deploy walks through these steps in order:
+
+  1.  Prepare config files - seeds .env and config/subscription.txt.
+  2.  Network & DNS settings - your router IP, LAN subnet, gateway IP, DNS.
+  3.  Image source - choose where images are pulled from (see below).
+  4.  Subscription URL - the proxy subscription that feeds your rules.
+  5.  Checks - validates prerequisites.
+  6.  Create the network - you pick the LAN interface.
+  7.  Log in to the registry - in "acr" image mode.
+  8.  Pull images.
+  9.  Start the containers.
+  10. Health check.
+  11. Summary - prints the dashboard URL and the values you need.
+
+Image source (asked during deploy)
+  * acr (DEFAULT, recommended in mainland China): pulls from YOUR private
+    image mirror. Enter the registry host, namespace, username, and password
+    ONCE; the installer builds the full image references for you.
+  * docker (upstream public registries): only works on a NAS with unfiltered
+    internet. The installer warns and asks you to confirm. Behind a blocking
+    firewall this mode will fail.
+
+Interface selection (network step)
+  The installer scans the NAS network interfaces, shows each with its IPv4,
+  marks the auto-detected LAN interface as recommended, and lets you pick a
+  number or type an interface name manually.
+
+--------------------------------------------------------------------------
+5. Verify from ANOTHER device (important)
+--------------------------------------------------------------------------
+Because the gateway uses macvlan, the NAS host cannot reach the gateway's own
+LAN IP. Do these checks from a DIFFERENT LAN device:
+
+  1. Open the dashboard:   http://<NAS-IP>:<WEB_UI_PORT>   (default 8080).
+     (This URL is also reachable from the NAS itself.)
+  2. In the dashboard, add a backend:
+        Host   = <MIHOMO_IP>
+        Port   = <CONTROLLER_PORT>     (default 9090)
+        Secret = <CONTROLLER_SECRET>   (if you set one)
+  3. To route a client, set that client's gateway and DNS to <MIHOMO_IP>,
+     then browse the internet from it to confirm traffic flows.
+
+--------------------------------------------------------------------------
+After install
+--------------------------------------------------------------------------
+  * Review CONFIGURE.txt for the full .env reference.
+  * Set up automatic updates with AUTO-UPDATE.txt.
+  * If anything fails, see TROUBLESHOOTING.txt.
+  * An install log is written under the logs/ folder.
