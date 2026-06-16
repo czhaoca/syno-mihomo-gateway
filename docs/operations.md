@@ -1,7 +1,7 @@
 # Operations Runbook
 
 [← README](../README.md) · [中文](zh/operations.md)
-Manual: [Architecture](architecture.md) · [Installation](installation.md) · [Configuration](configuration.md) · [Auto-Update](auto-update.md) · **Operations** · [Troubleshooting](troubleshooting.md) · [Development](development.md)
+Manual: [Architecture](architecture.md) · [Installation](installation.md) · [Release Zip](release-packaging.md) · [Configuration](configuration.md) · [Auto-Update](auto-update.md) · **Operations** · [Troubleshooting](troubleshooting.md) · [Development](development.md)
 
 ---
 

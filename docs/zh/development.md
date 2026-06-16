@@ -1,7 +1,7 @@
 # 开发与内部实现
 
 [← README](../../README.md) · [English](../development.md)
-手册：[架构](architecture.md) · [安装](installation.md) · [配置](configuration.md) · [自动更新](auto-update.md) · [运维](operations.md) · [故障排查](troubleshooting.md) · **开发**
+手册：[架构](architecture.md) · [安装](installation.md) · [离线发布包](release-packaging.md) · [配置](configuration.md) · [自动更新](auto-update.md) · [运维](operations.md) · [故障排查](troubleshooting.md) · **开发**
 
 ---
 
@@ -12,6 +12,8 @@
 ```
 docker-compose.yml            # mihomo (macvlan, privileged) + metacubexd (bridge)
 .env.example                  # documented config contract (copy to .env)
+VERSION                       # release version (stamped into the package.sh artifact name)
+bootstrap.sh                  # offline-install first-run helper (seeds .env, restores exec bits)
 config/
   config.template.yaml        # mihomo config with {{PLACEHOLDERS}}
   subscription.txt.example    # subscription template (copy to subscription.txt)
@@ -20,6 +22,7 @@ scripts/
   render_config.sh            # renders config.yaml from the template (entrypoint + CI both call it)
   auto_update.sh              # the DSM auto-update orchestrator (entry point)
   install_scheduler.sh        # prints DSM Task Scheduler / crontab settings
+  package.sh                  # build-host: builds the offline release zip (docs/release-packaging.md)
   lib/
     common.sh                 # env load, logging+rotation, mkdir lock, exit codes
     registry.sh               # preflight (compose/arch/network/tun), ACR login, pull + change detect
@@ -81,6 +84,23 @@ compose (+health-gate/rollback) → apply cloudflared (blue-green) → prune →
 | `render-config` | `python scripts/ci/render_check.py` —— 针对一个带 `Name=` 前缀及 `&` 参数的夹具 URL 运行**真实的**渲染器，并断言该 URL 能精确地往返还原；同时强制执行“不硬编码 DNS”规则 |
 | `shellcheck` | 对入口点脚本运行 `shellcheck -x`（lib/*.sh 在上下文中被一并检查） |
 
+## 制作发布版本
+
+维护者构建 [离线发布包](release-packaging.md) 中所消费的离线包：
+
+```bash
+sh scripts/package.sh                 # 生成 dist/syno-mihomo-gateway-<版本>.{zip,tar.gz} + .sha256
+sh scripts/package.sh --version 1.2.0 # 覆盖 VERSION 文件
+```
+
+- 用 `git archive` 构建，因此**只打包被跟踪的文件** —— `.env`、`config/subscription.txt`、
+  `config/config.yaml`、`logs/` 和 `.git/` 绝不会泄漏进去。`.env.example` 和
+  `config/subscription.txt.example` 作为模板包含在内。
+- 版本号来自 `VERSION` 文件（其次是 `git describe`）；产物输出到被 gitignore 的 `dist/`。
+  请在**干净的工作区**运行 —— 除非加 `--allow-dirty`，否则它会拒绝有未提交改动的工作区。
+- 仅含源码：不打包容器镜像。镜像通过 `docker-china-sync` 的 ACR 镜像到达 NAS
+  （见[与 docker-china-sync 的关系](#与-docker-china-sync-的关系)）。
+
 ## 推送前的本地检查
 
 ```bash
@@ -92,7 +112,7 @@ python3 -m venv /tmp/v && /tmp/v/bin/pip install -q pyyaml && /tmp/v/bin/python 
 
 # shellcheck (via Docker, same as CI)
 docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck-alpine:stable \
-  shellcheck -x scripts/auto_update.sh scripts/install_scheduler.sh scripts/setup_network.sh scripts/render_config.sh
+  shellcheck -x scripts/auto_update.sh scripts/install_scheduler.sh scripts/setup_network.sh scripts/render_config.sh scripts/package.sh bootstrap.sh
 
 # compose renders (needs a throwaway .env)
 cp .env.example .env && docker compose config -q && rm -f .env

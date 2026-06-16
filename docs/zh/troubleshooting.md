@@ -1,7 +1,7 @@
 # 故障排查与 FAQ
 
 [← README](../../README.md) · [English](../troubleshooting.md)
-手册：[架构](architecture.md) · [安装](installation.md) · [配置](configuration.md) · [自动更新](auto-update.md) · [运维](operations.md) · **故障排查** · [开发](development.md)
+手册：[架构](architecture.md) · [安装](installation.md) · [离线发布包](release-packaging.md) · [配置](configuration.md) · [自动更新](auto-update.md) · [运维](operations.md) · **故障排查** · [开发](development.md)
 
 ---
 

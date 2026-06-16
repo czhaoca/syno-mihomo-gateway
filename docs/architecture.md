@@ -1,7 +1,7 @@
 # Architecture
 
 [← README](../README.md) · [中文](zh/architecture.md)
-Manual: **Architecture** · [Installation](installation.md) · [Configuration](configuration.md) · [Auto-Update](auto-update.md) · [Operations](operations.md) · [Troubleshooting](troubleshooting.md) · [Development](development.md)
+Manual: **Architecture** · [Installation](installation.md) · [Release Zip](release-packaging.md) · [Configuration](configuration.md) · [Auto-Update](auto-update.md) · [Operations](operations.md) · [Troubleshooting](troubleshooting.md) · [Development](development.md)
 
 ---
 

@@ -1,7 +1,7 @@
 # Troubleshooting & FAQ
 
 [← README](../README.md) · [中文](zh/troubleshooting.md)
-Manual: [Architecture](architecture.md) · [Installation](installation.md) · [Configuration](configuration.md) · [Auto-Update](auto-update.md) · [Operations](operations.md) · **Troubleshooting** · [Development](development.md)
+Manual: [Architecture](architecture.md) · [Installation](installation.md) · [Release Zip](release-packaging.md) · [Configuration](configuration.md) · [Auto-Update](auto-update.md) · [Operations](operations.md) · **Troubleshooting** · [Development](development.md)
 
 ---
 

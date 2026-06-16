@@ -1,12 +1,12 @@
 # Installation
 
 [← README](../README.md) · [中文](zh/installation.md)
-Manual: [Architecture](architecture.md) · **Installation** · [Configuration](configuration.md) · [Auto-Update](auto-update.md) · [Operations](operations.md) · [Troubleshooting](troubleshooting.md) · [Development](development.md)
+Manual: [Architecture](architecture.md) · **Installation** · [Release Zip](release-packaging.md) · [Configuration](configuration.md) · [Auto-Update](auto-update.md) · [Operations](operations.md) · [Troubleshooting](troubleshooting.md) · [Development](development.md)
 
 ---
 
 This is the detailed walkthrough. For the condensed version see the
-[README quick start](../README.md#quick-start-guide).
+[README quick start](../README.md#quick-start).
 
 ## Prerequisites
 
@@ -18,7 +18,11 @@ This is the detailed walkthrough. For the condensed version see the
 5. (China) An **Alibaba Container Registry (ACR)** namespace and the `docker-china-sync` mirror
    already pushing your images — see [Auto-Update › ACR setup](auto-update.md#acr-setup).
 
-## 1. Clone
+## 1. Get the code
+
+Pick the path that matches your network.
+
+### Option A — git clone (you have GitHub access)
 
 SSH into the NAS and clone into your docker share:
 
@@ -28,8 +32,14 @@ git clone https://github.com/czhaoca/syno-mihomo-gateway.git
 cd syno-mihomo-gateway
 ```
 
+### Option B — release zip (mainland China / no GitHub)
+
+If the NAS cannot reach github.com, don't clone. Build a release zip on a machine that can,
+transfer it to the NAS, and unpack it into `/volume1/docker/syno-mihomo-gateway` — then come back
+here for steps 2-8. Full procedure: [Release Zip](release-packaging.md).
+
 > The path `/volume1/docker/syno-mihomo-gateway` is assumed throughout (the DSM scheduler
-> command and the docs use it). If you clone elsewhere, adjust those paths.
+> command and the docs use it). If you install elsewhere, adjust those paths.
 
 ## 2. Configure `.env`
 
@@ -131,3 +141,7 @@ docker compose up -d        # picks up compose/template/script changes
 
 Your `.env`, `config/subscription.txt`, and `config/config.yaml` are gitignored and untouched
 by `git pull`.
+
+> Installed via Option B (release zip)? There is no `git pull` — update by rebuilding and
+> re-unpacking the zip: see
+> [Release Zip › Updating an offline install](release-packaging.md#updating-an-offline-install).

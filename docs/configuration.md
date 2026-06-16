@@ -1,7 +1,7 @@
 # Configuration Reference
 
 [← README](../README.md) · [中文](zh/configuration.md)
-Manual: [Architecture](architecture.md) · [Installation](installation.md) · **Configuration** · [Auto-Update](auto-update.md) · [Operations](operations.md) · [Troubleshooting](troubleshooting.md) · [Development](development.md)
+Manual: [Architecture](architecture.md) · [Installation](installation.md) · [Release Zip](release-packaging.md) · **Configuration** · [Auto-Update](auto-update.md) · [Operations](operations.md) · [Troubleshooting](troubleshooting.md) · [Development](development.md)
 
 ---
 

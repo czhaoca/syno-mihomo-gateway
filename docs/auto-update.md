@@ -1,7 +1,7 @@
 # Auto-Update
 
 [← README](../README.md) · [中文](zh/auto-update.md)
-Manual: [Architecture](architecture.md) · [Installation](installation.md) · [Configuration](configuration.md) · **Auto-Update** · [Operations](operations.md) · [Troubleshooting](troubleshooting.md) · [Development](development.md)
+Manual: [Architecture](architecture.md) · [Installation](installation.md) · [Release Zip](release-packaging.md) · [Configuration](configuration.md) · **Auto-Update** · [Operations](operations.md) · [Troubleshooting](troubleshooting.md) · [Development](development.md)
 
 ---
 

@@ -21,6 +21,7 @@
 |---|---|
 | [架构](zh/architecture.md) | 组件、镜像同步→拉取流水线、macvlan 网络模型、安全模型 |
 | [安装](zh/installation.md) | 完整的群晖部署流程（SSH、网络、首次启动、面板） |
+| [离线发布包](zh/release-packaging.md) | GitHub 被封锁时的离线安装：构建压缩包，在 NAS 上解压，无需 git |
 | [配置](zh/configuration.md) | **完整 `.env` 参考**、模板、订阅、规则 |
 | [自动更新](zh/auto-update.md) | ACR 配置、运行流程、健康检查/回滚、cloudflared 蓝绿、退出码 |
 | [运维](zh/operations.md) | 运维手册：计划任务、试运行、开关、日志、通知、回滚 |
@@ -32,6 +33,9 @@
 ## 快速开始
 
 > 精简版；详见[安装](zh/installation.md)，每个配置项见[配置](zh/configuration.md)。
+>
+> **NAS 无法访问 GitHub（中国大陆）？** 请改用
+> [离线发布包](zh/release-packaging.md)，无需第 1 步的 git clone。
 
 ```bash
 # 1. 下载（在群晖上，通过 SSH）
@@ -65,7 +69,7 @@ sudo docker compose up -d
 
 ## 自动更新
 
-由于中国大陆封锁 Docker Hub/ghcr，[`docker-china-sync`](../../docker-china-sync) 每晚把镜像同步到
+由于中国大陆封锁 Docker Hub/ghcr，[`docker-china-sync`](https://github.com/czhaoca/docker-china-sync) 每晚把镜像同步到
 阿里云 ACR，`scripts/auto_update.sh`（由群晖任务计划运行）只拉取并重新部署有变化的镜像——
 mihomo/metacubexd 走 `docker compose up -d`（带健康检查与自动回滚），外部 cloudflared 走蓝绿部署。
 用 `sh scripts/install_scheduler.sh` 打印计划任务设置，用 `sh scripts/auto_update.sh --dry-run`

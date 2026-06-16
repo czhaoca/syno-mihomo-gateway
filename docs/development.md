@@ -1,7 +1,7 @@
 # Development & Internals
 
 [← README](../README.md) · [中文](zh/development.md)
-Manual: [Architecture](architecture.md) · [Installation](installation.md) · [Configuration](configuration.md) · [Auto-Update](auto-update.md) · [Operations](operations.md) · [Troubleshooting](troubleshooting.md) · **Development**
+Manual: [Architecture](architecture.md) · [Installation](installation.md) · [Release Zip](release-packaging.md) · [Configuration](configuration.md) · [Auto-Update](auto-update.md) · [Operations](operations.md) · [Troubleshooting](troubleshooting.md) · **Development**
 
 ---
 
@@ -12,6 +12,8 @@ For contributors and anyone extending the gateway.
 ```
 docker-compose.yml            # mihomo (macvlan, privileged) + metacubexd (bridge)
 .env.example                  # documented config contract (copy to .env)
+VERSION                       # release version (stamped into the package.sh artifact name)
+bootstrap.sh                  # offline-install first-run helper (seeds .env, restores exec bits)
 config/
   config.template.yaml        # mihomo config with {{PLACEHOLDERS}}
   subscription.txt.example    # subscription template (copy to subscription.txt)
@@ -20,6 +22,7 @@ scripts/
   render_config.sh            # renders config.yaml from the template (entrypoint + CI both call it)
   auto_update.sh              # the DSM auto-update orchestrator (entry point)
   install_scheduler.sh        # prints DSM Task Scheduler / crontab settings
+  package.sh                  # build-host: builds the offline release zip (docs/release-packaging.md)
   lib/
     common.sh                 # env load, logging+rotation, mkdir lock, exit codes
     registry.sh               # preflight (compose/arch/network/tun), ACR login, pull + change detect
@@ -85,6 +88,23 @@ Runs on push/PR to `main` and `master`:
 | `render-config` | `python scripts/ci/render_check.py` — runs the **real** renderer against a fixture URL with a `Name=` prefix + `&` params and asserts the URL round-trips exactly; also enforces the no-hardcoded-DNS rule |
 | `shellcheck` | `shellcheck -x` on the entry-point scripts (lib/*.sh followed in-context) |
 
+## Cutting a release
+
+Maintainers produce the offline bundle consumed in [Release Zip](release-packaging.md):
+
+```bash
+sh scripts/package.sh                 # dist/syno-mihomo-gateway-<version>.{zip,tar.gz} + .sha256
+sh scripts/package.sh --version 1.2.0 # override the VERSION file
+```
+
+- Built with `git archive`, so **only tracked files** ship — `.env`, `config/subscription.txt`,
+  `config/config.yaml`, `logs/`, and `.git/` can never leak in. `.env.example` and
+  `config/subscription.txt.example` ship as templates.
+- Version comes from the `VERSION` file (then `git describe`); output lands in the gitignored
+  `dist/`. Run from a **clean checkout** — it refuses a dirty tree unless `--allow-dirty`.
+- Source-only: container images are not bundled. They reach the NAS via the `docker-china-sync`
+  ACR mirror (see [Relationship to docker-china-sync](#relationship-to-docker-china-sync)).
+
 ## Local checks before pushing
 
 ```bash
@@ -96,7 +116,7 @@ python3 -m venv /tmp/v && /tmp/v/bin/pip install -q pyyaml && /tmp/v/bin/python 
 
 # shellcheck (via Docker, same as CI)
 docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck-alpine:stable \
-  shellcheck -x scripts/auto_update.sh scripts/install_scheduler.sh scripts/setup_network.sh scripts/render_config.sh
+  shellcheck -x scripts/auto_update.sh scripts/install_scheduler.sh scripts/setup_network.sh scripts/render_config.sh scripts/package.sh bootstrap.sh
 
 # compose renders (needs a throwaway .env)
 cp .env.example .env && docker compose config -q && rm -f .env

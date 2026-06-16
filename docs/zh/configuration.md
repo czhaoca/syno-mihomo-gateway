@@ -1,7 +1,7 @@
 # 配置参考
 
 [← README](../../README.md) · [English](../configuration.md)
-手册：[架构](architecture.md) · [安装](installation.md) · **配置** · [自动更新](auto-update.md) · [运维](operations.md) · [故障排查](troubleshooting.md) · [开发](development.md)
+手册：[架构](architecture.md) · [安装](installation.md) · [离线发布包](release-packaging.md) · **配置** · [自动更新](auto-update.md) · [运维](operations.md) · [故障排查](troubleshooting.md) · [开发](development.md)
 
 ---
 

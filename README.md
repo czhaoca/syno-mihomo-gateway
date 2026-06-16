@@ -22,6 +22,7 @@ your NAS, and a DSM-scheduled job keeps everything current and safely self-heali
 |---|---|
 | [Architecture](docs/architecture.md) | components, the mirror→pull pipeline, the macvlan model, the safety model |
 | [Installation](docs/installation.md) | full DSM walkthrough (SSH, network, first run, dashboard) |
+| [Release Zip](docs/release-packaging.md) | offline install where GitHub is blocked: build a zip, unpack on the NAS, no git |
 | [Configuration](docs/configuration.md) | **complete `.env` reference**, template, subscription, rules |
 | [Auto-Update](docs/auto-update.md) | ACR setup, the run sequence, health-gate/rollback, cloudflared blue-green, exit codes |
 | [Operations](docs/operations.md) | runbook: scheduling, dry-run, kill-switch, logs, notifications, rollback |
@@ -34,6 +35,9 @@ your NAS, and a DSM-scheduled job keeps everything current and safely self-heali
 
 > Condensed; see [Installation](docs/installation.md) for the detailed walkthrough and
 > [Configuration](docs/configuration.md) for every setting.
+>
+> **No GitHub on the NAS (mainland China)?** Use the
+> [release zip](docs/release-packaging.md) instead of step 1's clone.
 
 ```bash
 # 1. Clone (on the NAS, over SSH)
@@ -68,7 +72,7 @@ backend `Host=<MIHOMO_IP>`, `Port=<CONTROLLER_PORT>` (default `9090`), `Secret=<
 
 ## Automatic updates
 
-Because Docker Hub/ghcr are blocked in China, [`docker-china-sync`](../docker-china-sync) mirrors
+Because Docker Hub/ghcr are blocked in China, [`docker-china-sync`](https://github.com/czhaoca/docker-china-sync) mirrors
 images to Alibaba ACR nightly, and `scripts/auto_update.sh` (run by DSM Task Scheduler) pulls +
 redeploys only what changed — `docker compose up -d` for mihomo/metacubexd with a health-gate and
 auto-rollback, blue-green for an external cloudflared. Print the scheduler settings with

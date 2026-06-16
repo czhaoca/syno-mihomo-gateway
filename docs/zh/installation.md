@@ -1,12 +1,12 @@
 # 安装
 
 [← README](../../README.md) · [English](../installation.md)
-手册：[架构](architecture.md) · **安装** · [配置](configuration.md) · [自动更新](auto-update.md) · [运维](operations.md) · [故障排查](troubleshooting.md) · [开发](development.md)
+手册：[架构](architecture.md) · **安装** · [离线发布包](release-packaging.md) · [配置](configuration.md) · [自动更新](auto-update.md) · [运维](operations.md) · [故障排查](troubleshooting.md) · [开发](development.md)
 
 ---
 
 这是详细的操作步骤。如需精简版本，请参阅
-[README 快速开始](../../README.md#quick-start-guide)。
+[README 快速开始](../../README.md#quick-start)。
 
 ## 前置条件
 
@@ -18,7 +18,11 @@
 5. （中国大陆）已有一个 **阿里云容器镜像服务（ACR）** 命名空间，并且 `docker-china-sync` 镜像
    已经在推送你的镜像 —— 请参阅 [自动更新 › ACR 设置](auto-update.md)。
 
-## 1. 克隆仓库
+## 1. 获取代码
+
+根据你的网络情况选择方式。
+
+### 方式 A —— git clone（可访问 GitHub）
 
 通过 SSH 登录 NAS，并克隆到你的 docker 共享目录：
 
@@ -28,8 +32,14 @@ git clone https://github.com/czhaoca/syno-mihomo-gateway.git
 cd syno-mihomo-gateway
 ```
 
+### 方式 B —— 发布压缩包（中国大陆 / 无法访问 GitHub）
+
+如果 NAS 无法访问 github.com，请不要克隆。在一台能联网的机器上构建发布压缩包，传到 NAS，
+解压到 `/volume1/docker/syno-mihomo-gateway` —— 然后回到这里继续第 2-8 步。
+完整流程见 [离线发布包](release-packaging.md)。
+
 > 全文均假设使用路径 `/volume1/docker/syno-mihomo-gateway`（DSM 计划任务命令
-> 和文档中都使用它）。如果你克隆到其他位置，请相应调整这些路径。
+> 和文档中都使用它）。如果你安装到其他位置，请相应调整这些路径。
 
 ## 2. 配置 `.env`
 
@@ -131,3 +141,6 @@ docker compose up -d        # picks up compose/template/script changes
 
 你的 `.env`、`config/subscription.txt` 和 `config/config.yaml` 已被 gitignore 忽略，
 不会被 `git pull` 改动。
+
+> 通过方式 B（发布压缩包）安装的？这里没有 `git pull` —— 通过重新构建并覆盖解压压缩包来更新：
+> 见 [离线发布包 › 更新离线安装](release-packaging.md#更新离线安装)。

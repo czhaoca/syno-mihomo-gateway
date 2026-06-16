@@ -1,7 +1,7 @@
 # 运维手册
 
 [← README](../../README.md) · [English](../operations.md)
-手册：[架构](architecture.md) · [安装](installation.md) · [配置](configuration.md) · [自动更新](auto-update.md) · **运维** · [故障排查](troubleshooting.md) · [开发](development.md)
+手册：[架构](architecture.md) · [安装](installation.md) · [离线发布包](release-packaging.md) · [配置](configuration.md) · [自动更新](auto-update.md) · **运维** · [故障排查](troubleshooting.md) · [开发](development.md)
 
 ---
 
