@@ -17,16 +17,41 @@ _show_log_tail() {
   ui_say ""
 }
 
-# _clear_stale_containers - remove this app's named containers (mihomo, mihomo-ui)
-# left by a prior/partial/renamed deploy, so `compose up` can't hit a
-# "container name already in use" conflict. Idempotent. INSTALLER-ONLY: the
-# auto-updater calls compose_up directly and must NOT force-recreate.
-_clear_stale_containers() {
+# reprovision_containers - if this app's containers already exist (running,
+# stopped, created, or crash-looping), tear them down so the deploy recreates
+# them cleanly from the current image + freshly rendered config. Visible (reports
+# what it found) and idempotent: removes the compose project's containers (plus
+# any orphan service), force-removes the named containers even when compose state
+# is inconsistent ("container name already in use"), and detaches anything still
+# bound to the macvlan network so its recreate can't fail with "container still
+# attached". INSTALLER-ONLY: the auto-updater calls compose_up directly and must
+# NOT force-recreate.
+reprovision_containers() {
+  [ -n "${DOCKER_BIN:-}" ] || return 0
+  ui_step "$(msg step_reprovision)"
+
+  _rp_found=""
+  for _c in "$MIHOMO_CONTAINER" "$METACUBEXD_CONTAINER"; do
+    [ -n "$_c" ] || continue
+    _rp_st="$("$DOCKER_BIN" inspect -f '{{.State.Status}}' "$_c" 2>/dev/null)" || _rp_st=""
+    [ -n "$_rp_st" ] && { ui_say "$(msgf reprov_found "$_c" "$_rp_st")"; _rp_found=1; }
+  done
+
   # shellcheck disable=SC2086  # COMPOSE_CMD may be two words ("docker compose")
-  ( cd "$REPO_ROOT" && $COMPOSE_CMD --env-file "$ENV_FILE" down --remove-orphans ) >>"${LOG_FILE:-/dev/null}" 2>&1
+  ( cd "$REPO_ROOT" && $COMPOSE_CMD --env-file "$ENV_FILE" down --remove-orphans ) >>"${LOG_FILE:-/dev/null}" 2>&1 || true
   for _c in "$MIHOMO_CONTAINER" "$METACUBEXD_CONTAINER"; do
     [ -n "$_c" ] && "$DOCKER_BIN" rm -f "$_c" >>"${LOG_FILE:-/dev/null}" 2>&1 || true
   done
+
+  _rp_net="${TPROXY_NETWORK:-tproxy_network}"
+  if network_exists "$_rp_net"; then
+    for _rp_id in $("$DOCKER_BIN" ps -aq --filter "network=$_rp_net" 2>/dev/null); do
+      "$DOCKER_BIN" network disconnect -f "$_rp_net" "$_rp_id" >>"${LOG_FILE:-/dev/null}" 2>&1 || true
+    done
+  fi
+
+  if [ -n "$_rp_found" ]; then ui_ok "$(msg reprov_done)"; else ui_info "$(msg reprov_none)"; fi
+  return 0
 }
 
 # _show_mihomo_logs - print the tail of `docker logs mihomo` so the operator sees
@@ -110,9 +135,9 @@ flow_deploy() {
   pf_docker         || return 1
   pf_arch
 
-  # Clear stale mihomo/mihomo-ui BEFORE recreating the macvlan: a still-attached
-  # stale container would make `docker network rm` (in create_network) fail.
-  _clear_stale_containers
+  # Reprovision existing containers BEFORE recreating the macvlan: a still-attached
+  # container would make `docker network rm` (in create_network) fail.
+  reprovision_containers
   create_network    || return 1             # root: TUN + macvlan (final IP guard inside)
   load_env
 

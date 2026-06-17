@@ -161,6 +161,10 @@ _msg_en() {
 
     # --- flow_deploy.sh ---
     step_deploy_stack) printf '%s' 'Deploy the stack' ;;
+    step_reprovision) printf '%s' 'Reprovision existing containers' ;;
+    reprov_found)     printf '%s' '  found %s (%s) - will recreate it' ;;
+    reprov_done)      printf '%s' 'removed existing containers; they will be recreated from the current image + config' ;;
+    reprov_none)      printf '%s' 'no existing containers to reprovision' ;;
     diag_acr_login)   printf '%s' 'ACR login failed' ;;
     diag_acr_login_fix) printf '%s' 'check DOCKER_USERNAME / ACR_PASSWORD (token expiry?) in .env' ;;
     info_skip_login)  printf '%s' 'REGISTRY_MODE=docker - skipping registry login (public images)' ;;
@@ -409,6 +413,10 @@ _msg_zh() {
 
     # --- flow_deploy.sh ---
     step_deploy_stack) printf '%s' '部署服务栈' ;;
+    step_reprovision) printf '%s' '重新部署已存在的容器' ;;
+    reprov_found)     printf '%s' '  发现 %s（%s）——将重新创建' ;;
+    reprov_done)      printf '%s' '已移除现有容器；将基于当前镜像 + 配置重新创建' ;;
+    reprov_none)      printf '%s' '没有需要重新部署的现有容器' ;;
     diag_acr_login)   printf '%s' 'ACR 登录失败' ;;
     diag_acr_login_fix) printf '%s' '请检查 .env 中的 DOCKER_USERNAME / ACR_PASSWORD（令牌是否过期？）' ;;
     info_skip_login)  printf '%s' 'REGISTRY_MODE=docker - 跳过仓库登录（公共镜像）' ;;

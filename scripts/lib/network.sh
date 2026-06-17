@@ -181,8 +181,17 @@ recreate_macvlan() {
   if network_exists "$_name"; then
     log_warn "docker network '$_name' exists - removing to re-create"
     if ! "$_d" network rm "$_name" >/dev/null 2>&1; then
-      log_error "could not remove existing '$_name' (is a container still attached? 'docker network inspect $_name')"
-      return 1
+      # A still-attached container blocks removal: force-disconnect every container
+      # bound to it, then retry. (reprovision_containers normally clears these
+      # first, but this keeps the network teardown self-healing for any caller.)
+      for _cid in $("$_d" ps -aq --filter "network=$_name" 2>/dev/null); do
+        log_warn "detaching container $_cid from '$_name'"
+        "$_d" network disconnect -f "$_name" "$_cid" >/dev/null 2>&1 || true
+      done
+      if ! "$_d" network rm "$_name" >/dev/null 2>&1; then
+        log_error "could not remove existing '$_name' (is a container still attached? 'docker network inspect $_name')"
+        return 1
+      fi
     fi
   fi
 

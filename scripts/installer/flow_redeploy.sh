@@ -50,9 +50,9 @@ flow_redeploy() {
 
   pf_docker || return 1
   pf_arch
-  # Clear stale mihomo/mihomo-ui BEFORE recreating the macvlan (a still-attached
-  # stale container would make create_network's `docker network rm` fail).
-  _clear_stale_containers
+  # Reprovision existing containers BEFORE recreating the macvlan (a still-attached
+  # container would make create_network's `docker network rm` fail).
+  reprovision_containers
   create_network || return 1     # root: TUN + macvlan (re-runs the final IP guard)
   load_env
   deploy_stack || return 1
