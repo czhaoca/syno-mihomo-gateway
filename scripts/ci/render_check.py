@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate the config renderer end-to-end by invoking the REAL renderer.
+r"""Validate the config renderer end-to-end by invoking the REAL renderer.
 
 This shells out to scripts/render_config.sh (the same script the mihomo container
 runs) against a temp config dir with a realistic subscription.txt fixture, so the
@@ -7,9 +7,11 @@ runtime awk/sed logic is actually exercised — earlier this check used a Python
 str.replace() stand-in and therefore missed two critical rendering bugs.
 
 Enforces:
-  * the subscription URL round-trips EXACTLY, including a `Name=` prefix and `&`
-    query separators (regression guard for the two critical rendering bugs);
-  * a controller secret containing `&` renders verbatim;
+  * the subscription URL round-trips EXACTLY, including a `Name=` prefix, `&`
+    query separators, AND a literal `"` (regression guard for the rendering bugs,
+    incl. the YAML double-quoted-scalar escaping — url renders inside `url: "..."`);
+  * a controller secret containing `&`, `|`, `"` AND `\` renders verbatim
+    (secret renders inside `secret: "..."`, so `"`/`\` must be YAML-escaped);
   * external-controller + DNS sections are present and correctly typed (lists);
   * NO hardcoded DNS server / user network address remains in the committed template
     (CLAUDE.md rule) — only the generic bind/loopback constants are allowed.
@@ -31,10 +33,14 @@ RENDERER = REPO / "scripts" / "render_config.sh"
 ALLOWED_IPS = {"0.0.0.0", "127.0.0.1"}  # bind-all / loopback are generic, not DNS/user addrs
 IPV4 = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
 
-# A deliberately nasty fixture: label prefix + multiple `&`-joined params + `=` inside.
-SUB_URL = "https://h.example.com/api/v1/subscribe?token=a&flag=1&list=clash"
+# A deliberately nasty fixture: label prefix + multiple `&`-joined params + `=`
+# inside + a literal `"`. The URL and secret both render inside YAML double-quoted
+# scalars, so a `"`/`\` not escaped for that context closes the string early (or is
+# read as a YAML escape) -> invalid config -> mihomo crash-loop. These exercise
+# BOTH render_config.sh escaping layers: esc() (sed: \ & |) and yaml_dq() (YAML: " \).
+SUB_URL = 'https://h.example.com/api/v1/subscribe?token=a&flag=1&list=clash&note="x"'
 SUB_LINE = f"Default={SUB_URL}"
-SECRET = "s3cr&t|x"  # exercises sed replacement-special escaping (& and |)
+SECRET = 's3cr&t|"x\\y'  # & | render via esc(); " and \ render via yaml_dq()
 
 
 def fail(msg: str):

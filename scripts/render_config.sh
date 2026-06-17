@@ -31,14 +31,27 @@ SUB_URL=$(grep -v '^#' "$SUB_FILE" | grep -v '^[[:space:]]*$' | head -n1 \
   | sed -e 's/^[A-Za-z0-9_.-]*=//' -e 's/[[:space:]]*$//')
 [ -n "$SUB_URL" ] || { echo "ERROR: subscription.txt has no usable URL" >&2; exit 1; }
 
-# Escape sed replacement-side specials so values containing & | \ render verbatim
-# (URLs join params with &; '|' is our sed delimiter). Order matters: backslash first.
+# Two escaping layers, applied in order for values that land inside a YAML
+# double-quoted scalar; only the sed layer for bare/flow-sequence values.
+#
+# esc - escape sed replacement-side specials so a value renders verbatim through
+#   `sed s|...|...|`: backslash FIRST, then & (whole-match ref) and the '|'
+#   delimiter. URLs join params with &; '|' is our delimiter.
 esc() { printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/&/\\\&/g' -e 's/|/\\|/g'; }
+#
+# yaml_dq - escape a value for a YAML DOUBLE-QUOTED scalar ("..."): backslash
+#   FIRST, then the double-quote. The template wraps the subscription URL and the
+#   controller secret in double quotes, so an unescaped " would close the string
+#   early (invalid YAML -> mihomo crash-loops) and a \ would be read as a YAML
+#   escape. Compose UNDER esc() so sed then emits the escaped form verbatim:
+#   esc "$(yaml_dq "$value")". Bare/flow values (port, DNS) must NOT use this -
+#   \" is only meaningful inside double quotes.
+yaml_dq() { printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'; }
 
 sed \
-  -e "s|{{AIRPORT_URL}}|$(esc "$SUB_URL")|g" \
+  -e "s|{{AIRPORT_URL}}|$(esc "$(yaml_dq "$SUB_URL")")|g" \
   -e "s|{{CONTROLLER_PORT}}|$(esc "$CONTROLLER_PORT")|g" \
-  -e "s|{{CONTROLLER_SECRET}}|$(esc "$CONTROLLER_SECRET")|g" \
+  -e "s|{{CONTROLLER_SECRET}}|$(esc "$(yaml_dq "$CONTROLLER_SECRET")")|g" \
   -e "s|{{DNS_DEFAULT_NAMESERVER}}|$(esc "$DNS_DEFAULT_NAMESERVER")|g" \
   -e "s|{{DNS_NAMESERVER}}|$(esc "$DNS_NAMESERVER")|g" \
   -e "s|{{DNS_FALLBACK}}|$(esc "$DNS_FALLBACK")|g" \
