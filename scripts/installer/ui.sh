@@ -182,6 +182,28 @@ is_hhmm() {
   [ "$_h" -ge 0 ] && [ "$_h" -le 23 ] && [ "$_m" -ge 0 ] && [ "$_m" -le 59 ]
 }
 
+# is_dns_list - 0 if a non-empty comma-separated list where each entry looks like
+# a DNS server: an IPv4, or a host/scheme (contains a '.' or '://', e.g.
+# dns.google or https://dns.example/dns-query). Guards the .env DNS_* fields,
+# which render_config.sh HARD-FAILS on when empty.
+is_dns_list() {
+  [ -n "$1" ] || return 1
+  _dl_rest="$1"
+  while [ -n "$_dl_rest" ]; do
+    case "$_dl_rest" in
+      *,*) _dl_tok="${_dl_rest%%,*}"; _dl_rest="${_dl_rest#*,}" ;;
+      *)   _dl_tok="$_dl_rest"; _dl_rest="" ;;
+    esac
+    _dl_tok="${_dl_tok# }"; _dl_tok="${_dl_tok% }"   # trim one leading/trailing space
+    [ -n "$_dl_tok" ] || return 1
+    case "$_dl_tok" in
+      *://*|*.*) : ;;        # scheme (DoH/DoT) or a dotted host / IPv4
+      *) return 1 ;;
+    esac
+  done
+  return 0
+}
+
 # ui_ask_validated VARNAME PROMPT DEFAULT VALIDATOR - re-prompt until VALIDATOR
 # (a function name taking the value) accepts the input.
 ui_ask_validated() {

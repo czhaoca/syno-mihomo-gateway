@@ -204,18 +204,103 @@ wizard_subscription() {
   return 1
 }
 
-# ensure_subscription - guarantee config/subscription.txt holds a real URL before
-# deploy. The container entrypoint (render_config.sh) HARD-FAILS without it, which
-# crash-loops mihomo. Prompts via wizard_subscription if missing, still the shipped
-# placeholder, or lacking an http(s) line. Returns non-zero if the operator declines.
+# ensure_subscription - guarantee config/subscription.txt holds a CLEAN, usable
+# URL before deploy. The container entrypoint (render_config.sh) HARD-FAILS
+# without one (crash-loops mihomo), and a paste-corrupted line (bracketed-paste
+# residue / control chars) renders a broken url. Bounces to wizard_subscription
+# if the file is missing, still the shipped placeholder, or lacks an http(s)
+# line; if the stored line is dirty but recoverable, offers the cleaned URL.
+# Returns non-zero only if the operator declines to provide a valid URL.
 ensure_subscription() {
   _sub="$REPO_ROOT/config/subscription.txt"
   _example="$REPO_ROOT/config/subscription.txt.example"
-  if [ ! -f "$_sub" ] \
-     || { [ -f "$_example" ] && cmp -s "$_sub" "$_example"; } \
-     || ! grep -v '^#' "$_sub" 2>/dev/null | grep -q 'https\{0,1\}://'; then
+
+  # 1) Missing, or still the shipped placeholder -> enter a fresh URL.
+  if [ ! -f "$_sub" ] || { [ -f "$_example" ] && cmp -s "$_sub" "$_example"; }; then
     ui_warn "$(msg warn_no_sub)"
     wizard_subscription || return 1
+    return 0
   fi
+
+  # 2) Take the first real line and SANITIZE it; the cleaned value is what render
+  #    will effectively use (minus paste corruption render's label-strip can't
+  #    fix). Decide on the cleaned result, not on grep of the raw bytes - so a
+  #    control-char-garbled line never slips through on any grep implementation.
+  _line="$(grep -v '^#' "$_sub" 2>/dev/null | grep -v '^[[:space:]]*$' | head -n1)"
+  _clean="$(_sanitize_url "$_line")"
+  case "$_clean" in
+    http://*|https://*) : ;;
+    *) ui_warn "$(msg warn_no_sub)"; wizard_subscription || return 1; return 0 ;;
+  esac
+
+  # 3) Recoverable URL, but was the stored line garbled (control chars incl. ESC,
+  #    or bracketed-paste markers)? Detect with shell globbing only (no grep, no
+  #    binary-mode surprises); offer the cleaned URL, else re-enter.
+  _dirty=0
+  case "$_line" in *[[:cntrl:]]* | *'[200~'* | *'[201~'*) _dirty=1 ;; esac
+  if [ "$_dirty" = 1 ]; then
+    ui_warn "$(msg warn_sub_dirty)"
+    ui_say "$(msgf sub_confirm "$_clean")"
+    if ui_yesno "$(msg ask_sub_ok)" y; then
+      printf '%s\n' "$_clean" > "$_sub" && ui_ok "$(msg ok_sub_saved)"
+    else
+      wizard_subscription || return 1
+    fi
+  fi
+  return 0
+}
+
+# precheck_env - validate the SAVED .env before a deploy that reuses it, and
+# BOUNCE BACK to re-enter only the fields that are missing/invalid (rather than
+# letting create_network / render_config.sh / compose fail mid-deploy). Each
+# fix is persisted. Returns non-zero only if the operator quits / declines.
+_pc_need() {  # KEY VALIDATOR PROMPT_MSG_KEY DEFAULT
+  _pc_k="$1"; _pc_ck="$2"; _pc_qk="$3"; _pc_df="$4"
+  _pc_cur="$(env_get "$_pc_k" 2>/dev/null || echo '')"
+  if "$_pc_ck" "$_pc_cur"; then return 0; fi
+  _pc_fixed=1
+  ui_warn "$(msgf precheck_bad "$_pc_k" "$_pc_cur")"
+  ui_ask_validated _pc_nv "$(msg "$_pc_qk")" "${_pc_cur:-$_pc_df}" "$_pc_ck"
+  env_set "$_pc_k" "$_pc_nv"
+}
+
+precheck_env() {
+  ui_step "$(msg precheck_step)"
+  _pc_fixed=0
+  _pc_need ROUTER_IP   is_ipv4 q_router 192.168.1.1
+  _pc_need SUBNET_CIDR is_cidr q_subnet 192.168.1.0/24
+  # MIHOMO_IP: validate AND conflict-check on re-entry (DHCP collision guard).
+  _pc_cur="$(env_get MIHOMO_IP 2>/dev/null || echo '')"
+  if ! is_ipv4 "$_pc_cur"; then
+    _pc_fixed=1
+    ui_warn "$(msgf precheck_bad MIHOMO_IP "$_pc_cur")"
+    while :; do
+      ui_ask_validated MIHOMO_IP "$(msg q_mihomo_ip)" "${_pc_cur:-192.168.1.100}" is_ipv4
+      check_ip_conflict "$MIHOMO_IP" && break
+    done
+    env_set MIHOMO_IP "$MIHOMO_IP"
+  fi
+  _pc_need WEB_UI_PORT     is_port     q_web_port        8080
+  _pc_need CONTROLLER_PORT is_port     q_controller_port 9090
+  _pc_need DNS_DEFAULT_NAMESERVER is_dns_list q_dns_bootstrap 1.1.1.1
+  _pc_need DNS_NAMESERVER         is_dns_list q_dns_domestic  1.1.1.1
+  _pc_need DNS_FALLBACK           is_dns_list q_dns_fallback  1.1.1.1
+  # Image refs must resolve or compose fails closed (${MIHOMO_IMAGE:?}).
+  if [ -z "$(env_get MIHOMO_IMAGE 2>/dev/null || echo '')" ] \
+     || [ -z "$(env_get METACUBEXD_IMAGE 2>/dev/null || echo '')" ]; then
+    _pc_fixed=1
+    ui_warn "$(msg precheck_images)"
+    wizard_images || return 1
+  fi
+  load_env
+  [ "$_pc_fixed" = 0 ] && ui_ok "$(msg precheck_ok)"
+  return 0
+}
+
+# precheck_deploy - the single ".env AND subscription.txt" gate for a reuse
+# deploy: validate/repair the saved .env, then the subscription URL.
+precheck_deploy() {
+  precheck_env || return 1
+  ensure_subscription || return 1
   return 0
 }

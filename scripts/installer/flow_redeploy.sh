@@ -23,6 +23,8 @@ flow_redeploy() {
   ui_say "$(msgf redeploy_subnet "${SUBNET_CIDR:-?}")"
   ui_say "$(msgf redeploy_mihomo "${MIHOMO_IP:-?}")"
   ui_say "$(msgf redeploy_images "${MIHOMO_IMAGE:-?}")"
+  _rd_sub="$(grep -v '^#' "$REPO_ROOT/config/subscription.txt" 2>/dev/null | grep -v '^[[:space:]]*$' | head -n1)"
+  ui_say "$(msgf redeploy_sub "${_rd_sub:-$(msg redeploy_sub_none)}")"
 
   ui_menu_select _r "$(msg redeploy_what)" \
     "$(msg redeploy_asis)" \
@@ -41,6 +43,10 @@ flow_redeploy() {
     4) scan_and_prefill || return 1; load_env ;;
     5) return 0 ;;
   esac
+
+  # Validate the saved .env + subscription.txt and BOUNCE BACK to re-enter any
+  # missing/invalid/garbled value, so a reuse-deploy can't fail mid-flight.
+  precheck_deploy || return 1
 
   pf_docker || return 1
   pf_arch
