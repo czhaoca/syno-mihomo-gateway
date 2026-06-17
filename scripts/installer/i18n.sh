@@ -182,6 +182,11 @@ _msg_en() {
     ok_mihomo_healthy) printf '%s' 'mihomo is running and healthy' ;;
     diag_unhealthy)   printf '%s' 'mihomo did not become healthy' ;;
     diag_unhealthy_fix) printf '%s' "see the mihomo log above; a bad subscription URL, DNS, or a blocked geo-data download (geox-url in config.template.yaml) is the usual cause" ;;
+    info_egress_test) printf '%s' 'testing internet egress through the proxy (GET %s) ...' ;;
+    ok_egress)        printf '%s' 'egress OK - reached the test URL through the proxy (%s ms)' ;;
+    diag_egress)      printf '%s' 'the gateway is up, but it could NOT reach the internet through %s (the nodes time out)' ;;
+    diag_egress_fix)  printf '%s' 'your subscription may be expired or its nodes down/blocked from this network - open the dashboard (Proxies -> test the nodes), pick a working node, or update the subscription URL, then redeploy' ;;
+    info_egress_skip) printf '%s' 'egress test skipped (no wget/curl in the mihomo image)' ;;
     step_deploy_done) printf '%s' 'Deployment complete' ;;
     ok_gateway_up)    printf '%s' 'The gateway is up.' ;;
     rep_dashboard)    printf '%s' 'Dashboard (open from a LAN device that is NOT the NAS):' ;;
@@ -434,6 +439,11 @@ _msg_zh() {
     ok_mihomo_healthy) printf '%s' 'mihomo 正在运行且健康' ;;
     diag_unhealthy)   printf '%s' 'mihomo 未能进入健康状态' ;;
     diag_unhealthy_fix) printf '%s' "请查看上面的 mihomo 日志；通常是订阅链接、DNS，或 geo 数据下载被阻断（config.template.yaml 中的 geox-url）所致" ;;
+    info_egress_test) printf '%s' '正在通过代理测试外网连通性（GET %s）……' ;;
+    ok_egress)        printf '%s' '出口正常——已通过代理访问到测试地址（%s 毫秒）' ;;
+    diag_egress)      printf '%s' '网关已启动，但无法通过 %s 访问外网（节点超时）' ;;
+    diag_egress_fix)  printf '%s' '订阅可能已过期，或其节点已下线/在本网络被阻断——请打开面板（代理 -> 测试节点），选择一个可用节点，或更新订阅链接后重新部署' ;;
+    info_egress_skip) printf '%s' '已跳过出口测试（mihomo 镜像中没有 wget/curl）' ;;
     step_deploy_done) printf '%s' '部署完成' ;;
     ok_gateway_up)    printf '%s' '网关已启动。' ;;
     rep_dashboard)    printf '%s' '仪表盘（请从非 NAS 的 LAN 设备打开）：' ;;

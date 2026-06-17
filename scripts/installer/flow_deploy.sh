@@ -64,6 +64,56 @@ _show_mihomo_logs() {
   ui_say ""
 }
 
+# _ctrl_get URL [HEADER] - GET URL from INSIDE the mihomo container (so the
+# macvlan host-isolation quirk doesn't matter) and echo the body. Uses whichever
+# of wget/curl the image ships; empty output on any failure (incl. non-2xx).
+_ctrl_get() {
+  _cg_u="$1"; _cg_h="$2"
+  if "$DOCKER_BIN" exec "$MIHOMO_CONTAINER" sh -c 'command -v wget >/dev/null 2>&1' 2>/dev/null; then
+    if [ -n "$_cg_h" ]; then
+      "$DOCKER_BIN" exec "$MIHOMO_CONTAINER" wget -q -T 8 -O - --header "$_cg_h" "$_cg_u" 2>/dev/null
+    else
+      "$DOCKER_BIN" exec "$MIHOMO_CONTAINER" wget -q -T 8 -O - "$_cg_u" 2>/dev/null
+    fi
+  elif "$DOCKER_BIN" exec "$MIHOMO_CONTAINER" sh -c 'command -v curl >/dev/null 2>&1' 2>/dev/null; then
+    if [ -n "$_cg_h" ]; then
+      "$DOCKER_BIN" exec "$MIHOMO_CONTAINER" curl -fsS -m 8 -H "$_cg_h" "$_cg_u" 2>/dev/null
+    else
+      "$DOCKER_BIN" exec "$MIHOMO_CONTAINER" curl -fsS -m 8 "$_cg_u" 2>/dev/null
+    fi
+  fi
+}
+
+# proxy_egress_probe - EXTRA GUARD: a mihomo "Running + controller OK" health gate
+# does NOT prove the proxy can actually reach the internet. Ask mihomo to GET a
+# test URL THROUGH the rule target (the PROXY group) via the controller's delay
+# API, so a "started but every node times out" state (dead / expired / blocked
+# subscription nodes) is surfaced NOW with a clear diagnosis, not later as failing
+# traffic. Warns; never fails the deploy (the gateway itself is correctly set up).
+proxy_egress_probe() {
+  [ -n "${DOCKER_BIN:-}" ] || return 0
+  _eg_grp="${EGRESS_TEST_GROUP:-PROXY}"
+  _eg_url="${EGRESS_TEST_URL:-http://www.gstatic.com/generate_204}"
+  _eg_to="${EGRESS_TEST_TIMEOUT_MS:-5000}"
+  if ! "$DOCKER_BIN" exec "$MIHOMO_CONTAINER" sh -c 'command -v wget >/dev/null 2>&1 || command -v curl >/dev/null 2>&1' 2>/dev/null; then
+    ui_info "$(msg info_egress_skip)"
+    return 0
+  fi
+  _eg_api="http://127.0.0.1:${CONTROLLER_PORT:-9090}/proxies/${_eg_grp}/delay?timeout=${_eg_to}&url=${_eg_url}"
+  _eg_hdr=""
+  [ -n "${CONTROLLER_SECRET:-}" ] && _eg_hdr="Authorization: Bearer ${CONTROLLER_SECRET}"
+  ui_info "$(msgf info_egress_test "$_eg_url")"
+  _eg_out="$(_ctrl_get "$_eg_api" "$_eg_hdr")"
+  case "$_eg_out" in
+    *'"delay"'*)
+      _eg_ms="$(printf '%s' "$_eg_out" | sed -n 's/.*"delay"[^0-9]*\([0-9]\{1,\}\).*/\1/p')"
+      ui_ok "$(msgf ok_egress "${_eg_ms:-?}")" ;;
+    *)
+      diagnose "$(msgf diag_egress "$_eg_grp")" "$(msg diag_egress_fix)" ;;
+  esac
+  return 0
+}
+
 deploy_stack() {
   ui_step "$(msg step_deploy_stack)"
   # render_config.sh (the container entrypoint) hard-fails without a real
@@ -95,6 +145,7 @@ deploy_stack() {
   fi
   if health_gate; then
     ui_ok "$(msg ok_mihomo_healthy)"
+    proxy_egress_probe          # extra guard: real GET through the proxy nodes
     return 0
   fi
   _show_mihomo_logs
