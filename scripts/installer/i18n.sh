@@ -150,9 +150,11 @@ _msg_en() {
     sub_current)      printf '%s' 'current: %s' ;;
     ask_replace_sub)  printf '%s' 'replace the existing subscription URL?' ;;
     ok_sub_kept)      printf '%s' 'kept the existing subscription' ;;
-    q_sub_url)        printf '%s' 'Subscription URL' ;;
+    q_sub_url)        printf '%s' 'Subscription URL (paste it; you will confirm it next)' ;;
     warn_sub_required) printf '%s' 'a subscription URL is required' ;;
     warn_sub_scheme)  printf '%s' 'the URL must start with http:// or https://' ;;
+    sub_confirm)      printf '%s' 'captured: %s' ;;
+    ask_sub_ok)       printf '%s' 'is this URL correct and complete (not truncated)?' ;;
     ok_sub_saved)     printf '%s' 'subscription saved' ;;
     diag_sub_write)   printf '%s' 'could not write %s' ;;
     diag_sub_write_fix) printf '%s' 'check that this folder is writable' ;;
@@ -389,9 +391,11 @@ _msg_zh() {
     sub_current)      printf '%s' '当前：%s' ;;
     ask_replace_sub)  printf '%s' '是否替换现有的订阅链接？' ;;
     ok_sub_kept)      printf '%s' '已保留现有订阅' ;;
-    q_sub_url)        printf '%s' '订阅链接' ;;
+    q_sub_url)        printf '%s' '订阅链接（粘贴后将让你确认）' ;;
     warn_sub_required) printf '%s' '必须填写订阅链接' ;;
     warn_sub_scheme)  printf '%s' '链接必须以 http:// 或 https:// 开头' ;;
+    sub_confirm)      printf '%s' '已读取：%s' ;;
+    ask_sub_ok)       printf '%s' '此链接是否正确且完整（没有被截断）？' ;;
     ok_sub_saved)     printf '%s' '订阅已保存' ;;
     diag_sub_write)   printf '%s' '无法写入 %s' ;;
     diag_sub_write_fix) printf '%s' '请检查此文件夹是否可写' ;;

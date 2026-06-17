@@ -144,6 +144,27 @@ wizard_images() {
   return 0
 }
 
+# _sanitize_url - clean the common paste artifacts that corrupt a pasted
+# subscription URL ("the https link is not properly copied"):
+#   * bracketed-paste wrappers: modern terminals send the pasted text wrapped in
+#     ESC[200~ ... ESC[201~; a bare `read` captures them literally. Strip ALL
+#     control chars (URLs never contain them; this also drops a stray CR) then
+#     remove the leftover [200~ / [201~ markers.
+#   * surrounding single/double quotes (users paste "https://...").
+#   * a leading "label=" prefix (the documented Name=URL file format) so the
+#     interactive wizard accepts the same form the file does.
+#   * leading/trailing whitespace.
+# Echoes the cleaned value; does not validate. POSIX/BusyBox-safe.
+_sanitize_url() {
+  printf '%s' "$1" \
+    | tr -d '[:cntrl:]' \
+    | sed -e 's/\[20[01]~//g' \
+          -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' \
+          -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'\$//" \
+          -e 's/^[A-Za-z0-9_.-]*=//' \
+          -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'
+}
+
 # wizard_subscription - capture the airport/subscription URL into
 # config/subscription.txt (never silently overwrite a real one).
 wizard_subscription() {
@@ -163,12 +184,17 @@ wizard_subscription() {
     ui_yesno "$(msg ask_replace_sub)" n || { ui_ok "$(msg ok_sub_kept)"; return 0; }
   fi
   while :; do
-    ui_ask _url "$(msg q_sub_url)" ""
+    ui_ask _raw "$(msg q_sub_url)" ""
+    _url="$(_sanitize_url "$_raw")"
     case "$_url" in
-      http://*|https://*) break ;;
-      '') ui_warn "$(msg warn_sub_required)" ;;
-      *) ui_warn "$(msg warn_sub_scheme)" ;;
+      http://*|https://*) : ;;
+      '') ui_warn "$(msg warn_sub_required)"; continue ;;
+      *)  ui_warn "$(msg warn_sub_scheme)";  continue ;;
     esac
+    # Echo EXACTLY what was captured so a truncated/garbled paste is caught NOW,
+    # before a failed deploy. Default yes; answer no to re-enter.
+    ui_say "$(msgf sub_confirm "$_url")"
+    ui_yesno "$(msg ask_sub_ok)" y && break
   done
   if printf '%s\n' "$_url" > "$_sub"; then
     ui_ok "$(msg ok_sub_saved)"
