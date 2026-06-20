@@ -32,6 +32,18 @@ tun:
 external-controller: 0.0.0.0:{{CONTROLLER_PORT}}
 secret: "{{CONTROLLER_SECRET}}"
 
+# CORS allow-list for the controller API. The self-hosted MetaCubeXD dashboard is
+# served from the NAS host (http://<NAS-IP>:${WEB_UI_PORT}) while the controller
+# lives on the mihomo macvlan IP:port — a DIFFERENT browser origin. Recent mihomo
+# ships a RESTRICTIVE default allow-list (only the bundled/hosted dashboards), so a
+# request from your own dashboard is rejected and MetaCubeXD reports "cannot connect
+# to backend". Allow any origin here; the `secret` above still gates real API access.
+# allow-private-network answers Chrome's Private Network Access preflight.
+external-controller-cors:
+  allow-origins:
+    - '*'
+  allow-private-network: true
+
 dns:
   enable: true
   listen: 0.0.0.0:53

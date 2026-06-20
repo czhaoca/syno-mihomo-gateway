@@ -62,6 +62,27 @@ Checklist:
 - Is the controller actually enabled? `docker exec mihomo wget -qO- http://127.0.0.1:9090/version`
   should return JSON. If not, check `docker logs mihomo` for a render/start error.
 
+**Most common cause: CORS.** If the backend is reachable from a LAN device
+(`curl http://MIHOMO_IP:CONTROLLER_PORT/version` returns JSON) but MetaCubeXD still reports
+*"cannot connect to backend" / "无法连接后端"*, it is a cross-origin block — **not** a network or
+secret problem. The dashboard is served from `http://NAS_IP:WEB_UI_PORT` while the controller
+answers on `MIHOMO_IP:CONTROLLER_PORT` (a different origin), and recent mihomo ships a
+**restrictive** default CORS allow-list (only the bundled/hosted dashboards, not arbitrary LAN
+addresses). Confirm in the browser DevTools (F12) → Console — you'll see a CORS error. The config
+template now sets:
+
+```yaml
+external-controller-cors:
+  allow-origins:
+    - '*'        # the secret still gates real API access
+  allow-private-network: true
+```
+
+so a fresh deploy already allows your dashboard. On a gateway deployed **before** this was added,
+update `config/config.template.yaml` (or the rendered `…-data/config/config.yaml`) and re-render
+with `docker compose up -d --force-recreate mihomo` — the entrypoint re-renders `config.yaml` from
+the template on start.
+
 ## Containers are healthy but LAN clients have no internet
 
 Run the read-only structural diagnostic first:

@@ -106,6 +106,15 @@ def main() -> None:
     if doc.get("secret") != SECRET:
         fail(f"controller secret mangled: got {doc.get('secret')!r}, expected {SECRET!r}")
 
+    # 4b) CORS must permit a self-hosted dashboard origin. mihomo's default allow-list
+    # excludes arbitrary LAN addresses, so a NAS-hosted MetaCubeXD on a different
+    # host:port is otherwise rejected by the browser ("cannot connect to backend").
+    cors = doc.get("external-controller-cors") or {}
+    if "*" not in (cors.get("allow-origins") or []):
+        fail(f"external-controller-cors.allow-origins must allow '*': {cors.get('allow-origins')!r}")
+    if cors.get("allow-private-network") is not True:
+        fail("external-controller-cors.allow-private-network must be true (Chrome PNA preflight)")
+
     # 5) DNS lists.
     dns = doc.get("dns") or {}
     for field in ("default-nameserver", "nameserver", "fallback"):

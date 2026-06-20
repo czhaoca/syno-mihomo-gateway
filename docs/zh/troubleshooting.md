@@ -50,6 +50,23 @@
 - 如果你设置了 `CONTROLLER_SECRET`，是否已填写？
 - 控制器是否确实已启用？`docker exec mihomo wget -qO- http://127.0.0.1:9090/version` 应返回 JSON。如果没有，请检查 `docker logs mihomo` 是否有渲染 / 启动错误。
 
+**最常见原因：CORS（跨域）。** 如果在局域网设备上后端可达（`curl http://MIHOMO_IP:CONTROLLER_PORT/version`
+能返回 JSON），但 MetaCubeXD 仍提示*“无法连接后端”*，那这是**跨域拦截**，而非网络或密钥问题。仪表盘由
+`http://NAS_IP:WEB_UI_PORT` 提供，而控制器在 `MIHOMO_IP:CONTROLLER_PORT` 上响应（属于不同来源/origin），
+近期版本的 mihomo 默认的 CORS 白名单很**严格**（只允许内置/官方托管的仪表盘，不含任意局域网地址）。可在浏览器
+开发者工具（F12）→ Console 中确认（会看到 CORS 报错）。配置模板现已设置：
+
+```yaml
+external-controller-cors:
+  allow-origins:
+    - '*'        # 实际 API 访问仍由 secret 控制
+  allow-private-network: true
+```
+
+因此全新部署已默认允许你的仪表盘。若网关是在**此项加入之前**部署的，请更新
+`config/config.template.yaml`（或已渲染的 `…-data/config/config.yaml`），然后用
+`docker compose up -d --force-recreate mihomo` 重新渲染——容器入口会在启动时按模板重新生成 `config.yaml`。
+
 ## mihomo 无法启动 / 反复崩溃重启
 
 ```bash
