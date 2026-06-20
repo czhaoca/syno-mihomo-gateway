@@ -114,6 +114,7 @@ _msg_en() {
     q_router)         printf '%s' 'Router / Gateway IP' ;;
     q_subnet)         printf '%s' 'Home LAN subnet (CIDR)' ;;
     q_mihomo_ip)      printf '%s' 'Static LAN IP for mihomo (must be unused)' ;;
+    info_ip_suggest_scan) printf '%s' 'scanning the LAN for a free static IP near the NAS...' ;;
     q_web_port)       printf '%s' 'Dashboard port (published on the NAS)' ;;
     warn_port_in_use) printf '%s' 'port %s looks already in use - pick another if the dashboard fails to start' ;;
     q_controller_port) printf '%s' 'Mihomo controller port' ;;
@@ -146,6 +147,9 @@ _msg_en() {
     q_cf_tag)         printf '%s' 'cloudflared image tag' ;;
     ok_cf_image)      printf '%s' 'cloudflared image: %s' ;;
     q_cf_token)       printf '%s' 'cloudflared tunnel token (Enter to reuse the running one)' ;;
+    q_cf_token_new)   printf '%s' 'cloudflared tunnel token (required - no running tunnel to reuse)' ;;
+    info_cf_detected) printf '%s' "detected a running cloudflared container '%s' - press Enter to reuse its tunnel token" ;;
+    warn_cf_token_required) printf '%s' 'a tunnel token is required to provision the first cloudflared container' ;;
     step_sub)         printf '%s' 'Airport / subscription URL' ;;
     sub_current)      printf '%s' 'current: %s' ;;
     ask_replace_sub)  printf '%s' 'replace the existing subscription URL?' ;;
@@ -397,6 +401,7 @@ _msg_zh() {
     q_router)         printf '%s' '路由器 / 网关 IP' ;;
     q_subnet)         printf '%s' '家庭 LAN 子网（CIDR）' ;;
     q_mihomo_ip)      printf '%s' 'mihomo 的静态 LAN IP（必须未被占用）' ;;
+    info_ip_suggest_scan) printf '%s' '正在扫描 LAN 上靠近 NAS 的空闲静态 IP……' ;;
     q_web_port)       printf '%s' '仪表盘端口（在 NAS 上发布）' ;;
     warn_port_in_use) printf '%s' '端口 %s 似乎已被占用 - 若仪表盘启动失败请另选一个' ;;
     q_controller_port) printf '%s' 'Mihomo 控制器端口' ;;
@@ -429,6 +434,9 @@ _msg_zh() {
     q_cf_tag)         printf '%s' 'cloudflared 镜像 tag' ;;
     ok_cf_image)      printf '%s' 'cloudflared 镜像：%s' ;;
     q_cf_token)       printf '%s' 'cloudflared 隧道令牌（回车则复用正在运行的令牌）' ;;
+    q_cf_token_new)   printf '%s' 'cloudflared 隧道令牌（必填——没有可复用的运行中隧道）' ;;
+    info_cf_detected) printf '%s' "检测到正在运行的 cloudflared 容器 '%s' - 回车即可复用其隧道令牌" ;;
+    warn_cf_token_required) printf '%s' '首次部署 cloudflared 容器时必须提供隧道令牌' ;;
     step_sub)         printf '%s' '机场 / 订阅链接' ;;
     sub_current)      printf '%s' '当前：%s' ;;
     ask_replace_sub)  printf '%s' '是否替换现有的订阅链接？' ;;

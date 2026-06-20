@@ -46,8 +46,26 @@ wizard_env() {
   env_set ROUTER_IP "$ROUTER_IP"
   ui_ask_validated SUBNET_CIDR "$(msg q_subnet)" "$(env_get SUBNET_CIDR || echo 192.168.1.0/24)" is_cidr
   env_set SUBNET_CIDR "$SUBNET_CIDR"
+  # Suggest a free static IP near the NAS instead of the stale placeholder. Keep a
+  # saved value that is still a usable host in THIS subnet (idempotent re-run);
+  # otherwise derive the next free address above the NAS's own IP on the chosen
+  # interface (skipped when the operator typed the interface name by hand).
+  _mihomo_cur="$(env_get MIHOMO_IP 2>/dev/null || echo '')"
+  _mihomo_def="$_mihomo_cur"
+  if [ -z "$_mihomo_def" ] || ! ipv4_in_cidr "$_mihomo_def" "$SUBNET_CIDR" \
+     || ipv4_is_edge_of_cidr "$_mihomo_def" "$SUBNET_CIDR" || [ "$_mihomo_def" = "$ROUTER_IP" ]; then
+    _mihomo_def=""
+    if [ "${IFACE_MANUAL:-0}" != 1 ]; then
+      _nas_ip="$(_iface_ipv4 "${PARENT_INTERFACE:-${CHOSEN_IFACE:-}}")"
+      if [ -n "$_nas_ip" ] && ipv4_in_cidr "$_nas_ip" "$SUBNET_CIDR"; then
+        ui_info "$(msg info_ip_suggest_scan)"
+        _mihomo_def="$(next_free_ipv4 "$_nas_ip" "$SUBNET_CIDR" "$ROUTER_IP")"
+      fi
+    fi
+    [ -n "$_mihomo_def" ] || _mihomo_def="${_mihomo_cur:-192.168.1.100}"
+  fi
   while :; do
-    ui_ask_validated MIHOMO_IP "$(msg q_mihomo_ip)" "$(env_get MIHOMO_IP || echo 192.168.1.100)" is_ipv4
+    ui_ask_validated MIHOMO_IP "$(msg q_mihomo_ip)" "$_mihomo_def" is_ipv4
     check_ip_conflict "$MIHOMO_IP" && break
   done
   env_set MIHOMO_IP "$MIHOMO_IP"
@@ -106,7 +124,7 @@ wizard_images() {
   REGISTRY_MODE="$_mode"
 
   if [ "$_mode" = acr ]; then
-    ui_ask DOCKER_REGISTRY "$(msg q_acr_host)" "$(env_get DOCKER_REGISTRY || echo '')"
+    ui_ask DOCKER_REGISTRY "$(msg q_acr_host)" "$(env_get DOCKER_REGISTRY || echo 'registry.cn-shenzhen.aliyuncs.com')"
     env_set DOCKER_REGISTRY "$DOCKER_REGISTRY"
     ui_ask ACR_NAMESPACE "$(msg q_acr_namespace)" "$(env_get ACR_NAMESPACE || echo '')"
     env_set ACR_NAMESPACE "$ACR_NAMESPACE"
@@ -139,8 +157,20 @@ wizard_images() {
       env_set CF_IMAGE "$CF_IMAGE"
       ui_ok "$(msgf ok_cf_image "$CF_IMAGE")"
     fi
-    ui_ask_secret CF_TUNNEL_TOKEN "$(msg q_cf_token)"
-    [ -n "$CF_TUNNEL_TOKEN" ] && env_set CF_TUNNEL_TOKEN "$CF_TUNNEL_TOKEN"
+    # Reuse the token from an already-running cloudflared container when present
+    # (blue-green preserves it); only force a token to provision the first one.
+    if cloudflared_token_present; then
+      ui_info "$(msgf info_cf_detected "${CF_CONTAINER_NAME:-cloudflared}")"
+      ui_ask_secret CF_TUNNEL_TOKEN "$(msg q_cf_token)"
+      [ -n "$CF_TUNNEL_TOKEN" ] && env_set CF_TUNNEL_TOKEN "$CF_TUNNEL_TOKEN"
+    else
+      while :; do
+        ui_ask_secret CF_TUNNEL_TOKEN "$(msg q_cf_token_new)"
+        [ -n "$CF_TUNNEL_TOKEN" ] && break
+        ui_warn "$(msg warn_cf_token_required)"
+      done
+      env_set CF_TUNNEL_TOKEN "$CF_TUNNEL_TOKEN"
+    fi
   fi
   # Persist concrete references. The strict dotenv loader does not perform
   # arbitrary shell expansion, and the updater validates exact target mapping.

@@ -83,12 +83,16 @@ This script:
 - optionally logs in to your registry and pulls images (non-interactive when `ACR_PASSWORD`
   is set, otherwise it prompts).
 
-For an existing or partial deployment, use `sudo sh ./install.sh` instead. Before teardown, the
-installer inventories the gateway containers and macvlan and asks independently whether to reuse
-them, dismantle verified project resources automatically, or show commands for manual handling.
-Manual mode removes nothing and can rescan after you finish. Automatic teardown waits until image,
-architecture, rendered-config, Compose, and network validation pass. Unrelated resources always
-require manual resolution; the external cloudflared container is never part of this cleanup.
+For an existing or partial deployment, use `sudo sh ./install.sh` instead. Its **first** step
+inventories the gateway containers and macvlan and asks independently whether to reuse them,
+dismantle verified project resources automatically, or show commands for manual handling — running
+this decision up front keeps the subsequent interface detection clean. The interface picker then
+lists only NICs that carry an IP address, and the static-IP prompt suggests the next free address
+above the NAS's own IP (probed with arping/ping) instead of a fixed placeholder. Manual mode removes
+nothing and can rescan after you finish. Automatic teardown still waits until image, architecture,
+rendered-config, Compose, and network validation pass — a failed re-deploy never tears down your
+running gateway. Unrelated resources always require manual resolution; the external cloudflared
+container is never part of this cleanup.
 
 ## 5. Start the stack
 

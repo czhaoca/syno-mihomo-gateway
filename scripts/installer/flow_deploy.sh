@@ -198,22 +198,24 @@ flow_deploy() {
   seed_config       || return 1
   load_env                                  # .env now exists; export its values
 
-  scan_and_prefill  || return 1             # interface FIRST -> derive router/subnet
+  pf_docker         || return 1             # lifecycle inspect/cleanup needs docker
+  plan_predeployment_cleanup || return 1    # DECIDE first (on the saved .env params)
+                                            # so interface + IP detection run clean
+
+  scan_and_prefill  || return 1             # interface -> derive router/subnet
   load_env                                  # pick up derived ROUTER_IP/SUBNET_CIDR
 
-  wizard_env        || return 1             # pre-filled; MIHOMO_IP conflict-checked
+  wizard_env        || return 1             # MIHOMO_IP suggested from the NAS IP
   wizard_images     || return 1
   wizard_subscription || return 1
   load_env                                  # re-load after the wizards wrote .env
 
-  pf_docker         || return 1
   pf_arch           || return 1
   pf_web_port       || return 1
   validate_selected_network || return 1
-  plan_predeployment_cleanup || return 1
-  prepare_stack     || return 1
+  prepare_stack     || return 1             # pull + validate NEW images (non-destructive)
 
-  apply_predeployment_cleanup || return 1
+  apply_predeployment_cleanup || return 1   # TEAR DOWN only after validation (safety kept)
   create_network    || return 1             # root: TUN + macvlan (final IP guard inside)
   load_env
 

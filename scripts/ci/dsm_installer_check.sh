@@ -7,6 +7,7 @@ ROOT="$(CDPATH='' cd -- "$(dirname -- "$0")/../.." && pwd)"
 . "$ROOT/scripts/lib/network.sh"
 . "$ROOT/scripts/lib/registry.sh"
 . "$ROOT/scripts/lib/compose.sh"
+. "$ROOT/scripts/lib/cloudflared.sh"
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 ui_error() { echo "ERROR: $*" >&2; }
@@ -91,6 +92,41 @@ ipv4_is_edge_of_cidr 192.168.1.255 192.168.1.0/24 || fail "broadcast edge not de
 cidr_is_canonical 192.168.1.0/24 || fail "canonical subnet rejected"
 ! cidr_is_canonical 192.168.1.10/24 || fail "host address accepted as subnet"
 
+# next_free_ipv4: suggest the first free host ABOVE the NAS IP, skipping the
+# router, the subnet edges, and any address ip_in_use reports as taken.
+mihomo_owns_ip() { return 1; }
+ip_in_use() { case "$1" in 192.168.1.11) return 0 ;; *) return 1 ;; esac; }
+[ "$(next_free_ipv4 192.168.1.10 192.168.1.0/24 192.168.1.1)" = 192.168.1.12 ] \
+  || fail "next_free_ipv4 did not skip the in-use .11"
+ip_in_use() { return 1; }
+[ "$(next_free_ipv4 192.168.1.5 192.168.1.0/24 192.168.1.6)" = 192.168.1.7 ] \
+  || fail "next_free_ipv4 did not skip the router address"
+[ -z "$(next_free_ipv4 10.0.0.5 192.168.1.0/24 192.168.1.1)" ] \
+  || fail "next_free_ipv4 accepted a base outside the subnet"
+
+# scan_interfaces: list only NICs that carry an IPv4 (address-less ones are never
+# valid macvlan parents); loopback/virtual interfaces stay filtered.
+ip() { [ "$1 $2 $3" = "-o link show" ] && printf '1: lo: <LOOP>\n2: eth0: <UP>\n3: eth1: <UP>\n'; }
+_iface_ipv4() { case "$1" in eth0) echo 192.168.1.10 ;; *) echo '' ;; esac; }
+[ "$(scan_interfaces)" = 'eth0 192.168.1.10' ] \
+  || fail "scan_interfaces kept an address-less or filtered NIC: $(scan_interfaces)"
+unset -f ip
+
+# cloudflared_token_present: reuse the token only when a container actually has one.
+_net_docker() { echo _fake_cf_docker; }
+_fake_cf_docker() {
+  [ "$1" = inspect ] || return 0
+  if [ "$2" = -f ]; then _cf_name="$4"; else _cf_name="$2"; fi
+  case "$_cf_name" in
+    has-token) [ "$2" = -f ] && printf 'PATH=/usr/bin\nTUNNEL_TOKEN=abc.def\n'; return 0 ;;
+    no-token)  [ "$2" = -f ] && printf 'PATH=/usr/bin\n'; return 0 ;;
+    *) return 1 ;;
+  esac
+}
+CF_CONTAINER_NAME=has-token; cloudflared_token_present || fail "missed an existing tunnel token"
+CF_CONTAINER_NAME=no-token;  ! cloudflared_token_present || fail "invented a tunnel token"
+CF_CONTAINER_NAME=absent;    ! cloudflared_token_present || fail "saw a token on a missing container"
+
 interface_exists() { return 0; }
 _iface_ipv4() { echo 192.168.1.10; }
 validate_network_plan eth0 192.168.1.0/24 192.168.1.1 192.168.1.100 \
@@ -118,15 +154,15 @@ host_arch() { echo amd64; }
 image_arch() { echo arm64; }
 ! arch_ok example.invalid/image:latest >/dev/null 2>&1 || fail "wrong image architecture was accepted"
 
-# Deployment sequencing regression: no network/container mutation may occur
-# before non-destructive image/config preparation succeeds.
+# Deployment sequencing regression: the pre-deployment DECISION runs first (so
+# interface + IP detection are clean), but no network/container mutation may occur
+# before non-destructive image/config preparation succeeds (validate-before-teardown).
 . "$ROOT/scripts/installer/flow_deploy.sh"
 msg() { echo "$1"; }
 ui_step() { :; }
 is_root() { return 0; }
 seed_config() { return 0; }
 load_env() { return 0; }
-scan_and_prefill() { return 0; }
 wizard_env() { return 0; }
 wizard_images() { return 0; }
 wizard_subscription() { return 0; }
@@ -134,7 +170,8 @@ pf_docker() { return 0; }
 pf_arch() { return 0; }
 pf_web_port() { return 0; }
 validate_selected_network() { return 0; }
-plan_predeployment_cleanup() { return 0; }
+plan_predeployment_cleanup() { echo plan >> "$TD/order"; }
+scan_and_prefill() { echo scan >> "$TD/order"; }
 apply_predeployment_cleanup() { echo cleanup >> "$TD/order"; }
 create_network() { echo network >> "$TD/order"; }
 deploy_stack() { echo deploy >> "$TD/order"; }
@@ -142,10 +179,13 @@ report_success() { :; }
 prepare_stack() { return 1; }
 : > "$TD/order"
 flow_deploy >/dev/null 2>&1 && fail "deploy continued after preparation failure"
-[ ! -s "$TD/order" ] || fail "deploy mutated state before preparation succeeded"
+case "$(tr '\n' ' ' < "$TD/order")" in
+  *cleanup*|*network*|*deploy*) fail "deploy mutated state before preparation succeeded" ;;
+esac
 prepare_stack() { echo prepare >> "$TD/order"; }
+: > "$TD/order"
 flow_deploy >/dev/null 2>&1 || fail "stubbed deployment sequence failed"
-[ "$(tr '\n' ' ' < "$TD/order")" = 'prepare cleanup network deploy ' ] \
+[ "$(tr '\n' ' ' < "$TD/order")" = 'plan scan prepare cleanup network deploy ' ] \
   || fail "unsafe deployment order: $(tr '\n' ' ' < "$TD/order")"
 
-echo "OK: BusyBox dotenv/network/arch/TUN checks and fail-before-mutation deployment order"
+echo "OK: BusyBox dotenv/network/arch/TUN/cloudflared checks and decision-first, fail-before-mutation deployment order"

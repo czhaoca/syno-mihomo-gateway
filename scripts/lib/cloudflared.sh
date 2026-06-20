@@ -18,6 +18,19 @@ _cloudflared_running() {
   [ "$("$DOCKER_BIN" inspect -f '{{.State.Running}}' "$1" 2>/dev/null)" = true ]
 }
 
+# cloudflared_token_present [NAME] - 0 if an existing cloudflared container (NAME,
+# default CF_CONTAINER_NAME) already carries a TUNNEL_TOKEN the blue-green updater
+# can reuse, so the installer can offer "Enter to reuse" instead of demanding one.
+# Reads only the token's PRESENCE; the value is never copied out. Resolves docker
+# via _net_docker so it works in the wizard before DOCKER_BIN is set.
+cloudflared_token_present() {
+  _ctp_name="${1:-${CF_CONTAINER_NAME:-cloudflared}}"
+  _ctp_d="$(_net_docker)"
+  "$_ctp_d" inspect "$_ctp_name" >/dev/null 2>&1 || return 1
+  "$_ctp_d" inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$_ctp_name" 2>/dev/null \
+    | grep -q '^TUNNEL_TOKEN=.'
+}
+
 cloudflared_cleanup_workdir() {
   [ -n "${CF_WORKDIR:-}" ] || return 0
   rm -rf "$CF_WORKDIR" 2>/dev/null || true

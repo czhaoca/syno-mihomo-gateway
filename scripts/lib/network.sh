@@ -56,10 +56,11 @@ _iface_ipv4() {
 }
 
 # scan_interfaces - print candidate LAN parent interfaces, one per line, as
-# "IFACE IPV4" (a literal "-" when the iface has no IPv4; both fields are
-# space-free so callers can split on the single space). Filters out loopback and
-# virtual/docker interfaces (lo, docker*, veth*, br-*, tproxy_network bridges).
-# Prefers `ip`, falls back to `ifconfig`. Newest BusyBox has both; DSM has one.
+# "IFACE IPV4" (both fields space-free so callers can split on the single space).
+# Skips loopback and virtual/docker interfaces (lo, docker*, veth*, br-*,
+# tproxy_network bridges) AND any interface that has no IPv4 address - an
+# address-less NIC is never a valid macvlan parent here, so it only adds noise to
+# the picker. Prefers `ip`, falls back to `ifconfig`; DSM BusyBox has one.
 scan_interfaces() {
   _names=""
   if command -v ip >/dev/null 2>&1; then
@@ -75,7 +76,8 @@ scan_interfaces() {
       lo|docker*|veth*|br-*|"$TPROXY_NETWORK"*) continue ;;
     esac
     _ip4="$(_iface_ipv4 "$_if")"
-    printf '%s %s\n' "$_if" "${_ip4:--}"
+    [ -n "$_ip4" ] || continue
+    printf '%s %s\n' "$_if" "$_ip4"
   done
 }
 
@@ -142,6 +144,44 @@ mihomo_owns_ip() {
   _have="$("$_d" inspect -f '{{range .NetworkSettings.Networks}}{{if .IPAMConfig}}{{.IPAMConfig.IPv4Address}}{{end}} {{.IPAddress}} {{end}}' mihomo 2>/dev/null)"
   case " $_have " in *" $_ip "*) return 0 ;; esac
   return 1
+}
+
+# next_free_ipv4 BASE SUBNET ROUTER [MAX] - suggest the first usable, free host
+# IPv4 ABOVE base within SUBNET. Skips the network/broadcast edges and ROUTER,
+# then probes each candidate with ip_in_use (arping->ping) and returns the first
+# that is free, unverifiable, or already held by our own mihomo container (so a
+# re-deploy reuses its address). Scans at most MAX candidates (default 10) to keep
+# the arping sweep short. Prints the chosen IP, or nothing if none qualifies (the
+# caller then falls back to a typed default). awk does the 32-bit integer math.
+next_free_ipv4() {
+  _nf_base="$1"; _nf_subnet="$2"; _nf_router="$3"; _nf_max="${4:-10}"
+  [ -n "$_nf_base" ] && [ -n "$_nf_subnet" ] || return 0
+  ipv4_in_cidr "$_nf_base" "$_nf_subnet" || return 0
+  _nf_cands="$(awk -v base="$_nf_base" -v cidr="$_nf_subnet" \
+                   -v router="$_nf_router" -v max="$_nf_max" 'BEGIN {
+    split(base,b,"."); x=((b[1]*256+b[2])*256+b[3])*256+b[4]
+    split(cidr,c,"/"); split(c[1],n,"."); m=c[2]+0
+    y=((n[1]*256+n[2])*256+n[3])*256+n[4]; block=2^(32-m)
+    net=int(y/block)*block; bcast=net+block-1
+    ri=-1
+    if (split(router,r,".")==4) ri=((r[1]*256+r[2])*256+r[3])*256+r[4]
+    cnt=0; ip=x+1
+    while (cnt<max && ip<bcast) {
+      if (ip>net && ip!=ri) {
+        printf "%d.%d.%d.%d\n", int(ip/16777216)%256, int(ip/65536)%256, int(ip/256)%256, ip%256
+        cnt++
+      }
+      ip++
+    }
+  }')"
+  for _nf_ip in $_nf_cands; do
+    mihomo_owns_ip "$_nf_ip" && { printf '%s' "$_nf_ip"; return 0; }
+    if ip_in_use "$_nf_ip"; then
+      continue                          # answers on the LAN -> taken, try the next
+    fi
+    printf '%s' "$_nf_ip"; return 0     # free or unverifiable -> offer it
+  done
+  return 0
 }
 
 # interface_exists IFACE - 0 if the interface is present on the host.

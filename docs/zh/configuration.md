@@ -35,8 +35,8 @@ Compose 兼容的引号，因此包含空格、`&`、`#`、`$`、引号或反斜
 |---|:--:|---|---|
 | `ROUTER_IP` | ✅ | 你的路由器/网关 IP。用于自动探测 macvlan 的父接口。 | `192.168.1.1` |
 | `SUBNET_CIDR` | ✅ | 用于 macvlan 网络的局域网子网。 | `192.168.1.0/24` |
-| `MIHOMO_IP` | ✅ | 分配给 mihomo 容器的静态局域网 IP。**必须是未被占用的地址**（安装器会检测冲突）。 | `192.168.1.100` |
-| `PARENT_INTERFACE` | | macvlan 父接口（局域网网卡）。安装器会从接口扫描结果填入；留空则自动检测（开机自愈任务也会自动检测）。 | `eth0` |
+| `MIHOMO_IP` | ✅ | 分配给 mihomo 容器的静态局域网 IP。**必须是未被占用的地址**——安装器会在所选接口上，基于 NAS 自身 IP 之上推荐下一个空闲地址（用 arping/ping 扫描），并在部署前再次检测冲突。 | `192.168.1.100` |
+| `PARENT_INTERFACE` | | macvlan 父接口（局域网网卡）。安装器会从接口扫描结果填入（无 IP 地址的网卡会被隐藏）；留空则自动检测（开机自愈任务也会自动检测）。 | `eth0` |
 
 ### Mihomo TUN
 
@@ -89,7 +89,7 @@ Compose 兼容的引号，因此包含空格、`&`、`#`、`$`、引号或反斜
 
 | 键 | Upd | Sec | 说明 | 示例 |
 |---|:--:|:--:|---|---|
-| `DOCKER_REGISTRY` | ✅ | | 镜像仓库主机（用于 `docker login` 并推导引用）。`docker` 模式下安装器会清空它以跳过登录。 | `registry.cn-shenzhen.aliyuncs.com` |
+| `DOCKER_REGISTRY` | ✅ | | 镜像仓库主机（用于 `docker login` 并推导引用）；安装器会预填 `registry.cn-shenzhen.aliyuncs.com` 作为默认值。`docker` 模式下安装器会清空它以跳过登录。 | `registry.cn-shenzhen.aliyuncs.com` |
 | `DOCKER_USERNAME` | ✅ | | 镜像仓库用户名（安装器与更新器共用）。 | `your_registry_user` |
 | `ACR_PASSWORD` | ✅ | 🔒 | 镜像仓库密码/访问令牌（用于非交互式 `--password-stdin`）。 | `…` |
 | `ACR_NAMESPACE` | ✅ | | 你的镜像所在的仓库命名空间（与主机 + 标签组合以推导引用）。 | `myns` |
@@ -109,7 +109,7 @@ Compose 兼容的引号，因此包含空格、`&`、`#`、`$`、引号或反斜
 | 键 | Sec | 说明 | 默认值 / 示例 |
 |---|:--:|---|---|
 | `CF_CONTAINER_NAME` | | 正在运行的 cloudflared 容器的规范名称。 | `cloudflared` |
-| `CF_TUNNEL_TOKEN` | 🔒 | 令牌**覆盖值**。留空 = 复用正在运行的容器中的令牌（推荐）。仅在首次部署、尚不存在任何容器时才需要填写。 | `` |
+| `CF_TUNNEL_TOKEN` | 🔒 | 令牌**覆盖值**。留空 = 复用正在运行的容器中的令牌（推荐）——安装器会检测已存在的 `cloudflared` 容器并提示复用，仅在首次部署时才要求填写令牌。仅在尚不存在任何容器、首次部署时才需要填写。 | `` |
 | `CF_HEALTH_TIMEOUT` | | 在切换前，等待新连接器报告 "connected" 的秒数。 | `60` |
 
 ### 上报与系统

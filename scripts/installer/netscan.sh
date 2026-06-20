@@ -11,9 +11,12 @@
 #
 # Requires ui.sh, network.sh, envedit.sh, preflight.sh sourced. POSIX /bin/sh.
 
-# choose_interface - sets global CHOSEN_IFACE. Returns non-zero if none chosen.
+# choose_interface - sets global CHOSEN_IFACE (and IFACE_MANUAL=1 when the
+# operator typed the name instead of picking a scanned NIC, so the MIHOMO_IP
+# wizard can skip NAS-IP auto-derivation). Returns non-zero if none chosen.
 choose_interface() {
   CHOSEN_IFACE=""
+  IFACE_MANUAL=0
   _auto="$(detect_parent_interface "${ROUTER_IP:-}")"
   _scan="$(scan_interfaces)"
 
@@ -47,6 +50,7 @@ choose_interface() {
       done
       break
     elif [ "$_c" = "$_manual" ]; then
+      IFACE_MANUAL=1
       ui_ask CHOSEN_IFACE "$(msg net_iface_name)" "$_auto"
       if [ -n "$CHOSEN_IFACE" ] && ! interface_exists "$CHOSEN_IFACE"; then
         ui_warn "$(msgf warn_iface_absent "$CHOSEN_IFACE")"

@@ -35,8 +35,8 @@ backslashes round-trip safely. When editing by hand, keep one `KEY=VALUE` assign
 |---|:--:|---|---|
 | `ROUTER_IP` | ✅ | Your router/gateway IP. Used to auto-detect the macvlan parent interface. | `192.168.1.1` |
 | `SUBNET_CIDR` | ✅ | Your LAN subnet for the macvlan network. | `192.168.1.0/24` |
-| `MIHOMO_IP` | ✅ | Static LAN IP assigned to the mihomo container. **Must be unused** (the installer checks for a conflict). | `192.168.1.100` |
-| `PARENT_INTERFACE` | | Macvlan parent NIC. The installer fills this from the interface scan; blank = auto-detect (the boot-up self-heal task auto-detects too). | `eth0` |
+| `MIHOMO_IP` | ✅ | Static LAN IP assigned to the mihomo container. **Must be unused** — the installer suggests the next free address above the NAS's own IP on the chosen interface (scanned with arping/ping) and re-checks for a conflict before deploy. | `192.168.1.100` |
+| `PARENT_INTERFACE` | | Macvlan parent NIC. The installer fills this from the interface scan (address-less NICs are hidden); blank = auto-detect (the boot-up self-heal task auto-detects too). | `eth0` |
 
 ### Mihomo TUN
 
@@ -89,7 +89,7 @@ against the three resolved refs (see [Auto-Update](auto-update.md#image-refs)).
 
 | Key | Upd | Sec | Description | Example |
 |---|:--:|:--:|---|---|
-| `DOCKER_REGISTRY` | ✅ | | Registry host (used for `docker login` and to derive the refs). In `docker` mode the installer clears it so login is skipped. | `registry.cn-shenzhen.aliyuncs.com` |
+| `DOCKER_REGISTRY` | ✅ | | Registry host (used for `docker login` and to derive the refs); the installer pre-fills `registry.cn-shenzhen.aliyuncs.com` as the default. In `docker` mode the installer clears it so login is skipped. | `registry.cn-shenzhen.aliyuncs.com` |
 | `DOCKER_USERNAME` | ✅ | | Registry username (shared by the installer + updater). | `your_registry_user` |
 | `ACR_PASSWORD` | ✅ | 🔒 | Registry password / access token (non-interactive `--password-stdin`). | `…` |
 | `ACR_NAMESPACE` | ✅ | | Registry namespace your images live under (combined with the host + tag to derive the refs). | `myns` |
@@ -109,7 +109,7 @@ against the three resolved refs (see [Auto-Update](auto-update.md#image-refs)).
 | Key | Sec | Description | Default / Example |
 |---|:--:|---|---|
 | `CF_CONTAINER_NAME` | | Canonical name of the running cloudflared container. | `cloudflared` |
-| `CF_TUNNEL_TOKEN` | 🔒 | Token **override**. Blank = reuse the token from the running container (preferred). Required only for first-time provisioning when no container exists. | `` |
+| `CF_TUNNEL_TOKEN` | 🔒 | Token **override**. Blank = reuse the token from the running container (preferred) — the installer detects an existing `cloudflared` container and offers reuse, only requiring a token when provisioning the first one. Required for first-time provisioning when no container exists. | `` |
 | `CF_HEALTH_TIMEOUT` | | Seconds to wait for the new connector to report "connected" before cutover. | `60` |
 
 ### Reporting & system
