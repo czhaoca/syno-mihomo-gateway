@@ -56,8 +56,9 @@ flow_redeploy() {
   pf_arch || return 1
   pf_web_port || return 1
   validate_selected_network || return 1
+  plan_predeployment_cleanup || return 1
   prepare_stack || return 1
-  reprovision_containers || return 1
+  apply_predeployment_cleanup || return 1
   create_network || return 1     # root: TUN + macvlan (re-runs the final IP guard)
   load_env
   deploy_stack || return 1

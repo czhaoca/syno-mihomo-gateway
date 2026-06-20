@@ -93,9 +93,9 @@ against the three resolved refs (see [Auto-Update](auto-update.md#image-refs)).
 | Key | Description | Default / Example |
 |---|---|---|
 | `UPDATE_ENABLED` | Master kill-switch. `false` makes a run exit immediately (unless `--force`). | `true` |
-| `UPDATE_IMAGES` | Space-separated image refs to check/pull. Recommended: inherit the three image vars. | `"${MIHOMO_IMAGE} ${METACUBEXD_IMAGE} ${CF_IMAGE}"` |
-| `UPDATE_SCHEDULE` | Cron expr — source of truth for the DSM task / fallback crontab. **Quote it.** The installer sets it from a daily HH:MM prompt. | `"0 2 * * *"` |
-| `UPDATE_TZ` | Timezone the schedule runs in (the script exports it as `TZ`). | `Asia/Shanghai` |
+| `UPDATE_IMAGES` | Space-separated image refs to check/pull. Both Compose refs are required; when `CF_IMAGE` is non-empty it is required too. The installer persists concrete resolved refs. | `"${MIHOMO_IMAGE} ${METACUBEXD_IMAGE} ${CF_IMAGE}"` |
+| `UPDATE_SCHEDULE` | Five-field numeric cron expression used to configure DSM Task Scheduler / the fallback crontab. It is range-validated before output. **Quote it.** | `"0 2 * * *"` |
+| `UPDATE_TZ` | Timezone used for updater log timestamps. The DSM trigger itself follows the NAS Regional Options timezone. | `Asia/Shanghai` |
 | `EXPECTED_ARCH` | Guard against the amd64-only mirror landing on an ARM NAS. `amd64`/`arm64`. | `amd64` |
 
 ### cloudflared (external container, blue-green by name)
@@ -125,6 +125,7 @@ These have sensible defaults in `scripts/lib/common.sh` / `registry.sh`; overrid
 |---|---|---|
 | `LOG_MAX_BYTES` | `1048576` | Rotate `UPDATE_LOG` when it exceeds this size. |
 | `PULL_RETRIES` / `PULL_RETRY_DELAY` | `3` / `10` | `docker pull` retry count / delay (s). |
+| `DOCKER_READY_TIMEOUT` / `DOCKER_READY_INTERVAL` | `120` / `5` | How long a DSM scheduled/boot task waits for Container Manager and how often it retries (s). |
 | `HEALTH_RETRIES` / `HEALTH_INTERVAL` | `6` / `10` | mihomo health-gate attempts / interval (s). |
 | `LOCK_DIR` | `/tmp/syno-mihomo-update.lock` | Mutex lock directory. |
 | `TPROXY_NETWORK` | `tproxy_network` | Macvlan network name the preflight checks. |

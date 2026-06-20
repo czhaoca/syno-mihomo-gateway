@@ -65,7 +65,7 @@ those `=`/`&` are handled correctly. `config/subscription.txt` is gitignored so 
 never committed.
 
 ```text
-Default=https://your-provider.com/api/v1/subscribe?token=abc&flag=1
+Default=https://provider.example/api/v1/subscribe?token=REPLACE_ME&flag=1
 ```
 
 ## 4. Create the network + TUN device
@@ -79,9 +79,17 @@ This script:
 - creates `/dev/net/tun` if missing and fixes its permissions;
 - auto-detects the parent interface (the one that routes to `ROUTER_IP`; falls back to the
   default route) — supports `eth0` and `ovs_eth0`;
-- (re)creates the `tproxy_network` macvlan with your `SUBNET_CIDR` / `ROUTER_IP`;
+- creates or reuses a matching `tproxy_network` macvlan with your `SUBNET_CIDR` /
+  `ROUTER_IP`; it refuses to remove a mismatched existing network;
 - optionally logs in to your registry and pulls images (non-interactive when `ACR_PASSWORD`
   is set, otherwise it prompts).
+
+For an existing or partial deployment, use `sudo sh ./install.sh` instead. Before teardown, the
+installer inventories the gateway containers and macvlan and asks independently whether to reuse
+them, dismantle verified project resources automatically, or show commands for manual handling.
+Manual mode removes nothing and can rescan after you finish. Automatic teardown waits until image,
+architecture, rendered-config, Compose, and network validation pass. Unrelated resources always
+require manual resolution; the external cloudflared container is never part of this cleanup.
 
 ## 5. Start the stack
 

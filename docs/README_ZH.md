@@ -10,6 +10,7 @@
 ## 功能特点
 - 🚀 **自动化脚本** — 自动检测群晖网络接口（`eth0` / `ovs_eth0`）。
 - 🛡️ **安全隔离** — 使用 Docker macvlan；拥有独立局域网 IP，不干扰宿主机网络。
+- 🧹 **可控重新部署** — 可分别复用、安全拆除或手动处理现有网关容器和 macvlan。
 - 🔧 **配置集中在 `.env`** — IP、端口、DNS、镜像仓库；仓库内不硬编码任何密钥或 DNS。
 - 🔁 **订阅分离** — 机场订阅链接保存在单独的 gitignore 文件中。
 - 🤖 **安全自动更新** — 从阿里云 ACR 拉取，按摘要检测变化，带健康检查与自动回滚；外部 cloudflared
@@ -61,6 +62,9 @@ sudo docker compose up -d
 
 > **macvlan 注意：** 群晖宿主机无法访问自己 macvlan 容器的 IP——请用其它设备打开面板与测试。
 > 详见[架构](zh/architecture.md#网络模型-macvlan)。
+>
+> 首次安装或处理已有/部分部署时，请运行 `sudo sh ./install.sh`。清理选择只会在所有非破坏性
+> 校验成功后执行。
 
 ## 客户端设置
 
@@ -70,8 +74,8 @@ sudo docker compose up -d
 ## 自动更新
 
 由于中国大陆封锁 Docker Hub/ghcr，[`docker-china-sync`](https://github.com/czhaoca/docker-china-sync) 每晚把镜像同步到
-阿里云 ACR，`scripts/auto_update.sh`（由群晖任务计划运行）只拉取并重新部署有变化的镜像——
-mihomo/metacubexd 走 `docker compose up -d`（带健康检查与自动回滚），外部 cloudflared 走蓝绿部署。
+阿里云 ACR，`scripts/auto_update.sh`（由群晖任务计划以 root 运行）只拉取、校验并部署有变化的镜像。
+Compose v2 用 `--pull never` 应用已校验的本地镜像；应用或健康检查失败都会回滚。外部 cloudflared 走蓝绿部署。
 用 `sh scripts/install_scheduler.sh` 打印计划任务设置，用 `sh scripts/auto_update.sh --dry-run`
 试运行。详见[自动更新](zh/auto-update.md) · [运维](zh/operations.md)。
 

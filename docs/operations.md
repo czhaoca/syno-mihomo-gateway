@@ -36,8 +36,9 @@ docker compose up -d mihomo          # re-renders + restarts mihomo
 
 ## Scheduling on DSM
 
-DSM rewrites `/etc/crontab` on package updates, so use **Task Scheduler** (survives upgrades,
-runs as root). Print the exact settings:
+On DSM 7, use **Control Panel → Task Scheduler** rather than editing `/etc/crontab`.
+The supported UI persists the task, lets you run it manually, and can retain or email abnormal
+output. Print the validated settings:
 
 ```bash
 sh scripts/install_scheduler.sh
@@ -47,29 +48,44 @@ Create two tasks in **Control Panel → Task Scheduler** (User = **root**):
 
 1. **Scheduled task → User-defined script** — the auto-updater, at your `UPDATE_SCHEDULE` time:
    ```
-   cd /volume1/docker/syno-mihomo-gateway && /bin/sh scripts/auto_update.sh >> logs/auto-update.log 2>&1
+   cd '/volume1/docker/syno-mihomo-gateway' && exec /bin/sh '/volume1/docker/syno-mihomo-gateway/scripts/auto_update.sh'
    ```
-   The script exports `TZ=$UPDATE_TZ`, so the `.env` timezone is authoritative. Optionally tick
-   "send run details by email" to get notified on non-zero exit.
+   Use the exact command printed for your actual path. Select **root**, enable the task, and tick
+   **Send run details only when the script terminates abnormally** or enable **Settings → Save
+   output results**. Do not append `>> logs/auto-update.log`: the updater already owns and rotates
+   that log, and a second redirection duplicates lines and breaks rotation.
 2. **Triggered task → Boot-up** — recreate the macvlan + TUN after a reboot (closes the
    "network missing at update time" hole):
    ```
-   cd /volume1/docker/syno-mihomo-gateway && /bin/sh scripts/setup_network.sh
+   cd '/volume1/docker/syno-mihomo-gateway' && exec /bin/sh '/volume1/docker/syno-mihomo-gateway/scripts/setup_network.sh'
    ```
+   The boot helper waits for Container Manager/Docker before touching the macvlan.
 
-Schedule the updater comfortably after the nightly mirror (23:00 UTC) — e.g. `0 9 * * *`
-Asia/Shanghai. It's idempotent, so exact timing doesn't matter.
+DSM schedules against the timezone configured in **Control Panel → Regional Options**.
+`UPDATE_TZ` changes updater log timestamps only. Schedule comfortably after the mirror window,
+then select the task and click **Run** once. Confirm a zero result and inspect
+`logs/auto-update.log` before relying on unattended runs.
 
 ## Running the updater by hand
 
 ```bash
-sh scripts/auto_update.sh --dry-run   # pull + detect + report, NO swap
+sh scripts/auto_update.sh --dry-run   # pull + inspect + report, NO container swap
 sh scripts/auto_update.sh             # real run
 sh scripts/auto_update.sh --force     # ignore UPDATE_ENABLED=false kill-switch
 ```
 
 Exit codes: `0` ok/no-op · `2` partial failure · `3` config/preflight · `4` locked · `5` ACR
 login failed (see [Auto-Update › exit codes](auto-update.md#exit-codes)).
+
+Before a release or after changing updater logic, run the same DSM/BusyBox regression suite used
+by CI:
+
+```bash
+sh scripts/ci/dsm_installer_check.sh
+sh scripts/ci/auto_update_check.sh
+sh scripts/ci/cloudflared_check.sh
+docker compose --env-file .env.example config --quiet
+```
 
 ## Kill-switch
 
@@ -132,9 +148,13 @@ docker tag <OLD_IMAGE_ID> "$MIHOMO_IMAGE"                  # re-point the tag
 docker compose up -d mihomo
 ```
 
-For cloudflared, if a cutover left a `cloudflared-candidate` running (rename failure), promote it:
+If only `cloudflared-candidate` is running, treat it as the live recovery connector and do not
+remove it. Inspect its logs, then recreate the canonical container from the original run settings
+while the candidate keeps the tunnel available. As an emergency name-only recovery you can rename
+the candidate, but its temporary dynamic IP and omitted host-port bindings will remain:
 
 ```bash
+docker logs --tail 100 cloudflared-candidate
 docker rename cloudflared-candidate cloudflared
 ```
 

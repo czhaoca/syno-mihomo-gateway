@@ -109,10 +109,16 @@ Automatic updates
       Turns scheduled auto-updates on or off.
 
   UPDATE_SCHEDULE
-      A cron expression for when updates run. Default is 02:00 daily.
+      A validated five-field numeric cron expression. Default is 02:00 daily.
+      Configure the DSM task to match it.
 
   UPDATE_TZ
-      Timezone used for the update schedule. Default Asia/Shanghai.
+      Timezone used for updater log timestamps. DSM fires the task in the NAS
+      Regional Options timezone. Default Asia/Shanghai.
+
+  DOCKER_READY_TIMEOUT / DOCKER_READY_INTERVAL
+      Seconds a scheduled or boot task waits for Container Manager, and the
+      retry interval. Defaults: 120 / 5.
 
   EXPECTED_ARCH
       The expected CPU architecture: amd64 or arm64. Set this to match your

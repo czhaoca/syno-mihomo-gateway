@@ -159,6 +159,30 @@ _msg_en() {
     diag_sub_write)   printf '%s' 'could not write %s' ;;
     diag_sub_write_fix) printf '%s' 'check that this folder is writable' ;;
 
+    # --- preprocess.sh ---
+    step_preprocess)  printf '%s' 'Pre-deployment resource handling' ;;
+    step_apply_preprocess) printf '%s' 'Apply pre-deployment choices' ;;
+    prep_container_state) printf '%s' 'containers: mihomo=%s, dashboard=%s' ;;
+    prep_network_state) printf '%s' 'network %s: %s' ;;
+    prep_network_attached) printf '%s' 'attached containers: %s' ;;
+    prep_net_match)    printf '%s' 'matches the requested macvlan' ;;
+    prep_net_drift)    printf '%s' 'configuration differs from the requested macvlan' ;;
+    prep_net_absent)   printf '%s' 'not present' ;;
+    prep_containers_prompt) printf '%s' 'How should existing gateway containers be handled?' ;;
+    prep_network_prompt) printf '%s' 'How should the existing macvlan be handled?' ;;
+    prep_preserve)     printf '%s' 'Preserve and reuse it' ;;
+    prep_auto)         printf '%s' 'Dismantle automatically after validation' ;;
+    prep_manual)       printf '%s' 'I will handle it manually' ;;
+    prep_ambiguous)    printf '%s' 'a canonical container name is not verifiably owned by this project; automatic cleanup is blocked' ;;
+    prep_unrelated)    printf '%s' 'the macvlan has an unrelated attachment; automatic cleanup is blocked' ;;
+    prep_drift_requires_cleanup) printf '%s' 'a mismatched macvlan cannot be reused; choose automatic or manual cleanup' ;;
+    prep_network_needs_containers) printf '%s' 'remove the attached gateway containers automatically too, or handle the network manually' ;;
+    prep_manual_commands) printf '%s' 'Run and review these commands in another terminal:' ;;
+    prep_rescan)       printf '%s' 'Have you completed the manual cleanup and want to rescan now?' ;;
+    prep_manual_pending) printf '%s' 'manual pre-deployment cleanup is still pending' ;;
+    prep_manual_fix)   printf '%s' 'inspect/remove only the listed resources, then run the installer again' ;;
+    prep_applied)      printf '%s' 'pre-deployment resource choices applied' ;;
+
     # --- flow_deploy.sh ---
     step_deploy_stack) printf '%s' 'Deploy the stack' ;;
     step_reprovision) printf '%s' 'Validate existing containers' ;;
@@ -204,7 +228,7 @@ _msg_en() {
     diag_no_crontab_fix) printf '%s' 'use the DSM Task Scheduler settings instead' ;;
     ok_cron_exists)   printf '%s' 'an auto-update line already exists in %s - not adding a duplicate' ;;
     ok_cron_installed) printf '%s' 'fallback crontab line installed and crond reloaded' ;;
-    warn_cron_reload) printf '%s' 'line added to %s - reload cron manually: synoservice --restart crond' ;;
+    warn_cron_reload) printf '%s' 'line added to %s but crond reload failed - use DSM Task Scheduler instead' ;;
     warn_cron_tz)     printf '%s' 'note: BusyBox crond fires in the NAS SYSTEM timezone (it ignores a per-line TZ); set the NAS time correctly. UPDATE_TZ only affects in-job log timestamps.' ;;
     diag_cron_write)  printf '%s' 'could not write to %s' ;;
     diag_cron_write_fix) printf '%s' 'run as root (sudo)' ;;
@@ -212,16 +236,16 @@ _msg_en() {
     diag_no_env)      printf '%s' '.env not found' ;;
     diag_no_env_fix)  printf '%s' 'run the end-to-end deploy first (main menu option 1)' ;;
     q_daily_time)     printf '%s' 'Daily update time (HH:MM, 24h)' ;;
-    cron_tz_prompt)   printf '%s' 'Timezone for the schedule' ;;
+    cron_tz_prompt)   printf '%s' 'Timezone for updater log timestamps (DSM triggers in NAS timezone)' ;;
     cron_tz_other)    printf '%s' 'Other (type it)' ;;
     q_tz_freeform)    printf '%s' 'Timezone (e.g. Asia/Singapore)' ;;
     ask_enable_updates) printf '%s' 'Enable automatic updates?' ;;
     warn_updates_disabled) printf '%s' 'auto-updates disabled (UPDATE_ENABLED=false) - the job will no-op until re-enabled' ;;
-    ok_schedule)      printf '%s' 'schedule: daily at %s (%s)' ;;
+    ok_schedule)      printf '%s' 'schedule: daily at %s in NAS system timezone; log timezone %s' ;;
     cron_how)         printf '%s' 'How do you want to schedule it?' ;;
     cron_how_dsm)     printf '%s' 'Set it up via the DSM web UI (Task Scheduler) - recommended' ;;
     cron_how_cli)     printf '%s' 'Install a crontab entry now (CLI; DSM may overwrite it on upgrade)' ;;
-    cron_how_dry)     printf '%s' 'Validate now with a dry-run (changes nothing)' ;;
+    cron_how_dry)     printf '%s' 'Validate now with a dry-run (pulls cache; does not swap containers)' ;;
     cron_how_done)    printf '%s' 'Done' ;;
     step_dsm_sched)   printf '%s' 'Synology DSM Task Scheduler settings' ;;
     warn_cron_not_installed) printf '%s' 'fallback crontab not installed - use the DSM web UI instead' ;;
@@ -416,6 +440,30 @@ _msg_zh() {
     diag_sub_write)   printf '%s' '无法写入 %s' ;;
     diag_sub_write_fix) printf '%s' '请检查此文件夹是否可写' ;;
 
+    # --- preprocess.sh ---
+    step_preprocess)  printf '%s' '部署前资源处理' ;;
+    step_apply_preprocess) printf '%s' '执行部署前选择' ;;
+    prep_container_state) printf '%s' '容器：mihomo=%s，面板=%s' ;;
+    prep_network_state) printf '%s' '网络 %s：%s' ;;
+    prep_network_attached) printf '%s' '已连接容器：%s' ;;
+    prep_net_match)    printf '%s' '与所需 macvlan 配置一致' ;;
+    prep_net_drift)    printf '%s' '与所需 macvlan 配置不同' ;;
+    prep_net_absent)   printf '%s' '不存在' ;;
+    prep_containers_prompt) printf '%s' '如何处理现有网关容器？' ;;
+    prep_network_prompt) printf '%s' '如何处理现有 macvlan？' ;;
+    prep_preserve)     printf '%s' '保留并复用' ;;
+    prep_auto)         printf '%s' '校验完成后自动拆除' ;;
+    prep_manual)       printf '%s' '由我手动处理' ;;
+    prep_ambiguous)    printf '%s' '同名容器无法确认属于本项目，已禁止自动清理' ;;
+    prep_unrelated)    printf '%s' 'macvlan 上连接了无关容器，已禁止自动清理' ;;
+    prep_drift_requires_cleanup) printf '%s' '配置不匹配的 macvlan 无法复用，请选择自动或手动清理' ;;
+    prep_network_needs_containers) printf '%s' '请同时自动移除已连接的网关容器，或手动处理网络' ;;
+    prep_manual_commands) printf '%s' '请在另一个终端中检查并运行以下命令：' ;;
+    prep_rescan)       printf '%s' '手动清理是否已完成并立即重新扫描？' ;;
+    prep_manual_pending) printf '%s' '部署前的手动清理尚未完成' ;;
+    prep_manual_fix)   printf '%s' '只检查/移除列出的资源，然后重新运行安装器' ;;
+    prep_applied)      printf '%s' '已执行部署前资源选择' ;;
+
     # --- flow_deploy.sh ---
     step_deploy_stack) printf '%s' '部署服务栈' ;;
     step_reprovision) printf '%s' '校验现有容器' ;;
@@ -461,7 +509,7 @@ _msg_zh() {
     diag_no_crontab_fix) printf '%s' '请改用 DSM 任务计划程序设置' ;;
     ok_cron_exists)   printf '%s' '%s 中已存在自动更新条目 - 不再重复添加' ;;
     ok_cron_installed) printf '%s' '已安装回退 crontab 条目并重新加载 crond' ;;
-    warn_cron_reload) printf '%s' '已向 %s 添加条目 - 请手动重新加载 cron：synoservice --restart crond' ;;
+    warn_cron_reload) printf '%s' '已向 %s 添加条目，但 crond 重新加载失败 - 请改用 DSM 任务计划程序' ;;
     warn_cron_tz)     printf '%s' '注意：BusyBox crond 按 NAS 系统时区触发（忽略逐行 TZ）；请正确设置 NAS 时间。UPDATE_TZ 仅影响任务内日志时间戳。' ;;
     diag_cron_write)  printf '%s' '无法写入 %s' ;;
     diag_cron_write_fix) printf '%s' '请以 root 身份（sudo）运行' ;;
@@ -469,16 +517,16 @@ _msg_zh() {
     diag_no_env)      printf '%s' '找不到 .env' ;;
     diag_no_env_fix)  printf '%s' '请先执行端到端部署（主菜单选项 1）' ;;
     q_daily_time)     printf '%s' '每日更新时间（HH:MM，24 小时制）' ;;
-    cron_tz_prompt)   printf '%s' '计划任务的时区' ;;
+    cron_tz_prompt)   printf '%s' '更新器日志时间戳时区（DSM 按 NAS 系统时区触发）' ;;
     cron_tz_other)    printf '%s' '其他（手动输入）' ;;
     q_tz_freeform)    printf '%s' '时区（例如 Asia/Singapore）' ;;
     ask_enable_updates) printf '%s' '是否启用自动更新？' ;;
     warn_updates_disabled) printf '%s' '自动更新已禁用（UPDATE_ENABLED=false）- 在重新启用前任务将不执行任何操作' ;;
-    ok_schedule)      printf '%s' '计划：每日 %s（%s）' ;;
+    ok_schedule)      printf '%s' '计划：按 NAS 系统时区每日 %s；日志时区 %s' ;;
     cron_how)         printf '%s' '你想如何安排它？' ;;
     cron_how_dsm)     printf '%s' '通过 DSM 网页界面（任务计划程序）设置 - 推荐' ;;
     cron_how_cli)     printf '%s' '立即安装 crontab 条目（CLI；DSM 升级时可能覆盖）' ;;
-    cron_how_dry)     printf '%s' '立即以 dry-run 验证（不做任何更改）' ;;
+    cron_how_dry)     printf '%s' '立即以 dry-run 验证（会拉取缓存，但不切换容器）' ;;
     cron_how_done)    printf '%s' '完成' ;;
     step_dsm_sched)   printf '%s' 'Synology DSM 任务计划程序设置' ;;
     warn_cron_not_installed) printf '%s' '未安装回退 crontab - 请改用 DSM 网页界面' ;;

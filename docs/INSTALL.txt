@@ -83,12 +83,17 @@ Deploy walks through these steps in order:
   4.  Image source - choose where images are pulled from (see below).
   5.  Subscription URL - the proxy subscription that feeds your rules.
   6.  Checks - validates prerequisites.
-  7.  Create the network.
-  8.  Log in to the registry - in "acr" image mode.
-  9.  Pull images.
-  10. Start the containers.
-  11. Health check.
+  7.  Existing-resource choices - independently preserve, automatically
+      dismantle verified project containers/macvlan, or handle them manually.
+  8.  Log in, pull/check images, validate the rendered config and Compose.
+  9.  Apply the chosen cleanup only after every non-destructive check passes.
+  10. Create or reuse the matching network.
+  11. Start containers and run the health check.
   12. Summary - prints the dashboard URL and the values you need.
+
+Automatic cleanup never removes an ambiguous container, a network with an
+unrelated attachment, or the external cloudflared container. Manual mode only
+prints commands and lets you rescan; it performs no cleanup itself.
 
 Image source (asked during deploy)
   * acr (DEFAULT, recommended in mainland China): pulls from YOUR private

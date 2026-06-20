@@ -25,6 +25,8 @@ INST="$REPO_ROOT/scripts/installer"
 # ui.sh is kept out of common.sh so the unattended updater never sources TTY code.
 # shellcheck source=scripts/lib/common.sh
 . "$LIB/common.sh"
+# shellcheck source=scripts/lib/scheduler.sh
+. "$LIB/scheduler.sh"
 # shellcheck source=scripts/installer/ui.sh
 . "$INST/ui.sh"
 # shellcheck source=scripts/installer/i18n.sh
@@ -39,12 +41,16 @@ INST="$REPO_ROOT/scripts/installer"
 . "$LIB/cloudflared.sh"
 # shellcheck source=scripts/lib/network.sh
 . "$LIB/network.sh"
+# shellcheck source=scripts/lib/lifecycle.sh
+. "$LIB/lifecycle.sh"
 # shellcheck source=scripts/installer/envedit.sh
 . "$INST/envedit.sh"
 # shellcheck source=scripts/installer/preflight.sh
 . "$INST/preflight.sh"
 # shellcheck source=scripts/installer/netscan.sh
 . "$INST/netscan.sh"
+# shellcheck source=scripts/installer/preprocess.sh
+. "$INST/preprocess.sh"
 # shellcheck source=scripts/installer/wizards.sh
 . "$INST/wizards.sh"
 # shellcheck source=scripts/installer/flow_deploy.sh

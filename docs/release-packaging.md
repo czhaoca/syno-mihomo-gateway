@@ -30,8 +30,21 @@ On any workstation that can reach github.com (your laptop, a VPS, a CI box):
 ```bash
 git clone https://github.com/czhaoca/syno-mihomo-gateway.git
 cd syno-mihomo-gateway
+sh scripts/ci/dsm_installer_check.sh
+sh scripts/ci/lifecycle_check.sh
+sh scripts/ci/auto_update_check.sh
+sh scripts/ci/cloudflared_check.sh
+python3 scripts/ci/package_check.py
+python3 scripts/ci/privacy_check.py
+python3 scripts/ci/privacy_check_test.py
+docker compose --env-file .env.example config --quiet
 sh scripts/package.sh                    # end-user DSM bundle (default profile)
 ```
+
+Do not publish a release unless these commands and the Woodpecker pipeline pass. The updater tests
+use fake Docker/Compose CLIs to exercise pull retries, image-ID comparison, architecture rejection,
+Compose apply failure, health rollback, scheduler quoting, and staged cloudflared cutover/rollback without
+touching a real daemon.
 
 This writes to `dist/`:
 

@@ -23,26 +23,36 @@ scripts/
   auto_update.sh              # the DSM auto-update orchestrator (entry point)
   install_scheduler.sh        # prints DSM Task Scheduler / crontab settings
   package.sh                  # build-host: builds the offline release zip (docs/release-packaging.md)
+  installer/
+    preprocess.sh             # 分资源清理选择；延后所有变更
   lib/
     common.sh                 # env load, logging+rotation, mkdir lock, exit codes
     registry.sh               # preflight (compose/arch/network/tun), ACR login, pull + change detect
     compose.sh                # compose up, health gate, rollback
     cloudflared.sh            # blue-green reprovision of the external cloudflared
+    lifecycle.sh              # 部署盘点 + 已验证的定向拆除
+    scheduler.sh              # 安全解析 DSM/BusyBox cron 并生成任务命令
   ci/
     render_check.py           # CI: runs the real renderer + structural/rule assertions
+    auto_update_check.sh      # 使用伪 Docker 的计划/更新/回滚 TDD 测试
+    cloudflared_check.sh      # 使用伪 Docker 的蓝绿更新 TDD 测试
+    lifecycle_check.sh        # 使用伪 Docker 的盘点/清理安全测试
+    privacy_check.py          # 被跟踪内容/历史隐私守卫
 .woodpecker.yml               # CI: compose/yaml validate, render check, shellcheck
 docs/                         # this manual (EN) + docs/zh (中文)
 ```
 
 ## 编码规约
 
-- **POSIX `/bin/sh`，BusyBox 兼容。** DSM 自带 BusyBox；不使用 bashism，不使用关联数组。
-  `scripts/setup_network.sh` 是唯一一个 `#!/bin/bash` 脚本（在 NAS 主机上进行交互式安装）。
+- **POSIX `/bin/sh`，BusyBox 兼容。** DSM 自带 BusyBox；不使用 bashism 或关联数组，
+  `scripts/setup_network.sh` 和无人值守任务入口也遵循此规则。
 - **编排器中不使用 `set -e`/`set -u`。** 它显式检查返回码，从而避免某个软失败意外地拆毁整个网关。
   `render_config.sh` *确实*使用了 `set -eu`（它是一个简短的、快速失败的渲染器）。
 - **提交的文件中不硬编码 DNS / 网络地址**（项目规则）。请使用
   `{{PLACEHOLDERS}}` + `.env`。CI 会强制执行这一点（`render_check.py`）。
 - **机密信息只放在被 gitignore 的 `.env` 中**（`ACR_PASSWORD`、`CF_TUNNEL_TOKEN`、`CONTROLLER_SECRET`）。
+- **拒绝私有运维数据。** `privacy_check.py` 会扫描被跟踪内容和可达 blob，同时允许公共项目链接
+  与深圳 ACR 示例。
 - **Shell 脚本中只使用 ASCII** —— 非 ASCII 字符（例如长破折号）会破坏 CI 镜像中 shellcheck 的输出编码。
 
 ## 渲染器（`render_config.sh`）
@@ -60,18 +70,22 @@ docs/                         # this manual (EN) + docs/zh (中文)
 
 ## 编排器运行序列
 
-`auto_update.sh` 加载这些库并依次运行：**lock → kill-switch → preflight → detect → apply
-compose (+health-gate/rollback) → apply cloudflared (blue-green) → prune → notify**。完整细节
-见[自动更新](auto-update.md)。关键库函数：
+`auto_update.sh` 加载这些库并依次运行：**加锁 → 校验终止开关 → 终止开关 → 校验配置 →
+等待 Docker 并执行预检 → 拉取/检查/检测变更 → 仅使用本地镜像执行 Compose
+（含健康门控/回滚）→ cloudflared 蓝绿更新 → 清理 → 通知**。完整细节见
+[自动更新](auto-update.md)。关键库函数：
 
 | 文件 | 函数 |
 |---|---|
 | `lib/common.sh` | `load_env`、`log*`、`rotate_log`、`acquire_lock`/`release_lock`（由 `LOCK_HELD` 守护）、`EXIT_*` 退出码 |
-| `lib/registry.sh` | `detect_compose`、`check_arch_expectation`/`arch_ok`、`check_network`、`check_tun`、`acr_login`、`pull_image`、`deploy_needed` |
-| `lib/compose.sh` | `compose_up`、`health_gate`（含 `mihomo_controller_probe`）、`rollback_compose` |
-| `lib/cloudflared.sh` | `cloudflared_blue_green`、`cloudflared_wait_connected`、`_cloudflared_promote`、`cloudflared_cleanup_candidate`（由 `CF_KEEP_CANDIDATE` 守护） |
+| `lib/registry.sh` | `validate_update_config`、`wait_for_docker_ready`、`check_arch_expectation`/`arch_ok`、`check_network`、`check_tun`、`acr_login`、`pull_image`、`deploy_needed` |
+| `lib/compose.sh` | `compose_config_check`、`compose_up_local`、`health_gate`（含 `mihomo_controller_probe`）、`rollback_compose` |
+| `lib/cloudflared.sh` | `cloudflared_blue_green`、`cloudflared_wait_connected`、安全规格捕获/重放、回滚、候选/临时目录清理 |
+| `lib/lifecycle.sh` | `lifecycle_inspect`、已验证的容器/网络移除、手动命令输出 |
+| `lib/scheduler.sh` | `cron_normalize`、`scheduler_update_command`、`scheduler_network_command`、`scheduler_reload_crond` |
 
-并发：只有持锁者才会释放锁（`LOCK_HELD`）；EXIT 陷阱不会回收一个已晋升但尚未重命名的 cloudflared 候选容器（`CF_KEEP_CANDIDATE`）。
+并发：只有持锁者才会释放锁（`LOCK_HELD`）；当候选可能是唯一已连接隧道时，EXIT 陷阱不会
+回收它（`CF_KEEP_CANDIDATE`）。
 
 ## CI（`.woodpecker.yml`）
 
@@ -84,7 +98,8 @@ compose (+health-gate/rollback) → apply cloudflared (blue-green) → prune →
 | `render-config` | `python scripts/ci/render_check.py` —— 针对一个带 `Name=` 前缀及 `&` 参数的夹具 URL 运行**真实的**渲染器，并断言该 URL 能精确地往返还原；同时强制执行“不硬编码 DNS”规则 |
 | `compose-policy` | `python scripts/ci/compose_policy_check.py` —— 断言网关镜像**仅来自 ACR**：`docker-compose.yml` 中不得有直接 Docker Hub/ghcr 回退，`.env.example` 的镜像引用须指向私有仓库 |
 | `package-check` | `python scripts/ci/package_check.py` —— 在临时仓库中构建发布 zip，证明**任何密钥都不会被打包**（植入的 `.env`/订阅/`config.yaml` 不在两种压缩包的文件名*和*字节中），校验和正确，各项守卫生效，且 `bootstrap.sh` 往返正常 |
-| `dsm-shell-tests` | 在 BusyBox `sh` 下执行 dotenv、网络、架构和 TUN 健康检查回归测试 |
+| `privacy-check` | 扫描被跟踪文件和可达 blob，拒绝私有运维标识、凭据、私钥和意外跟踪的运行时文件 |
+| `dsm-shell-tests` | 在 BusyBox `sh` 下执行安装器、生命周期、计划任务/更新器和分阶段 cloudflared 断言；Docker/Compose 全部使用假实现 |
 | `shellcheck` | 对入口点脚本运行 `shellcheck -x`（lib/*.sh 在上下文中被一并检查） |
 
 ## 制作发布版本
@@ -94,7 +109,7 @@ compose (+health-gate/rollback) → apply cloudflared (blue-green) → prune →
 ```bash
 sh scripts/package.sh                         # DSM 最终用户包（默认）
 sh scripts/package.sh --profile dev           # 完整内部/开发包
-sh scripts/package.sh --version 1.2.11         # 覆盖 VERSION 文件
+sh scripts/package.sh --version 1.2.12         # 覆盖 VERSION 文件
 ```
 
 - 用 `git archive` 构建，因此**只打包被跟踪的文件** —— `.env`、`config/subscription.txt`、
@@ -125,6 +140,14 @@ cp .env.example .env && docker compose config -q && rm -f .env
 
 # release packaging safeguard (hermetic; builds in a temp repo, needs git)
 python3 scripts/ci/package_check.py
+
+# 计划任务/更新器/cloudflared TDD 测试（使用伪 Docker/Compose，不修改 NAS）
+sh scripts/ci/auto_update_check.sh
+sh scripts/ci/cloudflared_check.sh
+sh scripts/ci/dsm_installer_check.sh
+sh scripts/ci/lifecycle_check.sh
+python3 scripts/ci/privacy_check.py
+python3 scripts/ci/privacy_check_test.py
 
 # ACR-only image policy (no direct Docker Hub/ghcr fallback)
 python3 scripts/ci/compose_policy_check.py

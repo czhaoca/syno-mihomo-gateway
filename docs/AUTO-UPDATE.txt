@@ -30,30 +30,37 @@ Run it as root. When you choose the DSM web UI method, the installer prints
 the EXACT settings to enter (the command line, schedule, and user). Copy those
 into the Task Scheduler task.
 
+The printed command uses an absolute working directory and an explicit /bin/sh,
+as recommended for DSM 7 tasks. Do NOT add ">> logs/auto-update.log": the
+updater already writes and rotates that file. A second redirection duplicates
+log lines and keeps writing to the old file after rotation.
+
+Enable "Send run details only when the script terminates abnormally", or use
+Task Scheduler Settings -> Save output results. After creating the task, select
+it and click Run once; verify a zero result and logs/auto-update.log.
+
 Why the GUI task is preferred: a crontab line may be overwritten by DSM during
 a system upgrade. The Task Scheduler task persists across upgrades.
 
 --------------------------------------------------------------------------
 How to schedule (an explicit choice)
 --------------------------------------------------------------------------
-After you pick the time and timezone, the installer offers HOW to schedule:
+After you pick the time and log timezone, the installer offers HOW to schedule:
 
   1) Set it up via the DSM web UI (Task Scheduler) - RECOMMENDED, and
      upgrade-persistent. The installer prints the exact Control Panel ->
      Task Scheduler settings to enter.
   2) Install a crontab entry now via CLI - quick, but may be overwritten by a
      DSM system upgrade.
-  3) Just run a DRY-RUN to validate - validates the whole update pipeline but
-     changes nothing. Use this to confirm everything is wired up before
-     trusting the schedule.
+  3) Just run a DRY-RUN to validate - pulls/checks the image cache but never
+     swaps a container. Use this before trusting the schedule.
 
 --------------------------------------------------------------------------
 IMPORTANT: timezone vs actual trigger time
 --------------------------------------------------------------------------
-The timezone you chose labels the in-job log timestamps. For a CRONTAB entry,
-the actual trigger time follows the NAS SYSTEM timezone, not the timezone you
-picked; a DSM Task Scheduler task triggers on DSM's own Regional Options time.
-Either way, set the NAS time correctly so the job runs when you expect.
+The timezone you chose labels the in-job log timestamps. The actual trigger
+time follows the NAS SYSTEM timezone: DSM Task Scheduler uses Regional Options,
+and BusyBox cron also uses the system timezone. Set the NAS time correctly.
 
 --------------------------------------------------------------------------
 Related .env settings
@@ -61,7 +68,8 @@ Related .env settings
   UPDATE_ENABLED    - turns scheduled updates on/off.
   UPDATE_SCHEDULE   - a cron expression for when updates run (default 02:00
                       daily).
-  UPDATE_TZ         - timezone used for the schedule (default Asia/Shanghai).
+  UPDATE_TZ         - timezone used for updater log timestamps (default
+                      Asia/Shanghai); DSM scheduling uses the NAS timezone.
   EXPECTED_ARCH     - amd64 or arm64; set to match your NAS.
 
 See CONFIGURE.txt for the full settings reference.
@@ -69,10 +77,25 @@ See CONFIGURE.txt for the full settings reference.
 --------------------------------------------------------------------------
 What the updater does on each run
 --------------------------------------------------------------------------
-  1. Pulls the latest images from your configured image source.
-  2. Compares against what is running and redeploys only changed components.
-  3. Runs a health check on the new containers.
-  4. If a new image is unhealthy, rolls back to the previous working image.
+  1. Validates all settings, waits for Container Manager, validates Compose,
+     and logs in to ACR before pulling.
+  2. Pulls each image with retries, then verifies its local image ID and
+     architecture.
+  3. Compares against what is running and redeploys only changed components.
+     Compose v2 uses "up -d --pull never" so the checked local image cannot be
+     replaced by a second implicit pull.
+  4. Checks the controller, TUN dataplane, forwarding, and crash-loop state.
+  5. If Compose fails or a new image is unhealthy, verifies/re-tags the previous
+     image, recreates without pulling, and runs the health check again.
+
+For external cloudflared, the updater starts a conflict-free temporary connector
+without the canonical static IP or published host ports and proves it connected.
+It then rebuilds and verifies the canonical container with the latest image and
+the saved ports/networks. If finalization fails, it restores the previous image
+and run specification while the temporary connector keeps the tunnel live. A
+candidate that may be the only connector is never removed automatically.
+
+A dry-run DOES update the local image cache, but never swaps a container.
 
 --------------------------------------------------------------------------
 Updater exit codes

@@ -23,15 +23,14 @@ install_fallback_crontab() {
     ui_ok "$(msgf ok_cron_exists "$_ct")"
     return 0
   fi
-  _min="$(echo "$UPDATE_SCHEDULE" | awk '{print $1}')"
-  _hr="$(echo "$UPDATE_SCHEDULE" | awk '{print $2}')"
-  _rest="$(echo "$UPDATE_SCHEDULE" | awk '{print $3, $4, $5}')"
-  # mkdir -p logs FIRST: the '>>' redirect is opened by the shell before
-  # auto_update.sh runs, so an absent logs/ would fail the job on first run.
-  _cmd="cd $REPO_ROOT && mkdir -p logs && /bin/sh scripts/auto_update.sh >> logs/auto-update.log 2>&1"
+  if ! _schedule="$(cron_normalize "$UPDATE_SCHEDULE")"; then
+    diagnose "invalid UPDATE_SCHEDULE" "enter a safe five-field numeric cron expression"
+    return 1
+  fi
+  _cmd="$(scheduler_update_command)" || return 1
   # DSM crontab columns: min hour dom mon dow USER command
-  if printf '%s\t%s\t%s\troot\t%s\n' "$_min" "$_hr" "$_rest" "$_cmd" >> "$_ct"; then
-    if synoservice --restart crond >/dev/null 2>&1 || synoservice -restart crond >/dev/null 2>&1; then
+  if printf '%s\troot\t%s\n' "$_schedule" "$_cmd" >> "$_ct"; then
+    if scheduler_reload_crond; then
       ui_ok "$(msg ok_cron_installed)"
     else
       ui_warn "$(msgf warn_cron_reload "$_ct")"
@@ -47,12 +46,7 @@ install_fallback_crontab() {
 # ("M H * * *"); falls back to 02:00 when it isn't a simple daily time.
 _default_hhmm() {
   _s="$(env_get UPDATE_SCHEDULE || echo '0 2 * * *')"
-  _m="$(echo "$_s" | awk '{print $1}')"
-  _h="$(echo "$_s" | awk '{print $2}')"
-  case "$_m$_h" in
-    ''|*[!0-9]*) printf '02:00' ;;
-    *) printf '%02d:%02d' "$_h" "$_m" ;;
-  esac
+  cron_daily_hhmm "$_s" 2>/dev/null || printf '02:00'
 }
 
 flow_cron() {

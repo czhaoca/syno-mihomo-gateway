@@ -227,9 +227,10 @@ network_attachments() {
   "$_na_d" network inspect -f '{{range $id, $c := .Containers}}{{$c.Name}} {{end}}' "$1" 2>/dev/null
 }
 
-# recreate_macvlan PARENT [SUBNET] [GATEWAY] [NAME] - (re)create the macvlan
-# network on PARENT. Removes an existing same-named network first so a changed
-# parent/subnet takes effect (idempotent). SUBNET/GATEWAY/NAME default to
+# recreate_macvlan PARENT [SUBNET] [GATEWAY] [NAME] - ensure the macvlan exists
+# on PARENT. A mismatched same-named network is never removed here; interactive
+# lifecycle preprocessing must first verify ownership and apply the operator's
+# cleanup choice. SUBNET/GATEWAY/NAME default to
 # $SUBNET_CIDR/$ROUTER_IP/$TPROXY_NETWORK from .env. Returns non-zero on failure.
 recreate_macvlan() {
   _parent="$1"
@@ -248,11 +249,9 @@ recreate_macvlan() {
   fi
 
   if network_exists "$_name"; then
-    log_warn "docker network '$_name' exists - removing to re-create"
-    if ! "$_d" network rm "$_name" >/dev/null 2>&1; then
-      log_error "could not remove existing '$_name'; attached containers: $(network_attachments "$_name")"
-      return 1
-    fi
+    log_error "docker network '$_name' exists with different settings; refusing implicit removal"
+    log_error "run install.sh and choose automatic or manual macvlan cleanup"
+    return 1
   fi
 
   if "$_d" network create -d macvlan \

@@ -26,10 +26,12 @@ dotenv_load "$ENV_FILE"
 [ "$ACR_PASSWORD" = "$SPECIAL" ] || fail "strict dotenv loader changed a secret"
 [ "$UPDATE_SCHEDULE" = '0 2 * * *' ] || fail "strict dotenv loader changed a schedule"
 
+# shellcheck disable=SC2016 # Literal payload verifies dotenv values are never evaluated.
 printf '%s\n' 'UNTRUSTED=$(touch SHOULD_NOT_EXIST)' >> "$ENV_FILE"
 _oldpwd="$PWD"; cd "$TD"
 dotenv_load "$ENV_FILE"
 cd "$_oldpwd"
+# shellcheck disable=SC2016 # Compare against the same literal malicious payload.
 [ "$UNTRUSTED" = '$(touch SHOULD_NOT_EXIST)' ] || fail "dotenv value was evaluated"
 [ ! -e "$TD/SHOULD_NOT_EXIST" ] || fail "dotenv content executed a command"
 printf '%s\n' 'not-an-assignment' > "$ENV_FILE"
@@ -86,7 +88,8 @@ pf_docker() { return 0; }
 pf_arch() { return 0; }
 pf_web_port() { return 0; }
 validate_selected_network() { return 0; }
-reprovision_containers() { echo ownership >> "$TD/order"; }
+plan_predeployment_cleanup() { return 0; }
+apply_predeployment_cleanup() { echo cleanup >> "$TD/order"; }
 create_network() { echo network >> "$TD/order"; }
 deploy_stack() { echo deploy >> "$TD/order"; }
 report_success() { :; }
@@ -96,7 +99,7 @@ flow_deploy >/dev/null 2>&1 && fail "deploy continued after preparation failure"
 [ ! -s "$TD/order" ] || fail "deploy mutated state before preparation succeeded"
 prepare_stack() { echo prepare >> "$TD/order"; }
 flow_deploy >/dev/null 2>&1 || fail "stubbed deployment sequence failed"
-[ "$(tr '\n' ' ' < "$TD/order")" = 'prepare ownership network deploy ' ] \
+[ "$(tr '\n' ' ' < "$TD/order")" = 'prepare cleanup network deploy ' ] \
   || fail "unsafe deployment order: $(tr '\n' ' ' < "$TD/order")"
 
 echo "OK: BusyBox dotenv/network/arch/TUN checks and fail-before-mutation deployment order"

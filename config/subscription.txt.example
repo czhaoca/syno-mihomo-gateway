@@ -3,4 +3,4 @@
 # config/subscription.txt is gitignored so your token never gets committed.
 # The mihomo entrypoint uses the FIRST valid (non-#) line found.
 # Example:
-MyAirport=https://your-airport-url.com/api/v1/subscribe?token=xyz
+MyAirport=https://provider.example/api/v1/subscribe?token=REPLACE_ME

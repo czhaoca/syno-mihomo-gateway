@@ -111,18 +111,39 @@ Network flakiness to ACR. The updater retries pulls (`PULL_RETRIES`/`PULL_RETRY_
 pulls **before** swapping, so a failed pull aborts without touching the running container.
 Increase the retry env vars if needed, or schedule further from the mirror window.
 
+## DSM 7 scheduled task does not run
+
+1. In **Control Panel → Task Scheduler**, verify the task is enabled and runs as **root**.
+2. Re-run `sh scripts/install_scheduler.sh` and copy its exact absolute-path command.
+3. Confirm the Schedule time against **Regional Options**; `UPDATE_TZ` only affects log timestamps.
+4. Select the task and click **Run**, then inspect its saved result and `logs/auto-update.log`.
+5. Exit code `3` with a Docker readiness message means Container Manager did not become ready
+   within `DOCKER_READY_TIMEOUT`; verify the package is running or increase the timeout.
+
+If each line appears twice or rotation looks wrong, remove any outer
+`>> logs/auto-update.log 2>&1` from the DSM command. The updater logs internally.
+
+## Compose apply failed during auto-update
+
+The updater now treats a failed `compose up` as a rollback event, not only an unhealthy start.
+Look for `ROLLED BACK` in the notification/log. If rollback is incomplete, do not prune images:
+verify the old IDs with `docker image inspect <id>`, then follow
+[Operations › Manual rollback](operations.md#manual-rollback).
+
 ## cloudflared tunnel down after an update
 
-The blue-green path proves the new connector is connected before retiring the old one, and
-keeps the candidate if the final rename fails. If you see only `cloudflared-candidate` running:
+The staged path verifies a temporary connector before replacing the canonical container and keeps
+that candidate if canonical update and rollback cannot complete. If only
+`cloudflared-candidate` is running, do not remove it—it may be the only live connector:
 
 ```bash
 docker ps -a | grep cloudflared
-docker rename cloudflared-candidate cloudflared      # promote it
+docker logs --tail 100 cloudflared-candidate
 ```
 
-For best results start cloudflared with `--metrics 127.0.0.1:<port>` (preserved across updates)
-so the connected-check is precise instead of log-scraping.
+Recreate the canonical container from the original run settings while the candidate remains live.
+Emergency fallback: rename the candidate to `cloudflared`; its temporary dynamic IP and omitted
+host-port bindings remain until you reconstruct the full canonical specification.
 
 ## "no image changes" but I expected an update
 

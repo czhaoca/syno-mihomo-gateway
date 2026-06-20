@@ -141,6 +141,12 @@ wizard_images() {
     ui_ask_secret CF_TUNNEL_TOKEN "$(msg q_cf_token)"
     [ -n "$CF_TUNNEL_TOKEN" ] && env_set CF_TUNNEL_TOKEN "$CF_TUNNEL_TOKEN"
   fi
+  # Persist concrete references. The strict dotenv loader does not perform
+  # arbitrary shell expansion, and the updater validates exact target mapping.
+  _wi_updates="$MIHOMO_IMAGE $METACUBEXD_IMAGE"
+  _wi_cf="$(env_get CF_IMAGE || echo '')"
+  [ -z "$_wi_cf" ] || _wi_updates="$_wi_updates $_wi_cf"
+  env_set UPDATE_IMAGES "$_wi_updates"
   return 0
 }
 

@@ -100,10 +100,15 @@ DNS 设置
       开启或关闭计划自动更新。
 
   UPDATE_SCHEDULE
-      更新运行时机的 cron 表达式。默认为每天 02:00。
+      经过校验的五字段数字 cron 表达式。默认为每天 02:00。DSM 任务时间需
+      与它一致。
 
   UPDATE_TZ
-      更新计划使用的时区。默认 Asia/Shanghai。
+      更新器日志时间戳所用时区。DSM 按 NAS“区域选项”的系统时区触发任务。
+      默认 Asia/Shanghai。
+
+  DOCKER_READY_TIMEOUT / DOCKER_READY_INTERVAL
+      计划或开机任务等待 Container Manager 的秒数和重试间隔。默认 120 / 5。
 
   EXPECTED_ARCH
       期望的 CPU 架构：amd64 或 arm64。设为与你的 NAS 一致，以便尽早发现

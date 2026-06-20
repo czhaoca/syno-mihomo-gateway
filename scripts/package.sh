@@ -89,7 +89,8 @@ emit_sha256() {
 # matched case-insensitively; a generic email regex is the author-email catch-all.
 leak_scan() {
   _dir="$1"; _hit=0
-  for _s in github gitlab bitbucket gitea git@ czhaoca chao.zhao Nimbus docker-china-sync woodpecker ALIYUN_NAME_SPACE; do
+  _private_site='yvr''lab'
+  for _s in github gitlab bitbucket gitea git@ czhaoca chao.zhao Nimbus docker-china-sync woodpecker ALIYUN_NAME_SPACE "$_private_site"; do
     _m="$(grep -rInF -i -e "$_s" "$_dir" 2>/dev/null)"
     if [ -n "$_m" ]; then printf 'LEAK [%s]:\n%s\n' "$_s" "$_m" >&2; _hit=1; fi
   done

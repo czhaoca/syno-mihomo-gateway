@@ -131,6 +131,17 @@ Auto-update reported a non-zero exit code
   5  Registry login failed - re-check your registry credentials.
 
 --------------------------------------------------------------------------
+DSM 7 scheduled update does not run
+--------------------------------------------------------------------------
+  * Confirm the Task Scheduler entry is enabled and runs as root.
+  * Run scripts/install_scheduler.sh again and copy its exact command.
+  * DSM triggers in the NAS Regional Options timezone; UPDATE_TZ only changes
+    updater log timestamps.
+  * Click Run once, then check the saved task result and logs/auto-update.log.
+  * Do not add an outer ">> logs/auto-update.log" redirect; it duplicates
+    output and interferes with the updater's own rotation.
+
+--------------------------------------------------------------------------
 Where to look
 --------------------------------------------------------------------------
   * Install log:     under the logs/ folder.

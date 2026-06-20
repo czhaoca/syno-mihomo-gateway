@@ -25,6 +25,101 @@ detect_compose() {
   log_info "docker=$DOCKER_BIN  compose=[$COMPOSE_CMD]"
 }
 
+docker_daemon_ready() {
+  if "$DOCKER_BIN" info >/dev/null 2>&1; then
+    return 0
+  fi
+  log_error "Docker daemon is unavailable; start Container Manager and run this task as root"
+  return 1
+}
+
+wait_for_docker_ready() {
+  _wr_timeout="${1:-${DOCKER_READY_TIMEOUT:-120}}"
+  _wr_interval="${2:-${DOCKER_READY_INTERVAL:-5}}"
+  case "$_wr_timeout:$_wr_interval" in
+    *[!0-9:]*|:*) log_error "invalid Docker readiness timeout/interval"; return 1 ;;
+  esac
+  _wr_elapsed=0
+  while :; do
+    if detect_compose && docker_daemon_ready; then
+      return 0
+    fi
+    [ "$_wr_elapsed" -ge "$_wr_timeout" ] && break
+    log_warn "waiting for Container Manager/Docker (${_wr_elapsed}s/${_wr_timeout}s)"
+    sleep "$_wr_interval"
+    _wr_elapsed=$((_wr_elapsed + _wr_interval))
+  done
+  log_error "Docker did not become ready within ${_wr_timeout}s"
+  return 1
+}
+
+_config_uint() {
+  _cu_name="$1"; _cu_value="$2"; _cu_min="$3"
+  case "$_cu_value" in ''|*[!0-9]*)
+    log_error "$_cu_name must be an integer (got '$_cu_value')"; return 1 ;;
+  esac
+  if [ "$_cu_value" -lt "$_cu_min" ]; then
+    log_error "$_cu_name must be >= $_cu_min (got $_cu_value)"
+    return 1
+  fi
+  return 0
+}
+
+_update_list_has() {
+  _ul_want="$1"
+  for _ul_image in ${UPDATE_IMAGES:-}; do
+    [ "$_ul_image" = "$_ul_want" ] && return 0
+  done
+  return 1
+}
+
+validate_update_switch() {
+  case "${UPDATE_ENABLED:-}" in true|false) : ;; *)
+    log_error "UPDATE_ENABLED must be true or false"; return 1 ;;
+  esac
+  return 0
+}
+
+validate_update_config() {
+  validate_update_switch || return 1
+  _config_uint PULL_RETRIES "${PULL_RETRIES:-}" 1 || return 1
+  _config_uint PULL_RETRY_DELAY "${PULL_RETRY_DELAY:-}" 0 || return 1
+  _config_uint DOCKER_READY_TIMEOUT "${DOCKER_READY_TIMEOUT:-}" 0 || return 1
+  _config_uint DOCKER_READY_INTERVAL "${DOCKER_READY_INTERVAL:-}" 1 || return 1
+  _config_uint HEALTH_RETRIES "${HEALTH_RETRIES:-}" 1 || return 1
+  _config_uint HEALTH_INTERVAL "${HEALTH_INTERVAL:-}" 0 || return 1
+  _config_uint HEALTH_MAX_RESTARTS "${HEALTH_MAX_RESTARTS:-}" 1 || return 1
+  _config_uint CF_HEALTH_TIMEOUT "${CF_HEALTH_TIMEOUT:-}" 1 || return 1
+  _config_uint LOG_KEEP "${LOG_KEEP:-}" 1 || return 1
+  _config_uint LOG_MAX_BYTES "${LOG_MAX_BYTES:-}" 1 || return 1
+
+  [ -n "${MIHOMO_IMAGE:-}" ] || { log_error "MIHOMO_IMAGE is empty"; return 1; }
+  [ -n "${METACUBEXD_IMAGE:-}" ] || { log_error "METACUBEXD_IMAGE is empty"; return 1; }
+  [ -n "${UPDATE_IMAGES:-}" ] || { log_error "UPDATE_IMAGES is empty"; return 1; }
+  case "$UPDATE_IMAGES" in
+    *'*'*|*'?'*|*'['*|*']'*)
+      log_error "UPDATE_IMAGES contains shell wildcard characters"; return 1 ;;
+  esac
+  for _vc_image in $UPDATE_IMAGES; do
+    case "$_vc_image" in
+      -*|*';'*|*'|'*|*'&'*|*'<'*|*'>'*|*'"'*|*"'"*)
+        log_error "unsafe image reference in UPDATE_IMAGES: $_vc_image"; return 1 ;;
+    esac
+  done
+  _update_list_has "$MIHOMO_IMAGE" || {
+    log_error "UPDATE_IMAGES does not include MIHOMO_IMAGE exactly"; return 1;
+  }
+  _update_list_has "$METACUBEXD_IMAGE" || {
+    log_error "UPDATE_IMAGES does not include METACUBEXD_IMAGE exactly"; return 1;
+  }
+  if [ -n "${CF_IMAGE:-}" ]; then
+    _update_list_has "$CF_IMAGE" || {
+      log_error "CF_IMAGE is configured but UPDATE_IMAGES does not include it exactly"; return 1;
+    }
+  fi
+  return 0
+}
+
 host_arch() {
   case "$(uname -m)" in
     x86_64|amd64)   echo amd64 ;;
@@ -103,7 +198,10 @@ pull_image() {
   _img="$1"; _n=0
   while [ "$_n" -lt "$PULL_RETRIES" ]; do
     if "$DOCKER_BIN" pull "$_img" >>"$LOG_FILE" 2>&1; then
-      return 0
+      if [ -n "$(local_image_id "$_img")" ]; then
+        return 0
+      fi
+      log_warn "pull returned success but no local image is inspectable: $_img"
     fi
     _n=$((_n+1))
     [ "$_n" -lt "$PULL_RETRIES" ] && { log_warn "pull failed ($_img) attempt $_n/$PULL_RETRIES - retrying in ${PULL_RETRY_DELAY}s"; sleep "$PULL_RETRY_DELAY"; }

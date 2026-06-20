@@ -78,16 +78,36 @@ docker exec mihomo grep -m1 'url:' /root/.config/mihomo/config.yaml
 
 到 ACR 的网络不稳定。更新器会重试拉取（`PULL_RETRIES`/`PULL_RETRY_DELAY`），并在切换**之前**完成拉取，因此拉取失败会中止而不会触及正在运行的容器。如有需要可增大重试相关的环境变量，或将计划任务安排得离镜像同步窗口更远一些。
 
+## DSM 7 计划任务没有运行
+
+1. 在**控制面板 → 任务计划程序**确认任务已启用，并以 **root** 运行。
+2. 重新运行 `sh scripts/install_scheduler.sh`，复制其中带绝对路径的完整命令。
+3. 按“区域选项”的 NAS 时区核对触发时间；`UPDATE_TZ` 只影响日志时间戳。
+4. 选中任务并点击**运行**，再检查保存的结果与 `logs/auto-update.log`。
+5. 若退出码为 `3` 且提示 Docker 未就绪，说明 Container Manager 未能在
+   `DOCKER_READY_TIMEOUT` 内启动；请检查套件状态或增加该超时。
+
+如果每行日志出现两次或轮转异常，请删除 DSM 命令外层的
+`>> logs/auto-update.log 2>&1`；更新器本身已经写日志。
+
+## 自动更新时 Compose 应用失败
+
+更新器现在会把 `compose up` 失败也当作回滚事件，而不只处理启动后的不健康。
+在通知/日志中查找 `ROLLED BACK`。若回滚不完整，不要清理镜像；先用
+`docker image inspect <id>` 验证旧 ID，再按[运维 › 手动回滚](operations.md)操作。
+
 ## 更新后 cloudflared 隧道掉线
 
-蓝绿部署流程会在淘汰旧连接器之前先证明新连接器已连接成功，并在最终重命名失败时保留候选容器。如果你只看到 `cloudflared-candidate` 在运行：
+分阶段更新会先验证临时连接器，再替换规范容器；若规范更新和回滚都无法完成，会保留候选。
+如果只有 `cloudflared-candidate` 在运行，请不要删除——它可能是唯一实时连接器：
 
 ```bash
 docker ps -a | grep cloudflared
-docker rename cloudflared-candidate cloudflared      # promote it
+docker logs --tail 100 cloudflared-candidate
 ```
 
-为获得最佳效果，请以 `--metrics 127.0.0.1:<port>` 启动 cloudflared（该设置会在更新间保留），这样连接检查就会精确判断，而不是靠抓取日志。
+请在候选保持连接时，按原始运行设置重建规范容器。紧急情况下可将候选重命名为
+`cloudflared`；但其临时动态 IP 和省略的主机端口绑定会一直保留，直到重建完整规范配置。
 
 ## 提示“no image changes”但我本来预期会更新
 

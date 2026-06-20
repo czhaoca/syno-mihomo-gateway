@@ -29,8 +29,20 @@
 ```bash
 git clone https://github.com/czhaoca/syno-mihomo-gateway.git
 cd syno-mihomo-gateway
+sh scripts/ci/dsm_installer_check.sh
+sh scripts/ci/lifecycle_check.sh
+sh scripts/ci/auto_update_check.sh
+sh scripts/ci/cloudflared_check.sh
+python3 scripts/ci/package_check.py
+python3 scripts/ci/privacy_check.py
+python3 scripts/ci/privacy_check_test.py
+docker compose --env-file .env.example config --quiet
 sh scripts/package.sh                    # DSM 最终用户包（默认配置）
 ```
+
+这些命令及 Woodpecker 流水线全部通过后才能发布。更新器测试使用假的 Docker/Compose
+命令，在不接触真实守护进程的情况下覆盖拉取重试、镜像 ID 比较、架构拒绝、Compose
+应用失败、健康回滚、计划命令引号以及 cloudflared 分阶段切换/回滚流程。
 
 这会在 `dist/` 下生成：
 

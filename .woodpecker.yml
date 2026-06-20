@@ -45,10 +45,22 @@ steps:
       - apt-get update -qq && apt-get install -y -qq --no-install-recommends git >/dev/null
       - python scripts/ci/package_check.py
 
+  - name: privacy-check
+    image: python:3.12-slim
+    commands:
+      # Public project/GitHub and Shenzhen ACR references are allowed. Private
+      # operational identifiers, credentials, and tracked runtime files are not.
+      - apt-get update -qq && apt-get install -y -qq --no-install-recommends git >/dev/null
+      - python scripts/ci/privacy_check.py
+      - python scripts/ci/privacy_check_test.py
+
   - name: dsm-shell-tests
     image: alpine:3.22
     commands:
       - sh scripts/ci/dsm_installer_check.sh
+      - sh scripts/ci/lifecycle_check.sh
+      - sh scripts/ci/auto_update_check.sh
+      - sh scripts/ci/cloudflared_check.sh
 
   - name: shellcheck
     image: koalaman/shellcheck-alpine:stable

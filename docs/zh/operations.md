@@ -36,8 +36,8 @@ docker compose up -d mihomo          # re-renders + restarts mihomo
 
 ## 在 DSM 上配置定时任务
 
-DSM 会在套件更新时重写 `/etc/crontab`，因此请使用 **任务计划程序（Task Scheduler）**（可在升级后保留，
-并以 root 身份运行）。打印准确的设置内容：
+在 DSM 7 上请使用**控制面板 → 任务计划程序**，不要直接编辑 `/etc/crontab`。
+官方界面能保留任务、手动运行，并保存或邮件发送异常输出。打印经过校验的设置：
 
 ```bash
 sh scripts/install_scheduler.sh
@@ -47,29 +47,41 @@ sh scripts/install_scheduler.sh
 
 1. **计划的任务 → 用户定义的脚本** —— 自动更新器，在你设定的 `UPDATE_SCHEDULE` 时间运行：
    ```
-   cd /volume1/docker/syno-mihomo-gateway && /bin/sh scripts/auto_update.sh >> logs/auto-update.log 2>&1
+   cd '/volume1/docker/syno-mihomo-gateway' && exec /bin/sh '/volume1/docker/syno-mihomo-gateway/scripts/auto_update.sh'
    ```
-   该脚本会导出 `TZ=$UPDATE_TZ`，因此 `.env` 中的时区为权威设置。可选择勾选
-   “通过电子邮件发送运行详情”，以便在退出码非零时收到通知。
+   实际路径请复制脚本打印的精确命令。选择 **root**、启用任务，并勾选“仅当脚本异常终止时
+   发送运行详情”，或启用“设置 → 保存输出结果”。不要追加 `>> logs/auto-update.log`：
+   更新器已经自行写入并轮转该日志；再次重定向会导致重复日志并破坏轮转。
 2. **触发的任务 → 开机** —— 在重启后重新创建 macvlan + TUN（弥补
    “更新时网络缺失”的漏洞）：
    ```
-   cd /volume1/docker/syno-mihomo-gateway && /bin/sh scripts/setup_network.sh
+   cd '/volume1/docker/syno-mihomo-gateway' && exec /bin/sh '/volume1/docker/syno-mihomo-gateway/scripts/setup_network.sh'
    ```
+   开机辅助脚本会等待 Container Manager/Docker 就绪后再处理 macvlan。
 
-请将更新器安排在每晚镜像同步（23:00 UTC）之后较为宽裕的时间运行 —— 例如 `0 9 * * *`
-（Asia/Shanghai）。它是幂等的，因此精确的时间点并不重要。
+DSM 按**控制面板 → 区域选项**中的 NAS 时区触发任务；`UPDATE_TZ` 只改变更新器的日志时间。
+请安排在镜像同步窗口之后，然后选择任务并先点击一次**运行**。确认结果为零并检查
+`logs/auto-update.log` 后，再依赖无人值守运行。
 
 ## 手动运行更新器
 
 ```bash
-sh scripts/auto_update.sh --dry-run   # pull + detect + report, NO swap
+sh scripts/auto_update.sh --dry-run   # 拉取 + 检查 + 报告，不切换容器
 sh scripts/auto_update.sh             # real run
 sh scripts/auto_update.sh --force     # ignore UPDATE_ENABLED=false kill-switch
 ```
 
 退出码：`0` 正常/无操作 · `2` 部分失败 · `3` 配置/预检 · `4` 已加锁 · `5` ACR
 登录失败（参见 [自动更新 › 退出码](auto-update.md)）。
+
+发布前或修改更新逻辑后，运行与 CI 相同的 DSM/BusyBox 回归测试：
+
+```bash
+sh scripts/ci/dsm_installer_check.sh
+sh scripts/ci/auto_update_check.sh
+sh scripts/ci/cloudflared_check.sh
+docker compose --env-file .env.example config --quiet
+```
 
 ## 终止开关（Kill-switch）
 
@@ -130,9 +142,12 @@ docker tag <OLD_IMAGE_ID> "$MIHOMO_IMAGE"                  # re-point the tag
 docker compose up -d mihomo
 ```
 
-对于 cloudflared，如果某次切换后遗留了一个正在运行的 `cloudflared-candidate`（重命名失败），请将其提升为正式容器：
+如果只有 `cloudflared-candidate` 在运行，请把它视为实时恢复连接器，不要删除。先检查日志，
+再按原始运行设置重建规范容器，由候选维持隧道。紧急情况下可只重命名候选，但它仍会使用
+临时动态 IP，且没有原来的主机端口绑定：
 
 ```bash
+docker logs --tail 100 cloudflared-candidate
 docker rename cloudflared-candidate cloudflared
 ```
 

@@ -11,6 +11,8 @@ your NAS, and a DSM-scheduled job keeps everything current and safely self-heali
 ## Features
 - 🚀 **Automated setup** — auto-detects the Synology interface (`eth0` / `ovs_eth0`).
 - 🛡️ **Safe & isolated** — Docker macvlan; its own LAN IP, doesn't disturb host networking.
+- 🧹 **Controlled redeploys** — independently reuse, safely dismantle, or manually handle
+  existing gateway containers and macvlan.
 - 🔧 **Everything in `.env`** — IPs, ports, DNS, registry; no secrets or DNS hardcoded in the repo.
 - 🔁 **Decoupled subscription** — your provider URL lives in one gitignored file.
 - 🤖 **Safe auto-updates** — pulls from Alibaba ACR, digest-detected, health-gated with
@@ -63,6 +65,9 @@ backend `Host=<MIHOMO_IP>`, `Port=<CONTROLLER_PORT>` (default `9090`), `Secret=<
 
 > **macvlan note:** the NAS host can't reach its own macvlan container IP — use another device for
 > the dashboard and tests. See [Architecture](docs/architecture.md#network-model-macvlan).
+>
+> For guided installation or an existing/partial deployment, run `sudo sh ./install.sh`.
+> Cleanup choices are applied only after all non-destructive validation succeeds.
 
 ## Client setup
 
@@ -73,9 +78,10 @@ backend `Host=<MIHOMO_IP>`, `Port=<CONTROLLER_PORT>` (default `9090`), `Secret=<
 ## Automatic updates
 
 Because Docker Hub/ghcr are blocked in China, [`docker-china-sync`](https://github.com/czhaoca/docker-china-sync) mirrors
-images to Alibaba ACR nightly, and `scripts/auto_update.sh` (run by DSM Task Scheduler) pulls +
-redeploys only what changed — `docker compose up -d` for mihomo/metacubexd with a health-gate and
-auto-rollback, blue-green for an external cloudflared. Print the scheduler settings with
+images to Alibaba ACR nightly, and `scripts/auto_update.sh` (run as root by DSM Task Scheduler)
+pulls, verifies, and redeploys only what changed. Compose v2 applies the checked local image with
+`--pull never`; apply or health failure triggers rollback. External cloudflared uses blue-green.
+Print the scheduler settings with
 `sh scripts/install_scheduler.sh` and dry-run with `sh scripts/auto_update.sh --dry-run`.
 Full details: [Auto-Update](docs/auto-update.md) · [Operations](docs/operations.md).
 

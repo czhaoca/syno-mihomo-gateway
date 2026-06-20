@@ -128,21 +128,9 @@ create_network() {
 
   _net="${TPROXY_NETWORK:-tproxy_network}"
   if network_exists "$_net" && ! macvlan_matches "$_net" "$_pi" "$SUBNET_CIDR" "$ROUTER_IP"; then
-    _attached="$(network_attachments "$_net")"
-    for _name in $_attached; do
-      if [ "$_name" != "$MIHOMO_CONTAINER" ]; then
-        diagnose "network '$_net' has an unrelated attached container: $_name" \
-          "disconnect it explicitly or select a different network name"
-        return 1
-      fi
-    done
-    if [ -n "$_attached" ]; then
-      # All external checks have passed; stop only this Compose project so the
-      # changed macvlan can be replaced cleanly.
-      # shellcheck disable=SC2086
-      ( cd "$REPO_ROOT" && $COMPOSE_CMD --env-file "$ENV_FILE" down --remove-orphans ) \
-        >>"${LOG_FILE:-/dev/null}" 2>&1 || return 1
-    fi
+    diagnose "network '$_net' still has a different macvlan configuration" \
+      "run the installer's preprocessing step and choose automatic or manual network cleanup"
+    return 1
   fi
 
   ensure_tun_device || { diagnose "$(msg diag_tun_fail)" "$(msg diag_tun_fail_fix)"; return 1; }
@@ -159,5 +147,8 @@ create_network() {
 setup_network_interactive() {
   scan_and_prefill || return 1
   load_env                       # refresh derived ROUTER_IP/SUBNET_CIDR
+  validate_selected_network || return 1
+  plan_predeployment_cleanup || return 1
+  apply_predeployment_cleanup || return 1
   create_network
 }

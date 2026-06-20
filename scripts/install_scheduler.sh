@@ -7,6 +7,8 @@
 SELF_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
 # shellcheck source=scripts/lib/common.sh
 . "$SELF_DIR/lib/common.sh"
+# shellcheck source=scripts/lib/scheduler.sh
+. "$SELF_DIR/lib/scheduler.sh"
 
 if [ -f "$ENV_FILE" ]; then
   dotenv_load "$ENV_FILE" || exit "$EXIT_CONFIG"
@@ -14,17 +16,19 @@ fi
 : "${UPDATE_SCHEDULE:=0 2 * * *}"
 : "${UPDATE_TZ:=Asia/Shanghai}"
 
-# mkdir -p logs FIRST: the '>>' redirect is opened by the shell before
-# auto_update.sh can create logs/, so a fresh install would otherwise fail.
-CMD="cd $REPO_ROOT && mkdir -p logs && /bin/sh scripts/auto_update.sh >> logs/auto-update.log 2>&1"
+if ! UPDATE_SCHEDULE="$(cron_normalize "$UPDATE_SCHEDULE")"; then
+  log_error "invalid UPDATE_SCHEDULE: expected a safe five-field numeric cron expression"
+  exit "$EXIT_CONFIG"
+fi
+CMD="$(scheduler_update_command)" || exit "$EXIT_CONFIG"
+BOOT_CMD="$(scheduler_network_command)" || exit "$EXIT_CONFIG"
 
 # Parse the cron "minute hour" fields into a friendly daily time for the GUI.
-MIN="$(echo "$UPDATE_SCHEDULE" | awk '{print $1}')"
-HOUR="$(echo "$UPDATE_SCHEDULE" | awk '{print $2}')"
-case "$MIN$HOUR" in
-  ''|*[!0-9]*) SCHED_DESC="Custom schedule (cron: $UPDATE_SCHEDULE) - set the DSM trigger to match" ;;
-  *)           SCHED_DESC="Daily, first run time $(printf '%02d:%02d' "$HOUR" "$MIN")" ;;
-esac
+if DAILY_TIME="$(cron_daily_hhmm "$UPDATE_SCHEDULE")"; then
+  SCHED_DESC="Daily, first run time $DAILY_TIME"
+else
+  SCHED_DESC="Custom schedule (cron: $UPDATE_SCHEDULE) - set the DSM trigger to match"
+fi
 
 cat <<EOF
 ========================================================================
@@ -42,16 +46,21 @@ Recommended (persists across DSM upgrades, runs as root):
 
      $CMD
 
+   Enable "Send run details only when the script terminates abnormally" or
+   Task Scheduler Settings -> "Save output results". The updater writes its
+   own rotating log at UPDATE_LOG; do not add another >> redirection.
+
  Also recommended: a second task with the "Boot-up" trigger (User = root) running
-   cd $REPO_ROOT && /bin/sh scripts/setup_network.sh
+   $BOOT_CMD
  so the macvlan network + /dev/net/tun self-heal after a reboot.
 
 ------------------------------------------------------------------------
 Fallback (raw crontab - may be wiped by DSM updates; DSM cron has a user column):
 
-  $MIN $HOUR $(echo "$UPDATE_SCHEDULE" | awk '{print $3, $4, $5}')	root	$CMD
+  $UPDATE_SCHEDULE	root	$CMD
 
-  Then reload: synoservice --restart crond   (older DSM: synoservice -restart crond)
+  Reload is DSM-build-specific (synosystemctl on DSM 7; synoservice on older
+  builds). The installer probes both. If reload fails, use Task Scheduler.
   Note: BusyBox crond fires in the NAS SYSTEM timezone (it ignores a per-line TZ=).
 ========================================================================
 EOF

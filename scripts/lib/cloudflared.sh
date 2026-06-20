@@ -1,154 +1,335 @@
 #!/bin/sh
-# cloudflared.sh - blue-green reprovision of the EXTERNAL cloudflared container.
-# It is NOT in docker-compose.yml; we manage it by name. The candidate is a faithful
-# CLONE of the running container (all env, ports, binds, networks + static IP, restart
-# policy and command) with only the image bumped - so the tunnel token AND any other
-# settings (e.g. --metrics) are preserved. Cloudflare allows multiple simultaneous
-# connectors per tunnel, so the candidate runs alongside the old one and the live
-# tunnel never drops during verification.
-# Requires common.sh + registry.sh sourced first (DOCKER_BIN, log_*).
+# cloudflared.sh - staged updates for the EXTERNAL cloudflared container.
+#
+# A temporary connector is first started without the canonical container's host
+# ports or static IPs.  Once it is connected, the canonical container is rebuilt
+# with the preserved run specification and the new image.  The temporary
+# connector stays online until the canonical replacement is verified.  If that
+# final step fails, the old image is recreated from the same saved specification.
+#
+# Requires common.sh + registry.sh (DOCKER_BIN, log_*). POSIX /bin/sh.
+# shellcheck disable=SC2016 # Docker Go templates are intentionally single quoted.
 
-CF_CANDIDATE_SUFFIX="-candidate"
-CF_RENAME_RETRIES=5
-# Set to 1 when a candidate has been promoted-but-not-renamed and must NOT be reaped
-# by the EXIT trap (it is the only live connector at that point).
+CF_CANDIDATE_SUFFIX="${CF_CANDIDATE_SUFFIX:--candidate}"
 CF_KEEP_CANDIDATE=0
+CF_WORKDIR=""
 
-# Remove a leftover candidate from a previously crashed run (also called by the trap).
-# Never removes a candidate we deliberately kept after a rename failure.
-cloudflared_cleanup_candidate() {
-  [ "${CF_KEEP_CANDIDATE:-0}" = 1 ] && return 0
-  _cand="${CF_CONTAINER_NAME}${CF_CANDIDATE_SUFFIX}"
-  if "$DOCKER_BIN" inspect "$_cand" >/dev/null 2>&1; then
-    log_warn "removing stray cloudflared candidate: $_cand"
-    "$DOCKER_BIN" rm -f "$_cand" >/dev/null 2>&1 || true
-  fi
+_cloudflared_running() {
+  [ "$("$DOCKER_BIN" inspect -f '{{.State.Running}}' "$1" 2>/dev/null)" = true ]
 }
 
-# Wait until the connector reports connected. Prefers native HEALTHCHECK, else the
-# "Registered tunnel connection" log marker cloudflared emits per edge connection.
+cloudflared_cleanup_workdir() {
+  [ -n "${CF_WORKDIR:-}" ] || return 0
+  rm -rf "$CF_WORKDIR" 2>/dev/null || true
+  CF_WORKDIR=""
+}
+
+# A candidate can be the only live tunnel after an interrupted recovery. Never
+# reap it merely because its name is temporary.
+cloudflared_cleanup_candidate() {
+  [ "${CF_KEEP_CANDIDATE:-0}" = 1 ] && return 0
+  _ccc_cand="${CF_CONTAINER_NAME}${CF_CANDIDATE_SUFFIX}"
+  "$DOCKER_BIN" inspect "$_ccc_cand" >/dev/null 2>&1 || return 0
+  if _cloudflared_running "$CF_CONTAINER_NAME"; then
+    log_warn "removing stale cloudflared candidate while the canonical connector is running: $_ccc_cand"
+    "$DOCKER_BIN" rm -f "$_ccc_cand" >/dev/null 2>&1 || return 1
+    return 0
+  fi
+  if _cloudflared_running "$_ccc_cand"; then
+    CF_KEEP_CANDIDATE=1
+    log_error "candidate '$_ccc_cand' may be the only live connector; leaving it untouched"
+    log_error "restore '$CF_CONTAINER_NAME', verify it, then remove or rename the candidate manually"
+    return 1
+  fi
+  log_warn "removing stopped stale cloudflared candidate: $_ccc_cand"
+  "$DOCKER_BIN" rm -f "$_ccc_cand" >/dev/null 2>&1 || return 1
+}
+
 cloudflared_wait_connected() {
-  _c="$1"; _timeout="$2"; _waited=0
-  while [ "$_waited" -lt "$_timeout" ]; do
-    _run="$("$DOCKER_BIN" inspect -f '{{.State.Running}}' "$_c" 2>/dev/null)"
-    [ "$_run" = "true" ] || { log_error "cloudflared $_c exited early"; return 1; }
-    _hs="$("$DOCKER_BIN" inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$_c" 2>/dev/null)"
-    [ "$_hs" = "healthy" ] && return 0
-    if "$DOCKER_BIN" logs "$_c" 2>&1 | grep -Eqi 'Registered tunnel connection|Connection [0-9a-f-]+ registered|registered tunnel connection'; then
+  _cwc_name="$1"; _cwc_timeout="$2"; _cwc_waited=0
+  while [ "$_cwc_waited" -lt "$_cwc_timeout" ]; do
+    _cloudflared_running "$_cwc_name" || {
+      log_error "cloudflared $_cwc_name exited early"
+      return 1
+    }
+    _cwc_health="$("$DOCKER_BIN" inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$_cwc_name" 2>/dev/null)"
+    [ "$_cwc_health" = healthy ] && return 0
+    if "$DOCKER_BIN" logs "$_cwc_name" 2>&1 \
+      | grep -Eqi 'Registered tunnel connection|Connection [0-9a-f-]+ registered|registered tunnel connection'; then
       return 0
     fi
-    sleep 3; _waited=$((_waited+3))
+    sleep 3
+    _cwc_waited=$((_cwc_waited + 3))
   done
   return 1
 }
 
-# Promote candidate -> canonical name, retrying rename (daemon hiccups / name-reclaim
-# races). On persistent failure, KEEP the candidate (it is the only live connector) and
-# tell the trap to leave it alone, so the operator can rename it manually.
-_cloudflared_promote() {
-  _cand="$1"; _blue="$2"; _n=0
-  while [ "$_n" -lt "$CF_RENAME_RETRIES" ]; do
-    if "$DOCKER_BIN" rename "$_cand" "$_blue" >>"$LOG_FILE" 2>&1; then
-      log_info "cloudflared: promoted candidate -> $_blue (token preserved)"
-      return 0
+_cloudflared_make_workdir() {
+  cloudflared_cleanup_workdir
+  CF_WORKDIR="$(mktemp -d "${TMPDIR:-/tmp}/smg-cloudflared.XXXXXX" 2>/dev/null)" || {
+    log_error "could not create a private cloudflared state directory"
+    return 1
+  }
+  chmod 700 "$CF_WORKDIR" 2>/dev/null || {
+    cloudflared_cleanup_workdir
+    return 1
+  }
+  return 0
+}
+
+# Keep tunnel credentials out of the docker client argv/process list. The
+# private env file is removed by cloudflared_cleanup_workdir after each attempt.
+_cloudflared_set_token_override() {
+  [ -n "${CF_TUNNEL_TOKEN:-}" ] || return 0
+  case "$CF_TUNNEL_TOKEN" in
+    *'
+'*) log_error "CF_TUNNEL_TOKEN must be a single line"; return 1 ;;
+  esac
+  sed '/^TUNNEL_TOKEN=/d' "$CF_WORKDIR/env" >"$CF_WORKDIR/env.next" || return 1
+  printf 'TUNNEL_TOKEN=%s\n' "$CF_TUNNEL_TOKEN" >>"$CF_WORKDIR/env.next" || return 1
+  chmod 600 "$CF_WORKDIR/env.next" 2>/dev/null || return 1
+  mv "$CF_WORKDIR/env.next" "$CF_WORKDIR/env" || return 1
+}
+
+# Capture the subset of Docker run configuration this updater can faithfully
+# replay. Values with spaces remain one line/argument and are never eval'd.
+_cloudflared_capture_spec() {
+  _ccs_name="$1"
+  _cloudflared_make_workdir || return 1
+
+  _ccs_container_network="$("$DOCKER_BIN" inspect -f '{{.HostConfig.NetworkMode}}' "$_ccs_name" 2>/dev/null)"
+  case "$_ccs_container_network" in container:*)
+    log_error "cloudflared uses container network mode, which cannot be replayed safely"
+    cloudflared_cleanup_workdir; return 1 ;;
+  esac
+  if [ "$("$DOCKER_BIN" inspect -f '{{.HostConfig.AutoRemove}}' "$_ccs_name" 2>/dev/null)" = true ]; then
+    log_error "cloudflared was created with --rm; automatic replacement is unsafe"
+    cloudflared_cleanup_workdir; return 1
+  fi
+
+  "$DOCKER_BIN" inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$_ccs_name" >"$CF_WORKDIR/env" 2>/dev/null || return 1
+  chmod 600 "$CF_WORKDIR/env" 2>/dev/null || return 1
+  _cloudflared_set_token_override || { cloudflared_cleanup_workdir; return 1; }
+  "$DOCKER_BIN" inspect -f '{{range .Config.Cmd}}{{println .}}{{end}}' "$_ccs_name" >"$CF_WORKDIR/cmd" 2>/dev/null || return 1
+  "$DOCKER_BIN" inspect -f '{{range .Config.Entrypoint}}{{println .}}{{end}}' "$_ccs_name" >"$CF_WORKDIR/entrypoint" 2>/dev/null || return 1
+  "$DOCKER_BIN" inspect -f '{{range .HostConfig.Binds}}{{println .}}{{end}}' "$_ccs_name" >"$CF_WORKDIR/binds" 2>/dev/null || return 1
+  awk -F: 'NF >= 2 { print $2 }' "$CF_WORKDIR/binds" >"$CF_WORKDIR/bind-destinations" || return 1
+  "$DOCKER_BIN" inspect -f '{{range .Mounts}}{{if eq .Type "volume"}}{{printf "%s|%s|%t\n" .Name .Destination .RW}}{{end}}{{end}}' "$_ccs_name" >"$CF_WORKDIR/volumes" 2>/dev/null || return 1
+  "$DOCKER_BIN" inspect -f '{{range $p,$c := .HostConfig.PortBindings}}{{range $c}}{{printf "%s|%s|%s\n" .HostIp .HostPort $p}}{{end}}{{end}}' "$_ccs_name" >"$CF_WORKDIR/ports" 2>/dev/null || return 1
+  "$DOCKER_BIN" inspect -f '{{range $k,$v := .NetworkSettings.Networks}}{{printf "%s|%s\n" $k $v.IPAddress}}{{end}}' "$_ccs_name" >"$CF_WORKDIR/networks.raw" 2>/dev/null || return 1
+  "$DOCKER_BIN" inspect -f '{{range .HostConfig.Dns}}{{println .}}{{end}}' "$_ccs_name" >"$CF_WORKDIR/dns" 2>/dev/null || return 1
+  "$DOCKER_BIN" inspect -f '{{range .HostConfig.ExtraHosts}}{{println .}}{{end}}' "$_ccs_name" >"$CF_WORKDIR/extra-hosts" 2>/dev/null || return 1
+  "$DOCKER_BIN" inspect -f '{{range .HostConfig.CapAdd}}{{println .}}{{end}}' "$_ccs_name" >"$CF_WORKDIR/cap-add" 2>/dev/null || return 1
+  "$DOCKER_BIN" inspect -f '{{range .HostConfig.CapDrop}}{{println .}}{{end}}' "$_ccs_name" >"$CF_WORKDIR/cap-drop" 2>/dev/null || return 1
+  "$DOCKER_BIN" inspect -f '{{range .HostConfig.SecurityOpt}}{{println .}}{{end}}' "$_ccs_name" >"$CF_WORKDIR/security-opt" 2>/dev/null || return 1
+  "$DOCKER_BIN" inspect -f '{{range .HostConfig.Devices}}{{printf "%s:%s:%s\n" .PathOnHost .PathInContainer .CgroupPermissions}}{{end}}' "$_ccs_name" >"$CF_WORKDIR/devices" 2>/dev/null || return 1
+  "$DOCKER_BIN" inspect -f '{{range $p,$o := .HostConfig.Tmpfs}}{{printf "%s|%s\n" $p $o}}{{end}}' "$_ccs_name" >"$CF_WORKDIR/tmpfs" 2>/dev/null || return 1
+
+  CF_SPEC_RESTART="$("$DOCKER_BIN" inspect -f '{{.HostConfig.RestartPolicy.Name}}' "$_ccs_name" 2>/dev/null)"
+  CF_SPEC_RESTART_MAX="$("$DOCKER_BIN" inspect -f '{{.HostConfig.RestartPolicy.MaximumRetryCount}}' "$_ccs_name" 2>/dev/null)"
+  CF_SPEC_USER="$("$DOCKER_BIN" inspect -f '{{.Config.User}}' "$_ccs_name" 2>/dev/null)"
+  CF_SPEC_WORKDIR="$("$DOCKER_BIN" inspect -f '{{.Config.WorkingDir}}' "$_ccs_name" 2>/dev/null)"
+  CF_SPEC_READONLY="$("$DOCKER_BIN" inspect -f '{{.HostConfig.ReadonlyRootfs}}' "$_ccs_name" 2>/dev/null)"
+  CF_SPEC_PRIVILEGED="$("$DOCKER_BIN" inspect -f '{{.HostConfig.Privileged}}' "$_ccs_name" 2>/dev/null)"
+  CF_SPEC_NETWORK_MODE="$_ccs_container_network"
+  CF_OLD_IMAGE_ID="$("$DOCKER_BIN" inspect -f '{{.Image}}' "$_ccs_name" 2>/dev/null)"
+  [ -n "$CF_OLD_IMAGE_ID" ] || {
+    log_error "could not capture cloudflared's current image ID"
+    cloudflared_cleanup_workdir; return 1
+  }
+
+  # Replay the original primary network first, then all additional networks.
+  awk -F'|' -v primary="$CF_SPEC_NETWORK_MODE" '
+    $1 == primary { print > primary_file; next }
+    { print > extra_file }
+  ' primary_file="$CF_WORKDIR/networks.primary" extra_file="$CF_WORKDIR/networks.extra" \
+    "$CF_WORKDIR/networks.raw"
+  [ -s "$CF_WORKDIR/networks.primary" ] || {
+    sed -n '1p' "$CF_WORKDIR/networks.raw" >"$CF_WORKDIR/networks.primary"
+    sed '1d' "$CF_WORKDIR/networks.raw" >"$CF_WORKDIR/networks.extra"
+  }
+  return 0
+}
+
+_cloudflared_run_saved() {
+  _crs_mode="$1"; _crs_name="$2"; _crs_image="$3"
+  if [ "$_crs_mode" = candidate ]; then
+    set -- --name "$_crs_name" --env-file "$CF_WORKDIR/env" --restart no
+  else
+    _crs_restart="${CF_SPEC_RESTART:-unless-stopped}"
+    [ "$_crs_restart" != no ] || _crs_restart=no
+    if [ "$_crs_restart" = on-failure ] && [ "${CF_SPEC_RESTART_MAX:-0}" -gt 0 ] 2>/dev/null; then
+      _crs_restart="on-failure:${CF_SPEC_RESTART_MAX}"
     fi
-    _n=$((_n+1)); sleep 2
-  done
+    set -- --name "$_crs_name" --env-file "$CF_WORKDIR/env" --restart "$_crs_restart"
+  fi
+  [ -n "${CF_SPEC_USER:-}" ] && set -- "$@" --user "$CF_SPEC_USER"
+  [ -n "${CF_SPEC_WORKDIR:-}" ] && set -- "$@" --workdir "$CF_SPEC_WORKDIR"
+  [ "${CF_SPEC_READONLY:-false}" = true ] && set -- "$@" --read-only
+  [ "${CF_SPEC_PRIVILEGED:-false}" = true ] && set -- "$@" --privileged
+
+  _crs_primary="$(head -n1 "$CF_WORKDIR/networks.primary" 2>/dev/null)"
+  _crs_primary_name="${_crs_primary%%|*}"
+  _crs_primary_ip="${_crs_primary#*|}"
+  [ "$_crs_primary_ip" != "$_crs_primary" ] || _crs_primary_ip=""
+  [ -n "$_crs_primary_name" ] && set -- "$@" --network "$_crs_primary_name"
+  if [ "$_crs_mode" = canonical ] && [ -z "$_crs_primary_name" ]; then
+    case "${CF_SPEC_NETWORK_MODE:-}" in
+      host|none|bridge) set -- "$@" --network "$CF_SPEC_NETWORK_MODE" ;;
+    esac
+  fi
+  if [ "$_crs_mode" = canonical ] && [ -n "$_crs_primary_ip" ]; then
+    set -- "$@" --ip "$_crs_primary_ip"
+  fi
+
+  while IFS= read -r _crs_line || [ -n "$_crs_line" ]; do [ -n "$_crs_line" ] && set -- "$@" -v "$_crs_line"; done <"$CF_WORKDIR/binds"
+  while IFS='|' read -r _crs_volume _crs_dest _crs_rw || [ -n "$_crs_volume$_crs_dest" ]; do
+    [ -n "$_crs_volume" ] && [ -n "$_crs_dest" ] || continue
+    grep -Fqx "$_crs_dest" "$CF_WORKDIR/bind-destinations" 2>/dev/null && continue
+    if [ "$_crs_rw" = false ]; then set -- "$@" -v "$_crs_volume:$_crs_dest:ro"; else set -- "$@" -v "$_crs_volume:$_crs_dest"; fi
+  done <"$CF_WORKDIR/volumes"
+  if [ "$_crs_mode" = canonical ]; then
+    while IFS='|' read -r _crs_hip _crs_hport _crs_cport || [ -n "$_crs_cport" ]; do
+      [ -n "$_crs_cport" ] || continue
+      if [ -n "$_crs_hip" ]; then set -- "$@" -p "$_crs_hip:$_crs_hport:$_crs_cport"; else set -- "$@" -p "$_crs_hport:$_crs_cport"; fi
+    done <"$CF_WORKDIR/ports"
+  fi
+  while IFS= read -r _crs_line || [ -n "$_crs_line" ]; do [ -n "$_crs_line" ] && set -- "$@" --dns "$_crs_line"; done <"$CF_WORKDIR/dns"
+  while IFS= read -r _crs_line || [ -n "$_crs_line" ]; do [ -n "$_crs_line" ] && set -- "$@" --add-host "$_crs_line"; done <"$CF_WORKDIR/extra-hosts"
+  while IFS= read -r _crs_line || [ -n "$_crs_line" ]; do [ -n "$_crs_line" ] && set -- "$@" --cap-add "$_crs_line"; done <"$CF_WORKDIR/cap-add"
+  while IFS= read -r _crs_line || [ -n "$_crs_line" ]; do [ -n "$_crs_line" ] && set -- "$@" --cap-drop "$_crs_line"; done <"$CF_WORKDIR/cap-drop"
+  while IFS= read -r _crs_line || [ -n "$_crs_line" ]; do [ -n "$_crs_line" ] && set -- "$@" --security-opt "$_crs_line"; done <"$CF_WORKDIR/security-opt"
+  while IFS= read -r _crs_line || [ -n "$_crs_line" ]; do [ -n "$_crs_line" ] && set -- "$@" --device "$_crs_line"; done <"$CF_WORKDIR/devices"
+  while IFS='|' read -r _crs_path _crs_opts || [ -n "$_crs_path" ]; do
+    [ -n "$_crs_path" ] || continue
+    if [ -n "$_crs_opts" ]; then set -- "$@" --tmpfs "$_crs_path:$_crs_opts"; else set -- "$@" --tmpfs "$_crs_path"; fi
+  done <"$CF_WORKDIR/tmpfs"
+  _crs_entrypoint="$(sed -n '1p' "$CF_WORKDIR/entrypoint")"
+  [ -n "$_crs_entrypoint" ] && set -- "$@" --entrypoint "$_crs_entrypoint"
+  set -- "$@" "$_crs_image"
+  # Docker --entrypoint accepts only the executable. Preserve any additional
+  # entrypoint argv by placing it before the saved Config.Cmd arguments.
+  sed '1d' "$CF_WORKDIR/entrypoint" >"$CF_WORKDIR/entrypoint.rest"
+  while IFS= read -r _crs_arg || [ -n "$_crs_arg" ]; do set -- "$@" "$_crs_arg"; done <"$CF_WORKDIR/entrypoint.rest"
+  while IFS= read -r _crs_arg || [ -n "$_crs_arg" ]; do set -- "$@" "$_crs_arg"; done <"$CF_WORKDIR/cmd"
+
+  if ! "$DOCKER_BIN" run -d "$@" >>"$LOG_FILE" 2>&1; then return 1; fi
+
+  # The first line was used at docker run time. Attach remaining networks with
+  # dynamic addresses for the candidate and their saved addresses for canonical.
+  while IFS='|' read -r _crs_net _crs_ip || [ -n "$_crs_net" ]; do
+    [ -n "$_crs_net" ] || continue
+    if [ "$_crs_mode" = canonical ] && [ -n "$_crs_ip" ]; then
+      "$DOCKER_BIN" network connect --ip "$_crs_ip" "$_crs_net" "$_crs_name" >>"$LOG_FILE" 2>&1 || return 1
+    else
+      "$DOCKER_BIN" network connect "$_crs_net" "$_crs_name" >>"$LOG_FILE" 2>&1 || return 1
+    fi
+  done <"$CF_WORKDIR/networks.extra"
+  return 0
+}
+
+_cloudflared_restore_old() {
+  _cro_blue="$1"; _cro_cand="$2"
+  "$DOCKER_BIN" rm -f "$_cro_blue" >/dev/null 2>&1 || true
+  log_warn "cloudflared: restoring previous image $CF_OLD_IMAGE_ID"
+  if _cloudflared_run_saved canonical "$_cro_blue" "$CF_OLD_IMAGE_ID" \
+     && cloudflared_wait_connected "$_cro_blue" "$CF_HEALTH_TIMEOUT"; then
+    "$DOCKER_BIN" rm -f "$_cro_cand" >/dev/null 2>&1 || true
+    log_warn "cloudflared: previous image restored and connected"
+    return 0
+  fi
   CF_KEEP_CANDIDATE=1
-  log_error "cloudflared rename failed ${CF_RENAME_RETRIES}x; candidate kept running as '$_cand' (only connector). Fix: docker rename $_cand $_blue"
+  log_error "cloudflared rollback failed; candidate kept running as '$_cro_cand'"
   return 1
 }
 
 cloudflared_blue_green() {
-  _blue="$CF_CONTAINER_NAME"
-  _cand="${CF_CONTAINER_NAME}${CF_CANDIDATE_SUFFIX}"
+  _cbg_blue="$CF_CONTAINER_NAME"
+  _cbg_cand="${CF_CONTAINER_NAME}${CF_CANDIDATE_SUFFIX}"
+  CF_KEEP_CANDIDATE=0
   [ -n "${CF_IMAGE:-}" ] || { log_error "CF_IMAGE unset - cannot update cloudflared"; return 1; }
-  cloudflared_cleanup_candidate
+  cloudflared_cleanup_candidate || return 1
 
-  # No existing container -> first-time provision (needs an explicit token).
-  if ! "$DOCKER_BIN" inspect "$_blue" >/dev/null 2>&1; then
-    log_warn "no existing '$_blue' container - provisioning fresh from CF_IMAGE"
-    [ -n "${CF_TUNNEL_TOKEN:-}" ] || { log_error "CF_TUNNEL_TOKEN required (no container to clone the key from)"; return 1; }
-    "$DOCKER_BIN" run -d --name "$_blue" --restart unless-stopped \
-      -e TUNNEL_TOKEN="$CF_TUNNEL_TOKEN" "$CF_IMAGE" tunnel --no-autoupdate run >>"$LOG_FILE" 2>&1 \
-      || { log_error "failed to start fresh cloudflared"; return 1; }
-    cloudflared_wait_connected "$_blue" "$CF_HEALTH_TIMEOUT" \
-      || { log_error "fresh cloudflared never connected"; return 1; }
+  # First provision has no run specification to preserve.
+  if ! "$DOCKER_BIN" inspect "$_cbg_blue" >/dev/null 2>&1; then
+    log_warn "no existing '$_cbg_blue' container - provisioning fresh from CF_IMAGE"
+    [ -n "${CF_TUNNEL_TOKEN:-}" ] || { log_error "CF_TUNNEL_TOKEN required for first provisioning"; return 1; }
+    _cloudflared_make_workdir || return 1
+    : >"$CF_WORKDIR/env"
+    chmod 600 "$CF_WORKDIR/env" 2>/dev/null || { cloudflared_cleanup_workdir; return 1; }
+    _cloudflared_set_token_override || { cloudflared_cleanup_workdir; return 1; }
+    if ! "$DOCKER_BIN" run -d --name "$_cbg_blue" --restart unless-stopped \
+      --env-file "$CF_WORKDIR/env" "$CF_IMAGE" tunnel --no-autoupdate run >>"$LOG_FILE" 2>&1; then
+      log_error "failed to start fresh cloudflared"
+      "$DOCKER_BIN" rm -f "$_cbg_blue" >/dev/null 2>&1 || true
+      cloudflared_cleanup_workdir
+      return 1
+    fi
+    if ! cloudflared_wait_connected "$_cbg_blue" "$CF_HEALTH_TIMEOUT"; then
+      log_error "fresh cloudflared never connected"
+      "$DOCKER_BIN" rm -f "$_cbg_blue" >/dev/null 2>&1 || true
+      cloudflared_cleanup_workdir
+      return 1
+    fi
+    cloudflared_cleanup_workdir
     log_info "cloudflared: provisioned fresh and connected"
     return 0
   fi
 
-  # --- Clone the run spec of the running container (everything but the image) ---
-  _restart="$("$DOCKER_BIN" inspect -f '{{.HostConfig.RestartPolicy.Name}}' "$_blue" 2>/dev/null)"
-  [ -n "$_restart" ] && [ "$_restart" != "no" ] || _restart="unless-stopped"
-  # Original command (args after the image entrypoint); default to our standard run.
-  _cmd="$("$DOCKER_BIN" inspect -f '{{range .Config.Cmd}}{{.}} {{end}}' "$_blue" 2>/dev/null)"
-  [ -n "$_cmd" ] || _cmd="tunnel --no-autoupdate run"
-  # Networks: primary + its static IP (replay --ip only if statically assigned).
-  _nets="$("$DOCKER_BIN" inspect -f '{{range $k,$v := .NetworkSettings.Networks}}{{println $k}}{{end}}' "$_blue" 2>/dev/null)"
-  _primary_net="$(printf '%s\n' "$_nets" | head -n1)"
-  _ip=""
-  if [ -n "$_primary_net" ]; then
-    _ip="$("$DOCKER_BIN" inspect -f "{{with (index .NetworkSettings.Networks \"$_primary_net\")}}{{if .IPAMConfig}}{{.IPAMConfig.IPv4Address}}{{end}}{{end}}" "$_blue" 2>/dev/null)"
-  fi
-  # All env vars -> a temp env-file (survives spaces; carries TUNNEL_TOKEN + TUNNEL_METRICS etc.).
-  _envf="$(mktemp 2>/dev/null || echo /tmp/cf-env.$$)"
-  "$DOCKER_BIN" inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$_blue" 2>/dev/null > "$_envf"
-
-  # Token sanity (non-fatal): must come from env-file, the command, or the override.
-  if [ -z "${CF_TUNNEL_TOKEN:-}" ] && ! grep -q '^TUNNEL_TOKEN=' "$_envf" 2>/dev/null \
-       && ! printf '%s' "$_cmd" | grep -q -- '--token'; then
-    log_warn "no TUNNEL_TOKEN found on '$_blue' (env/cmd) and no override - candidate may fail to connect"
-  fi
-
-  # Build the candidate run argv.
-  set -- --name "$_cand" --env-file "$_envf" --restart "$_restart"
-  [ -n "$_primary_net" ] && set -- "$@" --network "$_primary_net"
-  [ -n "$_ip" ] && set -- "$@" --ip "$_ip"
-  # Published ports.
-  _ports="$("$DOCKER_BIN" inspect -f '{{range $p,$c := .HostConfig.PortBindings}}{{range $c}}{{println (printf "%s|%s|%s" .HostIp .HostPort $p)}}{{end}}{{end}}' "$_blue" 2>/dev/null)"
-  while IFS='|' read -r _hip _hport _cport; do
-    [ -n "$_cport" ] || continue
-    if [ -n "$_hip" ]; then set -- "$@" -p "$_hip:$_hport:$_cport"; else set -- "$@" -p "$_hport:$_cport"; fi
-  done <<EOF
-$_ports
-EOF
-  # Bind mounts.
-  _binds="$("$DOCKER_BIN" inspect -f '{{range .HostConfig.Binds}}{{println .}}{{end}}' "$_blue" 2>/dev/null)"
-  while IFS= read -r _b; do
-    [ -n "$_b" ] && set -- "$@" -v "$_b"
-  done <<EOF
-$_binds
-EOF
-  # Override token wins (appended after --env-file).
-  [ -n "${CF_TUNNEL_TOKEN:-}" ] && set -- "$@" -e TUNNEL_TOKEN="$CF_TUNNEL_TOKEN"
-  set -- "$@" "$CF_IMAGE"
-
-  log_info "cloudflared: launching candidate (net=${_primary_net:-default} ip=${_ip:-auto} restart=$_restart)"
-  # shellcheck disable=SC2086  # $_cmd is intentionally word-split into command args
-  if ! "$DOCKER_BIN" run -d "$@" $_cmd >>"$LOG_FILE" 2>&1; then
-    log_error "failed to start cloudflared candidate"
-    rm -f "$_envf" 2>/dev/null || true
-    "$DOCKER_BIN" rm -f "$_cand" >/dev/null 2>&1 || true
+  _cloudflared_capture_spec "$_cbg_blue" || return 1
+  if ! _cloudflared_run_saved candidate "$_cbg_cand" "$CF_IMAGE"; then
+    log_error "failed to start conflict-free cloudflared candidate; canonical connector is untouched"
+    "$DOCKER_BIN" rm -f "$_cbg_cand" >/dev/null 2>&1 || true
+    cloudflared_cleanup_workdir
     return 1
   fi
-  rm -f "$_envf" 2>/dev/null || true
-
-  # Re-attach any additional networks beyond the primary.
-  printf '%s\n' "$_nets" | tail -n +2 | while IFS= read -r _extra; do
-    [ -n "$_extra" ] && "$DOCKER_BIN" network connect "$_extra" "$_cand" >>"$LOG_FILE" 2>&1 || true
-  done
-
-  # Prove the candidate is connected BEFORE touching blue.
-  if ! cloudflared_wait_connected "$_cand" "$CF_HEALTH_TIMEOUT"; then
-    log_error "candidate never connected within ${CF_HEALTH_TIMEOUT}s - ROLLBACK (blue untouched)"
-    "$DOCKER_BIN" logs --tail 50 "$_cand" >>"$LOG_FILE" 2>&1 || true
-    "$DOCKER_BIN" rm -f "$_cand" >/dev/null 2>&1 || true
+  if ! cloudflared_wait_connected "$_cbg_cand" "$CF_HEALTH_TIMEOUT"; then
+    log_error "candidate never connected; canonical connector is untouched"
+    "$DOCKER_BIN" logs --tail 50 "$_cbg_cand" >>"$LOG_FILE" 2>&1 || true
+    "$DOCKER_BIN" rm -f "$_cbg_cand" >/dev/null 2>&1 || true
+    cloudflared_cleanup_workdir
     return 1
   fi
 
-  # Cutover: stop+remove blue, then promote candidate (with rename retries).
-  "$DOCKER_BIN" stop "$_blue" >>"$LOG_FILE" 2>&1 || true
-  "$DOCKER_BIN" rm "$_blue"   >>"$LOG_FILE" 2>&1 || true
-  _cloudflared_promote "$_cand" "$_blue"
+  if ! "$DOCKER_BIN" stop "$_cbg_blue" >>"$LOG_FILE" 2>&1; then
+    log_error "could not confirm canonical cloudflared stopped"
+    if _cloudflared_running "$_cbg_blue"; then
+      "$DOCKER_BIN" rm -f "$_cbg_cand" >/dev/null 2>&1 || true
+    else
+      "$DOCKER_BIN" start "$_cbg_blue" >>"$LOG_FILE" 2>&1 || true
+      if cloudflared_wait_connected "$_cbg_blue" "$CF_HEALTH_TIMEOUT"; then
+        "$DOCKER_BIN" rm -f "$_cbg_cand" >/dev/null 2>&1 || true
+      else
+        CF_KEEP_CANDIDATE=1
+      fi
+    fi
+    cloudflared_cleanup_workdir
+    return 1
+  fi
+  if ! "$DOCKER_BIN" rm "$_cbg_blue" >>"$LOG_FILE" 2>&1; then
+    log_error "could not remove stopped canonical cloudflared; attempting to restart it"
+    "$DOCKER_BIN" start "$_cbg_blue" >>"$LOG_FILE" 2>&1 || true
+    if cloudflared_wait_connected "$_cbg_blue" "$CF_HEALTH_TIMEOUT"; then
+      "$DOCKER_BIN" rm -f "$_cbg_cand" >/dev/null 2>&1 || true
+    else
+      CF_KEEP_CANDIDATE=1
+    fi
+    cloudflared_cleanup_workdir
+    return 1
+  fi
+
+  if _cloudflared_run_saved canonical "$_cbg_blue" "$CF_IMAGE" \
+     && cloudflared_wait_connected "$_cbg_blue" "$CF_HEALTH_TIMEOUT"; then
+    "$DOCKER_BIN" rm -f "$_cbg_cand" >/dev/null 2>&1 || true
+    cloudflared_cleanup_workdir
+    log_info "cloudflared: canonical container updated and connected"
+    return 0
+  fi
+
+  log_error "new canonical cloudflared failed; rolling back while the candidate remains connected"
+  _cloudflared_restore_old "$_cbg_blue" "$_cbg_cand" || true
+  cloudflared_cleanup_workdir
+  # The old connector may be healthy again, but the requested update still
+  # failed and must be reported as a partial failure by the orchestrator.
+  return 1
 }

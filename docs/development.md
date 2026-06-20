@@ -23,27 +23,37 @@ scripts/
   auto_update.sh              # the DSM auto-update orchestrator (entry point)
   install_scheduler.sh        # prints DSM Task Scheduler / crontab settings
   package.sh                  # build-host: builds the offline release zip (docs/release-packaging.md)
+  installer/
+    preprocess.sh             # per-resource cleanup choices; mutations are deferred
   lib/
     common.sh                 # env load, logging+rotation, mkdir lock, exit codes
     registry.sh               # preflight (compose/arch/network/tun), ACR login, pull + change detect
     compose.sh                # compose up, health gate, rollback
     cloudflared.sh            # blue-green reprovision of the external cloudflared
+    lifecycle.sh              # deployment inventory + verified scoped teardown
+    scheduler.sh              # safe DSM/BusyBox cron parsing and task commands
   ci/
     render_check.py           # CI: runs the real renderer + structural/rule assertions
+    auto_update_check.sh      # fake-Docker TDD suite for scheduler/update/rollback paths
+    cloudflared_check.sh      # fake-Docker TDD suite for blue-green behavior
+    lifecycle_check.sh       # fake-Docker inventory/cleanup safety suite
+    privacy_check.py         # tracked-content/history privacy gate
 .woodpecker.yml               # CI: compose/yaml validate, render check, shellcheck
 docs/                         # this manual (EN) + docs/zh (中文)
 ```
 
 ## Coding rules
 
-- **POSIX `/bin/sh`, BusyBox-safe.** DSM ships BusyBox; no bashisms, no associative arrays.
-  `scripts/setup_network.sh` is the one `#!/bin/bash` script (interactive setup on the NAS host).
+- **POSIX `/bin/sh`, BusyBox-safe.** DSM ships BusyBox; no bashisms or associative arrays,
+  including in `scripts/setup_network.sh` and the unattended task entry points.
 - **No `set -e`/`set -u` in the orchestrator.** It checks return codes explicitly so one soft
   failure never tears down the gateway by surprise. `render_config.sh` *does* use `set -eu` (it's
   a short, fail-fast renderer).
 - **No hardcoded DNS / network addresses** in committed files (project rule). Use
   `{{PLACEHOLDERS}}` + `.env`. CI enforces this (`render_check.py`).
 - **Secrets only in gitignored `.env`** (`ACR_PASSWORD`, `CF_TUNNEL_TOKEN`, `CONTROLLER_SECRET`).
+- **Private operations data is rejected.** `privacy_check.py` scans tracked content and reachable
+  blobs while allowing public project links and Shenzhen ACR examples.
 - **ASCII only in shell scripts** — non-ASCII (e.g. em-dashes) breaks shellcheck's output
   encoding in the CI image.
 
@@ -63,19 +73,22 @@ temp dir. Key correctness points:
 
 ## The orchestrator run sequence
 
-`auto_update.sh` sources the libs and runs: **lock → kill-switch → preflight → detect → apply
-compose (+health-gate/rollback) → apply cloudflared (blue-green) → prune → notify**. Full detail
-in [Auto-Update](auto-update.md#the-run-sequence). Key library functions:
+`auto_update.sh` sources the libs and runs: **lock → validate kill-switch → kill-switch → validate
+config → wait for Docker + preflight → pull/inspect/detect → local-only Compose apply
+(+health-gate/rollback) → cloudflared blue-green → prune → notify**. Full detail in
+[Auto-Update](auto-update.md#the-run-sequence). Key library functions:
 
 | File | Functions |
 |---|---|
 | `lib/common.sh` | `load_env`, `log*`, `rotate_log`, `acquire_lock`/`release_lock` (guarded by `LOCK_HELD`), `EXIT_*` codes |
-| `lib/registry.sh` | `detect_compose`, `check_arch_expectation`/`arch_ok`, `check_network`, `check_tun`, `acr_login`, `pull_image`, `deploy_needed` |
-| `lib/compose.sh` | `compose_up`, `health_gate` (+ `mihomo_controller_probe`), `rollback_compose` |
-| `lib/cloudflared.sh` | `cloudflared_blue_green`, `cloudflared_wait_connected`, `_cloudflared_promote`, `cloudflared_cleanup_candidate` (guarded by `CF_KEEP_CANDIDATE`) |
+| `lib/registry.sh` | `validate_update_config`, `wait_for_docker_ready`, `check_arch_expectation`/`arch_ok`, `check_network`, `check_tun`, `acr_login`, `pull_image`, `deploy_needed` |
+| `lib/compose.sh` | `compose_config_check`, `compose_up_local`, `health_gate` (+ `mihomo_controller_probe`), `rollback_compose` |
+| `lib/cloudflared.sh` | `cloudflared_blue_green`, `cloudflared_wait_connected`, secure spec capture/replay, rollback, candidate/workdir cleanup |
+| `lib/lifecycle.sh` | `lifecycle_inspect`, verified container/network removal, manual command rendering |
+| `lib/scheduler.sh` | `cron_normalize`, `scheduler_update_command`, `scheduler_network_command`, `scheduler_reload_crond` |
 
 Concurrency: only the lock holder releases the lock (`LOCK_HELD`); the EXIT trap won't reap a
-cloudflared candidate that was promoted-but-not-renamed (`CF_KEEP_CANDIDATE`).
+cloudflared candidate when it may be the only connected tunnel (`CF_KEEP_CANDIDATE`).
 
 ## CI (`.woodpecker.yml`)
 
@@ -88,7 +101,8 @@ Runs on push/PR to `main` and `master`:
 | `render-config` | `python scripts/ci/render_check.py` — runs the **real** renderer against a fixture URL with a `Name=` prefix + `&` params and asserts the URL round-trips exactly; also enforces the no-hardcoded-DNS rule |
 | `compose-policy` | `python scripts/ci/compose_policy_check.py` — asserts gateway images are **ACR-only**: no direct Docker Hub/ghcr fallback in `docker-compose.yml`, and `.env.example` image refs target a private registry |
 | `package-check` | `python scripts/ci/package_check.py` — builds the release zip in a throwaway repo and proves **no secret can ship** (planted `.env`/subscription/`config.yaml` absent from both archives' names *and* bytes), checksums verify, the guards fire, and `bootstrap.sh` round-trips |
-| `dsm-shell-tests` | Executes dotenv, network, architecture, and TUN health regressions under BusyBox `sh` |
+| `privacy-check` | Scans tracked files and reachable blobs for private operational identifiers, credentials, private keys, and accidentally tracked runtime files |
+| `dsm-shell-tests` | Executes installer, lifecycle, scheduler/updater, and staged-cloudflared assertions under BusyBox `sh`, using fake Docker/Compose CLIs |
 | `shellcheck` | `shellcheck -x` on the entry-point scripts (lib/*.sh followed in-context) |
 
 ## Cutting a release
@@ -98,7 +112,7 @@ Maintainers produce the offline bundle consumed in [Release Zip](release-packagi
 ```bash
 sh scripts/package.sh                         # curated DSM end-user bundle (default)
 sh scripts/package.sh --profile dev           # full internal/developer bundle
-sh scripts/package.sh --version 1.2.11         # override the VERSION file
+sh scripts/package.sh --version 1.2.12         # override the VERSION file
 ```
 
 - Built with `git archive`, so **only tracked files** ship — `.env`, `config/subscription.txt`,
@@ -129,6 +143,14 @@ cp .env.example .env && docker compose config -q && rm -f .env
 
 # release packaging safeguard (hermetic; builds in a temp repo, needs git)
 python3 scripts/ci/package_check.py
+
+# scheduler/updater/cloudflared TDD suites (fake Docker/Compose; no NAS mutation)
+sh scripts/ci/auto_update_check.sh
+sh scripts/ci/cloudflared_check.sh
+sh scripts/ci/dsm_installer_check.sh
+sh scripts/ci/lifecycle_check.sh
+python3 scripts/ci/privacy_check.py
+python3 scripts/ci/privacy_check_test.py
 
 # ACR-only image policy (no direct Docker Hub/ghcr fallback)
 python3 scripts/ci/compose_policy_check.py

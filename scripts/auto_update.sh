@@ -18,7 +18,7 @@
 PATH="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
 export PATH
 
-SELF_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
+SELF_DIR="${AUTO_UPDATE_SELF_DIR:-$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)}"
 # shellcheck source=scripts/lib/common.sh
 . "$SELF_DIR/lib/common.sh"
 # shellcheck source=scripts/lib/notify.sh
@@ -29,6 +29,8 @@ SELF_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
 . "$SELF_DIR/lib/compose.sh"
 # shellcheck source=scripts/lib/cloudflared.sh
 . "$SELF_DIR/lib/cloudflared.sh"
+
+auto_update_main() {
 
 DRY_RUN=0
 FORCE=0
@@ -49,11 +51,19 @@ rotate_log
 on_exit() {
   release_lock
   [ -n "${DOCKER_BIN:-}" ] && [ -n "${CF_CONTAINER_NAME:-}" ] && cloudflared_cleanup_candidate >/dev/null 2>&1
+  cloudflared_cleanup_workdir
 }
 trap on_exit EXIT INT TERM
 
 acquire_lock
-log_info "=== auto-update start (host=$(hostname 2>/dev/null) dry_run=$DRY_RUN force=$FORCE) ==="
+log_info "=== auto-update start (dry_run=$DRY_RUN force=$FORCE) ==="
+
+# Validate the boolean before interpreting it. A typo such as
+# UPDATE_ENABLED=False must fail loudly, not silently disable updates.
+validate_update_switch || {
+  notify "Mihomo Gateway: update aborted" "UPDATE_ENABLED must be true or false."
+  exit "$EXIT_CONFIG"
+}
 
 # Kill-switch.
 if [ "$UPDATE_ENABLED" != "true" ] && [ "$FORCE" -ne 1 ]; then
@@ -61,14 +71,20 @@ if [ "$UPDATE_ENABLED" != "true" ] && [ "$FORCE" -ne 1 ]; then
   exit "$EXIT_OK"
 fi
 
+# With updates enabled, validate all remaining data-only settings before
+# waiting for Docker or contacting the registry.
+validate_update_config || {
+  notify "Mihomo Gateway: update aborted" "Invalid auto-update settings in .env."
+  exit "$EXIT_CONFIG"
+}
+
 # --- Preflight (abort touching nothing on any failure) ---
-detect_compose       || { notify "Mihomo Gateway: update aborted" "docker/compose not found (preflight)."; exit "$EXIT_CONFIG"; }
+wait_for_docker_ready || { notify "Mihomo Gateway: update aborted" "Container Manager/Docker did not become ready."; exit "$EXIT_CONFIG"; }
 check_arch_expectation || { notify "Mihomo Gateway: update aborted" "EXPECTED_ARCH does not match this NAS."; exit "$EXIT_CONFIG"; }
 check_tun            || { notify "Mihomo Gateway: update aborted" "/dev/net/tun missing - run setup_network.sh."; exit "$EXIT_CONFIG"; }
 check_network        || { notify "Mihomo Gateway: update aborted" "tproxy_network missing/mismatched - run setup_network.sh."; exit "$EXIT_CONFIG"; }
+compose_config_check || { notify "Mihomo Gateway: update aborted" "Docker Compose configuration is invalid."; exit "$EXIT_CONFIG"; }
 acr_login            || { notify "Mihomo Gateway: update aborted" "ACR login failed - check ACR_PASSWORD/token."; exit "$EXIT_LOGIN"; }
-
-[ -n "${UPDATE_IMAGES:-}" ] || { log_error "UPDATE_IMAGES is empty - nothing to do"; exit "$EXIT_CONFIG"; }
 
 # --- Detect changes (pull, arch-check, compare running-vs-local) ---
 compose_changed=0; cf_changed=0; changed_any=0; fail=0
@@ -127,8 +143,8 @@ fi
 
 # --- Apply: compose services (single up -d; recreates only what changed) ---
 if [ "$compose_changed" -eq 1 ]; then
-  log_info "applying compose services (docker compose up -d)"
-  if compose_up; then
+  log_info "applying validated local images (docker compose up -d --pull never when supported)"
+  if compose_up_local; then
     if health_gate; then
       summary="$summary
 - compose: applied + healthy"
@@ -145,8 +161,13 @@ if [ "$compose_changed" -eq 1 ]; then
     fi
   else
     log_error "docker compose up -d failed"
-    summary="$summary
-- compose: up -d FAILED"
+    if rollback_compose "$mihomo_old" "$meta_old" && health_gate; then
+      summary="$summary
+- compose: APPLY FAILED -> ROLLED BACK to last-good (now healthy)"
+    else
+      summary="$summary
+- compose: APPLY FAILED AND rollback incomplete -> MANUAL ATTENTION NEEDED"
+    fi
     fail=1
   fi
 fi
@@ -156,7 +177,7 @@ if [ "$cf_changed" -eq 1 ]; then
   log_info "applying cloudflared blue-green"
   if cloudflared_blue_green; then
     summary="$summary
-- cloudflared: promoted new image (token preserved)"
+- cloudflared: canonical container updated + connected (token preserved)"
   else
     summary="$summary
 - cloudflared: update FAILED (old left running / rolled back)"
@@ -178,3 +199,8 @@ fi
 log_info "auto-update completed OK"
 notify "Mihomo Gateway: updated" "$summary"
 exit "$EXIT_OK"
+}
+
+if [ "${AUTO_UPDATE_SOURCE_ONLY:-0}" != 1 ]; then
+  auto_update_main "$@"
+fi

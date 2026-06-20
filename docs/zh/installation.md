@@ -65,7 +65,7 @@ vi config/subscription.txt
 永远不会被提交。
 
 ```text
-Default=https://your-provider.com/api/v1/subscribe?token=abc&flag=1
+Default=https://provider.example/api/v1/subscribe?token=REPLACE_ME&flag=1
 ```
 
 ## 4. 创建网络 + TUN 设备
@@ -79,9 +79,15 @@ sudo ./scripts/setup_network.sh
 - 如果 `/dev/net/tun` 不存在则创建它，并修复其权限；
 - 自动检测父接口（即路由到 `ROUTER_IP` 的那个接口；否则回退到
   默认路由）—— 支持 `eth0` 和 `ovs_eth0`；
-- （重新）创建带有你的 `SUBNET_CIDR` / `ROUTER_IP` 的 `tproxy_network` macvlan；
+- 创建或复用与 `SUBNET_CIDR` / `ROUTER_IP` 一致的 `tproxy_network` macvlan；若同名网络
+  配置不一致，脚本会拒绝隐式删除；
 - 可选地登录你的镜像仓库并拉取镜像（当设置了 `ACR_PASSWORD` 时为非交互式，
   否则会进行提示）。
+
+若已有或曾经部分部署，请改用 `sudo sh ./install.sh`。安装器会先盘点网关容器和 macvlan，
+并分别询问：保留复用、自动拆除已确认属于本项目的资源，或显示命令后由你手动处理。手动模式
+不会删除任何资源，完成后可重新扫描。自动拆除只会在镜像、架构、渲染配置、Compose 和网络
+校验全部通过后执行。无关资源必须手动解决；外部 cloudflared 永远不在此清理范围内。
 
 ## 5. 启动服务栈
 

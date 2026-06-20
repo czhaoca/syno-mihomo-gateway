@@ -12,6 +12,36 @@ compose_up() {
   ( cd "$REPO_ROOT" && $COMPOSE_CMD --env-file "$ENV_FILE" up -d ) >>"$LOG_FILE" 2>&1
 }
 
+compose_config_check() {
+  # shellcheck disable=SC2086
+  if ( cd "$REPO_ROOT" && $COMPOSE_CMD --env-file "$ENV_FILE" config >/dev/null ) \
+      >>"$LOG_FILE" 2>&1; then
+    return 0
+  fi
+  log_error "Docker Compose rejected docker-compose.yml + .env"
+  return 1
+}
+
+compose_supports_pull_never() {
+  # Docker Compose v2 supports up --pull never; legacy v1 generally does not.
+  # shellcheck disable=SC2086
+  ( cd "$REPO_ROOT" && $COMPOSE_CMD up --help 2>/dev/null ) \
+    | grep -- '--pull' | grep -q 'never'
+}
+
+compose_up_local() {
+  # Images were explicitly pulled, inspected, and architecture-checked already.
+  # Prevent a second implicit pull between validation and container recreation.
+  if compose_supports_pull_never; then
+    # shellcheck disable=SC2086
+    ( cd "$REPO_ROOT" && $COMPOSE_CMD --env-file "$ENV_FILE" up -d --pull never ) >>"$LOG_FILE" 2>&1
+    return $?
+  fi
+  log_warn "Compose lacks 'up --pull never'; using legacy cached-image behavior"
+  # shellcheck disable=SC2086
+  ( cd "$REPO_ROOT" && $COMPOSE_CMD --env-file "$ENV_FILE" up -d ) >>"$LOG_FILE" 2>&1
+}
+
 compose_recreate() {
   # Installer deploys must restart mihomo so a newly rendered bind-mounted
   # configuration takes effect even when the image and compose model are unchanged.
@@ -118,8 +148,25 @@ _check_ui() {
 # single recreate. Empty args are skipped. Returns 0 if the recreate succeeded.
 rollback_compose() {
   _m_old="$1"; _u_old="$2"
-  [ -n "$_m_old" ] && { log_warn "rollback: re-tag $MIHOMO_IMAGE -> $_m_old";    "$DOCKER_BIN" tag "$_m_old" "$MIHOMO_IMAGE"     >>"$LOG_FILE" 2>&1; }
-  [ -n "$_u_old" ] && { log_warn "rollback: re-tag $METACUBEXD_IMAGE -> $_u_old"; "$DOCKER_BIN" tag "$_u_old" "$METACUBEXD_IMAGE" >>"$LOG_FILE" 2>&1; }
-  compose_up || { log_error "rollback compose up failed"; return 1; }
+  [ -n "$_m_old$_u_old" ] || { log_error "rollback unavailable: no previous running image IDs"; return 1; }
+  if [ -n "$_m_old" ] && ! "$DOCKER_BIN" image inspect "$_m_old" >/dev/null 2>&1; then
+    log_error "rollback image is missing: $_m_old"
+    return 1
+  fi
+  if [ -n "$_u_old" ] && ! "$DOCKER_BIN" image inspect "$_u_old" >/dev/null 2>&1; then
+    log_error "rollback image is missing: $_u_old"
+    return 1
+  fi
+  if [ -n "$_m_old" ]; then
+    log_warn "rollback: re-tag $MIHOMO_IMAGE -> $_m_old"
+    "$DOCKER_BIN" tag "$_m_old" "$MIHOMO_IMAGE" >>"$LOG_FILE" 2>&1 \
+      || { log_error "rollback re-tag failed for $MIHOMO_IMAGE"; return 1; }
+  fi
+  if [ -n "$_u_old" ]; then
+    log_warn "rollback: re-tag $METACUBEXD_IMAGE -> $_u_old"
+    "$DOCKER_BIN" tag "$_u_old" "$METACUBEXD_IMAGE" >>"$LOG_FILE" 2>&1 \
+      || { log_error "rollback re-tag failed for $METACUBEXD_IMAGE"; return 1; }
+  fi
+  compose_up_local || { log_error "rollback compose up failed"; return 1; }
   return 0
 }

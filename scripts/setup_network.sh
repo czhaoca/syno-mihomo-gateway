@@ -18,12 +18,18 @@ SELF_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
 . "$SELF_DIR/lib/common.sh"
 # shellcheck source=scripts/lib/network.sh
 . "$SELF_DIR/lib/network.sh"
+# shellcheck source=scripts/lib/registry.sh
+. "$SELF_DIR/lib/registry.sh"
 
 load_env   # FATAL (exit 3) if .env is missing; exports ROUTER_IP, SUBNET_CIDR, ...
 
 echo "========================================"
 echo " Mihomo Gateway - network self-heal"
 echo "========================================"
+
+# DSM boot-up tasks can run before Container Manager is ready. Wait for both the
+# Docker CLI/Compose plugin and daemon rather than racing network creation.
+wait_for_docker_ready || exit "$EXIT_CONFIG"
 
 # 1. TUN device (mihomo needs it; baked into compose too, but self-heal here).
 echo "[1/3] TUN device (/dev/net/tun)..."

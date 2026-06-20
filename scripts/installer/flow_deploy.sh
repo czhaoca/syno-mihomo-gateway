@@ -17,33 +17,6 @@ _show_log_tail() {
   ui_say ""
 }
 
-# Validate ownership of fixed container names before Compose changes anything.
-# Never force-remove or disconnect unrelated containers from a user-managed NAS.
-reprovision_containers() {
-  [ -n "${DOCKER_BIN:-}" ] || return 0
-  ui_step "$(msg step_reprovision)"
-
-  _rp_found=""
-  for _c in "$MIHOMO_CONTAINER" "$METACUBEXD_CONTAINER"; do
-    [ -n "$_c" ] || continue
-    _rp_st="$("$DOCKER_BIN" inspect -f '{{.State.Status}}' "$_c" 2>/dev/null)" || _rp_st=""
-    [ -n "$_rp_st" ] || continue
-    case "$_c" in
-      "$MIHOMO_CONTAINER") _rp_expected=mihomo ;;
-      *) _rp_expected=metacubexd ;;
-    esac
-    _rp_service="$("$DOCKER_BIN" inspect -f '{{index .Config.Labels "com.docker.compose.service"}}' "$_c" 2>/dev/null)"
-    if [ "$_rp_service" != "$_rp_expected" ]; then
-      diagnose "container name '$_c' is owned by another deployment" \
-        "rename/remove that container explicitly, then retry"
-      return 1
-    fi
-    ui_say "$(msgf reprov_found "$_c" "$_rp_st")"; _rp_found=1
-  done
-  if [ -n "$_rp_found" ]; then ui_ok "$(msg reprov_done)"; else ui_info "$(msg reprov_none)"; fi
-  return 0
-}
-
 # _show_mihomo_logs - print the tail of `docker logs mihomo` so the operator sees
 # the container's OWN crash reason (the install log only holds compose's output).
 _show_mihomo_logs() {
@@ -231,9 +204,10 @@ flow_deploy() {
   pf_arch           || return 1
   pf_web_port       || return 1
   validate_selected_network || return 1
+  plan_predeployment_cleanup || return 1
   prepare_stack     || return 1
 
-  reprovision_containers || return 1
+  apply_predeployment_cleanup || return 1
   create_network    || return 1             # root: TUN + macvlan (final IP guard inside)
   load_env
 

@@ -55,7 +55,7 @@ MUST_EXCLUDE = [
 FORBIDDEN_SUBSTRINGS = [
     "github", "gitlab", "bitbucket", "gitea", "git@",
     "czhaoca", "chao.zhao", "nimbus", "docker-china-sync",
-    "woodpecker", "aliyun_name_space",
+    "woodpecker", "aliyun_name_space", "yvr" + "lab",
 ]
 EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 
@@ -64,8 +64,11 @@ ENDUSER_MUST_INCLUDE = [
     PREFIX + "scripts/installer/ui.sh",
     PREFIX + "scripts/installer/i18n.sh",
     PREFIX + "scripts/installer/flow_redeploy.sh",
+    PREFIX + "scripts/installer/preprocess.sh",
     PREFIX + "scripts/lib/network.sh",
     PREFIX + "scripts/lib/common.sh",
+    PREFIX + "scripts/lib/lifecycle.sh",
+    PREFIX + "scripts/lib/scheduler.sh",
     PREFIX + "scripts/doctor.sh",
     PREFIX + "docs/README.txt",
     PREFIX + ".env.example",
@@ -273,9 +276,9 @@ def build_enduser_fixture(root: Path):
     (root / "config" / "config.template.yaml").write_text("mixed-port: 7894\n")
     (root / "config" / "subscription.txt.example").write_text(
         "Default=https://example.com/sub?token=REPLACE_ME\n")
-    for s in ("ui.sh", "i18n.sh", "flow_redeploy.sh", "flow_deploy.sh"):
+    for s in ("ui.sh", "i18n.sh", "flow_redeploy.sh", "flow_deploy.sh", "preprocess.sh"):
         (root / "scripts" / "installer" / s).write_text("#!/bin/sh\n:\n")
-    for s in ("common.sh", "network.sh", "registry.sh", "compose.sh"):
+    for s in ("common.sh", "network.sh", "registry.sh", "compose.sh", "scheduler.sh", "lifecycle.sh"):
         (root / "scripts" / "lib" / s).write_text("#!/bin/sh\n:\n")
     for s in ("auto_update.sh", "render_config.sh", "install_scheduler.sh", "setup_network.sh"):
         (root / "scripts" / s).write_text("#!/bin/sh\n:\n")

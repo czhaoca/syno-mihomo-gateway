@@ -93,9 +93,9 @@ Compose 兼容的引号，因此包含空格、`&`、`#`、`$`、引号或反斜
 | 键 | 说明 | 默认值 / 示例 |
 |---|---|---|
 | `UPDATE_ENABLED` | 总开关。设为 `false` 时，运行会立即退出（除非使用 `--force`）。 | `true` |
-| `UPDATE_IMAGES` | 以空格分隔、需要检查/拉取的镜像引用。推荐：直接沿用上述三个镜像变量。 | `"${MIHOMO_IMAGE} ${METACUBEXD_IMAGE} ${CF_IMAGE}"` |
-| `UPDATE_SCHEDULE` | Cron 表达式——DSM 计划任务/后备 crontab 的可信来源。**请加引号。** 安装器会根据每日 HH:MM 提示生成。 | `"0 2 * * *"` |
-| `UPDATE_TZ` | 计划任务运行所在的时区（脚本会将其导出为 `TZ`）。 | `Asia/Shanghai` |
+| `UPDATE_IMAGES` | 以空格分隔、需要检查/拉取的镜像引用。两个 Compose 引用必填；`CF_IMAGE` 非空时也必须包含。安装器会保存解析后的具体引用。 | `"${MIHOMO_IMAGE} ${METACUBEXD_IMAGE} ${CF_IMAGE}"` |
+| `UPDATE_SCHEDULE` | 用于配置 DSM 任务计划/后备 crontab 的五字段数字 cron 表达式；输出前会校验范围。**请加引号。** | `"0 2 * * *"` |
+| `UPDATE_TZ` | 更新器日志时间戳所用时区。DSM 触发时间遵循 NAS 的“区域选项”时区。 | `Asia/Shanghai` |
 | `EXPECTED_ARCH` | 防止仅 amd64 的镜像源被装到 ARM 架构的 NAS 上。可选 `amd64`/`arm64`。 | `amd64` |
 
 ### cloudflared（外部容器，按名称蓝绿切换）
@@ -125,6 +125,7 @@ Compose 兼容的引号，因此包含空格、`&`、`#`、`$`、引号或反斜
 |---|---|---|
 | `LOG_MAX_BYTES` | `1048576` | 当 `UPDATE_LOG` 超过此大小时进行轮转。 |
 | `PULL_RETRIES` / `PULL_RETRY_DELAY` | `3` / `10` | `docker pull` 的重试次数/重试间隔（秒）。 |
+| `DOCKER_READY_TIMEOUT` / `DOCKER_READY_INTERVAL` | `120` / `5` | DSM 计划/开机任务等待 Container Manager 的总时长与重试间隔（秒）。 |
 | `HEALTH_RETRIES` / `HEALTH_INTERVAL` | `6` / `10` | mihomo 健康检查门控的尝试次数/间隔（秒）。 |
 | `LOCK_DIR` | `/tmp/syno-mihomo-update.lock` | 互斥锁目录。 |
 | `TPROXY_NETWORK` | `tproxy_network` | 预检阶段检查的 macvlan 网络名称。 |
