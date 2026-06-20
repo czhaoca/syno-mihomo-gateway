@@ -38,8 +38,10 @@ host_arch() {
 check_arch_expectation() {
   _h="$(host_arch)"
   if [ "$_h" != "$EXPECTED_ARCH" ]; then
-    log_warn "EXPECTED_ARCH=$EXPECTED_ARCH but this NAS is $_h - image arch checks use EXPECTED_ARCH."
+    log_error "EXPECTED_ARCH=$EXPECTED_ARCH but this NAS is $_h"
+    return 1
   fi
+  return 0
 }
 
 check_network() {
@@ -54,6 +56,13 @@ check_network() {
     _parent_live="$(ip route get "$ROUTER_IP" 2>/dev/null | sed -n 's/.*dev \([^ ]*\).*/\1/p' | head -n1)"
     if [ -n "$_parent_cfg" ] && [ -n "$_parent_live" ] && [ "$_parent_cfg" != "$_parent_live" ]; then
       log_error "macvlan parent mismatch: network='$_parent_cfg' live='$_parent_live'. Re-run setup_network.sh."
+      return 1
+    fi
+  fi
+  _parent_expected="${PARENT_INTERFACE:-${_parent_live:-}}"
+  if [ -n "$_parent_expected" ] && [ -n "${SUBNET_CIDR:-}" ] && [ -n "${ROUTER_IP:-}" ]; then
+    if ! macvlan_matches "$_net" "$_parent_expected" "$SUBNET_CIDR" "$ROUTER_IP"; then
+      log_error "macvlan configuration drift: expected parent=$_parent_expected subnet=$SUBNET_CIDR gateway=$ROUTER_IP"
       return 1
     fi
   fi
@@ -106,12 +115,13 @@ pull_image() {
 # arch_ok IMAGE -> 0 if image arch matches EXPECTED_ARCH (never swap an unrunnable image)
 arch_ok() {
   _a="$(image_arch "$1")"
+  _h="$(host_arch)"
   if [ -z "$_a" ]; then
     log_warn "could not determine arch of $1"
     return 1
   fi
-  if [ "$_a" != "$EXPECTED_ARCH" ]; then
-    log_error "arch mismatch for $1: image=$_a expected=$EXPECTED_ARCH - refusing to deploy."
+  if [ "$_a" != "$_h" ]; then
+    log_error "arch mismatch for $1: image=$_a host=$_h - refusing to deploy."
     return 1
   fi
   return 0

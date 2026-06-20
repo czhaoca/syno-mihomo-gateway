@@ -102,8 +102,27 @@ def main() -> None:
         if not isinstance(servers, list) or not servers:
             fail(f"dns.{field} did not parse as a non-empty list: {servers!r}")
 
-    print("OK: real renderer round-trips the subscription URL (with Name= prefix & '&' "
-          "params) and secret exactly; controller + DNS valid; no hardcoded DNS/network literals.")
+    # 6) The advertised LAN-gateway behavior requires a real interception
+    # dataplane. A mounted /dev/net/tun and an open tproxy-port are insufficient.
+    tun = doc.get("tun") or {}
+    required_tun = {
+        "enable": True,
+        "device": "mihomo-tun",
+        "stack": "mixed",
+        "auto-route": True,
+        "auto-redirect": True,
+        "auto-detect-interface": True,
+    }
+    for field, expected in required_tun.items():
+        if tun.get(field) != expected:
+            fail(f"tun.{field}={tun.get(field)!r}, expected {expected!r}")
+    hijack = tun.get("dns-hijack") or []
+    for required in ("any:53", "tcp://any:53"):
+        if required not in hijack:
+            fail(f"tun.dns-hijack missing {required!r}: {hijack!r}")
+
+    print("OK: renderer preserves URL/secrets; controller, DNS, and TUN gateway mode are valid; "
+          "no hardcoded DNS/network literals.")
 
 
 if __name__ == "__main__":

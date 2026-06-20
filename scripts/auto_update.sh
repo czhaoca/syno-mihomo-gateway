@@ -63,7 +63,7 @@ fi
 
 # --- Preflight (abort touching nothing on any failure) ---
 detect_compose       || { notify "Mihomo Gateway: update aborted" "docker/compose not found (preflight)."; exit "$EXIT_CONFIG"; }
-check_arch_expectation
+check_arch_expectation || { notify "Mihomo Gateway: update aborted" "EXPECTED_ARCH does not match this NAS."; exit "$EXIT_CONFIG"; }
 check_tun            || { notify "Mihomo Gateway: update aborted" "/dev/net/tun missing - run setup_network.sh."; exit "$EXIT_CONFIG"; }
 check_network        || { notify "Mihomo Gateway: update aborted" "tproxy_network missing/mismatched - run setup_network.sh."; exit "$EXIT_CONFIG"; }
 acr_login            || { notify "Mihomo Gateway: update aborted" "ACR login failed - check ACR_PASSWORD/token."; exit "$EXIT_LOGIN"; }

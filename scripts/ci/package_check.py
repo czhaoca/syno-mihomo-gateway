@@ -66,6 +66,7 @@ ENDUSER_MUST_INCLUDE = [
     PREFIX + "scripts/installer/flow_redeploy.sh",
     PREFIX + "scripts/lib/network.sh",
     PREFIX + "scripts/lib/common.sh",
+    PREFIX + "scripts/doctor.sh",
     PREFIX + "docs/README.txt",
     PREFIX + ".env.example",
     PREFIX + "docker-compose.yml",
@@ -217,10 +218,10 @@ def check_bootstrap(tar: Path, nas: Path):
 def check_guards(root: Path, dist: Path, pkg: Path, ng: Path):
     # dirty tree -> refuse without --allow-dirty; accept (with -dirty suffix) with it.
     (root / "VERSION").write_text("0.0.0-fixture-edited\n")
-    r = run(["sh", str(pkg), "--version", "1.2.3"])
+    r = run(["sh", str(pkg), "--profile", "dev", "--version", "1.2.3"])
     if r.returncode != 3:
         fail(f"dirty-tree guard: expected exit 3, got {r.returncode}")
-    r = run(["sh", str(pkg), "--version", "1.2.3", "--allow-dirty"])
+    r = run(["sh", str(pkg), "--profile", "dev", "--version", "1.2.3", "--allow-dirty"])
     if r.returncode != 0:
         fail(f"--allow-dirty: expected exit 0, got {r.returncode}: {r.stderr.strip()}")
     if not (dist / "syno-mihomo-gateway-1.2.3-dirty.tar.gz").exists():
@@ -229,7 +230,7 @@ def check_guards(root: Path, dist: Path, pkg: Path, ng: Path):
 
     # tracked secret -> refuse (the in-tool §1 guard).
     git(["add", "-f", ".env"], cwd=root)
-    r = run(["sh", str(pkg), "--version", "1.2.3"])
+    r = run(["sh", str(pkg), "--profile", "dev", "--version", "1.2.3"])
     if r.returncode != 3:
         fail(f"tracked-secret guard: expected exit 3, got {r.returncode}")
     if "tracked" not in (r.stdout + r.stderr).lower():
@@ -240,7 +241,7 @@ def check_guards(root: Path, dist: Path, pkg: Path, ng: Path):
     (ng / "scripts").mkdir(parents=True)
     shutil.copy(PACKAGER, ng / "scripts" / "package.sh")
     env = {**os.environ, "GIT_CEILING_DIRECTORIES": str(ng.parent)}
-    r = run(["sh", str(ng / "scripts" / "package.sh")], env=env)
+    r = run(["sh", str(ng / "scripts" / "package.sh"), "--profile", "dev"], env=env)
     if r.returncode != 3:
         fail(f"non-git guard: expected exit 3, got {r.returncode}")
 
@@ -278,6 +279,7 @@ def build_enduser_fixture(root: Path):
         (root / "scripts" / "lib" / s).write_text("#!/bin/sh\n:\n")
     for s in ("auto_update.sh", "render_config.sh", "install_scheduler.sh", "setup_network.sh"):
         (root / "scripts" / s).write_text("#!/bin/sh\n:\n")
+    (root / "scripts" / "doctor.sh").write_text("#!/bin/sh\n:\n")
     (root / "docs" / "README.txt").write_text("Mihomo Gateway - start here.\nRun: sh ./install.sh\n")
     (root / "docs" / "INSTALL.txt").write_text("Move this folder into the Docker shared folder.\n")
 
@@ -342,7 +344,7 @@ def check_enduser(base: Path):
     pkg = eu / "scripts" / "package.sh"
     dist = eu / "dist"
 
-    r = run(["sh", str(pkg), "--profile", "enduser", "--version", "9.9.9-eu"])
+    r = run(["sh", str(pkg), "--version", "9.9.9-eu"])
     if r.returncode != 0:
         fail(f"enduser build failed (exit {r.returncode}): {r.stderr.strip()}")
     tar = dist / "syno-mihomo-gateway-9.9.9-eu.tar.gz"
@@ -358,7 +360,7 @@ def check_enduser(base: Path):
     cmp_path = eu / "docker-compose.yml"
     cmp_path.write_text(cmp_path.read_text() + "# mirror via docker-china-sync\n")
     git(["commit", "-aqm", "inject leak"], cwd=eu)
-    r2 = run(["sh", str(pkg), "--profile", "enduser", "--version", "9.9.9-leak"])
+    r2 = run(["sh", str(pkg), "--version", "9.9.9-leak"])
     if r2.returncode != 3:
         fail(f"leak-gate: expected exit 3 on an injected leak, got {r2.returncode}")
     if (dist / "syno-mihomo-gateway-9.9.9-leak.tar.gz").exists() or \
@@ -381,7 +383,7 @@ def main():
 
         pkg = root / "scripts" / "package.sh"
         dist = root / "dist"
-        r = run(["sh", str(pkg), "--version", "9.9.9-test"])
+        r = run(["sh", str(pkg), "--profile", "dev", "--version", "9.9.9-test"])
         if r.returncode != 0:
             fail(f"package.sh build failed (exit {r.returncode}): {r.stderr.strip()}")
 

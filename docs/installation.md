@@ -96,6 +96,7 @@ it **fails loudly** (the container won't run a poisoned config). Check logs:
 ```bash
 docker logs mihomo
 docker compose ps
+sh scripts/doctor.sh
 ```
 
 ## 6. Open the dashboard
@@ -136,7 +137,7 @@ sh scripts/auto_update.sh --dry-run
 ```bash
 cd /volume1/docker/syno-mihomo-gateway
 git pull
-docker compose up -d        # picks up compose/template/script changes
+sudo sh ./install.sh        # choose Redeploy; validates and force-recreates safely
 ```
 
 Your `.env`, `config/subscription.txt`, and `config/config.yaml` are gitignored and untouched

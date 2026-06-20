@@ -10,6 +10,10 @@ each value means so you can review or hand-edit .env if needed. After editing
 .env by hand, apply changes with "4) Modify an existing deployment" so the
 containers are redeployed with the health-gated rollback.
 
+The file is parsed as dotenv data, not executed as shell code. Keep one
+KEY=VALUE per line. Installer-written quoted values preserve spaces, &, #, $,
+quotes, and backslashes in passwords and secrets.
+
 --------------------------------------------------------------------------
 Network settings
 --------------------------------------------------------------------------

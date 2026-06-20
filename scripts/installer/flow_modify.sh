@@ -6,38 +6,29 @@
 #
 # Requires the installer module set sourced. POSIX /bin/sh.
 
-# apply_changes - re-render + redeploy the compose services with rollback. A
-# `docker compose up -d` re-runs the entrypoint renderer (picking up new DNS /
-# subscription / secret) and pulls any image whose ref changed.
+# Apply through the same fail-closed preparation and health gate as Deploy and
+# Redeploy. Keeping one path prevents Modify from bypassing config/arch/TUN checks.
 apply_changes() {
   ui_step "$(msg step_apply)"
+  if ! is_root; then
+    diagnose "applying changes requires root privileges" "re-run: sudo sh ./install.sh"
+    return 1
+  fi
   load_env
   pf_docker || return 1
   if [ "$(stack_state)" = "fresh" ]; then
     ui_warn "$(msg warn_nothing_deployed)"
     return 1
   fi
-
-  _m_old="$(running_image_id mihomo 2>/dev/null)"
-  _x_old="$(running_image_id mihomo-ui 2>/dev/null)"
-
-  if [ "${REGISTRY_MODE:-acr}" = "acr" ]; then
-    acr_login || ui_warn "$(msg warn_acr_login_soft)"
-  fi
-
-  ui_info "$(msg info_redeploying)"
-  if compose_up && health_gate; then
-    ui_ok "$(msg ok_applied)"
-    return 0
-  fi
-
-  ui_warn "$(msg warn_health_rollback)"
-  if rollback_compose "$_m_old" "$_x_old" && health_gate; then
-    ui_warn "$(msg warn_rolled_back)"
-  else
-    diagnose "$(msg diag_rollback_fail)" "$(msg diag_rollback_fail_fix)"
-  fi
-  return 1
+  precheck_deploy || return 1
+  pf_arch || return 1
+  pf_web_port || return 1
+  validate_selected_network || return 1
+  prepare_stack || return 1
+  reprovision_containers || return 1
+  create_network || return 1
+  load_env
+  deploy_stack
 }
 
 flow_modify() {

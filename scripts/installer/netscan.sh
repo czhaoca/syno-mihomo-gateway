@@ -92,6 +92,17 @@ scan_and_prefill() {
 }
 
 # create_network - root step: ensure the TUN device + (re)create the macvlan.
+validate_selected_network() {
+  _vs_pi="${CHOSEN_IFACE:-$(env_get PARENT_INTERFACE 2>/dev/null || detect_parent_interface "${ROUTER_IP:-}")}"
+  [ -n "$_vs_pi" ] || { diagnose "$(msg diag_no_iface_sel)" "$(msg diag_no_iface_sel_fix)"; return 1; }
+  if validate_network_plan "$_vs_pi" "${SUBNET_CIDR:-}" "${ROUTER_IP:-}" "${MIHOMO_IP:-}"; then
+    return 0
+  fi
+  diagnose "network settings are internally inconsistent" \
+    "choose the LAN interface again and ensure router/gateway IPs belong to the selected subnet"
+  return 1
+}
+
 create_network() {
   ui_step "$(msg step_create_net)"
   if ! is_root; then
@@ -105,10 +116,33 @@ create_network() {
   fi
   _pi="${CHOSEN_IFACE:-$(env_get PARENT_INTERFACE 2>/dev/null || detect_parent_interface "${ROUTER_IP:-}")}"
   [ -n "$_pi" ] || { diagnose "$(msg diag_no_iface_sel)" "$(msg diag_no_iface_sel_fix)"; return 1; }
+  validate_network_plan "$_pi" "$SUBNET_CIDR" "$ROUTER_IP" "$MIHOMO_IP" || {
+    diagnose "network settings are internally inconsistent" "correct the interface, subnet, router, and Mihomo IP"
+    return 1
+  }
 
   # Final conflict guard (the IP could have been taken since the wizard ran).
   if [ -n "${MIHOMO_IP:-}" ]; then
     check_ip_conflict "$MIHOMO_IP" || { diagnose "$(msgf diag_ip_in_use "$MIHOMO_IP")" "$(msg diag_ip_in_use_fix)"; return 1; }
+  fi
+
+  _net="${TPROXY_NETWORK:-tproxy_network}"
+  if network_exists "$_net" && ! macvlan_matches "$_net" "$_pi" "$SUBNET_CIDR" "$ROUTER_IP"; then
+    _attached="$(network_attachments "$_net")"
+    for _name in $_attached; do
+      if [ "$_name" != "$MIHOMO_CONTAINER" ]; then
+        diagnose "network '$_net' has an unrelated attached container: $_name" \
+          "disconnect it explicitly or select a different network name"
+        return 1
+      fi
+    done
+    if [ -n "$_attached" ]; then
+      # All external checks have passed; stop only this Compose project so the
+      # changed macvlan can be replaced cleanly.
+      # shellcheck disable=SC2086
+      ( cd "$REPO_ROOT" && $COMPOSE_CMD --env-file "$ENV_FILE" down --remove-orphans ) \
+        >>"${LOG_FILE:-/dev/null}" 2>&1 || return 1
+    fi
   fi
 
   ensure_tun_device || { diagnose "$(msg diag_tun_fail)" "$(msg diag_tun_fail_fix)"; return 1; }

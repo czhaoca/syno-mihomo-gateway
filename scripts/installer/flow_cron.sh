@@ -67,7 +67,7 @@ flow_cron() {
   ui_ask_validated _time "$(msg q_daily_time)" "$(_default_hhmm)" is_hhmm
   _hh="${_time%%:*}"; _mm="${_time#*:}"
   UPDATE_SCHEDULE="$(printf '%d %d * * *' "$_mm" "$_hh")"
-  env_set UPDATE_SCHEDULE "\"$UPDATE_SCHEDULE\""   # quote: spaces + '*'
+  env_set UPDATE_SCHEDULE "$UPDATE_SCHEDULE"       # env_set quotes safely
 
   # --- timezone (menu + free entry) ---
   ui_menu_select _tz "$(msg cron_tz_prompt)" \

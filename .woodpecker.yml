@@ -7,8 +7,7 @@ steps:
   - name: validate-compose
     image: docker/compose:latest
     commands:
-      - docker compose config --quiet
-    failure: ignore
+      - docker-compose --env-file .env.example config --quiet
 
   - name: validate-yaml
     image: python:3.12-slim
@@ -46,6 +45,11 @@ steps:
       - apt-get update -qq && apt-get install -y -qq --no-install-recommends git >/dev/null
       - python scripts/ci/package_check.py
 
+  - name: dsm-shell-tests
+    image: alpine:3.22
+    commands:
+      - sh scripts/ci/dsm_installer_check.sh
+
   - name: shellcheck
     image: koalaman/shellcheck-alpine:stable
     commands:
@@ -54,4 +58,4 @@ steps:
       # + scripts/lib/*.sh; auto_update.sh + setup_network.sh pull in their libs.
       # setup_network.sh is now POSIX /bin/sh (no more bash exception).
       - 'for f in $(find . -path ./.git -prune -o -name "*.sh" -print); do sh -n "$f" || exit 1; done'
-      - shellcheck -x install.sh scripts/auto_update.sh scripts/install_scheduler.sh scripts/setup_network.sh scripts/render_config.sh scripts/package.sh bootstrap.sh
+      - shellcheck -x install.sh scripts/auto_update.sh scripts/install_scheduler.sh scripts/setup_network.sh scripts/render_config.sh scripts/package.sh scripts/doctor.sh bootstrap.sh

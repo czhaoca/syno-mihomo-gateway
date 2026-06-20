@@ -82,3 +82,5 @@ INSTALLER_LANG），因此以后运行会直接进入菜单。
   * TROUBLESHOOTING.zh.txt  - 故障现象与解决办法
 
 日志写入 logs/ 文件夹（一份安装日志；设置计划任务后还有一份自动更新日志）。
+
+只读健康检查：sudo sh scripts/doctor.sh --egress

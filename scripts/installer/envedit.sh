@@ -26,17 +26,8 @@ CF_UPSTREAM="docker.io/cloudflare/cloudflared"
 # surrounding double-quotes stripped). Returns 1 if absent or empty (so callers
 # can fall back to their own default).
 env_get() {
-  _k="$1"
-  [ -f "${ENV_FILE:-}" ] || return 1
-  _val="$(ENV_K="$_k" awk '
-    BEGIN { k = ENVIRON["ENV_K"] }
-    $0 ~ "^" k "=" { sub("^" k "=", ""); v = $0 }
-    END { print v }
-  ' "$ENV_FILE")"
+  _val="$(dotenv_get "$1")" || return 1
   [ -n "$_val" ] || return 1
-  case "$_val" in
-    '"'*'"') _val="${_val#\"}"; _val="${_val%\"}" ;;
-  esac
   printf '%s' "$_val"
 }
 
@@ -48,8 +39,13 @@ env_set() {
     : > "$ENV_FILE" || { ui_error "cannot create $ENV_FILE"; return 1; }
     chmod 600 "$ENV_FILE" 2>/dev/null
   fi
+  # Compose-compatible double quoting. The strict loader reverses these
+  # escapes without evaluating the value as shell code.
+  _encoded="$(printf '%s' "$_v" | sed \
+    -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/\$/$$/g')"
+  _encoded="\"$_encoded\""
   _tmp="${ENV_FILE}.tmp.$$"
-  if ENV_K="$_k" ENV_V="$_v" awk '
+  if ENV_K="$_k" ENV_V="$_encoded" awk '
         BEGIN { k = ENVIRON["ENV_K"]; v = ENVIRON["ENV_V"]; done = 0 }
         (done == 0) && ($0 ~ "^" k "=") { print k "=" v; done = 1; next }
         { print }

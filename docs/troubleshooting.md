@@ -62,6 +62,19 @@ Checklist:
 - Is the controller actually enabled? `docker exec mihomo wget -qO- http://127.0.0.1:9090/version`
   should return JSON. If not, check `docker logs mihomo` for a render/start error.
 
+## Containers are healthy but LAN clients have no internet
+
+Run the read-only structural diagnostic first:
+
+```bash
+sudo sh scripts/doctor.sh --egress
+```
+
+It checks the host TUN device, macvlan, Compose model, image architecture, controller, and the
+in-container `mihomo-tun` dataplane. Exit `0` is structurally healthy, `2` is degraded external
+proxy egress, and `3` is a local configuration/runtime failure. If it passes, test gateway and
+DNS from a different LAN device because the NAS cannot reach its own macvlan child.
+
 ## mihomo won't start / crash-loops
 
 ```bash

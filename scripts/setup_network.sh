@@ -40,6 +40,12 @@ if [ -z "$PARENT_INTERFACE" ]; then
 fi
 echo "      Using interface: $PARENT_INTERFACE"
 
+if ! validate_network_plan "$PARENT_INTERFACE" "${SUBNET_CIDR:-}" \
+    "${ROUTER_IP:-}" "${MIHOMO_IP:-}"; then
+  log_error "network settings are inconsistent; run sh ./install.sh and re-enter them"
+  exit "$EXIT_CONFIG"
+fi
+
 # 3. (Re)create the macvlan network.
 echo "[3/3] Creating macvlan '${TPROXY_NETWORK}' (${SUBNET_CIDR:-?})..."
 if recreate_macvlan "$PARENT_INTERFACE"; then

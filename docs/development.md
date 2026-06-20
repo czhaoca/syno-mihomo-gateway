@@ -83,11 +83,12 @@ Runs on push/PR to `main` and `master`:
 
 | Step | What |
 |---|---|
-| `validate-compose` | `docker compose config --quiet` |
+| `validate-compose` | `docker-compose --env-file .env.example config --quiet` (blocking) |
 | `validate-yaml` | `yaml.safe_load(docker-compose.yml)` |
 | `render-config` | `python scripts/ci/render_check.py` — runs the **real** renderer against a fixture URL with a `Name=` prefix + `&` params and asserts the URL round-trips exactly; also enforces the no-hardcoded-DNS rule |
 | `compose-policy` | `python scripts/ci/compose_policy_check.py` — asserts gateway images are **ACR-only**: no direct Docker Hub/ghcr fallback in `docker-compose.yml`, and `.env.example` image refs target a private registry |
 | `package-check` | `python scripts/ci/package_check.py` — builds the release zip in a throwaway repo and proves **no secret can ship** (planted `.env`/subscription/`config.yaml` absent from both archives' names *and* bytes), checksums verify, the guards fire, and `bootstrap.sh` round-trips |
+| `dsm-shell-tests` | Executes dotenv, network, architecture, and TUN health regressions under BusyBox `sh` |
 | `shellcheck` | `shellcheck -x` on the entry-point scripts (lib/*.sh followed in-context) |
 
 ## Cutting a release
@@ -95,8 +96,9 @@ Runs on push/PR to `main` and `master`:
 Maintainers produce the offline bundle consumed in [Release Zip](release-packaging.md):
 
 ```bash
-sh scripts/package.sh                 # dist/syno-mihomo-gateway-<version>.{zip,tar.gz} + .sha256
-sh scripts/package.sh --version 1.2.0 # override the VERSION file
+sh scripts/package.sh                         # curated DSM end-user bundle (default)
+sh scripts/package.sh --profile dev           # full internal/developer bundle
+sh scripts/package.sh --version 1.2.11         # override the VERSION file
 ```
 
 - Built with `git archive`, so **only tracked files** ship — `.env`, `config/subscription.txt`,

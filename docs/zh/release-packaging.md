@@ -29,7 +29,7 @@
 ```bash
 git clone https://github.com/czhaoca/syno-mihomo-gateway.git
 cd syno-mihomo-gateway
-sh scripts/package.sh
+sh scripts/package.sh                    # DSM 最终用户包（默认配置）
 ```
 
 这会在 `dist/` 下生成：
@@ -124,7 +124,9 @@ sh bootstrap.sh
 2. 把它**覆盖解压**到现有目录树（`cd /volume1/docker && unzip -o syno-mihomo-gateway-<版本>.zip`）。
    你的 `.env`、`config/subscription.txt`、`config/config.yaml` 不在压缩包里，因此会被保留。
    （上游删除的文件不会被 `unzip` 删掉 —— 如有需要请手动清理过期文件。）
-3. `sh bootstrap.sh`（对已有配置是空操作，仅补回可执行位），然后 `docker compose up -d`。
+3. `sh bootstrap.sh`（对已有配置是空操作，仅补回可执行位），然后运行
+   `sudo sh ./install.sh` 并选择**重新部署**。这样会强制渲染并启用新版网关配置；
+   单独运行 `docker compose up -d` 可能不会重新创建容器。
 
 更新**镜像**的方式不变：`scripts/auto_update.sh`（DSM 任务计划）从你的 ACR 拉取 —— 而非 GitHub ——
 所以正常的[自动更新](auto-update.md)流程在离线安装上同样有效。

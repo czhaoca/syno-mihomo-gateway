@@ -10,6 +10,10 @@
 
 flow_redeploy() {
   ui_step "$(msg step_redeploy)"
+  if ! is_root; then
+    diagnose "redeployment requires root privileges" "re-run: sudo sh ./install.sh"
+    return 1
+  fi
   if [ ! -f "$ENV_FILE" ]; then
     diagnose "$(msg diag_no_env_redeploy)" "$(msg diag_no_env_fix)"
     return 1
@@ -49,10 +53,11 @@ flow_redeploy() {
   precheck_deploy || return 1
 
   pf_docker || return 1
-  pf_arch
-  # Reprovision existing containers BEFORE recreating the macvlan (a still-attached
-  # container would make create_network's `docker network rm` fail).
-  reprovision_containers
+  pf_arch || return 1
+  pf_web_port || return 1
+  validate_selected_network || return 1
+  prepare_stack || return 1
+  reprovision_containers || return 1
   create_network || return 1     # root: TUN + macvlan (re-runs the final IP guard)
   load_env
   deploy_stack || return 1

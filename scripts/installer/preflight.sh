@@ -94,24 +94,52 @@ check_location() {
 # pf_docker - ensure docker + a compose flavor exist (sets DOCKER_BIN/COMPOSE_CMD
 # via registry.sh:detect_compose). Diagnose on failure.
 pf_docker() {
-  if detect_compose; then
-    ui_ok "$(msg ok_docker_compose)"
-    return 0
+  detect_compose || {
+    diagnose "$(msg diag_no_docker)" "$(msg diag_no_docker_fix)"
+    return 1
+  }
+  if ! "$DOCKER_BIN" info >/dev/null 2>&1; then
+    diagnose "Docker is installed but the daemon is unavailable" \
+      "start Container Manager and run this installer as root"
+    return 1
   fi
-  diagnose "$(msg diag_no_docker)" \
-    "$(msg diag_no_docker_fix)"
-  return 1
+  ui_ok "$(msg ok_docker_compose)"
+  return 0
 }
 
-# pf_arch - warn (non-fatal) if the NAS arch differs from EXPECTED_ARCH.
+# pf_arch - fail before pulling/deploying when configured and real host arch differ.
 pf_arch() {
   _h="$(host_arch)"
   if [ "$_h" != "${EXPECTED_ARCH:-amd64}" ]; then
-    ui_warn "$(msgf warn_arch "$_h" "${EXPECTED_ARCH:-amd64}" "$_h")"
-  else
-    ui_ok "$(msgf ok_arch "$_h")"
+    diagnose "$(msgf warn_arch "$_h" "${EXPECTED_ARCH:-amd64}" "$_h")" \
+      "set EXPECTED_ARCH=$_h in .env and ensure the ACR mirror publishes $_h images"
+    return 1
   fi
+  ui_ok "$(msgf ok_arch "$_h")"
   return 0
+}
+
+pf_compose_config() {
+  # shellcheck disable=SC2086 # COMPOSE_CMD may be two words
+  if ( cd "$REPO_ROOT" && $COMPOSE_CMD --env-file "$ENV_FILE" config >/dev/null ) \
+      >>"${LOG_FILE:-/dev/null}" 2>&1; then
+    return 0
+  fi
+  diagnose "Docker Compose rejected the generated project configuration" \
+    "review .env and run: docker compose --env-file .env config"
+  return 1
+}
+
+pf_web_port() {
+  _p="${WEB_UI_PORT:-8080}"
+  pf_port_free "$_p"; _st=$?
+  [ "$_st" -eq 0 ] && return 0
+  [ "$_st" -eq 2 ] && { ui_warn "cannot verify whether dashboard port $_p is free"; return 0; }
+  _own="$("$DOCKER_BIN" port "$METACUBEXD_CONTAINER" 80/tcp 2>/dev/null)"
+  case "$_own" in *":$_p"*) return 0 ;; esac
+  diagnose "dashboard port $_p is already in use" \
+    "choose another WEB_UI_PORT in the installer"
+  return 1
 }
 
 # pf_port_free PORT - 0 free, 1 in use, 2 cannot determine (no ss/netstat).

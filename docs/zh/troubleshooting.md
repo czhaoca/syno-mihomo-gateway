@@ -100,3 +100,10 @@ docker rename cloudflared-candidate cloudflared      # promote it
 ## 整个家庭断网
 
 如果设备使用 `MIHOMO_IP` 作为网关 / DNS 而 mihomo 宕机，它们就会被切断连接。最快的恢复方法：将受影响设备的网关 / DNS 改回路由器，然后修复 mihomo（`docker compose up -d mihomo`，检查日志）。对于有风险的改动，请考虑使用 kill-switch（紧急切断）+ 维护窗口。
+
+## 容器健康但局域网客户端无法上网
+
+先运行只读诊断：`sudo sh scripts/doctor.sh --egress`。它会检查宿主机 TUN、macvlan、
+Compose 配置、镜像架构、控制器以及容器内的 `mihomo-tun` 数据通路。退出码 `0` 表示
+结构正常，`2` 表示外部代理出口降级，`3` 表示本地配置或运行时故障。诊断通过后，
+请从另一台局域网设备测试网关和 DNS；NAS 无法直接访问自己的 macvlan 子容器。
