@@ -106,11 +106,14 @@ Dashboard port already in use
 --------------------------------------------------------------------------
 Gateway is "unhealthy" after deploy
 --------------------------------------------------------------------------
-  Cause: usually a bad/unreachable subscription URL, or a bad DNS setting.
+  Cause: usually a bad/unreachable subscription URL, bad DNS, or a TUN error.
   Fix:   check config/subscription.txt (the subscription URL) and the
          DNS_DEFAULT_NAMESERVER / DNS_NAMESERVER / DNS_FALLBACK values, then
          redeploy. The deploy and auto-update flows health-gate the new image
          and roll back automatically if it stays unhealthy.
+         If the log says "iptables (nf_tables): Could not fetch rule set
+         generation id", set TUN_AUTO_REDIRECT=false in .env and redeploy.
+         TUN auto-route remains enabled.
 
 --------------------------------------------------------------------------
 Containers look healthy but LAN clients have no internet

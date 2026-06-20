@@ -64,6 +64,8 @@ DSM 任务计划使用“区域选项”，BusyBox cron 也使用系统时区。
   UPDATE_TZ         - 更新器日志时间戳时区（默认 Asia/Shanghai）；DSM 按 NAS
                       系统时区触发。
   EXPECTED_ARCH     - amd64 或 arm64；设为与你的 NAS 一致。
+  TUN_AUTO_REDIRECT - 可选 TCP 重定向优化；DSM 上默认 false。设为 true 时
+                      会先运行 iptables 兼容性探测。
 
 完整的设置参考见 CONFIGURE.zh.txt。
 
@@ -74,8 +76,10 @@ DSM 任务计划使用“区域选项”，BusyBox cron 也使用系统时区。
   2. 带重试拉取每个镜像，再校验本地镜像 ID 与架构。
   3. 与运行中镜像比较，只部署变化的组件。Compose v2 使用
      "up -d --pull never"，防止校验后再次隐式拉取。
-  4. 检查控制器、TUN 数据通路、转发和崩溃重启状态。
-  5. Compose 应用失败或新镜像不健康时，校验并重新打标旧镜像，在不拉取的
+  4. 若 TUN_AUTO_REDIRECT=true，在应用前先用一次性网络命名空间验证目标
+     镜像能否针对 DSM 内核创建 NAT 链。
+  5. 检查控制器、TUN 数据通路、转发和崩溃重启状态。
+  6. Compose 应用失败或新镜像不健康时，校验并重新打标旧镜像，在不拉取的
      情况下重建，然后再次执行健康检查。
 
 对于外部 cloudflared，更新器会先启动一个不占用规范静态 IP 或主机发布端口的

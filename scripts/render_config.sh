@@ -1,8 +1,9 @@
 #!/bin/sh
 # render_config.sh - render config.yaml from config.template.yaml.
 # Substitutes the subscription URL (from subscription.txt) and the env-provided
-# tokens (CONTROLLER_*, DNS_*). Used by BOTH the mihomo container entrypoint and
-# CI (scripts/ci/render_check.py), so the exact same renderer is what gets tested.
+# tokens (CONTROLLER_*, DNS_*, TUN_*). Used by BOTH the mihomo container
+# entrypoint and CI (scripts/ci/render_check.py), so the exact same renderer is
+# what gets tested.
 # POSIX /bin/sh (BusyBox-safe). Fails loud (non-zero, no output file) on bad input.
 set -eu
 
@@ -15,6 +16,11 @@ TMP="$CFG_DIR/.config.yaml.tmp"
 # Port/secret may default; DNS must come from .env (CLAUDE.md: no hardcoded DNS).
 : "${CONTROLLER_PORT:=9090}"
 : "${CONTROLLER_SECRET:=}"
+: "${TUN_AUTO_REDIRECT:=false}"
+case "$TUN_AUTO_REDIRECT" in
+  true|false) : ;;
+  *) echo "ERROR: TUN_AUTO_REDIRECT must be true or false" >&2; exit 1 ;;
+esac
 for _v in DNS_DEFAULT_NAMESERVER DNS_NAMESERVER DNS_FALLBACK; do
   eval "_val=\${$_v:-}"
   [ -n "$_val" ] || { echo "ERROR: $_v must be set in .env (see .env.example)" >&2; exit 1; }
@@ -55,6 +61,7 @@ sed \
   -e "s|{{DNS_DEFAULT_NAMESERVER}}|$(esc "$DNS_DEFAULT_NAMESERVER")|g" \
   -e "s|{{DNS_NAMESERVER}}|$(esc "$DNS_NAMESERVER")|g" \
   -e "s|{{DNS_FALLBACK}}|$(esc "$DNS_FALLBACK")|g" \
+  -e "s|{{TUN_AUTO_REDIRECT}}|$(esc "$TUN_AUTO_REDIRECT")|g" \
   "$TEMPLATE" > "$TMP"
 mv "$TMP" "$OUT"
 echo "Rendered $OUT"

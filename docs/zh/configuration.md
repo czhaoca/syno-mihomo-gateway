@@ -38,6 +38,12 @@ Compose 兼容的引号，因此包含空格、`&`、`#`、`$`、引号或反斜
 | `MIHOMO_IP` | ✅ | 分配给 mihomo 容器的静态局域网 IP。**必须是未被占用的地址**（安装器会检测冲突）。 | `192.168.1.100` |
 | `PARENT_INTERFACE` | | macvlan 父接口（局域网网卡）。安装器会从接口扫描结果填入；留空则自动检测（开机自愈任务也会自动检测）。 | `eth0` |
 
+### Mihomo TUN
+
+| 键 | Req | 说明 | 默认值 |
+|---|:--:|---|---|
+| `TUN_AUTO_REDIRECT` | | 可选的 Linux TCP 重定向优化。DSM 上应保持 `false`，除非安装程序的一次性 iptables 兼容性探测成功。无论此项为何值，TUN `auto-route` 都保持启用。仅接受小写 `true`/`false`。 | `false` |
+
 ### 端口与控制器
 
 | 键 | Req | 说明 | 示例 |
@@ -139,6 +145,7 @@ Compose 兼容的引号，因此包含空格、`&`、`#`、`$`、引号或反斜
 | `{{AIRPORT_URL}}` | `config/subscription.txt` 的第一行（去除标签后） |
 | `{{CONTROLLER_PORT}}` / `{{CONTROLLER_SECRET}}` | `.env` |
 | `{{DNS_DEFAULT_NAMESERVER}}` / `{{DNS_NAMESERVER}}` / `{{DNS_FALLBACK}}` | `.env` |
+| `{{TUN_AUTO_REDIRECT}}` | `.env`（缺省时为 `false`） |
 
 代理**规则**、`proxy-groups` / `proxy-providers` 块、端口等请直接在模板中编辑（它们
 未做参数化）。编辑后，通过重建 mihomo 重新渲染

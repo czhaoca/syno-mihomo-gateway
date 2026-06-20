@@ -82,6 +82,9 @@ validate_update_switch() {
 
 validate_update_config() {
   validate_update_switch || return 1
+  case "${TUN_AUTO_REDIRECT:-}" in true|false) : ;; *)
+    log_error "TUN_AUTO_REDIRECT must be true or false"; return 1 ;;
+  esac
   _config_uint PULL_RETRIES "${PULL_RETRIES:-}" 1 || return 1
   _config_uint PULL_RETRY_DELAY "${PULL_RETRY_DELAY:-}" 0 || return 1
   _config_uint DOCKER_READY_TIMEOUT "${DOCKER_READY_TIMEOUT:-}" 0 || return 1
@@ -223,6 +226,31 @@ arch_ok() {
     return 1
   fi
   return 0
+}
+
+# mihomo_auto_redirect_probe IMAGE
+# auto-redirect asks the image's iptables frontend to program the host kernel.
+# Older DSM kernels reject the nft-backed frontend used by current Mihomo images.
+# Exercise the same NAT-chain operation in a disposable network namespace before
+# recreating a healthy gateway. Disabled mode deliberately performs no Docker call.
+mihomo_auto_redirect_probe() {
+  case "${TUN_AUTO_REDIRECT:-false}" in
+    false) return 0 ;;
+    true) : ;;
+    *) log_error "TUN_AUTO_REDIRECT must be true or false"; return 1 ;;
+  esac
+  _arp_image="${1:-${MIHOMO_IMAGE:-}}"
+  [ -n "$_arp_image" ] || { log_error "cannot probe TUN auto-redirect: MIHOMO_IMAGE is empty"; return 1; }
+  log_info "probing TUN auto-redirect compatibility with $_arp_image"
+  if "$DOCKER_BIN" run --rm --privileged --network none --entrypoint /bin/sh \
+      "$_arp_image" -c \
+      'iptables -t nat -N smg-auto-redirect-probe && iptables -t nat -X smg-auto-redirect-probe' \
+      >>"$LOG_FILE" 2>&1; then
+    log_info "TUN auto-redirect compatibility probe passed"
+    return 0
+  fi
+  log_error "TUN auto-redirect is incompatible with this DSM kernel/image; set TUN_AUTO_REDIRECT=false"
+  return 1
 }
 
 # deploy_needed IMAGE CONTAINER -> 0 if the running container's image differs from

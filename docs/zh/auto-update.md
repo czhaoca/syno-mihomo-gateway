@@ -82,6 +82,8 @@ UPDATE_IMAGES="${MIHOMO_IMAGE} ${METACUBEXD_IMAGE} ${CF_IMAGE}"
 - **在容器内部**（`docker exec`）探测控制器的 `GET /version`；配置密钥时会携带
   bearer token。缺少探测工具或响应失败都会使健康门失败；
 - 检查容器内 `mihomo-tun` 网卡与 IPv4 转发，避免控制器正常但透明代理数据通路损坏；
+- 当 `TUN_AUTO_REDIRECT=true` 时，先在一次性网络命名空间中验证目标镜像能否针对 DSM
+  内核创建 iptables NAT 链；不兼容时跳过 Compose 应用；
 - 检查 metacubexd 是否在运行（仅警告——UI 不是关键组件）。
 
 如果健康门失败，更新器会校验并**重新打标到上一个正常的镜像**（在切换之前已捕获），

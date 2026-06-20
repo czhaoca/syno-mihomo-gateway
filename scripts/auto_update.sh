@@ -127,6 +127,15 @@ for img in $UPDATE_IMAGES; do
   esac
 done
 
+# An image can be valid for this architecture yet carry an nft-backed iptables
+# frontend that the DSM kernel cannot service. Prove an explicit auto-redirect
+# opt-in before any Compose recreation; keep unrelated cloudflared work eligible.
+if [ "$compose_changed" -eq 1 ] && ! mihomo_auto_redirect_probe "$MIHOMO_IMAGE"; then
+  fail=1; compose_changed=0
+  summary="$summary
+- compose: SKIPPED (TUN auto-redirect incompatible; set TUN_AUTO_REDIRECT=false)"
+fi
+
 # --- Nothing to do / dry-run short-circuits ---
 if [ "$changed_any" -eq 0 ] && [ "$fail" -eq 0 ]; then
   log_info "no image changes."

@@ -197,6 +197,8 @@ _msg_en() {
     diag_pull_fail_fix) printf '%s' 'confirm the image exists in your registry and the NAS can reach it' ;;
     diag_arch_mismatch) printf '%s' 'image arch mismatch for %s' ;;
     diag_arch_mismatch_fix) printf '%s' "mirror a %s image, or set EXPECTED_ARCH to this NAS's arch in .env" ;;
+    diag_auto_redirect) printf '%s' 'TUN auto-redirect is incompatible with this DSM kernel/image' ;;
+    diag_auto_redirect_fix) printf '%s' 'set TUN_AUTO_REDIRECT=false in .env; TUN auto-route remains enabled' ;;
     info_starting)    printf '%s' 'starting containers (docker compose up -d)' ;;
     info_log_tail)    printf '%s' '--- last lines of the deploy log (the actual error) ---' ;;
     info_mihomo_logs) printf '%s' '--- docker logs mihomo (the actual crash reason) ---' ;;
@@ -205,7 +207,7 @@ _msg_en() {
     diag_compose_up_fix) printf '%s' 'review the output above and %s; verify the macvlan network and .env image refs' ;;
     ok_mihomo_healthy) printf '%s' 'mihomo is running and healthy' ;;
     diag_unhealthy)   printf '%s' 'mihomo did not become healthy' ;;
-    diag_unhealthy_fix) printf '%s' "see the mihomo log above; a bad subscription URL, DNS, or a blocked geo-data download (geox-url in config.template.yaml) is the usual cause" ;;
+    diag_unhealthy_fix) printf '%s' "see the mihomo log above; check subscription/DNS/geo-data errors and any TUN or iptables failure" ;;
     info_egress_test) printf '%s' 'testing internet egress through the proxy (GET %s) ...' ;;
     ok_egress)        printf '%s' 'egress OK - reached the test URL through the proxy (%s ms)' ;;
     diag_egress)      printf '%s' 'the gateway is up, but it could NOT reach the internet through %s (the nodes time out)' ;;
@@ -478,6 +480,8 @@ _msg_zh() {
     diag_pull_fail_fix) printf '%s' '请确认镜像存在于你的仓库中，且 NAS 能够访问它' ;;
     diag_arch_mismatch) printf '%s' '%s 的镜像架构不匹配' ;;
     diag_arch_mismatch_fix) printf '%s' '请镜像一个 %s 架构的镜像，或在 .env 中将 EXPECTED_ARCH 设为此 NAS 的架构' ;;
+    diag_auto_redirect) printf '%s' 'TUN auto-redirect 与此 DSM 内核/镜像不兼容' ;;
+    diag_auto_redirect_fix) printf '%s' '请在 .env 中设置 TUN_AUTO_REDIRECT=false；TUN auto-route 仍会保持启用' ;;
     info_starting)    printf '%s' '正在启动容器（docker compose up -d）' ;;
     info_log_tail)    printf '%s' '--- 部署日志的最后几行（真正的错误）---' ;;
     info_mihomo_logs) printf '%s' '--- docker logs mihomo（真正的崩溃原因）---' ;;
@@ -486,7 +490,7 @@ _msg_zh() {
     diag_compose_up_fix) printf '%s' '请查看上面的输出以及 %s；核对 macvlan 网络和 .env 中的镜像引用' ;;
     ok_mihomo_healthy) printf '%s' 'mihomo 正在运行且健康' ;;
     diag_unhealthy)   printf '%s' 'mihomo 未能进入健康状态' ;;
-    diag_unhealthy_fix) printf '%s' "请查看上面的 mihomo 日志；通常是订阅链接、DNS，或 geo 数据下载被阻断（config.template.yaml 中的 geox-url）所致" ;;
+    diag_unhealthy_fix) printf '%s' '请查看上面的 mihomo 日志；检查订阅/DNS/geo 数据错误以及 TUN 或 iptables 故障' ;;
     info_egress_test) printf '%s' '正在通过代理测试外网连通性（GET %s）……' ;;
     ok_egress)        printf '%s' '出口正常——已通过代理访问到测试地址（%s 毫秒）' ;;
     diag_egress)      printf '%s' '网关已启动，但无法通过 %s 访问外网（节点超时）' ;;

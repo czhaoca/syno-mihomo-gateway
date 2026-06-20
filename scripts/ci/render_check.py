@@ -13,6 +13,8 @@ Enforces:
   * a controller secret containing `&`, `|`, `"` AND `\` renders verbatim
     (secret renders inside `secret: "..."`, so `"`/`\` must be YAML-escaped);
   * external-controller + DNS sections are present and correctly typed (lists);
+  * TUN auto-redirect defaults to the DSM-safe false value, accepts an explicit
+    true opt-in, and rejects non-boolean input before writing config.yaml;
   * NO hardcoded DNS server / user network address remains in the committed template
     (CLAUDE.md rule) — only the generic bind/loopback constants are allowed.
 
@@ -48,16 +50,8 @@ def fail(msg: str):
     sys.exit(1)
 
 
-def main() -> None:
-    raw = TEMPLATE.read_text()
-
-    # 1) No hardcoded DNS / network address literals in the committed template.
-    leftover = [ip for ip in IPV4.findall(raw) if ip not in ALLOWED_IPS]
-    if leftover:
-        fail(f"hardcoded IP literal(s) in {TEMPLATE.name}: {sorted(set(leftover))} "
-             f"(use {{placeholders}} + .env per CLAUDE.md)")
-
-    # 2) Run the REAL renderer against a temp config dir.
+def render(raw: str, tun_auto_redirect: str | None = None):
+    """Run the real renderer in an isolated config directory."""
     with tempfile.TemporaryDirectory() as td:
         tdp = Path(td)
         (tdp / "config.template.yaml").write_text(raw)
@@ -71,11 +65,28 @@ def main() -> None:
             "DNS_NAMESERVER": "114.114.114.114,223.5.5.5",
             "DNS_FALLBACK": "8.8.8.8,8.8.4.4",
         }
+        env.pop("TUN_AUTO_REDIRECT", None)
+        if tun_auto_redirect is not None:
+            env["TUN_AUTO_REDIRECT"] = tun_auto_redirect
         proc = subprocess.run(["sh", str(RENDERER)], env=env,
                               capture_output=True, text=True)
-        if proc.returncode != 0:
-            fail(f"render_config.sh exited {proc.returncode}: {proc.stderr.strip()}")
-        rendered = (tdp / "config.yaml").read_text()
+        out = tdp / "config.yaml"
+        return proc, out.read_text() if out.exists() else None
+
+
+def main() -> None:
+    raw = TEMPLATE.read_text()
+
+    # 1) No hardcoded DNS / network address literals in the committed template.
+    leftover = [ip for ip in IPV4.findall(raw) if ip not in ALLOWED_IPS]
+    if leftover:
+        fail(f"hardcoded IP literal(s) in {TEMPLATE.name}: {sorted(set(leftover))} "
+             f"(use {{placeholders}} + .env per CLAUDE.md)")
+
+    # 2) Run the REAL renderer with the backwards-compatible omitted-key path.
+    proc, rendered = render(raw)
+    if proc.returncode != 0 or rendered is None:
+        fail(f"render_config.sh exited {proc.returncode}: {proc.stderr.strip()}")
 
     unresolved = re.findall(r"\{\{[^}]+\}\}", rendered)
     if unresolved:
@@ -110,7 +121,7 @@ def main() -> None:
         "device": "mihomo-tun",
         "stack": "mixed",
         "auto-route": True,
-        "auto-redirect": True,
+        "auto-redirect": False,
         "auto-detect-interface": True,
     }
     for field, expected in required_tun.items():
@@ -121,8 +132,19 @@ def main() -> None:
         if required not in hijack:
             fail(f"tun.dns-hijack missing {required!r}: {hijack!r}")
 
-    print("OK: renderer preserves URL/secrets; controller, DNS, and TUN gateway mode are valid; "
-          "no hardcoded DNS/network literals.")
+    # 7) A deliberate opt-in must render as a YAML boolean, while invalid
+    # spellings fail closed without producing a config file.
+    proc, opted_in = render(raw, "true")
+    if proc.returncode != 0 or opted_in is None:
+        fail(f"TUN auto-redirect opt-in failed: {proc.stderr.strip()}")
+    if (yaml.safe_load(opted_in).get("tun") or {}).get("auto-redirect") is not True:
+        fail("TUN_AUTO_REDIRECT=true did not render as YAML true")
+    proc, invalid = render(raw, "yes")
+    if proc.returncode == 0 or invalid is not None:
+        fail("invalid TUN_AUTO_REDIRECT was accepted or wrote config.yaml")
+
+    print("OK: renderer preserves URL/secrets; controller, DNS, and DSM-safe TUN defaults are "
+          "valid; auto-redirect opt-in is strict; no hardcoded DNS/network literals.")
 
 
 if __name__ == "__main__":

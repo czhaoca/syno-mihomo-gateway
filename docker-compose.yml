@@ -30,6 +30,9 @@ services:
       - DNS_DEFAULT_NAMESERVER=${DNS_DEFAULT_NAMESERVER}
       - DNS_NAMESERVER=${DNS_NAMESERVER}
       - DNS_FALLBACK=${DNS_FALLBACK}
+      # Optional Linux TCP redirect optimization. Missing on older .env files
+      # intentionally defaults to the DSM-compatible TUN auto-route path.
+      - TUN_AUTO_REDIRECT=${TUN_AUTO_REDIRECT:-false}
 
     # Entrypoint: render config.yaml from the template (subscription URL + env tokens)
     # via the shared, CI-tested renderer, then start Mihomo. The renderer fails loudly

@@ -67,11 +67,12 @@ and Open vSwitch `ovs_eth0`). mihomo attaches to it with the static `MIHOMO_IP`,
 as a **first-class device on your LAN** with its own IP — it does not NAT through the NAS host
 and does not disturb host networking.
 
-Inside the container, Mihomo enables its `mihomo-tun` interface with `auto-route` and Linux
-`auto-redirect`. That is the interception dataplane for packets forwarded by LAN clients; the
-macvlan address alone only makes the container reachable and does not transparently proxy traffic.
-The health gate therefore requires the controller **and** the runtime TUN interface before it
-reports the gateway healthy.
+Inside the container, Mihomo enables its `mihomo-tun` interface with `auto-route`. That is the
+interception dataplane for packets forwarded by LAN clients; the macvlan address alone only makes
+the container reachable and does not transparently proxy traffic. Linux `auto-redirect` is an
+optional TCP optimization, disabled by default because current nft-backed iptables userspace is
+incompatible with older DSM kernels. The health gate therefore requires the controller **and**
+the runtime TUN interface before it reports the gateway healthy.
 
 ```
         LAN 192.168.1.0/24

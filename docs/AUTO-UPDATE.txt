@@ -71,6 +71,8 @@ Related .env settings
   UPDATE_TZ         - timezone used for updater log timestamps (default
                       Asia/Shanghai); DSM scheduling uses the NAS timezone.
   EXPECTED_ARCH     - amd64 or arm64; set to match your NAS.
+  TUN_AUTO_REDIRECT - optional TCP redirect optimization; default false on
+                      DSM. true runs an iptables compatibility probe first.
 
 See CONFIGURE.txt for the full settings reference.
 
@@ -84,8 +86,10 @@ What the updater does on each run
   3. Compares against what is running and redeploys only changed components.
      Compose v2 uses "up -d --pull never" so the checked local image cannot be
      replaced by a second implicit pull.
-  4. Checks the controller, TUN dataplane, forwarding, and crash-loop state.
-  5. If Compose fails or a new image is unhealthy, verifies/re-tags the previous
+  4. If TUN_AUTO_REDIRECT=true, proves the target image can create a NAT chain
+     against the DSM kernel in a disposable network namespace before apply.
+  5. Checks the controller, TUN dataplane, forwarding, and crash-loop state.
+  6. If Compose fails or a new image is unhealthy, verifies/re-tags the previous
      image, recreates without pulling, and runs the health check again.
 
 For external cloudflared, the updater starts a conflict-free temporary connector

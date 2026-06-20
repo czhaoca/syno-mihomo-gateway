@@ -10,15 +10,16 @@ socks-port: 7891
 mixed-port: 7894
 
 # Transparent gateway dataplane. The container receives forwarded packets from
-# LAN clients through its macvlan address; TUN + auto-redirect is what actually
-# intercepts those packets. Merely exposing redir/tproxy ports does not install
-# any routing rules.
+# LAN clients through its macvlan address; TUN auto-route is what intercepts
+# those packets. auto-redirect is an optional Linux TCP optimization, disabled
+# by default because nft-backed iptables is incompatible with older DSM kernels.
+# Merely exposing redir/tproxy ports does not install any routing rules.
 tun:
   enable: true
   device: mihomo-tun
   stack: mixed
   auto-route: true
-  auto-redirect: true
+  auto-redirect: {{TUN_AUTO_REDIRECT}}
   auto-detect-interface: true
   strict-route: false
   dns-hijack:

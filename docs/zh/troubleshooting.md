@@ -58,6 +58,9 @@ docker logs mihomo --tail 80
 常见原因：
 - **订阅或 DNS 为空 / 损坏** —— 渲染器会明确报错：`ERROR: subscription.txt has no usable URL` 或 `ERROR: DNS_… must be set`。请修复 `config/subscription.txt` / `.env` 中的 `DNS_*` 键，然后执行 `docker compose up -d mihomo`。
 - **缺少 `/dev/net/tun`** —— 运行 `sudo ./scripts/setup_network.sh`。
+- **`iptables (nf_tables): Could not fetch rule set generation id`** —— 镜像中的 nft 后端
+  iptables 与 DSM 内核不兼容。在 `.env` 中设置 `TUN_AUTO_REDIRECT=false` 后重新部署；
+  TUN `auto-route` 仍会提供网关数据通路。
 - **架构错误的镜像** —— 参见上文。
 
 ## config.yaml 中的订阅 URL 看起来不对

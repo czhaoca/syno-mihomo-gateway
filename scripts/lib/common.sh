@@ -119,7 +119,9 @@ load_env() {
   : "${HEALTH_INTERVAL:=10}"
   : "${HEALTH_MAX_RESTARTS:=3}"
   : "${TUN_DEVICE:=mihomo-tun}"
+  : "${TUN_AUTO_REDIRECT:=false}"
   : "${LOCK_DIR:=/tmp/syno-mihomo-update.lock}"
+  export TUN_AUTO_REDIRECT
 
   # Backward compatibility with the pre-1.2.11 template. The strict loader
   # intentionally does not perform arbitrary shell expansion.

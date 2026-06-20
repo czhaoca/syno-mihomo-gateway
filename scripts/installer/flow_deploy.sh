@@ -130,6 +130,12 @@ prepare_stack() {
       "review config/config.yaml and the error above"
     return 1
   fi
+  if ! mihomo_auto_redirect_probe "$MIHOMO_IMAGE"; then
+    rm -rf "$_cfg_test"
+    _show_log_tail
+    diagnose "$(msg diag_auto_redirect)" "$(msg diag_auto_redirect_fix)"
+    return 1
+  fi
   rm -rf "$_cfg_test"
   return 0
 }

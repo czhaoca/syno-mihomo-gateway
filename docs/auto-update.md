@@ -93,6 +93,8 @@ After recreating, "running" is not enough — mihomo could be up but routing not
   bearer token when configured. A missing probe tool or failed response fails the gate;
 - verifies the in-container `mihomo-tun` interface and IPv4 forwarding, so a responsive
   controller cannot hide a broken transparent-proxy dataplane;
+- when `TUN_AUTO_REDIRECT=true`, first proves the target image can create an iptables NAT chain
+  against the DSM kernel in a disposable network namespace; incompatibility skips Compose apply;
 - checks metacubexd is running (warn-only — the UI is non-critical).
 
 If the gate fails, the updater verifies and **re-tags the last-good image** (captured before the

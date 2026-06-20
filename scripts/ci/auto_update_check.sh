@@ -168,6 +168,7 @@ printf '%s\n' '#!/bin/sh' \
   '      *"/sys/class/net/"*) exit "${MOCK_TUN_RC:-0}" ;;' \
   '      *"/proc/sys/net/ipv4/ip_forward"*) echo "${MOCK_FORWARD:-1}"; exit 0 ;;' \
   '    esac ;;' \
+  '  run) exit "${MOCK_IPTABLES_RC:-0}" ;;' \
   '  tag) exit "${MOCK_TAG_RC:-0}" ;;' \
   'esac' \
   'exit 0' > "$MOCK_DOCKER"
@@ -213,7 +214,11 @@ CF_HEALTH_TIMEOUT=1
 LOG_KEEP=1
 LOG_MAX_BYTES=1024
 UPDATE_IMAGES="$MIHOMO_IMAGE $METACUBEXD_IMAGE"
+TUN_AUTO_REDIRECT=false
 expect_success "valid updater configuration accepted" validate_update_config
+TUN_AUTO_REDIRECT=False
+expect_failure "TUN auto-redirect boolean is strict" validate_update_config
+TUN_AUTO_REDIRECT=false
 CF_IMAGE=acr.example/cloudflared:latest
 expect_failure "configured cloudflared must be mapped in UPDATE_IMAGES" validate_update_config
 UPDATE_IMAGES="$UPDATE_IMAGES $CF_IMAGE"
@@ -258,6 +263,19 @@ expect_failure "private registry requires credentials" acr_login
 DOCKER_USERNAME=user ACR_PASSWORD=secret MOCK_LOGIN_RC=0
 export MOCK_LOGIN_RC
 expect_success "private registry noninteractive login succeeds" acr_login
+
+# DSM-safe mode avoids iptables entirely. Explicit opt-in proves that the
+# target image can create a NAT chain against this kernel before recreation.
+: > "$MOCK_DOCKER_CALLS"
+TUN_AUTO_REDIRECT=false
+expect_success "default TUN mode skips auto-redirect probe" mihomo_auto_redirect_probe "$MIHOMO_IMAGE"
+assert_not_contains "disabled auto-redirect makes no probe container" "$(cat "$MOCK_DOCKER_CALLS")" "run --rm --privileged"
+TUN_AUTO_REDIRECT=true MOCK_IPTABLES_RC=0; export MOCK_IPTABLES_RC
+expect_success "compatible auto-redirect opt-in passes" mihomo_auto_redirect_probe "$MIHOMO_IMAGE"
+assert_contains "enabled auto-redirect uses disposable privileged probe" "$(cat "$MOCK_DOCKER_CALLS")" "run --rm --privileged --network none"
+MOCK_IPTABLES_RC=4; export MOCK_IPTABLES_RC
+expect_failure "incompatible DSM nftables backend is rejected" mihomo_auto_redirect_probe "$MIHOMO_IMAGE"
+TUN_AUTO_REDIRECT=false MOCK_IPTABLES_RC=0; export MOCK_IPTABLES_RC
 
 # Health gate covers stability, authenticated controller access, TUN, forwarding,
 # and UI inspection with no real wait.
@@ -354,6 +372,49 @@ PREFLIGHT_TRACE="$(tr '\n' ' ' < "$TRACE")"
 assert_contains "preflight reaches Compose validation" "$PREFLIGHT_TRACE" "compose-config"
 assert_not_contains "preflight failure prevents registry login" "$PREFLIGHT_TRACE" "login"
 assert_not_contains "preflight failure prevents pulls" "$PREFLIGHT_TRACE" "pull"
+
+# An incompatible explicit auto-redirect opt-in is discovered after the image
+# is pulled but before Compose changes the running gateway. It is not a rollback
+# case because no service mutation has occurred.
+if (
+  load_env() {
+    LOG_FILE="$TMP/orchestrator.log"; UPDATE_ENABLED=true; UPDATE_IMAGES="m u"
+    MIHOMO_IMAGE=m; METACUBEXD_IMAGE=u; CF_IMAGE=; CF_CONTAINER_NAME=cloudflared
+    MIHOMO_CONTAINER=mihomo; METACUBEXD_CONTAINER=mihomo-ui
+    NOTIFY_ON_NOCHANGE=0; TUN_AUTO_REDIRECT=true
+  }
+  rotate_log() { :; }
+  acquire_lock() { :; }
+  release_lock() { :; }
+  detect_compose() { DOCKER_BIN=true; return 0; }
+  docker_daemon_ready() { return 0; }
+  validate_update_config() { return 0; }
+  check_arch_expectation() { return 0; }
+  check_tun() { return 0; }
+  check_network() { return 0; }
+  compose_config_check() { return 0; }
+  acr_login() { return 0; }
+  pull_image() { return 0; }
+  arch_ok() { return 0; }
+  deploy_needed() { [ "$1" = "$MIHOMO_IMAGE" ]; }
+  running_image_id() { printf '%s\n' sha256:old; }
+  mihomo_auto_redirect_probe() { printf '%s\n' redirect-probe >> "$TRACE"; return 1; }
+  compose_up_local() { printf '%s\n' compose-apply >> "$TRACE"; return 0; }
+  rollback_compose() { printf '%s\n' rollback >> "$TRACE"; return 0; }
+  notify() { :; }
+  cloudflared_cleanup_candidate() { :; }
+  : > "$TRACE"
+  auto_update_main
+); then
+  fail "incompatible auto-redirect should report a partial failure"
+else
+  _rc=$?
+  if [ "$_rc" -eq "$EXIT_PARTIAL" ]; then ok; else fail "auto-redirect probe exit code (got $_rc)"; fi
+fi
+REDIRECT_TRACE="$(cat "$TRACE")"
+assert_contains "auto-redirect compatibility is probed" "$REDIRECT_TRACE" "redirect-probe"
+assert_not_contains "failed auto-redirect probe prevents Compose apply" "$REDIRECT_TRACE" "compose-apply"
+assert_not_contains "pre-apply auto-redirect failure does not roll back" "$REDIRECT_TRACE" "rollback"
 
 if (
   load_env() {

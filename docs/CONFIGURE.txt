@@ -36,6 +36,15 @@ Network settings
       Blank = auto-detect.
 
 --------------------------------------------------------------------------
+Mihomo TUN
+--------------------------------------------------------------------------
+  TUN_AUTO_REDIRECT
+      Optional Linux TCP redirect optimization. Default false for DSM
+      compatibility; TUN auto-route remains enabled. Set true only when the
+      installer's disposable iptables compatibility probe succeeds. Only the
+      lowercase values true and false are accepted.
+
+--------------------------------------------------------------------------
 Installer
 --------------------------------------------------------------------------
   INSTALLER_LANG

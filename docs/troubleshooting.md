@@ -85,6 +85,9 @@ Common causes:
   `ERROR: subscription.txt has no usable URL` or `ERROR: DNS_… must be set`. Fix
   `config/subscription.txt` / the `DNS_*` keys in `.env`, then `docker compose up -d mihomo`.
 - **`/dev/net/tun` missing** — run `sudo ./scripts/setup_network.sh`.
+- **`iptables (nf_tables): Could not fetch rule set generation id`** — the image's nft-backed
+  iptables is incompatible with the DSM kernel. Set `TUN_AUTO_REDIRECT=false` in `.env` and
+  redeploy; TUN `auto-route` still provides the gateway dataplane.
 - **Wrong arch image** — see above.
 
 ## Subscription URL looks wrong in config.yaml

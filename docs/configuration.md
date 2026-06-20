@@ -38,6 +38,12 @@ backslashes round-trip safely. When editing by hand, keep one `KEY=VALUE` assign
 | `MIHOMO_IP` | ✅ | Static LAN IP assigned to the mihomo container. **Must be unused** (the installer checks for a conflict). | `192.168.1.100` |
 | `PARENT_INTERFACE` | | Macvlan parent NIC. The installer fills this from the interface scan; blank = auto-detect (the boot-up self-heal task auto-detects too). | `eth0` |
 
+### Mihomo TUN
+
+| Key | Req | Description | Default |
+|---|:--:|---|---|
+| `TUN_AUTO_REDIRECT` | | Optional Linux TCP redirect optimization. Keep `false` on DSM unless the installer's disposable iptables compatibility probe succeeds. TUN `auto-route` remains enabled either way. Only lowercase `true`/`false` are accepted. | `false` |
+
 ### Ports & controller
 
 | Key | Req | Description | Example |
@@ -139,6 +145,7 @@ Holds the Mihomo config with placeholders the renderer fills:
 | `{{AIRPORT_URL}}` | first line of `config/subscription.txt` (label stripped) |
 | `{{CONTROLLER_PORT}}` / `{{CONTROLLER_SECRET}}` | `.env` |
 | `{{DNS_DEFAULT_NAMESERVER}}` / `{{DNS_NAMESERVER}}` / `{{DNS_FALLBACK}}` | `.env` |
+| `{{TUN_AUTO_REDIRECT}}` | `.env` (defaults to `false` when absent) |
 
 Edit proxy **rules**, the `proxy-groups` / `proxy-providers` blocks, ports, etc. directly in the
 template (they are not parameterized). After editing, re-render by recreating mihomo
