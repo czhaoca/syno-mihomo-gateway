@@ -67,6 +67,33 @@ external-controller-cors:
 `config/config.template.yaml`（或已渲染的 `…-data/config/config.yaml`），然后用
 `docker compose up -d --force-recreate mihomo` 重新渲染——容器入口会在启动时按模板重新生成 `config.yaml`。
 
+## 仪表盘/网关从局域网超时（macvlan 跑在 Open vSwitch 上）
+
+**症状：** 仪表盘后端**以及**将 `MIHOMO_IP` 作为网关的客户端都超时——即使测试设备与网关**同一子网**。
+在局域网设备上 `curl http://MIHOMO_IP:CONTROLLER_PORT/version` 卡住，但部署时的代理出口测试通过、路由器也能访问该 IP。
+
+**原因：** macvlan 的父接口是 **Open vSwitch** 端口（`ovs_eth0`）。OVS 桥上的 Docker *macvlan* 子接口会获得一个
+新 MAC，OVS 会把它转发给路由器（所以出口和回包正常），但**不会**泛洪到其他端口——因此其他局域网设备都无法访问
+`MIHOMO_IP`。这**不是** CORS：CORS 是可达但被浏览器拦截，这里是 TCP 层不可达。上面的 `curl` 即可区分（返回 JSON ⇒
+CORS；超时 ⇒ 本问题）。
+
+**解决——改用 ipvlan 驱动（推荐）。** ipvlan L2 子接口共享父接口已知的 MAC，因此能穿越 Open vSwitch。在 `.env` 中设
+`TPROXY_DRIVER=ipvlan` 后重新部署，或一次性执行：
+
+```sh
+docker rm -f mihomo mihomo-ui 2>/dev/null
+docker network rm tproxy_network
+docker network create -d ipvlan -o ipvlan_mode=l2 -o parent=ovs_eth0 \
+  --subnet="$SUBNET_CIDR" --gateway="$ROUTER_IP" tproxy_network
+sudo docker compose --env-file ../syno-mihomo-gateway-data/.env up -d
+```
+
+检测到 `ovs_*` 父接口时安装器会自动建议。随后在局域网设备上验证：`curl http://MIHOMO_IP:CONTROLLER_PORT/version`
+应返回 JSON。
+
+**退路——关闭 Open vSwitch。** 若在你的 OVS 配置上 ipvlan 仍不可达，请关闭 Open vSwitch（控制面板 → 网络 → 取消勾选
+*启用 Open vSwitch*），重启使网卡恢复为普通 `eth0`，再以 `eth0` 作为父接口重新部署（会失去 VMM 桥接网络）。
+
 ## mihomo 无法启动 / 反复崩溃重启
 
 ```bash

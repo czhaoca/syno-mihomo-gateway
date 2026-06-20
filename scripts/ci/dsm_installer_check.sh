@@ -127,6 +127,30 @@ CF_CONTAINER_NAME=has-token; cloudflared_token_present || fail "missed an existi
 CF_CONTAINER_NAME=no-token;  ! cloudflared_token_present || fail "invented a tunnel token"
 CF_CONTAINER_NAME=absent;    ! cloudflared_token_present || fail "saw a token on a missing container"
 
+# iface_is_ovs: an Open vSwitch parent needs the ipvlan driver, a plain NIC does not.
+iface_is_ovs ovs_eth0 || fail "ovs_eth0 not detected as Open vSwitch"
+! iface_is_ovs eth0 || fail "eth0 wrongly detected as Open vSwitch"
+
+# recreate_macvlan honors TPROXY_DRIVER: macvlan by default, ipvlan L2 for OVS parents.
+NET_CREATE_LOG="$TD/netcreate"
+fake_net_docker() {
+  if [ "$1 $2" = "network create" ]; then shift 2; echo "$*" >> "$NET_CREATE_LOG"; return 0; fi
+  return 1   # inspect -> absent/no-match, so recreate proceeds to create
+}
+_net_docker() { printf '%s' fake_net_docker; }
+SUBNET_CIDR=10.0.0.0/24
+ROUTER_IP=10.0.0.1
+: > "$NET_CREATE_LOG"
+recreate_macvlan eth0 >/dev/null 2>&1 || fail "recreate_macvlan(macvlan) returned non-zero"
+grep -q -- '-d macvlan' "$NET_CREATE_LOG" || fail "default driver was not macvlan"
+! grep -q 'ipvlan_mode' "$NET_CREATE_LOG" || fail "macvlan create included ipvlan_mode"
+: > "$NET_CREATE_LOG"
+TPROXY_DRIVER=ipvlan
+recreate_macvlan eth0 >/dev/null 2>&1 || fail "recreate_macvlan(ipvlan) returned non-zero"
+grep -q -- '-d ipvlan' "$NET_CREATE_LOG" || fail "ipvlan driver not used under TPROXY_DRIVER=ipvlan"
+grep -q 'ipvlan_mode=l2' "$NET_CREATE_LOG" || fail "ipvlan create missing ipvlan_mode=l2"
+TPROXY_DRIVER=macvlan
+
 interface_exists() { return 0; }
 _iface_ipv4() { echo 192.168.1.10; }
 validate_network_plan eth0 192.168.1.0/24 192.168.1.1 192.168.1.100 \

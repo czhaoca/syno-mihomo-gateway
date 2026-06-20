@@ -61,9 +61,14 @@ flowchart LR
 ## 网络模型 (macvlan)
 
 `scripts/setup_network.sh` 创建一个名为 `tproxy_network` 的 Docker **macvlan** 网络，其
-父接口为 NAS 的活动接口（通过到 `ROUTER_IP` 的路由自动检测；兼容 `eth0` 和 Open vSwitch
-`ovs_eth0`）。mihomo 以静态 `MIHOMO_IP` 接入该网络，因此它会以**你 LAN 上的一等设备**
-的形式出现，拥有自己的 IP——它不会通过 NAS 主机做 NAT，也不会干扰主机网络。
+父接口为 NAS 的活动接口（通过到 `ROUTER_IP` 的路由自动检测）。mihomo 以静态 `MIHOMO_IP`
+接入该网络，因此它会以**你 LAN 上的一等设备**的形式出现，拥有自己的 IP——它不会通过
+NAS 主机做 NAT，也不会干扰主机网络。
+
+> **Open vSwitch 注意事项。** 当父接口是 Open vSwitch 端口（`ovs_eth0`，在 DSM 为 VMM 启用
+> Open vSwitch 时出现）时，*macvlan* 子接口路由器可达，但**其他局域网设备无法访问**，导致仪表盘
+> 和网关从客户端超时。请设 `TPROXY_DRIVER=ipvlan`（安装器会自动建议）——ipvlan L2 共享父接口 MAC
+> 并可穿越 OVS。见[故障排查](troubleshooting.md)。
 
 容器内部由 Mihomo 启用 `mihomo-tun`，并使用 `auto-route` 接管局域网客户端转发来的
 流量。仅有 macvlan 地址只能让容器可达，并不能实现透明代理。Linux `auto-redirect`

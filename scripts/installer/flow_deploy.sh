@@ -182,6 +182,7 @@ report_success() {
   ui_say ""
   ui_say "$(msgf rep_point_client "${MIHOMO_IP:-<mihomo-ip>}")"
   ui_warn "$(msgf rep_warn_isolation "${MIHOMO_IP:-<mihomo-ip>}")"
+  ui_say "$(msgf rep_reach_test "${MIHOMO_IP:-<mihomo-ip>}" "${CONTROLLER_PORT:-9090}")"
   ui_say ""
   ui_say "$(msg rep_next)"
   return 0

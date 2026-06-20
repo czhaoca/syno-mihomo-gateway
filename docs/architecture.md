@@ -62,10 +62,15 @@ Plain-text fallback:
 ## Network model (macvlan)
 
 `scripts/setup_network.sh` creates a Docker **macvlan** network `tproxy_network` whose parent
-is the NAS's active interface (auto-detected via the route to `ROUTER_IP`; works with `eth0`
-and Open vSwitch `ovs_eth0`). mihomo attaches to it with the static `MIHOMO_IP`, so it appears
-as a **first-class device on your LAN** with its own IP — it does not NAT through the NAS host
-and does not disturb host networking.
+is the NAS's active interface (auto-detected via the route to `ROUTER_IP`). mihomo attaches to it
+with the static `MIHOMO_IP`, so it appears as a **first-class device on your LAN** with its own IP
+— it does not NAT through the NAS host and does not disturb host networking.
+
+> **Open vSwitch caveat.** When the parent is an Open vSwitch port (`ovs_eth0`, present when DSM's
+> Open vSwitch is enabled for VMM), a *macvlan* child is reachable by the router but **not** by
+> peer LAN devices, so the dashboard and the gateway time out from clients. Set `TPROXY_DRIVER=ipvlan`
+> (the installer offers this automatically) — ipvlan L2 shares the parent MAC and traverses OVS.
+> See [Troubleshooting](troubleshooting.md).
 
 Inside the container, Mihomo enables its `mihomo-tun` interface with `auto-route`. That is the
 interception dataplane for packets forwarded by LAN clients; the macvlan address alone only makes

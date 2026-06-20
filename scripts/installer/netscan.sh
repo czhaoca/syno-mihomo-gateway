@@ -86,6 +86,21 @@ scan_and_prefill() {
   ui_step "$(msg step_net_iface)"
   choose_interface || return 1
   env_set PARENT_INTERFACE "$CHOSEN_IFACE"
+
+  # macvlan over Open vSwitch (ovs_eth0) is reachable by the router but NOT by peer
+  # LAN devices, so the dashboard backend AND the gateway role time out from clients.
+  # Steer the operator to ipvlan L2, which shares the parent MAC and traverses OVS.
+  if iface_is_ovs "$CHOSEN_IFACE"; then
+    ui_warn "$(msgf warn_ovs_macvlan "$CHOSEN_IFACE")"
+    if ui_yesno "$(msg ask_use_ipvlan)" y; then
+      env_set TPROXY_DRIVER ipvlan
+      TPROXY_DRIVER=ipvlan; export TPROXY_DRIVER
+      ui_ok "$(msg info_ipvlan_set)"
+    else
+      ui_info "$(msg info_ovs_manual)"
+    fi
+  fi
+
   _gw="$(detect_gateway)"
   _cidr="$(iface_cidr "$CHOSEN_IFACE")"
   if [ -n "$_gw" ]; then env_set ROUTER_IP "$_gw"; ui_ok "$(msgf ok_router_gw "$_gw")"; fi

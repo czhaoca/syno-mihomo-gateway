@@ -80,6 +80,10 @@ _msg_en() {
     diag_no_iface)    printf '%s' 'no interface chosen' ;;
     diag_no_iface_fix) printf '%s' 're-run and pick a number, or type a valid interface name' ;;
     ok_iface)         printf '%s' 'interface: %s' ;;
+    warn_ovs_macvlan) printf '%s' "'%s' is an Open vSwitch port - a macvlan on it is reachable by the router but NOT by other LAN devices, so the dashboard and the gateway will time out from clients." ;;
+    ask_use_ipvlan)   printf '%s' 'Use the ipvlan driver instead (recommended for Open vSwitch)?' ;;
+    info_ipvlan_set)  printf '%s' 'using the ipvlan L2 driver for the gateway network' ;;
+    info_ovs_manual)  printf '%s' 'keeping macvlan - if clients cannot reach the gateway, disable Open vSwitch and use the physical NIC (see Troubleshooting)' ;;
     warn_ip_taken)    printf '%s' 'IP %s already answers on the LAN - likely used by another device (DHCP?).' ;;
     ask_use_ip)       printf '%s' 'use %s anyway?' ;;
     info_ip_unverified) printf '%s' 'could not verify %s is free (no ping/arping here) - make sure it is unused' ;;
@@ -225,6 +229,7 @@ _msg_en() {
     rep_backend_line) printf '%s' '    Host=%s  Port=%s  Secret=<your controller secret>' ;;
     rep_point_client) printf '%s' "Point a client's gateway + DNS at %s to route it through the proxy." ;;
     rep_warn_isolation) printf '%s' 'The NAS itself cannot reach %s (macvlan isolation) - always test from another device.' ;;
+    rep_reach_test)   printf '%s' 'Verify from a LAN device: curl http://%s:%s/version returns JSON. If it times out, the IP is unreachable (Open vSwitch? set TPROXY_DRIVER=ipvlan and redeploy) - see Troubleshooting.' ;;
     rep_next)         printf '%s' 'Next: set up automatic image updates from the main menu (option 2).' ;;
     step_deploy_e2e)  printf '%s' 'End-to-end deploy' ;;
 
@@ -367,6 +372,10 @@ _msg_zh() {
     diag_no_iface)    printf '%s' '未选择任何接口' ;;
     diag_no_iface_fix) printf '%s' '请重新运行并选择一个编号，或输入有效的接口名称' ;;
     ok_iface)         printf '%s' '接口：%s' ;;
+    warn_ovs_macvlan) printf '%s' "'%s' 是 Open vSwitch 端口——其上的 macvlan 路由器可达，但其他局域网设备无法访问，因此仪表盘和网关会从客户端超时。" ;;
+    ask_use_ipvlan)   printf '%s' '改用 ipvlan 驱动（Open vSwitch 推荐）？' ;;
+    info_ipvlan_set)  printf '%s' '网关网络改用 ipvlan L2 驱动' ;;
+    info_ovs_manual)  printf '%s' '保持 macvlan——若客户端无法访问网关，请关闭 Open vSwitch 并改用物理网卡（见故障排查）' ;;
     warn_ip_taken)    printf '%s' 'IP %s 已在 LAN 上有响应 - 很可能被其他设备占用（DHCP？）。' ;;
     ask_use_ip)       printf '%s' '仍要使用 %s 吗？' ;;
     info_ip_unverified) printf '%s' '无法验证 %s 是否空闲（此处无 ping/arping）- 请确保它未被占用' ;;
@@ -512,6 +521,7 @@ _msg_zh() {
     rep_backend_line) printf '%s' '    Host=%s  Port=%s  Secret=<你的控制器密钥>' ;;
     rep_point_client) printf '%s' '将客户端的网关 + DNS 指向 %s，即可让其流量经由代理。' ;;
     rep_warn_isolation) printf '%s' 'NAS 自身无法访问 %s（macvlan 隔离）- 请始终从另一台设备测试。' ;;
+    rep_reach_test)   printf '%s' '请从局域网设备验证：curl http://%s:%s/version 应返回 JSON。若超时，说明该 IP 不可达（Open vSwitch？请设 TPROXY_DRIVER=ipvlan 后重新部署）——见故障排查。' ;;
     rep_next)         printf '%s' '下一步：在主菜单设置自动镜像更新（选项 2）。' ;;
     step_deploy_e2e)  printf '%s' '端到端部署' ;;
 

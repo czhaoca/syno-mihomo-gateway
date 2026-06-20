@@ -83,6 +83,36 @@ update `config/config.template.yaml` (or the rendered `…-data/config/config.ya
 with `docker compose up -d --force-recreate mihomo` — the entrypoint re-renders `config.yaml` from
 the template on start.
 
+## Dashboard / gateway times out from the LAN (macvlan over Open vSwitch)
+
+**Symptom:** the dashboard backend **and** clients using `MIHOMO_IP` as their gateway time out —
+even from a device on the **same subnet**. `curl http://MIHOMO_IP:CONTROLLER_PORT/version` from a
+LAN device hangs, yet the proxy egress test passed at deploy time and your router can reach the IP.
+
+**Cause:** the macvlan parent is an **Open vSwitch** port (`ovs_eth0`). A Docker *macvlan* child on
+an OVS bridge gets a fresh MAC that OVS forwards to the router (so egress and the return path work)
+but does **not** flood to peer ports — so no other LAN device can reach `MIHOMO_IP`. This is *not*
+CORS: CORS = reachable but the browser blocks it; this = unreachable at TCP. The `curl` above tells
+them apart (JSON ⇒ CORS, timeout ⇒ this).
+
+**Fix — use the ipvlan driver (recommended).** ipvlan L2 children share the parent's already-known
+MAC, so they traverse Open vSwitch. Set `TPROXY_DRIVER=ipvlan` in `.env` and redeploy, or one-shot:
+
+```sh
+docker rm -f mihomo mihomo-ui 2>/dev/null
+docker network rm tproxy_network
+docker network create -d ipvlan -o ipvlan_mode=l2 -o parent=ovs_eth0 \
+  --subnet="$SUBNET_CIDR" --gateway="$ROUTER_IP" tproxy_network
+sudo docker compose --env-file ../syno-mihomo-gateway-data/.env up -d
+```
+
+The installer offers this automatically when it detects an `ovs_*` parent. Then verify from a LAN
+device: `curl http://MIHOMO_IP:CONTROLLER_PORT/version` should return JSON.
+
+**Fallback — disable Open vSwitch.** If ipvlan still can't be reached on your OVS setup, disable
+Open vSwitch (Control Panel → Network → uncheck *Enable Open vSwitch*), reboot so the NIC returns as
+a plain `eth0`, and redeploy with `eth0` as the parent (you lose VMM bridged networking).
+
 ## Containers are healthy but LAN clients have no internet
 
 Run the read-only structural diagnostic first:

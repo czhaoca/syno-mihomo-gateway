@@ -75,10 +75,11 @@ sudo ./scripts/setup_network.sh
 
 此脚本会：
 - 如果 `/dev/net/tun` 不存在则创建它，并修复其权限；
-- 自动检测父接口（即路由到 `ROUTER_IP` 的那个接口；否则回退到
-  默认路由）—— 支持 `eth0` 和 `ovs_eth0`；
-- 创建或复用与 `SUBNET_CIDR` / `ROUTER_IP` 一致的 `tproxy_network` macvlan；若同名网络
-  配置不一致，脚本会拒绝隐式删除；
+- 自动检测父接口（即路由到 `ROUTER_IP` 的那个接口；否则回退到默认路由）。若父接口是
+  **Open vSwitch**（`ovs_eth0`），请设 `TPROXY_DRIVER=ipvlan`（安装器会自动建议），
+  以便其他局域网设备能访问网关——见[故障排查](troubleshooting.md)；
+- 创建或复用与 `SUBNET_CIDR` / `ROUTER_IP` 一致的 `tproxy_network`（默认 macvlan，
+  当 `TPROXY_DRIVER=ipvlan` 时为 ipvlan）；若同名网络配置不一致，脚本会拒绝隐式删除；
 - 可选地登录你的镜像仓库并拉取镜像（当设置了 `ACR_PASSWORD` 时为非交互式，
   否则会进行提示）。
 

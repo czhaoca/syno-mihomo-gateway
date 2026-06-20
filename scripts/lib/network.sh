@@ -14,6 +14,11 @@
 # works whether or not registry.sh:detect_compose has run yet.
 
 TPROXY_NETWORK="${TPROXY_NETWORK:-tproxy_network}"
+# L2 driver for the gateway network. macvlan is the default; ipvlan (L2 mode) is the
+# fix for an Open vSwitch parent (ovs_eth0): ipvlan children share the parent's
+# already-learned MAC, so they traverse OVS and stay reachable by peer LAN devices,
+# whereas a macvlan child's fresh MAC is not flooded to peer ports.
+TPROXY_DRIVER="${TPROXY_DRIVER:-macvlan}"
 
 # Resolve a docker binary without depending on detect_compose having run.
 _net_docker() {
@@ -196,6 +201,13 @@ interface_exists() {
   fi
 }
 
+# iface_is_ovs IFACE - 0 if IFACE is an Open vSwitch port (Synology names it
+# ovs_eth0 when OVS is enabled). A macvlan child on an OVS parent is reachable by
+# the router but NOT by peer LAN hosts; the installer steers these to ipvlan.
+iface_is_ovs() {
+  case "$1" in ovs*|*-ovs|ovs_*) return 0 ;; *) return 1 ;; esac
+}
+
 # BusyBox-compatible IPv4/CIDR relationship checks. awk uses exact integer
 # arithmetic for the 32-bit values involved here and does not need ipcalc.
 ipv4_in_cidr() {
@@ -255,11 +267,14 @@ network_exists() {
   "$_d" network inspect "$_name" >/dev/null 2>&1
 }
 
+# macvlan_matches NAME PARENT SUBNET GATEWAY - 0 if the existing network matches the
+# requested driver (TPROXY_DRIVER), parent, subnet, and gateway. A driver change
+# (macvlan<->ipvlan) counts as a mismatch so the network is cleanly recreated.
 macvlan_matches() {
   _mm_name="$1"; _mm_parent="$2"; _mm_subnet="$3"; _mm_gateway="$4"
   _mm_d="$(_net_docker)"
   _mm_have="$("$_mm_d" network inspect -f '{{.Driver}}|{{index .Options "parent"}}|{{(index .IPAM.Config 0).Subnet}}|{{(index .IPAM.Config 0).Gateway}}' "$_mm_name" 2>/dev/null)"
-  [ "$_mm_have" = "macvlan|$_mm_parent|$_mm_subnet|$_mm_gateway" ]
+  [ "$_mm_have" = "${TPROXY_DRIVER:-macvlan}|$_mm_parent|$_mm_subnet|$_mm_gateway" ]
 }
 
 network_attachments() {
@@ -267,16 +282,18 @@ network_attachments() {
   "$_na_d" network inspect -f '{{range $id, $c := .Containers}}{{$c.Name}} {{end}}' "$1" 2>/dev/null
 }
 
-# recreate_macvlan PARENT [SUBNET] [GATEWAY] [NAME] - ensure the macvlan exists
-# on PARENT. A mismatched same-named network is never removed here; interactive
-# lifecycle preprocessing must first verify ownership and apply the operator's
-# cleanup choice. SUBNET/GATEWAY/NAME default to
+# recreate_macvlan PARENT [SUBNET] [GATEWAY] [NAME] - ensure the gateway L2 network
+# exists on PARENT, using the TPROXY_DRIVER (macvlan default, or ipvlan L2 for an
+# Open vSwitch parent). A mismatched same-named network is never removed here;
+# interactive lifecycle preprocessing must first verify ownership and apply the
+# operator's cleanup choice. SUBNET/GATEWAY/NAME default to
 # $SUBNET_CIDR/$ROUTER_IP/$TPROXY_NETWORK from .env. Returns non-zero on failure.
 recreate_macvlan() {
   _parent="$1"
   _subnet="${2:-$SUBNET_CIDR}"
   _gw="${3:-$ROUTER_IP}"
   _name="${4:-$TPROXY_NETWORK}"
+  _driver="${TPROXY_DRIVER:-macvlan}"
   _d="$(_net_docker)"
 
   [ -n "$_parent" ] || { log_error "recreate_macvlan: no parent interface given"; return 1; }
@@ -284,22 +301,27 @@ recreate_macvlan() {
   [ -n "$_gw" ]     || { log_error "recreate_macvlan: ROUTER_IP is empty (set it in .env)"; return 1; }
 
   if macvlan_matches "$_name" "$_parent" "$_subnet" "$_gw"; then
-    log_info "macvlan '$_name' already matches requested configuration"
+    log_info "$_driver network '$_name' already matches requested configuration"
     return 0
   fi
 
   if network_exists "$_name"; then
     log_error "docker network '$_name' exists with different settings; refusing implicit removal"
-    log_error "run install.sh and choose automatic or manual macvlan cleanup"
+    log_error "run install.sh and choose automatic or manual network cleanup"
     return 1
   fi
 
-  if "$_d" network create -d macvlan \
-       --subnet="$_subnet" --gateway="$_gw" \
-       -o parent="$_parent" "$_name" >/dev/null 2>&1; then
-    log_info "macvlan '$_name' created (parent=$_parent subnet=$_subnet gateway=$_gw)"
+  # ipvlan L2 takes an extra mode option; macvlan uses parent alone.
+  if [ "$_driver" = ipvlan ]; then
+    set -- -o ipvlan_mode=l2 -o parent="$_parent"
+  else
+    set -- -o parent="$_parent"
+  fi
+  if "$_d" network create -d "$_driver" \
+       --subnet="$_subnet" --gateway="$_gw" "$@" "$_name" >/dev/null 2>&1; then
+    log_info "$_driver network '$_name' created (parent=$_parent subnet=$_subnet gateway=$_gw)"
     return 0
   fi
-  log_error "failed to create macvlan '$_name' on parent '$_parent' (check: parent up? subnet/gateway match the LAN? need root?)"
+  log_error "failed to create $_driver network '$_name' on parent '$_parent' (check: parent up? subnet/gateway match the LAN? need root?)"
   return 1
 }

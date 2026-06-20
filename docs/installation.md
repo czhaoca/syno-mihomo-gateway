@@ -77,9 +77,11 @@ sudo ./scripts/setup_network.sh
 This script:
 - creates `/dev/net/tun` if missing and fixes its permissions;
 - auto-detects the parent interface (the one that routes to `ROUTER_IP`; falls back to the
-  default route) — supports `eth0` and `ovs_eth0`;
-- creates or reuses a matching `tproxy_network` macvlan with your `SUBNET_CIDR` /
-  `ROUTER_IP`; it refuses to remove a mismatched existing network;
+  default route). For an **Open vSwitch** parent (`ovs_eth0`) set `TPROXY_DRIVER=ipvlan` (the
+  installer offers this) so other LAN devices can reach the gateway — see [Troubleshooting](troubleshooting.md);
+- creates or reuses a matching `tproxy_network` (macvlan by default, ipvlan when
+  `TPROXY_DRIVER=ipvlan`) with your `SUBNET_CIDR` / `ROUTER_IP`; it refuses to remove a mismatched
+  existing network;
 - optionally logs in to your registry and pulls images (non-interactive when `ACR_PASSWORD`
   is set, otherwise it prompts).
 

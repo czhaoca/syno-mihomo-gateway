@@ -72,6 +72,19 @@ lifecycle_inspect
 [ "$LIFECYCLE_CONTAINERS_SAFE:$LIFECYCLE_NETWORK_SAFE:$LIFECYCLE_NETWORK_MATCHES" = 1:1:1 ] \
   && ok || fail "managed deployment inventory"
 
+# Driver-aware match: an ipvlan network matches only when TPROXY_DRIVER=ipvlan, and a
+# macvlan<->ipvlan driver change counts as drift so the network is cleanly recreated.
+TPROXY_DRIVER=ipvlan FAKE_NET_SPEC='ipvlan|eth0|192.168.1.0/24|192.168.1.1'
+export FAKE_NET_SPEC
+lifecycle_inspect
+[ "$LIFECYCLE_NETWORK_MATCHES" = 1 ] && ok || fail "ipvlan network not matched under TPROXY_DRIVER=ipvlan"
+TPROXY_DRIVER=ipvlan FAKE_NET_SPEC='macvlan|eth0|192.168.1.0/24|192.168.1.1'
+export FAKE_NET_SPEC
+lifecycle_inspect
+[ "$LIFECYCLE_NETWORK_MATCHES" = 0 ] && ok || fail "macvlan/ipvlan driver mismatch wrongly matched"
+unset TPROXY_DRIVER
+FAKE_NET_SPEC='macvlan|eth0|192.168.1.0/24|192.168.1.1'; export FAKE_NET_SPEC
+
 FAKE_MIHOMO_SERVICE=other; export FAKE_MIHOMO_SERVICE
 lifecycle_inspect
 [ "$LIFECYCLE_CONTAINERS_SAFE" = 0 ] && ok || fail "ambiguous container classification"
