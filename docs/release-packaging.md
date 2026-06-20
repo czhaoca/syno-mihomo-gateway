@@ -142,8 +142,10 @@ From here the steps are **identical to the standard install** — follow them in
 There is no `git pull` here. To update the **code**:
 
 1. Rebuild the zip on the connected machine (`git pull && sh scripts/package.sh`) and transfer it.
-2. Replace or unpack the release tree. Runtime data is preserved independently in
-   `/volume1/docker/syno-mihomo-gateway-data`, so removing the old release directory is safe.
+2. On the **first** upgrade from the legacy in-tree layout, unpack over the existing tree and run
+   `sh bootstrap.sh`; do not delete the old tree until `.env` and the subscription have migrated.
+   After `/volume1/docker/syno-mihomo-gateway-data` exists, future release directories can be
+   replaced safely.
 3. `sh bootstrap.sh` (a no-op for existing config; just restores exec bits), then run
    `sudo sh ./install.sh` and choose **Redeploy**. This forces Mihomo to render and activate
    the updated gateway configuration; a plain `docker compose up -d` may leave it unchanged.

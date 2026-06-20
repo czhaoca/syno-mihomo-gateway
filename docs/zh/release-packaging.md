@@ -133,8 +133,9 @@ sh bootstrap.sh
 这里没有 `git pull`。要更新**代码**：
 
 1. 在联网机器上重新构建压缩包（`git pull && sh scripts/package.sh`）并传输过去。
-2. 替换或解压发布目录。运行时数据独立保存在
-   `/volume1/docker/syno-mihomo-gateway-data`，因此可以安全删除旧发布目录。
+2. 从旧版目录内配置**首次**升级时，请覆盖解压到现有目录并运行 `sh bootstrap.sh`；确认 `.env`
+   和订阅已迁移前不要删除旧目录。`/volume1/docker/syno-mihomo-gateway-data` 创建后，今后的
+   发布目录可以安全替换。
 3. `sh bootstrap.sh`（对已有配置是空操作，仅补回可执行位），然后运行
    `sudo sh ./install.sh` 并选择**重新部署**。这样会强制渲染并启用新版网关配置；
    单独运行 `docker compose up -d` 可能不会重新创建容器。
