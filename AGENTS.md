@@ -20,8 +20,8 @@
 ## Deploy
 
 - **Entrypoint**: `docker-compose.yml` (mihomo on macvlan + metacubexd on bridge).
-- **Config**: rendered at container start by `scripts/render_config.sh` from
-  `config/config.template.yaml` + gitignored `.env` / `config/subscription.txt`.
+- **Config**: rendered at container start by `scripts/render_config.sh` from the tracked
+  `config/config.template.yaml` plus persistent sibling data in `../syno-mihomo-gateway-data`.
 - **Note**: This runs on Synology DSM, not on Proxmox. Registered in Nimbus for CIDR tracking only.
 
 ## Auto-Update (China / Alibaba ACR)

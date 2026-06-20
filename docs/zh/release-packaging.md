@@ -107,8 +107,8 @@ NAS 只需要能访问你的 ACR —— 始终不需要访问 github.com。
 sh bootstrap.sh
 ```
 
-它会从随包的示例文件生成 `.env` 和 `config/subscription.txt`（仅在不存在时），补回脚本的可执行位，
-并打印后续步骤。它不写入任何密钥，也不执行任何特权操作。
+它会在 `../syno-mihomo-gateway-data` 中从示例生成 `.env` 和订阅文件（仅在不存在时），
+自动迁移旧版目录内配置，补回脚本的可执行位并打印后续步骤。
 
 从这里开始，步骤与标准安装**完全相同** —— 请按 [安装](installation.md) 文档操作：
 
@@ -116,16 +116,16 @@ sh bootstrap.sh
    ACR 镜像仓库/凭据 + 镜像地址。
 2. [添加你的订阅](installation.md)。
 3. [创建网络 + TUN 设备](installation.md) —— `sudo ./scripts/setup_network.sh`。
-4. [启动服务栈](installation.md) —— `sudo docker compose up -d`。
+4. [启动服务栈](installation.md) —— 使用引导安装器，或向 Compose 显式传入持久 `.env`。
 
 ## 6. 验证
 
 - [ ] 目录树位于 `/volume1/docker/syno-mihomo-gateway`。
-- [ ] `.env` 存在（`chmod 600`）；`MIHOMO_IMAGE` / `METACUBEXD_IMAGE` 指向你的 ACR。
-- [ ] `config/subscription.txt` 存在且填入了你的真实 URL。
+- [ ] `../syno-mihomo-gateway-data/.env` 存在（`chmod 600`）；镜像地址指向你的 ACR。
+- [ ] `../syno-mihomo-gateway-data/config/subscription.txt` 填入了真实 URL。
 - [ ] `docker images` 显示从你的 ACR 拉取的 mihomo 和 metacubexd 镜像。
 - [ ] `sudo ./scripts/setup_network.sh` 成功（已创建 macvlan + TUN）。
-- [ ] `docker compose up -d` 后 `docker compose ps` 显示容器健康。
+- [ ] 引导安装器报告容器健康。
 - [ ] 从**非 NAS** 的局域网设备打开 `http://<NAS_IP>:<WEB_UI_PORT>` 能访问面板。
 
 ## 更新离线安装
@@ -133,9 +133,8 @@ sh bootstrap.sh
 这里没有 `git pull`。要更新**代码**：
 
 1. 在联网机器上重新构建压缩包（`git pull && sh scripts/package.sh`）并传输过去。
-2. 把它**覆盖解压**到现有目录树（`cd /volume1/docker && unzip -o syno-mihomo-gateway-<版本>.zip`）。
-   你的 `.env`、`config/subscription.txt`、`config/config.yaml` 不在压缩包里，因此会被保留。
-   （上游删除的文件不会被 `unzip` 删掉 —— 如有需要请手动清理过期文件。）
+2. 替换或解压发布目录。运行时数据独立保存在
+   `/volume1/docker/syno-mihomo-gateway-data`，因此可以安全删除旧发布目录。
 3. `sh bootstrap.sh`（对已有配置是空操作，仅补回可执行位），然后运行
    `sudo sh ./install.sh` 并选择**重新部署**。这样会强制渲染并启用新版网关配置；
    单独运行 `docker compose up -d` 可能不会重新创建容器。

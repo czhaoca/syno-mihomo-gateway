@@ -44,25 +44,24 @@ here for steps 2-8. Full procedure: [Release Zip](release-packaging.md).
 ## 2. Configure `.env`
 
 ```bash
-cp .env.example .env
-chmod 600 .env          # it holds secrets (ACR password, tunnel token, controller secret)
-vi .env
+sh bootstrap.sh
+vi ../syno-mihomo-gateway-data/.env
 ```
 
 At minimum set `ROUTER_IP`, `SUBNET_CIDR`, `MIHOMO_IP`, your DNS servers, and (for China) the
 ACR registry/credentials and image refs. Every key is documented in
-[Configuration](configuration.md). `.env` is gitignored.
+[Configuration](configuration.md). Runtime data is stored outside the release directory so a ZIP
+upgrade cannot delete it. `bootstrap.sh` also migrates a legacy in-tree `.env` automatically.
 
 ## 3. Add your subscription
 
 ```bash
-cp config/subscription.txt.example config/subscription.txt
-vi config/subscription.txt
+vi ../syno-mihomo-gateway-data/config/subscription.txt
 ```
 
 One line, `Name=URL`; the first valid line is used. The URL may contain `?token=…&flag=…` —
-those `=`/`&` are handled correctly. `config/subscription.txt` is gitignored so your token is
-never committed.
+those `=`/`&` are handled correctly. The file is outside the repository, so your token is never
+committed or replaced by an extracted release.
 
 ```text
 Default=https://provider.example/api/v1/subscribe?token=REPLACE_ME&flag=1
@@ -94,7 +93,7 @@ require manual resolution; the external cloudflared container is never part of t
 ## 5. Start the stack
 
 ```bash
-sudo docker compose up -d
+sudo docker compose --env-file ../syno-mihomo-gateway-data/.env up -d
 ```
 
 On start, the mihomo entrypoint renders `config/config.yaml` from the template + your
@@ -103,7 +102,7 @@ it **fails loudly** (the container won't run a poisoned config). Check logs:
 
 ```bash
 docker logs mihomo
-docker compose ps
+docker compose --env-file ../syno-mihomo-gateway-data/.env ps
 sh scripts/doctor.sh
 ```
 
@@ -148,8 +147,9 @@ git pull
 sudo sh ./install.sh        # choose Redeploy; validates and force-recreates safely
 ```
 
-Your `.env`, `config/subscription.txt`, and `config/config.yaml` are gitignored and untouched
-by `git pull`.
+Your `.env`, subscription, rendered config, and logs live in the sibling
+`/volume1/docker/syno-mihomo-gateway-data` directory and are untouched by `git pull` or release
+directory replacement.
 
 > Installed via Option B (release zip)? There is no `git pull` — update by rebuilding and
 > re-unpacking the zip: see

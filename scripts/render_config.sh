@@ -8,7 +8,7 @@
 set -eu
 
 CFG_DIR="${MIHOMO_CONFIG_DIR:-/root/.config/mihomo}"
-TEMPLATE="$CFG_DIR/config.template.yaml"
+TEMPLATE="${MIHOMO_TEMPLATE:-$CFG_DIR/config.template.yaml}"
 SUB_FILE="$CFG_DIR/subscription.txt"
 OUT="$CFG_DIR/config.yaml"
 TMP="$CFG_DIR/.config.yaml.tmp"

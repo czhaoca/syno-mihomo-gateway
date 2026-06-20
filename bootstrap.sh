@@ -6,7 +6,7 @@
 #
 # It is idempotent, writes NO secrets, and runs NOTHING privileged or networked.
 # It only:
-#   1. seeds .env and config/subscription.txt from the shipped examples (if absent),
+#   1. seeds persistent .env and subscription.txt from examples (if absent),
 #   2. restores the executable bit the .zip extraction drops from scripts,
 #   3. prints the next steps (which YOU run).
 #
@@ -14,21 +14,30 @@
 
 DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
 cd "$DIR" || { echo "FATAL: cannot cd to $DIR" >&2; exit 1; }
+REPO_ROOT="$DIR"
+# shellcheck source=scripts/lib/common.sh
+. "$DIR/scripts/lib/common.sh"
+ensure_persistent_state || {
+  echo "FATAL: cannot create persistent data directory: $GATEWAY_DATA_DIR" >&2
+  exit 1
+}
 
 # 1. Seed config from examples only if absent (never clobber a configured deploy).
-if [ -f .env ]; then
-  echo "ok    .env already exists - left untouched"
+if [ -f "$ENV_FILE" ]; then
+  echo "ok    $ENV_FILE already exists - left untouched"
 elif [ -f .env.example ]; then
-  cp .env.example .env && chmod 600 .env && echo "new   .env created from .env.example (chmod 600)"
+  cp .env.example "$ENV_FILE" && chmod 600 "$ENV_FILE" \
+    && echo "new   $ENV_FILE created from .env.example (chmod 600)"
 else
   echo "WARN  .env.example missing - cannot seed .env" >&2
 fi
 
-if [ -f config/subscription.txt ]; then
-  echo "ok    config/subscription.txt already exists - left untouched"
+if [ -f "$SUBSCRIPTION_FILE" ]; then
+  echo "ok    $SUBSCRIPTION_FILE already exists - left untouched"
 elif [ -f config/subscription.txt.example ]; then
-  cp config/subscription.txt.example config/subscription.txt \
-    && echo "new   config/subscription.txt created from example"
+  cp config/subscription.txt.example "$SUBSCRIPTION_FILE" \
+    && chmod 600 "$SUBSCRIPTION_FILE" \
+    && echo "new   $SUBSCRIPTION_FILE created from example"
 else
   echo "WARN  config/subscription.txt.example missing - cannot seed subscription" >&2
 fi
@@ -49,10 +58,10 @@ Setup is guided. Run the interactive installer (recommended):
 It walks you through configuration, the network, the image source, and start-up.
 
 Prefer to configure by hand? The manual steps are:
-  1. Edit .env                      ROUTER_IP, MIHOMO_IP, DNS, registry + image settings
-  2. Edit config/subscription.txt   your real subscription URL
+  1. Edit ../syno-mihomo-gateway-data/.env
+  2. Edit ../syno-mihomo-gateway-data/config/subscription.txt
   3. sudo ./scripts/setup_network.sh
-  4. sudo docker compose up -d
+  4. sudo docker compose --env-file ../syno-mihomo-gateway-data/.env up -d
   5. (optional) sh scripts/install_scheduler.sh   # auto-update schedule
 
 See the START-HERE and INSTALL guides in docs/ for details.

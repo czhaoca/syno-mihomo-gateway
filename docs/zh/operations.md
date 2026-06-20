@@ -30,8 +30,8 @@ docker compose up -d
 ## 更新订阅
 
 ```bash
-vi config/subscription.txt
-docker compose up -d mihomo          # re-renders + restarts mihomo
+vi ../syno-mihomo-gateway-data/config/subscription.txt
+docker compose --env-file ../syno-mihomo-gateway-data/.env up -d mihomo
 ```
 
 ## 在 DSM 上配置定时任务

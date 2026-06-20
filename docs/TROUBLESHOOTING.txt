@@ -107,7 +107,7 @@ Dashboard port already in use
 Gateway is "unhealthy" after deploy
 --------------------------------------------------------------------------
   Cause: usually a bad/unreachable subscription URL, bad DNS, or a TUN error.
-  Fix:   check config/subscription.txt (the subscription URL) and the
+  Fix:   check ../syno-mihomo-gateway-data/config/subscription.txt and the
          DNS_DEFAULT_NAMESERVER / DNS_NAMESERVER / DNS_FALLBACK values, then
          redeploy. The deploy and auto-update flows health-gate the new image
          and roll back automatically if it stays unhealthy.
@@ -149,5 +149,5 @@ Where to look
 --------------------------------------------------------------------------
   * Install log:     under the logs/ folder.
   * Auto-update log: under the logs/ folder.
-  * Settings:        .env (see CONFIGURE.txt) and config/subscription.txt.
+  * Settings:        ../syno-mihomo-gateway-data (see CONFIGURE.txt).
   * To change and redeploy: install.sh -> 4) Modify an existing deployment.

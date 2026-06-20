@@ -21,6 +21,10 @@ SELF_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
 # shellcheck source=scripts/lib/registry.sh
 . "$SELF_DIR/lib/registry.sh"
 
+ensure_persistent_state || {
+  echo "FATAL: cannot create persistent data directory: $GATEWAY_DATA_DIR" >&2
+  exit "$EXIT_CONFIG"
+}
 load_env   # FATAL (exit 3) if .env is missing; exports ROUTER_IP, SUBNET_CIDR, ...
 
 echo "========================================"

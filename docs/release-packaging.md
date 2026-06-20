@@ -112,8 +112,9 @@ Run the first-run helper from the unpacked folder:
 sh bootstrap.sh
 ```
 
-It seeds `.env` and `config/subscription.txt` from the shipped examples (only if absent), restores
-the script exec bits, and prints the next steps. It writes no secrets and runs nothing privileged.
+It seeds `../syno-mihomo-gateway-data/.env` and its `config/subscription.txt` from the shipped
+examples (only if absent), migrates legacy in-tree files, restores script exec bits, and prints
+the next steps. It writes no secrets and runs nothing privileged.
 
 From here the steps are **identical to the standard install** — follow them in
 [Installation](installation.md):
@@ -123,16 +124,17 @@ From here the steps are **identical to the standard install** — follow them in
 2. [Add your subscription](installation.md#3-add-your-subscription).
 3. [Create the network + TUN device](installation.md#4-create-the-network--tun-device) —
    `sudo ./scripts/setup_network.sh`.
-4. [Start the stack](installation.md#5-start-the-stack) — `sudo docker compose up -d`.
+4. [Start the stack](installation.md#5-start-the-stack) — use the guided installer, or pass the
+   persistent env file explicitly to Compose.
 
 ## 6. Verify
 
 - [ ] Tree is at `/volume1/docker/syno-mihomo-gateway`.
-- [ ] `.env` exists (`chmod 600`); `MIHOMO_IMAGE` / `METACUBEXD_IMAGE` point at your ACR.
-- [ ] `config/subscription.txt` exists with your real URL.
+- [ ] `../syno-mihomo-gateway-data/.env` exists (`chmod 600`); image refs point at your ACR.
+- [ ] `../syno-mihomo-gateway-data/config/subscription.txt` contains your real URL.
 - [ ] `docker images` shows the mihomo and metacubexd images pulled from your ACR.
 - [ ] `sudo ./scripts/setup_network.sh` succeeded (macvlan + TUN created).
-- [ ] `docker compose up -d` then `docker compose ps` shows the containers healthy.
+- [ ] The guided installer reports the containers healthy.
 - [ ] The dashboard opens from a **non-NAS** LAN device at `http://<NAS_IP>:<WEB_UI_PORT>`.
 
 ## Updating an offline install
@@ -140,10 +142,8 @@ From here the steps are **identical to the standard install** — follow them in
 There is no `git pull` here. To update the **code**:
 
 1. Rebuild the zip on the connected machine (`git pull && sh scripts/package.sh`) and transfer it.
-2. Unpack it **over** the existing tree (`cd /volume1/docker && unzip -o syno-mihomo-gateway-<v>.zip`).
-   Your `.env`, `config/subscription.txt`, and `config/config.yaml` are not in the archive, so they
-   are preserved. (A file removed upstream is not deleted by `unzip` — remove stale files by hand if
-   needed.)
+2. Replace or unpack the release tree. Runtime data is preserved independently in
+   `/volume1/docker/syno-mihomo-gateway-data`, so removing the old release directory is safe.
 3. `sh bootstrap.sh` (a no-op for existing config; just restores exec bits), then run
    `sudo sh ./install.sh` and choose **Redeploy**. This forces Mihomo to render and activate
    the updated gateway configuration; a plain `docker compose up -d` may leave it unchanged.

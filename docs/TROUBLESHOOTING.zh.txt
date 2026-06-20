@@ -100,7 +100,7 @@ macvlan 父接口 / 接口不匹配
 部署后网关 "不健康"
 --------------------------------------------------------------------------
   原因：通常是订阅地址错误/无法访问、DNS 设置有误，或 TUN 故障。
-  解决：检查 config/subscription.txt（订阅地址）以及
+  解决：检查 ../syno-mihomo-gateway-data/config/subscription.txt（订阅地址）以及
         DNS_DEFAULT_NAMESERVER / DNS_NAMESERVER / DNS_FALLBACK 各项，然后
         重新部署。部署与自动更新流程都会对新镜像做健康检查，若持续不健康会
         自动回滚。
@@ -139,5 +139,5 @@ DSM 7 计划更新没有运行
 --------------------------------------------------------------------------
   * 安装日志：     logs/ 文件夹下。
   * 自动更新日志： logs/ 文件夹下。
-  * 设置：         .env（见 CONFIGURE.zh.txt）与 config/subscription.txt。
+  * 设置：         ../syno-mihomo-gateway-data（见 CONFIGURE.zh.txt）。
   * 修改并重新部署：install.sh -> 4) 修改已有部署。

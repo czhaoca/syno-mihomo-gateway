@@ -30,8 +30,8 @@ docker compose up -d
 ## Update the subscription
 
 ```bash
-vi config/subscription.txt
-docker compose up -d mihomo          # re-renders + restarts mihomo
+vi ../syno-mihomo-gateway-data/config/subscription.txt
+docker compose --env-file ../syno-mihomo-gateway-data/.env up -d mihomo
 ```
 
 ## Scheduling on DSM

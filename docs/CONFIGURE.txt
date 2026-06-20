@@ -1,9 +1,10 @@
 Configuration Reference (.env)
 ==============================
 
-The gateway reads its settings from a .env file that the installer seeds for
-you during the deploy flow. The proxy subscription URL lives separately in
-config/subscription.txt.
+The gateway reads settings from ../syno-mihomo-gateway-data/.env. The proxy
+subscription URL is stored at
+../syno-mihomo-gateway-data/config/subscription.txt. This sibling directory is
+not replaced when you update the release folder.
 
 You normally set these through the installer prompts. This file documents what
 each value means so you can review or hand-edit .env if needed. After editing
@@ -144,7 +145,7 @@ Optional / advanced: tunnel
 Subscription URL
 --------------------------------------------------------------------------
   The proxy subscription URL is NOT in .env. It lives in:
-        config/subscription.txt
+        ../syno-mihomo-gateway-data/config/subscription.txt
   The installer seeds this file and asks for the URL during deploy. A bad or
   unreachable subscription URL is a common reason the gateway is unhealthy
   after deploy.

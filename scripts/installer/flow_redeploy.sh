@@ -27,7 +27,7 @@ flow_redeploy() {
   ui_say "$(msgf redeploy_subnet "${SUBNET_CIDR:-?}")"
   ui_say "$(msgf redeploy_mihomo "${MIHOMO_IP:-?}")"
   ui_say "$(msgf redeploy_images "${MIHOMO_IMAGE:-?}")"
-  _rd_sub="$(grep -v '^#' "$REPO_ROOT/config/subscription.txt" 2>/dev/null | grep -v '^[[:space:]]*$' | head -n1)"
+  _rd_sub="$(grep -v '^#' "$SUBSCRIPTION_FILE" 2>/dev/null | grep -v '^[[:space:]]*$' | head -n1)"
   ui_say "$(msgf redeploy_sub "${_rd_sub:-$(msg redeploy_sub_none)}")"
 
   ui_menu_select _r "$(msg redeploy_what)" \

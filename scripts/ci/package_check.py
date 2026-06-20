@@ -31,6 +31,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 PACKAGER = REPO / "scripts" / "package.sh"
 BOOTSTRAP = REPO / "bootstrap.sh"
+COMMON = REPO / "scripts" / "lib" / "common.sh"
 GITIGNORE = REPO / ".gitignore"
 PREFIX = "syno-mihomo-gateway/"
 
@@ -121,7 +122,7 @@ def build_fixture(root: Path):
     (root / "config" / "config.template.yaml").write_text("mixed-port: 7890\n")
     (root / "docker-compose.yml").write_text("services: {}\n")
     (root / "scripts" / "render_config.sh").write_text("#!/bin/sh\n:\n")
-    (root / "scripts" / "lib" / "common.sh").write_text("#!/bin/sh\n:\n")
+    shutil.copy(COMMON, root / "scripts" / "lib" / "common.sh")
     # Untracked planted secrets (gitignored) carrying unique sentinels.
     (root / ".env").write_text(f"ACR_PASSWORD={ENV_SENTINEL}\n")
     (root / "config" / "subscription.txt").write_text(
@@ -199,14 +200,15 @@ def check_bootstrap(tar: Path, nas: Path):
     r = run(["sh", "bootstrap.sh"], cwd=app)
     if r.returncode != 0:
         fail(f"bootstrap.sh exited {r.returncode}: {r.stderr.strip()}")
-    envf = app / ".env"
+    data = nas / "syno-mihomo-gateway-data"
+    envf = data / ".env"
     if not envf.exists():
         fail("bootstrap did not create .env from .env.example")
     mode = stat.S_IMODE(envf.stat().st_mode)
     if mode != 0o600:
         fail(f".env mode is {oct(mode)}, expected 0o600")
-    if not (app / "config" / "subscription.txt").exists():
-        fail("bootstrap did not create config/subscription.txt from the example")
+    if not (data / "config" / "subscription.txt").exists():
+        fail("bootstrap did not create persistent config/subscription.txt from the example")
     if not os.access(app / "scripts" / "render_config.sh", os.X_OK):
         fail("bootstrap did not restore +x on scripts/*.sh")
     # Idempotency: an existing .env must NOT be clobbered.

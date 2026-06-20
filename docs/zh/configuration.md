@@ -6,19 +6,19 @@
 ---
 
 本文档是每一个配置项的**唯一可信来源**。所有真实取值都保存在
-`.env` 中（从 `.env.example` 复制而来，执行 `chmod 600`，并被 gitignore 忽略）。提交到仓库的配置模板
+`../syno-mihomo-gateway-data/.env` 中（由 `bootstrap.sh` 从 `.env.example` 创建并执行 `chmod 600`）。提交到仓库的配置模板
 只包含 `{{PLACEHOLDERS}}` 占位符——不会硬编码任何 DNS 服务器或网络地址。
 
 ## 文件
 
 | 文件 | 是否纳入版本控制 | 用途 |
 |---|---|---|
-| `.env` | 否（被 gitignore 忽略） | 你的全部设置与密钥。从 `.env.example` 复制。 |
+| `../syno-mihomo-gateway-data/.env` | 否（仓库外） | 你的全部设置与密钥。由 `bootstrap.sh` 创建。 |
 | `.env.example` | 是 | `.env` 的带注释模板。 |
-| `config/subscription.txt` | 否（被 gitignore 忽略） | 你的机场/服务商订阅 URL（`Name=URL`，使用第一条有效行）。 |
+| `../syno-mihomo-gateway-data/config/subscription.txt` | 否（仓库外） | 你的服务商订阅 URL（`Name=URL`，使用第一条有效行）。 |
 | `config/subscription.txt.example` | 是 | 上述文件的模板。 |
 | `config/config.template.yaml` | 是 | 带 `{{PLACEHOLDERS}}` 占位符的 Mihomo 配置。 |
-| `config/config.yaml` | 否（被 gitignore 忽略） | 在容器启动时由 `scripts/render_config.sh` 渲染生成。切勿手动编辑。 |
+| `../syno-mihomo-gateway-data/config/config.yaml` | 否（仓库外） | 在容器启动时渲染生成。切勿手动编辑。 |
 
 ## `.env` 参考
 
@@ -118,7 +118,7 @@ Compose 兼容的引号，因此包含空格、`&`、`#`、`$`、引号或反斜
 |---|---|---|
 | `NOTIFY_WEBHOOK_URL` | 当 `synodsmnotify` 不可用时使用的可选后备 webhook（Bark/Gotify/Slack 风格的 JSON POST）。 | `` |
 | `NOTIFY_ON_NOCHANGE` | `1` = 在无变更的运行中也发送通知。 | `0` |
-| `UPDATE_LOG` | 编排器日志路径（相对路径在仓库下解析）。 | `./logs/auto-update.log` |
+| `UPDATE_LOG` | 编排器日志路径（相对路径在持久数据目录下解析）。 | `./logs/auto-update.log` |
 | `LOG_KEEP` | 保留的轮转日志代数。 | `7` |
 | `TZ` | 容器时区。 | `Asia/Shanghai` |
 | `INSTALLER_LANG` | `install.sh` 界面语言（`en` 或 `zh`）。由安装器首屏设置并保存于此，重运行时跳过该提示。 | `en` |

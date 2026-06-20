@@ -47,17 +47,18 @@ cd /volume1/docker
 git clone https://github.com/czhaoca/syno-mihomo-gateway.git
 cd syno-mihomo-gateway
 
-# 2. Configure (.env holds secrets)
-cp .env.example .env && chmod 600 .env && vi .env       # set ROUTER_IP, MIHOMO_IP, DNS, (China) ACR creds + image refs
+# 2. Create persistent runtime data beside the release directory
+sh bootstrap.sh
+vi ../syno-mihomo-gateway-data/.env       # set ROUTER_IP, MIHOMO_IP, DNS, (China) ACR creds + image refs
 
-# 3. Subscription (gitignored; token never committed)
-cp config/subscription.txt.example config/subscription.txt && vi config/subscription.txt
+# 3. Subscription (outside the replaceable release tree)
+vi ../syno-mihomo-gateway-data/config/subscription.txt
 
 # 4. Network + TUN (root)
 sudo chmod +x scripts/setup_network.sh && sudo ./scripts/setup_network.sh
 
 # 5. Start
-sudo docker compose up -d
+sudo docker compose --env-file ../syno-mihomo-gateway-data/.env up -d
 ```
 
 **Dashboard:** from a LAN device *other than the NAS*, open `http://<NAS_IP>:<WEB_UI_PORT>` and add
@@ -89,10 +90,11 @@ Full details: [Auto-Update](docs/auto-update.md) · [Operations](docs/operations
 
 ```bash
 # update subscription
-vi config/subscription.txt && docker compose up -d mihomo
+vi ../syno-mihomo-gateway-data/config/subscription.txt
+sudo docker compose --env-file ../syno-mihomo-gateway-data/.env up -d mihomo
 
 # update the repo
-git pull && docker compose up -d
+git pull && sudo sh ./install.sh
 ```
 
 See [Operations](docs/operations.md) for the full runbook.

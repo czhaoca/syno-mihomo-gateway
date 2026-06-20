@@ -25,9 +25,10 @@ seed_config() {
   # Persist the language picked on the first screen so the saved .env reflects it.
   env_set INSTALLER_LANG "${INSTALLER_LANG:-en}"
 
-  _sub="$REPO_ROOT/config/subscription.txt"
+  _sub="$SUBSCRIPTION_FILE"
   if [ ! -f "$_sub" ] && [ -f "$REPO_ROOT/config/subscription.txt.example" ]; then
     cp "$REPO_ROOT/config/subscription.txt.example" "$_sub" \
+      && chmod 600 "$_sub" 2>/dev/null \
       && ui_ok "$(msg ok_sub_created)"
   fi
 
@@ -175,7 +176,7 @@ _sanitize_url() {
 # config/subscription.txt (never silently overwrite a real one).
 wizard_subscription() {
   ui_step "$(msg step_sub)"
-  _sub="$REPO_ROOT/config/subscription.txt"
+  _sub="$SUBSCRIPTION_FILE"
   _example="$REPO_ROOT/config/subscription.txt.example"
   _cur=""
   if [ -f "$_sub" ]; then
@@ -218,7 +219,7 @@ wizard_subscription() {
 # line; if the stored line is dirty but recoverable, offers the cleaned URL.
 # Returns non-zero only if the operator declines to provide a valid URL.
 ensure_subscription() {
-  _sub="$REPO_ROOT/config/subscription.txt"
+  _sub="$SUBSCRIPTION_FILE"
   _example="$REPO_ROOT/config/subscription.txt.example"
 
   # 1) Missing, or still the shipped placeholder -> enter a fresh URL.

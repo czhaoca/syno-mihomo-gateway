@@ -32,6 +32,11 @@ SELF_DIR="${AUTO_UPDATE_SELF_DIR:-$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 
 auto_update_main() {
 
+ensure_persistent_state || {
+  echo "FATAL: cannot create persistent data directory: $GATEWAY_DATA_DIR" >&2
+  exit "$EXIT_CONFIG"
+}
+
 DRY_RUN=0
 FORCE=0
 for _arg in "$@"; do

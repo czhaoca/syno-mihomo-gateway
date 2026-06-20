@@ -108,7 +108,7 @@ prepare_stack() {
     return 1
   }
   chmod 700 "$_cfg_test" 2>/dev/null || true
-  if ! cp "$REPO_ROOT/config/config.template.yaml" "$REPO_ROOT/config/subscription.txt" "$_cfg_test/"; then
+  if ! cp "$REPO_ROOT/config/config.template.yaml" "$SUBSCRIPTION_FILE" "$_cfg_test/"; then
     rm -rf "$_cfg_test"
     diagnose "could not stage the Mihomo configuration" "check config file permissions"
     return 1

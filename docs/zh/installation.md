@@ -44,25 +44,23 @@ cd syno-mihomo-gateway
 ## 2. 配置 `.env`
 
 ```bash
-cp .env.example .env
-chmod 600 .env          # it holds secrets (ACR password, tunnel token, controller secret)
-vi .env
+sh bootstrap.sh
+vi ../syno-mihomo-gateway-data/.env
 ```
 
 至少需要设置 `ROUTER_IP`、`SUBNET_CIDR`、`MIHOMO_IP`、你的 DNS 服务器，以及（中国大陆）
 ACR 镜像仓库/凭据和镜像引用。每一个配置项都在
-[配置](configuration.md) 中有说明。`.env` 已被 gitignore 忽略。
+[配置](configuration.md) 中有说明。运行时数据保存在发布目录之外，覆盖发布 ZIP 不会删除它；
+`bootstrap.sh` 也会自动迁移旧版目录内的 `.env`。
 
 ## 3. 添加你的订阅
 
 ```bash
-cp config/subscription.txt.example config/subscription.txt
-vi config/subscription.txt
+vi ../syno-mihomo-gateway-data/config/subscription.txt
 ```
 
 一行内容，格式为 `Name=URL`；使用第一行有效内容。URL 中可以包含 `?token=…&flag=…` ——
-这些 `=`/`&` 会被正确处理。`config/subscription.txt` 已被 gitignore 忽略，因此你的令牌
-永远不会被提交。
+这些 `=`/`&` 会被正确处理。该文件位于仓库之外，因此令牌不会被提交或被新发布包覆盖。
 
 ```text
 Default=https://provider.example/api/v1/subscribe?token=REPLACE_ME&flag=1
@@ -92,7 +90,7 @@ sudo ./scripts/setup_network.sh
 ## 5. 启动服务栈
 
 ```bash
-sudo docker compose up -d
+sudo docker compose --env-file ../syno-mihomo-gateway-data/.env up -d
 ```
 
 启动时，mihomo 的入口点会根据模板 + 你的订阅 + `.env` 渲染 `config/config.yaml`，
@@ -101,7 +99,7 @@ sudo docker compose up -d
 
 ```bash
 docker logs mihomo
-docker compose ps
+docker compose --env-file ../syno-mihomo-gateway-data/.env ps
 sh scripts/doctor.sh
 ```
 
@@ -146,8 +144,8 @@ git pull
 sudo sh ./install.sh        # 选择重新部署；校验后安全地强制重建
 ```
 
-你的 `.env`、`config/subscription.txt` 和 `config/config.yaml` 已被 gitignore 忽略，
-不会被 `git pull` 改动。
+你的 `.env`、订阅、渲染配置和日志位于同级目录
+`/volume1/docker/syno-mihomo-gateway-data`，不会被 `git pull` 或替换发布目录改动。
 
 > 通过方式 B（发布压缩包）安装的？这里没有 `git pull` —— 通过重新构建并覆盖解压压缩包来更新：
 > 见 [离线发布包 › 更新离线安装](release-packaging.md#更新离线安装)。

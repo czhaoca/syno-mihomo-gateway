@@ -1,8 +1,8 @@
 配置参考（.env）
 ================
 
-网关从 .env 文件读取设置，部署流程会为你生成该文件。代理订阅地址单独存放在
-config/subscription.txt 中。
+网关从 ../syno-mihomo-gateway-data/.env 读取设置。代理订阅地址保存在
+../syno-mihomo-gateway-data/config/subscription.txt 中。更新发布目录不会替换该同级目录。
 
 通常你通过安装程序的提问来设置这些值。本文件说明每一项的含义，方便你查看或
 手动编辑 .env。手动修改 .env 后，请用 "4) 修改已有部署" 应用更改，以便容器
@@ -133,6 +133,6 @@ DNS 设置
 订阅地址
 --------------------------------------------------------------------------
   代理订阅地址不在 .env 中，而是位于：
-        config/subscription.txt
+        ../syno-mihomo-gateway-data/config/subscription.txt
   安装程序会生成该文件，并在部署时询问该 URL。订阅地址错误或无法访问，是
   部署后网关不健康的常见原因。

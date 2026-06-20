@@ -11,7 +11,10 @@ services:
         ipv4_address: ${MIHOMO_IP}
     privileged: true
     volumes:
-      - ./config:/root/.config/mihomo
+      # Runtime config is outside the replaceable release directory. The tracked
+      # template stays release-owned and is mounted separately read-only.
+      - ${GATEWAY_DATA_DIR:-../syno-mihomo-gateway-data}/config:/root/.config/mihomo
+      - ./config/config.template.yaml:/etc/syno-mihomo/config.template.yaml:ro
       - ./scripts:/scripts:ro
     cap_add:
       - NET_ADMIN
@@ -33,6 +36,7 @@ services:
       # Optional Linux TCP redirect optimization. Missing on older .env files
       # intentionally defaults to the DSM-compatible TUN auto-route path.
       - TUN_AUTO_REDIRECT=${TUN_AUTO_REDIRECT:-false}
+      - MIHOMO_TEMPLATE=/etc/syno-mihomo/config.template.yaml
 
     # Entrypoint: render config.yaml from the template (subscription URL + env tokens)
     # via the shared, CI-tested renderer, then start Mihomo. The renderer fails loudly

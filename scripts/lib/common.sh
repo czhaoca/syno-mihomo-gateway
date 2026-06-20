@@ -10,12 +10,41 @@
 
 # Resolve repo root regardless of cwd (DSM cron runs from /).
 LIB_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
-case "$LIB_DIR" in
-  */scripts/lib) REPO_ROOT="$(CDPATH='' cd -- "$LIB_DIR/../.." && pwd)" ;;
-  */scripts)     REPO_ROOT="$(CDPATH='' cd -- "$LIB_DIR/.." && pwd)" ;;
-  *)             REPO_ROOT="$(CDPATH='' cd -- "$LIB_DIR" && pwd)" ;;
-esac
-ENV_FILE="$REPO_ROOT/.env"
+if [ -z "${REPO_ROOT:-}" ]; then
+  case "$LIB_DIR" in
+    */scripts/lib) REPO_ROOT="$(CDPATH='' cd -- "$LIB_DIR/../.." && pwd)" ;;
+    */scripts)     REPO_ROOT="$(CDPATH='' cd -- "$LIB_DIR/.." && pwd)" ;;
+    *)             REPO_ROOT="$(CDPATH='' cd -- "$LIB_DIR" && pwd)" ;;
+  esac
+fi
+
+# Runtime data lives beside the replaceable release directory. A release ZIP can
+# therefore be unpacked over/replaced without deleting credentials or generated
+# configuration. GATEWAY_DATA_DIR may be exported for a non-standard layout.
+GATEWAY_DATA_DIR="${GATEWAY_DATA_DIR:-$(dirname "$REPO_ROOT")/syno-mihomo-gateway-data}"
+ENV_FILE="${ENV_FILE:-$GATEWAY_DATA_DIR/.env}"
+CONFIG_STATE_DIR="${CONFIG_STATE_DIR:-$GATEWAY_DATA_DIR/config}"
+SUBSCRIPTION_FILE="${SUBSCRIPTION_FILE:-$CONFIG_STATE_DIR/subscription.txt}"
+export REPO_ROOT GATEWAY_DATA_DIR ENV_FILE CONFIG_STATE_DIR SUBSCRIPTION_FILE
+
+# Create the persistent layout and import a legacy in-release installation once.
+# Copy (rather than move) so a failed first run can still use the old release.
+ensure_persistent_state() {
+  mkdir -p "$CONFIG_STATE_DIR" "$GATEWAY_DATA_DIR/logs" || return 1
+  chmod 700 "$GATEWAY_DATA_DIR" "$CONFIG_STATE_DIR" 2>/dev/null || true
+
+  if [ ! -f "$ENV_FILE" ] && [ -f "$REPO_ROOT/.env" ]; then
+    cp "$REPO_ROOT/.env" "$ENV_FILE" || return 1
+    chmod 600 "$ENV_FILE" 2>/dev/null || true
+    echo "Migrated legacy .env to $ENV_FILE" >&2
+  fi
+  if [ ! -f "$SUBSCRIPTION_FILE" ] && [ -f "$REPO_ROOT/config/subscription.txt" ]; then
+    cp "$REPO_ROOT/config/subscription.txt" "$SUBSCRIPTION_FILE" || return 1
+    chmod 600 "$SUBSCRIPTION_FILE" 2>/dev/null || true
+    echo "Migrated legacy subscription to $SUBSCRIPTION_FILE" >&2
+  fi
+  return 0
+}
 
 # Exit codes (see README / DSM Task Scheduler email-on-nonzero).
 EXIT_OK=0            # success or clean no-op
@@ -131,10 +160,10 @@ load_env() {
   esac
   export UPDATE_IMAGES
 
-  # Normalize UPDATE_LOG to an absolute path under the repo when relative.
+  # Normalize UPDATE_LOG to an absolute path under persistent runtime data.
   case "$UPDATE_LOG" in
     /*) LOG_FILE="$UPDATE_LOG" ;;
-    *)  LOG_FILE="$REPO_ROOT/${UPDATE_LOG#./}" ;;
+    *)  LOG_FILE="$GATEWAY_DATA_DIR/${UPDATE_LOG#./}" ;;
   esac
   # Under the interactive installer, send all library output (compose up, image
   # pull, ACR login) to the install log so the on-screen "Details: <file>"

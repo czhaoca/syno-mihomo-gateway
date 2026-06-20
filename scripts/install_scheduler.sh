@@ -10,6 +10,10 @@ SELF_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
 # shellcheck source=scripts/lib/scheduler.sh
 . "$SELF_DIR/lib/scheduler.sh"
 
+ensure_persistent_state || {
+  echo "FATAL: cannot create persistent data directory: $GATEWAY_DATA_DIR" >&2
+  exit "$EXIT_CONFIG"
+}
 if [ -f "$ENV_FILE" ]; then
   dotenv_load "$ENV_FILE" || exit "$EXIT_CONFIG"
 fi

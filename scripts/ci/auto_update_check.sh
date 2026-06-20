@@ -36,6 +36,8 @@ cp "$ROOT/scripts/lib/common.sh" "$SCHED_ROOT/scripts/lib/"
 cp "$ROOT/scripts/lib/scheduler.sh" "$SCHED_ROOT/scripts/lib/"
 printf '%s\n' 'UPDATE_SCHEDULE="5 3 * * *"' 'UPDATE_TZ=UTC' > "$SCHED_ROOT/.env"
 SCHED_OUT="$(sh "$SCHED_ROOT/scripts/install_scheduler.sh" 2>&1)" || fail "valid DSM schedule should render"
+SCHED_DATA="$(dirname "$SCHED_ROOT")/syno-mihomo-gateway-data"
+[ -f "$SCHED_DATA/.env" ] || fail "scheduler did not migrate legacy .env to persistent data"
 assert_contains "scheduler uses explicit /bin/sh" "$SCHED_OUT" "/bin/sh"
 assert_contains "scheduler uses absolute script path" "$SCHED_OUT" "$SCHED_ROOT/scripts/auto_update.sh"
 assert_contains "boot task uses absolute script path" "$SCHED_OUT" "$SCHED_ROOT/scripts/setup_network.sh"
@@ -43,7 +45,7 @@ assert_not_contains "scheduler must not duplicate its own log" "$SCHED_OUT" ">> 
 
 # A hand-edited schedule is untrusted data. Reject invalid ranges/extra fields
 # instead of printing an unsafe fallback crontab line.
-printf '%s\n' 'UPDATE_SCHEDULE="99 27 * * * root touch /tmp/bad"' 'UPDATE_TZ=UTC' > "$SCHED_ROOT/.env"
+printf '%s\n' 'UPDATE_SCHEDULE="99 27 * * * root touch /tmp/bad"' 'UPDATE_TZ=UTC' > "$SCHED_DATA/.env"
 if sh "$SCHED_ROOT/scripts/install_scheduler.sh" >/dev/null 2>&1; then
   fail "invalid cron schedule should be rejected"
 else

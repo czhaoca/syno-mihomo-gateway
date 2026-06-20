@@ -43,8 +43,11 @@ try() {
   [ "$1" = "--" ] && shift
   if "$@"; then
     return 0
+  else
+    # Capture inside else: after a completed `if` compound, `$?` may be zero
+    # even though the condition command failed (BusyBox ash included).
+    _rc=$?
   fi
-  _rc=$?
   diagnose "$_desc (exit $_rc)" "$_fix"
   return "$_rc"
 }

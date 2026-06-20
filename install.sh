@@ -62,8 +62,13 @@ INST="$REPO_ROOT/scripts/installer"
 # shellcheck source=scripts/installer/flow_modify.sh
 . "$INST/flow_modify.sh"
 
+ensure_persistent_state || {
+  echo "FATAL: cannot create persistent data directory: $GATEWAY_DATA_DIR" >&2
+  exit "${EXIT_CONFIG:-3}"
+}
+
 # Rotating-free install log for diagnostics (referenced by diagnose()).
-INSTALL_LOG="${INSTALL_LOG:-$REPO_ROOT/logs/install.log}"
+INSTALL_LOG="${INSTALL_LOG:-$GATEWAY_DATA_DIR/logs/install.log}"
 mkdir -p "$(dirname "$INSTALL_LOG")" 2>/dev/null
 export INSTALL_LOG
 

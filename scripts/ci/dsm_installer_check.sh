@@ -11,6 +11,7 @@ ROOT="$(CDPATH='' cd -- "$(dirname -- "$0")/../.." && pwd)"
 fail() { echo "FAIL: $*" >&2; exit 1; }
 ui_error() { echo "ERROR: $*" >&2; }
 . "$ROOT/scripts/installer/envedit.sh"
+. "$ROOT/scripts/installer/ui.sh"
 
 TD="$(mktemp -d)"
 trap 'rm -rf "$TD"' EXIT INT TERM
@@ -42,6 +43,45 @@ cd "$_oldpwd"
 [ ! -e "$TD/SHOULD_NOT_EXIST" ] || fail "dotenv content executed a command"
 printf '%s\n' 'not-an-assignment' > "$ENV_FILE"
 dotenv_load "$ENV_FILE" >/dev/null 2>&1 && fail "malformed dotenv line was accepted"
+
+# `try` must preserve the command's real status; losing it as zero allowed the
+# installer to continue pulling/deploying after an ACR authentication failure.
+diagnose() { DIAGNOSIS="$1"; }
+if try "login failed" "fix credentials" -- sh -c 'exit 5'; then
+  fail "try accepted a failed command"
+else
+  _try_rc=$?
+fi
+[ "$_try_rc" -eq 5 ] || fail "try changed exit 5 to exit $_try_rc"
+case "$DIAGNOSIS" in *'(exit 5)'*) : ;; *) fail "try reported the wrong exit status" ;; esac
+
+# First run of the new layout imports legacy secrets without overwriting an
+# already-persistent value.
+LEGACY_APP="$TD/legacy-app"
+LEGACY_DATA="$TD/legacy-data"
+mkdir -p "$LEGACY_APP/config" "$LEGACY_DATA/config"
+printf '%s\n' 'LEGACY_ENV=keep' > "$LEGACY_APP/.env"
+printf '%s\n' 'Default=https://legacy.example/sub' > "$LEGACY_APP/config/subscription.txt"
+(
+  REPO_ROOT="$LEGACY_APP"
+  GATEWAY_DATA_DIR="$LEGACY_DATA"
+  ENV_FILE="$LEGACY_DATA/.env"
+  CONFIG_STATE_DIR="$LEGACY_DATA/config"
+  SUBSCRIPTION_FILE="$LEGACY_DATA/config/subscription.txt"
+  ensure_persistent_state
+)
+grep -q '^LEGACY_ENV=keep$' "$LEGACY_DATA/.env" || fail "legacy .env was not migrated"
+grep -q 'legacy.example' "$LEGACY_DATA/config/subscription.txt" || fail "legacy subscription was not migrated"
+printf '%s\n' 'PERSISTENT=keep' > "$LEGACY_DATA/.env"
+(
+  REPO_ROOT="$LEGACY_APP"
+  GATEWAY_DATA_DIR="$LEGACY_DATA"
+  ENV_FILE="$LEGACY_DATA/.env"
+  CONFIG_STATE_DIR="$LEGACY_DATA/config"
+  SUBSCRIPTION_FILE="$LEGACY_DATA/config/subscription.txt"
+  ensure_persistent_state
+)
+grep -q '^PERSISTENT=keep$' "$LEGACY_DATA/.env" || fail "persistent .env was overwritten"
 
 ipv4_in_cidr 192.168.1.100 192.168.1.0/24 || fail "valid subnet member rejected"
 ! ipv4_in_cidr 192.168.2.100 192.168.1.0/24 || fail "outside IP accepted"

@@ -6,19 +6,19 @@ Manual: [Architecture](architecture.md) · [Installation](installation.md) · [R
 ---
 
 This is the **single source of truth** for every configuration key. All real values live in
-`.env` (copied from `.env.example`, `chmod 600`, gitignored). The committed config template
+`../syno-mihomo-gateway-data/.env` (copied from `.env.example`, `chmod 600`). The committed config template
 contains only `{{PLACEHOLDERS}}` — no DNS server or network address is hardcoded.
 
 ## Files
 
 | File | Tracked? | Purpose |
 |---|---|---|
-| `.env` | no (gitignored) | All your settings + secrets. Copy from `.env.example`. |
+| `../syno-mihomo-gateway-data/.env` | no (outside repo) | All your settings + secrets. Seeded by `bootstrap.sh`. |
 | `.env.example` | yes | Documented template for `.env`. |
-| `config/subscription.txt` | no (gitignored) | Your airport/provider URL (`Name=URL`, first valid line used). |
+| `../syno-mihomo-gateway-data/config/subscription.txt` | no (outside repo) | Your provider URL (`Name=URL`, first valid line used). |
 | `config/subscription.txt.example` | yes | Template for the above. |
 | `config/config.template.yaml` | yes | Mihomo config with `{{PLACEHOLDERS}}`. |
-| `config/config.yaml` | no (gitignored) | Rendered at container start by `scripts/render_config.sh`. Never edit by hand. |
+| `../syno-mihomo-gateway-data/config/config.yaml` | no (outside repo) | Rendered at container start. Never edit by hand. |
 
 ## `.env` reference
 
@@ -118,7 +118,7 @@ against the three resolved refs (see [Auto-Update](auto-update.md#image-refs)).
 |---|---|---|
 | `NOTIFY_WEBHOOK_URL` | Optional fallback webhook (Bark/Gotify/Slack-style JSON POST) when `synodsmnotify` is absent. | `` |
 | `NOTIFY_ON_NOCHANGE` | `1` = also notify on no-op runs. | `0` |
-| `UPDATE_LOG` | Orchestrator log path (relative resolves under the repo). | `./logs/auto-update.log` |
+| `UPDATE_LOG` | Orchestrator log path (relative resolves under the persistent data directory). | `./logs/auto-update.log` |
 | `LOG_KEEP` | Rotated log generations to keep. | `7` |
 | `TZ` | Container timezone. | `Asia/Shanghai` |
 | `INSTALLER_LANG` | Language of the `install.sh` UI (`en` or `zh`). The installer's first screen sets it; saved here so re-runs skip the prompt. | `en` |

@@ -71,7 +71,7 @@ Choose 1 for a first install.
 --------------------------------------------------------------------------
 Deploy walks through these steps in order:
 
-  1.  Prepare config files - seeds .env and config/subscription.txt.
+  1.  Prepare persistent config files in ../syno-mihomo-gateway-data.
   2.  Scan the network interface FIRST - you pick the LAN interface from the
       scanned list (or type one). The installer then AUTO-FILLS the router /
       gateway IP and the LAN subnet (CIDR) from that interface, so you just
