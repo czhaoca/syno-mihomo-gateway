@@ -141,6 +141,10 @@ LAN IP. Do these checks from a DIFFERENT LAN device:
   3. To route a client, set that client's gateway and DNS to <MIHOMO_IP>,
      then browse the internet from it to confirm traffic flows.
 
+Run the structural diagnostic at any time with:
+
+      sudo sh scripts/doctor.sh --egress
+
 --------------------------------------------------------------------------
 After install
 --------------------------------------------------------------------------

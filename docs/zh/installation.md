@@ -96,6 +96,7 @@ sudo docker compose up -d
 ```bash
 docker logs mihomo
 docker compose ps
+sh scripts/doctor.sh
 ```
 
 ## 6. 打开仪表盘
@@ -136,7 +137,7 @@ sh scripts/auto_update.sh --dry-run
 ```bash
 cd /volume1/docker/syno-mihomo-gateway
 git pull
-docker compose up -d        # picks up compose/template/script changes
+sudo sh ./install.sh        # 选择重新部署；校验后安全地强制重建
 ```
 
 你的 `.env`、`config/subscription.txt` 和 `config/config.yaml` 已被 gitignore 忽略，

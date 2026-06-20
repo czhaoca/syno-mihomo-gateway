@@ -7,9 +7,23 @@
 
 port: 7890
 socks-port: 7891
-redir-port: 7892
-tproxy-port: 7893
 mixed-port: 7894
+
+# Transparent gateway dataplane. The container receives forwarded packets from
+# LAN clients through its macvlan address; TUN + auto-redirect is what actually
+# intercepts those packets. Merely exposing redir/tproxy ports does not install
+# any routing rules.
+tun:
+  enable: true
+  device: mihomo-tun
+  stack: mixed
+  auto-route: true
+  auto-redirect: true
+  auto-detect-interface: true
+  strict-route: false
+  dns-hijack:
+    - any:53
+    - tcp://any:53
 
 # RESTful controller used by the MetaCubeXD dashboard.
 # Bound to 0.0.0.0 so LAN clients reach it at ${MIHOMO_IP}:${CONTROLLER_PORT}

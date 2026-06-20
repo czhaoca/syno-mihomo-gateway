@@ -156,11 +156,75 @@ interface_exists() {
   fi
 }
 
+# BusyBox-compatible IPv4/CIDR relationship checks. awk uses exact integer
+# arithmetic for the 32-bit values involved here and does not need ipcalc.
+ipv4_in_cidr() {
+  awk -v ip="$1" -v cidr="$2" 'BEGIN {
+    na=split(ip,a,"."); nc=split(cidr,c,"/"); nn=split(c[1],n,"."); m=c[2]+0
+    if (na!=4 || nc!=2 || nn!=4 || c[2] !~ /^[0-9]+$/ || m<0 || m>32) exit 1
+    for (i=1;i<=4;i++) if (a[i] !~ /^[0-9]+$/ || n[i] !~ /^[0-9]+$/ || a[i]>255 || n[i]>255) exit 1
+    x=((a[1]*256+a[2])*256+a[3])*256+a[4]
+    y=((n[1]*256+n[2])*256+n[3])*256+n[4]
+    block=2^(32-m); exit !(int(x/block)==int(y/block))
+  }'
+}
+
+ipv4_is_edge_of_cidr() {
+  awk -v ip="$1" -v cidr="$2" 'BEGIN {
+    na=split(ip,a,"."); nc=split(cidr,c,"/"); nn=split(c[1],n,"."); m=c[2]+0
+    if (na!=4 || nc!=2 || nn!=4 || c[2] !~ /^[0-9]+$/ || m<0 || m>32) exit 1
+    for (i=1;i<=4;i++) if (a[i] !~ /^[0-9]+$/ || n[i] !~ /^[0-9]+$/ || a[i]>255 || n[i]>255) exit 1
+    x=((a[1]*256+a[2])*256+a[3])*256+a[4]
+    y=((n[1]*256+n[2])*256+n[3])*256+n[4]
+    block=2^(32-m); base=int(y/block)*block
+    exit !((x==base) || (x==base+block-1))
+  }'
+}
+
+cidr_is_canonical() {
+  awk -v cidr="$1" 'BEGIN {
+    nc=split(cidr,c,"/"); nn=split(c[1],n,"."); m=c[2]+0
+    if (nc!=2 || nn!=4 || c[2] !~ /^[0-9]+$/ || m<0 || m>32) exit 1
+    for (i=1;i<=4;i++) if (n[i] !~ /^[0-9]+$/ || n[i]>255) exit 1
+    y=((n[1]*256+n[2])*256+n[3])*256+n[4]; block=2^(32-m)
+    exit !(y==int(y/block)*block)
+  }'
+}
+
+validate_network_plan() {
+  _vn_parent="$1"; _vn_subnet="$2"; _vn_router="$3"; _vn_mihomo="$4"
+  interface_exists "$_vn_parent" || { log_error "parent interface not found: $_vn_parent"; return 1; }
+  cidr_is_canonical "$_vn_subnet" || { log_error "SUBNET_CIDR must be a canonical network address: $_vn_subnet"; return 1; }
+  ipv4_in_cidr "$_vn_router" "$_vn_subnet" || { log_error "ROUTER_IP=$_vn_router is outside SUBNET_CIDR=$_vn_subnet"; return 1; }
+  ipv4_in_cidr "$_vn_mihomo" "$_vn_subnet" || { log_error "MIHOMO_IP=$_vn_mihomo is outside SUBNET_CIDR=$_vn_subnet"; return 1; }
+  [ "$_vn_router" != "$_vn_mihomo" ] || { log_error "MIHOMO_IP must differ from ROUTER_IP"; return 1; }
+  ! ipv4_is_edge_of_cidr "$_vn_router" "$_vn_subnet" || { log_error "ROUTER_IP cannot be the subnet network/broadcast address"; return 1; }
+  ! ipv4_is_edge_of_cidr "$_vn_mihomo" "$_vn_subnet" || { log_error "MIHOMO_IP cannot be the subnet network/broadcast address"; return 1; }
+  _vn_host="$(_iface_ipv4 "$_vn_parent")"
+  if [ -n "$_vn_host" ] && ! ipv4_in_cidr "$_vn_host" "$_vn_subnet"; then
+    log_error "parent $_vn_parent address $_vn_host is outside $_vn_subnet"
+    return 1
+  fi
+  return 0
+}
+
 # network_exists [NAME] - 0 if the docker network exists. Defaults to tproxy_network.
 network_exists() {
   _name="${1:-$TPROXY_NETWORK}"
   _d="$(_net_docker)"
   "$_d" network inspect "$_name" >/dev/null 2>&1
+}
+
+macvlan_matches() {
+  _mm_name="$1"; _mm_parent="$2"; _mm_subnet="$3"; _mm_gateway="$4"
+  _mm_d="$(_net_docker)"
+  _mm_have="$("$_mm_d" network inspect -f '{{.Driver}}|{{index .Options "parent"}}|{{(index .IPAM.Config 0).Subnet}}|{{(index .IPAM.Config 0).Gateway}}' "$_mm_name" 2>/dev/null)"
+  [ "$_mm_have" = "macvlan|$_mm_parent|$_mm_subnet|$_mm_gateway" ]
+}
+
+network_attachments() {
+  _na_d="$(_net_docker)"
+  "$_na_d" network inspect -f '{{range $id, $c := .Containers}}{{$c.Name}} {{end}}' "$1" 2>/dev/null
 }
 
 # recreate_macvlan PARENT [SUBNET] [GATEWAY] [NAME] - (re)create the macvlan
@@ -178,20 +242,16 @@ recreate_macvlan() {
   [ -n "$_subnet" ] || { log_error "recreate_macvlan: SUBNET_CIDR is empty (set it in .env)"; return 1; }
   [ -n "$_gw" ]     || { log_error "recreate_macvlan: ROUTER_IP is empty (set it in .env)"; return 1; }
 
+  if macvlan_matches "$_name" "$_parent" "$_subnet" "$_gw"; then
+    log_info "macvlan '$_name' already matches requested configuration"
+    return 0
+  fi
+
   if network_exists "$_name"; then
     log_warn "docker network '$_name' exists - removing to re-create"
     if ! "$_d" network rm "$_name" >/dev/null 2>&1; then
-      # A still-attached container blocks removal: force-disconnect every container
-      # bound to it, then retry. (reprovision_containers normally clears these
-      # first, but this keeps the network teardown self-healing for any caller.)
-      for _cid in $("$_d" ps -aq --filter "network=$_name" 2>/dev/null); do
-        log_warn "detaching container $_cid from '$_name'"
-        "$_d" network disconnect -f "$_name" "$_cid" >/dev/null 2>&1 || true
-      done
-      if ! "$_d" network rm "$_name" >/dev/null 2>&1; then
-        log_error "could not remove existing '$_name' (is a container still attached? 'docker network inspect $_name')"
-        return 1
-      fi
+      log_error "could not remove existing '$_name'; attached containers: $(network_attachments "$_name")"
+      return 1
     fi
   fi
 

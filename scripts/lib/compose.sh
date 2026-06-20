@@ -12,17 +12,55 @@ compose_up() {
   ( cd "$REPO_ROOT" && $COMPOSE_CMD --env-file "$ENV_FILE" up -d ) >>"$LOG_FILE" 2>&1
 }
 
+compose_recreate() {
+  # Installer deploys must restart mihomo so a newly rendered bind-mounted
+  # configuration takes effect even when the image and compose model are unchanged.
+  # shellcheck disable=SC2086
+  ( cd "$REPO_ROOT" && $COMPOSE_CMD --env-file "$ENV_FILE" up -d --force-recreate ) >>"$LOG_FILE" 2>&1
+}
+
 # Probe the controller from INSIDE the mihomo netns (docker exec) so the macvlan
 # host-isolation quirk (NAS can't reach its own macvlan IP) doesn't matter.
 # Returns: 0 ok, 1 definitively failed, 2 probe unavailable (no downloader in image).
 mihomo_controller_probe() {
   _url="http://127.0.0.1:${CONTROLLER_PORT}/version"
+  _auth=""
+  [ -n "${CONTROLLER_SECRET:-}" ] && _auth="Authorization: Bearer ${CONTROLLER_SECRET}"
   if "$DOCKER_BIN" exec "$MIHOMO_CONTAINER" sh -c 'command -v wget >/dev/null 2>&1' 2>/dev/null; then
-    if "$DOCKER_BIN" exec "$MIHOMO_CONTAINER" wget -q -T 5 -O /dev/null "$_url" 2>/dev/null; then return 0; else return 1; fi
+    if [ -n "$_auth" ]; then
+      "$DOCKER_BIN" exec "$MIHOMO_CONTAINER" wget -q -T 5 -O /dev/null --header "$_auth" "$_url" 2>/dev/null
+    else
+      "$DOCKER_BIN" exec "$MIHOMO_CONTAINER" wget -q -T 5 -O /dev/null "$_url" 2>/dev/null
+    fi
+    return $?
   elif "$DOCKER_BIN" exec "$MIHOMO_CONTAINER" sh -c 'command -v curl >/dev/null 2>&1' 2>/dev/null; then
-    if "$DOCKER_BIN" exec "$MIHOMO_CONTAINER" curl -fsS -m 5 -o /dev/null "$_url" 2>/dev/null; then return 0; else return 1; fi
+    if [ -n "$_auth" ]; then
+      "$DOCKER_BIN" exec "$MIHOMO_CONTAINER" curl -fsS -m 5 -o /dev/null -H "$_auth" "$_url" 2>/dev/null
+    else
+      "$DOCKER_BIN" exec "$MIHOMO_CONTAINER" curl -fsS -m 5 -o /dev/null "$_url" 2>/dev/null
+    fi
+    return $?
   fi
   return 2
+}
+
+# Verify the transparent-gateway dataplane, not only the management API. A
+# healthy controller without the runtime TUN interface leaves LAN clients with
+# no route through the proxy while appearing healthy to Docker.
+mihomo_gateway_probe() {
+  _tun="${TUN_DEVICE:-mihomo-tun}"
+  if ! "$DOCKER_BIN" exec "$MIHOMO_CONTAINER" sh -c \
+      'test -d "/sys/class/net/$1"' sh "$_tun" 2>/dev/null; then
+    log_warn "gateway probe: TUN interface '$_tun' is missing inside $MIHOMO_CONTAINER"
+    return 1
+  fi
+  _forward="$("$DOCKER_BIN" exec "$MIHOMO_CONTAINER" sh -c \
+      'cat /proc/sys/net/ipv4/ip_forward 2>/dev/null' 2>/dev/null)"
+  if [ "$_forward" != "1" ]; then
+    log_warn "gateway probe: net.ipv4.ip_forward=${_forward:-unknown}, expected 1"
+    return 1
+  fi
+  return 0
 }
 
 # health_gate -> 0 healthy, 1 unhealthy. Checks mihomo is running, NOT crash-looping,
@@ -58,8 +96,11 @@ health_gate() {
     # Stable. Now the controller probe (in-container).
     mihomo_controller_probe
     case "$?" in
-      0) log_info "health: mihomo running + controller OK"; _check_ui; return 0 ;;
-      2) log_info "health: mihomo running + stable (controller probe unavailable in image)"; _check_ui; return 0 ;;
+      0) if mihomo_gateway_probe; then
+           log_info "health: mihomo running + controller OK + TUN gateway ready"
+           _check_ui; return 0
+         fi ;;
+      2) log_warn "health[$_try/$HEALTH_RETRIES]: controller probe unavailable in image" ;;
       1) log_warn "health[$_try/$HEALTH_RETRIES]: controller not answering yet" ;;
     esac
   done

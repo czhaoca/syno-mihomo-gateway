@@ -30,7 +30,7 @@ On any workstation that can reach github.com (your laptop, a VPS, a CI box):
 ```bash
 git clone https://github.com/czhaoca/syno-mihomo-gateway.git
 cd syno-mihomo-gateway
-sh scripts/package.sh
+sh scripts/package.sh                    # end-user DSM bundle (default profile)
 ```
 
 This writes to `dist/`:
@@ -131,8 +131,9 @@ There is no `git pull` here. To update the **code**:
    Your `.env`, `config/subscription.txt`, and `config/config.yaml` are not in the archive, so they
    are preserved. (A file removed upstream is not deleted by `unzip` — remove stale files by hand if
    needed.)
-3. `sh bootstrap.sh` (a no-op for existing config; just restores exec bits), then
-   `docker compose up -d`.
+3. `sh bootstrap.sh` (a no-op for existing config; just restores exec bits), then run
+   `sudo sh ./install.sh` and choose **Redeploy**. This forces Mihomo to render and activate
+   the updated gateway configuration; a plain `docker compose up -d` may leave it unchanged.
 
 Updating the **images** is unchanged: `scripts/auto_update.sh` (DSM Task Scheduler) pulls from your
 ACR — not GitHub — so the normal [Auto-Update](auto-update.md) flow works on an offline install too.

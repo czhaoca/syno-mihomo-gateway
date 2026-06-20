@@ -5,14 +5,11 @@
 # that survives DSM upgrades, whereas hand-edited /etc/crontab gets rewritten.
 
 SELF_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
-REPO_ROOT="$(CDPATH='' cd -- "$SELF_DIR/.." && pwd)"
-ENV_FILE="$REPO_ROOT/.env"
+# shellcheck source=scripts/lib/common.sh
+. "$SELF_DIR/lib/common.sh"
 
 if [ -f "$ENV_FILE" ]; then
-  set -a
-  # shellcheck disable=SC1090
-  . "$ENV_FILE"
-  set +a
+  dotenv_load "$ENV_FILE" || exit "$EXIT_CONFIG"
 fi
 : "${UPDATE_SCHEDULE:=0 2 * * *}"
 : "${UPDATE_TZ:=Asia/Shanghai}"

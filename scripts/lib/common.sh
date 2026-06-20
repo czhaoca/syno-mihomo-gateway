@@ -24,16 +24,81 @@ EXIT_CONFIG=3       # config / preflight error - nothing changed
 EXIT_LOCKED=4       # another run holds the lock
 EXIT_LOGIN=5        # ACR login failed - nothing attempted
 
+# --- strict dotenv parsing ---------------------------------------------------
+# .env is shared with Docker Compose, but it is data, not a shell program. Do
+# not source it: an ordinary password containing '&', '$', spaces, or quotes can
+# otherwise be mangled, and command substitutions in a hand-edited file execute.
+dotenv_decode() {
+  _dd_raw="$1"
+  case "$_dd_raw" in
+    \"*\")
+      [ "${_dd_raw%\"}" != "$_dd_raw" ] || return 1
+      _dd_raw="${_dd_raw#\"}"; _dd_raw="${_dd_raw%\"}"
+      DOTENV_RAW="$_dd_raw" awk 'BEGIN {
+        s=ENVIRON["DOTENV_RAW"]; out=""; esc=0
+        for (i=1; i<=length(s); i++) {
+          c=substr(s,i,1)
+          if (esc) { if (c ~ /[\\"$`]/) out=out c; else out=out "\\" c; esc=0 }
+          else if (c == "\\") esc=1
+          else if (c == "$" && substr(s,i+1,1) == "$") { out=out "$"; i++ }
+          else out=out c
+        }
+        if (esc) out=out "\\"
+        printf "%s", out
+      }' ;;
+    \'*\')
+      [ "${_dd_raw%\'}" != "$_dd_raw" ] || return 1
+      _dd_raw="${_dd_raw#\'}"; _dd_raw="${_dd_raw%\'}"
+      printf '%s' "$_dd_raw" ;;
+    \"*|\'*) return 1 ;; # unmatched opening quote
+    *) printf '%s' "$_dd_raw" | sed 's/[[:space:]]*$//' ;;
+  esac
+}
+
+dotenv_get() {
+  _dg_key="$1"
+  [ -f "$ENV_FILE" ] || return 1
+  _dg_raw="$(DOTENV_KEY="$_dg_key" awk '
+    BEGIN { k=ENVIRON["DOTENV_KEY"]; found=0 }
+    $0 ~ "^" k "=" { sub("^" k "=", ""); v=$0; found=1 }
+    END { if (found) printf "%s", v; else exit 1 }
+  ' "$ENV_FILE")" || return 1
+  dotenv_decode "$_dg_raw"
+}
+
+dotenv_load() {
+  _dl_file="${1:-$ENV_FILE}"
+  [ -f "$_dl_file" ] || return 1
+  _dl_n=0
+  while IFS= read -r _dl_line || [ -n "$_dl_line" ]; do
+    _dl_n=$((_dl_n + 1))
+    _dl_line="$(printf '%s' "$_dl_line" | sed 's/\r$//')"
+    case "$_dl_line" in ''|'#'*) continue ;; esac
+    case "$_dl_line" in
+      *=*) _dl_key="${_dl_line%%=*}"; _dl_raw="${_dl_line#*=}" ;;
+      *) log_error "invalid .env line $_dl_n (expected KEY=VALUE)"; return 1 ;;
+    esac
+    case "$_dl_key" in ''|[0-9]*|*[!A-Za-z0-9_]*)
+      log_error "invalid .env key: $_dl_key"; return 1 ;;
+    esac
+    if ! _dl_value="$(dotenv_decode "$_dl_raw")"; then
+      log_error "invalid quoted value for $_dl_key in $_dl_file"
+      return 1
+    fi
+    export "$_dl_key=$_dl_value" || { log_error "could not export $_dl_key"; return 1; }
+  done < "$_dl_file"
+  return 0
+}
+
 load_env() {
   if [ ! -f "$ENV_FILE" ]; then
     echo "FATAL: .env not found at $ENV_FILE (copy .env.example -> .env)" >&2
     exit "$EXIT_CONFIG"
   fi
-  # Source (not `export $(... xargs)`) so values with spaces/special chars survive.
-  set -a
-  # shellcheck disable=SC1090
-  . "$ENV_FILE"
-  set +a
+  if ! dotenv_load "$ENV_FILE"; then
+    echo "FATAL: invalid .env at $ENV_FILE" >&2
+    exit "$EXIT_CONFIG"
+  fi
 
   # Defaults for optional tunables (keeps .env lean).
   : "${INSTALLER_LANG:=en}"
@@ -51,7 +116,16 @@ load_env() {
   : "${HEALTH_RETRIES:=6}"
   : "${HEALTH_INTERVAL:=10}"
   : "${HEALTH_MAX_RESTARTS:=3}"
+  : "${TUN_DEVICE:=mihomo-tun}"
   : "${LOCK_DIR:=/tmp/syno-mihomo-update.lock}"
+
+  # Backward compatibility with the pre-1.2.11 template. The strict loader
+  # intentionally does not perform arbitrary shell expansion.
+  case "${UPDATE_IMAGES:-}" in
+    ''|'${MIHOMO_IMAGE} ${METACUBEXD_IMAGE} ${CF_IMAGE}')
+      UPDATE_IMAGES="${MIHOMO_IMAGE:-} ${METACUBEXD_IMAGE:-} ${CF_IMAGE:-}" ;;
+  esac
+  export UPDATE_IMAGES
 
   # Normalize UPDATE_LOG to an absolute path under the repo when relative.
   case "$UPDATE_LOG" in
@@ -64,7 +138,7 @@ load_env() {
   # never sets INSTALL_LOG, so it keeps logging to UPDATE_LOG.
   [ -n "${INSTALL_LOG:-}" ] && LOG_FILE="$INSTALL_LOG"
   LOG_DIR="$(dirname "$LOG_FILE")"
-  mkdir -p "$LOG_DIR" 2>/dev/null || true
+  [ "${NO_LOG_INIT:-0}" = 1 ] || mkdir -p "$LOG_DIR" 2>/dev/null || true
 }
 
 _ts() { date '+%Y-%m-%d %H:%M:%S %z'; }

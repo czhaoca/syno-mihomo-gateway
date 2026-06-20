@@ -113,6 +113,15 @@ Gateway is "unhealthy" after deploy
          and roll back automatically if it stays unhealthy.
 
 --------------------------------------------------------------------------
+Containers look healthy but LAN clients have no internet
+--------------------------------------------------------------------------
+  Fix:   run   sudo sh scripts/doctor.sh --egress
+         It checks both /dev/net/tun and the in-container mihomo-tun dataplane,
+         not only the controller. Exit 0 is healthy, 2 is degraded proxy
+         egress, and 3 is a local configuration/runtime failure. Test from a
+         different LAN device because the NAS cannot reach its macvlan child.
+
+--------------------------------------------------------------------------
 Auto-update reported a non-zero exit code
 --------------------------------------------------------------------------
   0  Success / no-op.

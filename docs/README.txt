@@ -87,3 +87,5 @@ Where to read next
 
 Logs are written under the logs/ folder (an install log and, once scheduled,
 an auto-update log).
+
+Read-only health check:  sudo sh scripts/doctor.sh --egress

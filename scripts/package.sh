@@ -6,9 +6,9 @@
 # NAS and unpack into the Docker shared folder, then run `sh ./install.sh`.
 #
 # Two profiles:
-#   --profile dev      (default) the full tracked tree (docs, CI, metadata).
+#   --profile dev      the full tracked tree (docs, CI, metadata).
 #                      Internal use; what CI's package check builds.
-#   --profile enduser  the curated, self-contained distribution: runtime files +
+#   --profile enduser  (default) the curated, self-contained distribution: runtime files +
 #                      the interactive installer + the plain-text guides, with all
 #                      developer/internal files removed and a leak-gate that fails
 #                      the build if any identifying string would ship.
@@ -38,7 +38,7 @@ VERSION_OVERRIDE=""
 ALLOW_DIRTY=0
 DO_ZIP=1
 DO_TAR=1
-PROFILE=dev
+PROFILE=enduser
 
 # Files removed from the --profile enduser bundle: developer/CI/internal metadata
 # and the maintainer-only packager. The leak-gate below is the belt-and-suspenders
@@ -56,8 +56,8 @@ usage() {
   cat >&2 <<'EOF'
 Usage: scripts/package.sh [options]
 
-  --profile dev|enduser   dev (default) = full tracked tree; enduser = curated,
-                          self-contained distribution with a no-identity leak-gate
+  --profile dev|enduser   enduser (default) = curated self-contained distribution;
+                          dev = full tracked tree for internal use
   --version X.Y.Z         Override the version (default: ./VERSION, else git describe)
   --allow-dirty           Package even with uncommitted changes (archives HEAD)
   --no-zip                Skip the .zip artifact

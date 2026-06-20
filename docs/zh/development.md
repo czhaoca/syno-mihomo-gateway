@@ -79,11 +79,12 @@ compose (+health-gate/rollback) → apply cloudflared (blue-green) → prune →
 
 | 步骤 | 内容 |
 |---|---|
-| `validate-compose` | `docker compose config --quiet` |
+| `validate-compose` | `docker-compose --env-file .env.example config --quiet`（阻断式检查） |
 | `validate-yaml` | `yaml.safe_load(docker-compose.yml)` |
 | `render-config` | `python scripts/ci/render_check.py` —— 针对一个带 `Name=` 前缀及 `&` 参数的夹具 URL 运行**真实的**渲染器，并断言该 URL 能精确地往返还原；同时强制执行“不硬编码 DNS”规则 |
 | `compose-policy` | `python scripts/ci/compose_policy_check.py` —— 断言网关镜像**仅来自 ACR**：`docker-compose.yml` 中不得有直接 Docker Hub/ghcr 回退，`.env.example` 的镜像引用须指向私有仓库 |
 | `package-check` | `python scripts/ci/package_check.py` —— 在临时仓库中构建发布 zip，证明**任何密钥都不会被打包**（植入的 `.env`/订阅/`config.yaml` 不在两种压缩包的文件名*和*字节中），校验和正确，各项守卫生效，且 `bootstrap.sh` 往返正常 |
+| `dsm-shell-tests` | 在 BusyBox `sh` 下执行 dotenv、网络、架构和 TUN 健康检查回归测试 |
 | `shellcheck` | 对入口点脚本运行 `shellcheck -x`（lib/*.sh 在上下文中被一并检查） |
 
 ## 制作发布版本
@@ -91,8 +92,9 @@ compose (+health-gate/rollback) → apply cloudflared (blue-green) → prune →
 维护者构建 [离线发布包](release-packaging.md) 中所消费的离线包：
 
 ```bash
-sh scripts/package.sh                 # 生成 dist/syno-mihomo-gateway-<版本>.{zip,tar.gz} + .sha256
-sh scripts/package.sh --version 1.2.0 # 覆盖 VERSION 文件
+sh scripts/package.sh                         # DSM 最终用户包（默认）
+sh scripts/package.sh --profile dev           # 完整内部/开发包
+sh scripts/package.sh --version 1.2.11         # 覆盖 VERSION 文件
 ```
 
 - 用 `git archive` 构建，因此**只打包被跟踪的文件** —— `.env`、`config/subscription.txt`、

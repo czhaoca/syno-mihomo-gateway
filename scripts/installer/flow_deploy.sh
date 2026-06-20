@@ -17,15 +17,8 @@ _show_log_tail() {
   ui_say ""
 }
 
-# reprovision_containers - if this app's containers already exist (running,
-# stopped, created, or crash-looping), tear them down so the deploy recreates
-# them cleanly from the current image + freshly rendered config. Visible (reports
-# what it found) and idempotent: removes the compose project's containers (plus
-# any orphan service), force-removes the named containers even when compose state
-# is inconsistent ("container name already in use"), and detaches anything still
-# bound to the macvlan network so its recreate can't fail with "container still
-# attached". INSTALLER-ONLY: the auto-updater calls compose_up directly and must
-# NOT force-recreate.
+# Validate ownership of fixed container names before Compose changes anything.
+# Never force-remove or disconnect unrelated containers from a user-managed NAS.
 reprovision_containers() {
   [ -n "${DOCKER_BIN:-}" ] || return 0
   ui_step "$(msg step_reprovision)"
@@ -34,22 +27,19 @@ reprovision_containers() {
   for _c in "$MIHOMO_CONTAINER" "$METACUBEXD_CONTAINER"; do
     [ -n "$_c" ] || continue
     _rp_st="$("$DOCKER_BIN" inspect -f '{{.State.Status}}' "$_c" 2>/dev/null)" || _rp_st=""
-    [ -n "$_rp_st" ] && { ui_say "$(msgf reprov_found "$_c" "$_rp_st")"; _rp_found=1; }
+    [ -n "$_rp_st" ] || continue
+    case "$_c" in
+      "$MIHOMO_CONTAINER") _rp_expected=mihomo ;;
+      *) _rp_expected=metacubexd ;;
+    esac
+    _rp_service="$("$DOCKER_BIN" inspect -f '{{index .Config.Labels "com.docker.compose.service"}}' "$_c" 2>/dev/null)"
+    if [ "$_rp_service" != "$_rp_expected" ]; then
+      diagnose "container name '$_c' is owned by another deployment" \
+        "rename/remove that container explicitly, then retry"
+      return 1
+    fi
+    ui_say "$(msgf reprov_found "$_c" "$_rp_st")"; _rp_found=1
   done
-
-  # shellcheck disable=SC2086  # COMPOSE_CMD may be two words ("docker compose")
-  ( cd "$REPO_ROOT" && $COMPOSE_CMD --env-file "$ENV_FILE" down --remove-orphans ) >>"${LOG_FILE:-/dev/null}" 2>&1 || true
-  for _c in "$MIHOMO_CONTAINER" "$METACUBEXD_CONTAINER"; do
-    [ -n "$_c" ] && "$DOCKER_BIN" rm -f "$_c" >>"${LOG_FILE:-/dev/null}" 2>&1 || true
-  done
-
-  _rp_net="${TPROXY_NETWORK:-tproxy_network}"
-  if network_exists "$_rp_net"; then
-    for _rp_id in $("$DOCKER_BIN" ps -aq --filter "network=$_rp_net" 2>/dev/null); do
-      "$DOCKER_BIN" network disconnect -f "$_rp_net" "$_rp_id" >>"${LOG_FILE:-/dev/null}" 2>&1 || true
-    done
-  fi
-
   if [ -n "$_rp_found" ]; then ui_ok "$(msg reprov_done)"; else ui_info "$(msg reprov_none)"; fi
   return 0
 }
@@ -114,11 +104,12 @@ proxy_egress_probe() {
   return 0
 }
 
-deploy_stack() {
-  ui_step "$(msg step_deploy_stack)"
-  # render_config.sh (the container entrypoint) hard-fails without a real
-  # subscription URL, which crash-loops mihomo - guarantee one before deploying.
+# Non-destructive deployment preparation. Every registry/image/config failure is
+# detected before a healthy running stack or its macvlan can be touched.
+prepare_stack() {
   ensure_subscription || return 1
+  PREVIOUS_MIHOMO_IMAGE_ID="$(running_image_id "$MIHOMO_CONTAINER")"
+  PREVIOUS_METACUBEXD_IMAGE_ID="$(running_image_id "$METACUBEXD_CONTAINER")"
   if [ "${REGISTRY_MODE:-acr}" = "acr" ]; then
     try "$(msg diag_acr_login)" "$(msg diag_acr_login_fix)" -- acr_login || { _show_log_tail; return 1; }
   else
@@ -137,10 +128,53 @@ deploy_stack() {
     fi
   done
 
+  pf_compose_config || return 1
+  ui_info "validating the rendered Mihomo configuration"
+  _cfg_test="$(mktemp -d "${TMPDIR:-/tmp}/smg-config.XXXXXX" 2>/dev/null)" || {
+    diagnose "could not create a private temporary config directory" "check free space and /tmp permissions"
+    return 1
+  }
+  chmod 700 "$_cfg_test" 2>/dev/null || true
+  if ! cp "$REPO_ROOT/config/config.template.yaml" "$REPO_ROOT/config/subscription.txt" "$_cfg_test/"; then
+    rm -rf "$_cfg_test"
+    diagnose "could not stage the Mihomo configuration" "check config file permissions"
+    return 1
+  fi
+  if ! MIHOMO_CONFIG_DIR="$_cfg_test" sh "$REPO_ROOT/scripts/render_config.sh" \
+      >>"${LOG_FILE:-/dev/null}" 2>&1; then
+    rm -rf "$_cfg_test"
+    diagnose "failed to render config/config.yaml" \
+      "check the subscription, DNS values, and write permissions"
+    return 1
+  fi
+  if ! "$DOCKER_BIN" run --rm --entrypoint /mihomo \
+      -v "$_cfg_test/config.yaml:/root/.config/mihomo/config.yaml:ro" \
+      "$MIHOMO_IMAGE" -t -d /root/.config/mihomo \
+      >>"${LOG_FILE:-/dev/null}" 2>&1; then
+    rm -rf "$_cfg_test"
+    _show_log_tail
+    diagnose "the pulled Mihomo image rejected the rendered configuration" \
+      "review config/config.yaml and the error above"
+    return 1
+  fi
+  rm -rf "$_cfg_test"
+  return 0
+}
+
+rollback_installer_stack() {
+  [ -n "${PREVIOUS_MIHOMO_IMAGE_ID:-}${PREVIOUS_METACUBEXD_IMAGE_ID:-}" ] || return 1
+  ui_warn "deployment failed structural health checks; attempting the last running images"
+  rollback_compose "${PREVIOUS_MIHOMO_IMAGE_ID:-}" "${PREVIOUS_METACUBEXD_IMAGE_ID:-}" \
+    && health_gate
+}
+
+deploy_stack() {
+  ui_step "$(msg step_deploy_stack)"
   ui_info "$(msg info_starting)"
-  if ! compose_up; then
+  if ! compose_recreate; then
     _show_log_tail
     diagnose "$(msg diag_compose_up)" "$(msgf diag_compose_up_fix "$INSTALL_LOG")"
+    rollback_installer_stack && ui_warn "previous images restored and healthy"
     return 1
   fi
   if health_gate; then
@@ -150,6 +184,11 @@ deploy_stack() {
   fi
   _show_mihomo_logs
   diagnose "$(msg diag_unhealthy)" "$(msg diag_unhealthy_fix)"
+  if rollback_installer_stack; then
+    ui_warn "previous images restored and healthy"
+  else
+    ui_error "automatic rollback was unavailable or did not restore health"
+  fi
   return 1
 }
 
@@ -172,6 +211,11 @@ report_success() {
 flow_deploy() {
   ui_step "$(msg step_deploy_e2e)"
 
+  if ! is_root; then
+    diagnose "deployment requires root privileges" "re-run: sudo sh ./install.sh"
+    return 1
+  fi
+
   seed_config       || return 1
   load_env                                  # .env now exists; export its values
 
@@ -184,11 +228,12 @@ flow_deploy() {
   load_env                                  # re-load after the wizards wrote .env
 
   pf_docker         || return 1
-  pf_arch
+  pf_arch           || return 1
+  pf_web_port       || return 1
+  validate_selected_network || return 1
+  prepare_stack     || return 1
 
-  # Reprovision existing containers BEFORE recreating the macvlan: a still-attached
-  # container would make `docker network rm` (in create_network) fail.
-  reprovision_containers
+  reprovision_containers || return 1
   create_network    || return 1             # root: TUN + macvlan (final IP guard inside)
   load_env
 

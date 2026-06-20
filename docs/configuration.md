@@ -25,6 +25,10 @@ contains only `{{PLACEHOLDERS}}` — no DNS server or network address is hardcod
 Legend — **Req**: required for the gateway to run · **Upd**: required for auto-update ·
 **Sec**: secret (keep `.env` `chmod 600`).
 
+The installer reads `.env` as dotenv data, never as a shell program. Generated values are
+Compose-compatible quoted strings, so passwords containing spaces, `&`, `#`, `$`, quotes, or
+backslashes round-trip safely. When editing by hand, keep one `KEY=VALUE` assignment per line.
+
 ### Network
 
 | Key | Req | Description | Example |
