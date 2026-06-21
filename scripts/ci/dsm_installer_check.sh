@@ -212,4 +212,41 @@ flow_deploy >/dev/null 2>&1 || fail "stubbed deployment sequence failed"
 [ "$(tr '\n' ' ' < "$TD/order")" = 'plan scan prepare cleanup network deploy ' ] \
   || fail "unsafe deployment order: $(tr '\n' ' ' < "$TD/order")"
 
-echo "OK: BusyBox dotenv/network/arch/TUN/cloudflared checks and decision-first, fail-before-mutation deployment order"
+# The success report must turn the selected/auto-detected parent NIC's address
+# into a usable dashboard URL, while retaining a readable fallback if the host
+# address cannot be determined.
+. "$ROOT/scripts/installer/i18n.sh"
+. "$ROOT/scripts/installer/flow_deploy.sh"
+ui_step() { :; }
+ui_ok() { :; }
+ui_warn() { :; }
+ui_say() { printf '%s\n' "$*"; }
+INSTALLER_LANG=en
+WEB_UI_PORT=8080
+CHOSEN_IFACE=eth0
+PARENT_INTERFACE=''
+_iface_ipv4() { [ "$1" = eth0 ] && printf '192.168.1.10'; }
+_report="$(report_success)"
+case "$_report" in
+  *'http://192.168.1.10:8080'*) : ;;
+  *) fail "success report did not use the selected parent IPv4: $_report" ;;
+esac
+
+CHOSEN_IFACE=''
+PARENT_INTERFACE=''
+detect_parent_interface() { printf 'eth9'; }
+_iface_ipv4() { [ "$1" = eth9 ] && printf '10.20.30.40'; }
+_report="$(report_success)"
+case "$_report" in
+  *'http://10.20.30.40:8080'*) : ;;
+  *) fail "success report did not use the auto-detected parent IPv4: $_report" ;;
+esac
+
+_iface_ipv4() { :; }
+_report="$(report_success)"
+case "$_report" in
+  *'http://<NAS-IP>:8080'*) : ;;
+  *) fail "success report lost the NAS-IP fallback: $_report" ;;
+esac
+
+echo "OK: BusyBox dotenv/network/arch/TUN/cloudflared/report checks and decision-first, fail-before-mutation deployment order"

@@ -224,7 +224,7 @@ _msg_en() {
     step_deploy_done) printf '%s' 'Deployment complete' ;;
     ok_gateway_up)    printf '%s' 'The gateway is up.' ;;
     rep_dashboard)    printf '%s' 'Dashboard (open from a LAN device that is NOT the NAS):' ;;
-    rep_dashboard_url) printf '%s' '    http://<NAS-IP>:%s' ;;
+    rep_dashboard_url) printf '%s' '    http://%s:%s' ;;
     rep_add_backend)  printf '%s' '  Add a backend in the dashboard:' ;;
     rep_backend_line) printf '%s' '    Host=%s  Port=%s  Secret=<your controller secret>' ;;
     rep_point_client) printf '%s' "Point a client's gateway + DNS at %s to route it through the proxy." ;;
@@ -516,7 +516,7 @@ _msg_zh() {
     step_deploy_done) printf '%s' '部署完成' ;;
     ok_gateway_up)    printf '%s' '网关已启动。' ;;
     rep_dashboard)    printf '%s' '仪表盘（请从非 NAS 的 LAN 设备打开）：' ;;
-    rep_dashboard_url) printf '%s' '    http://<NAS-IP>:%s' ;;
+    rep_dashboard_url) printf '%s' '    http://%s:%s' ;;
     rep_add_backend)  printf '%s' '  在仪表盘中添加后端：' ;;
     rep_backend_line) printf '%s' '    Host=%s  Port=%s  Secret=<你的控制器密钥>' ;;
     rep_point_client) printf '%s' '将客户端的网关 + DNS 指向 %s，即可让其流量经由代理。' ;;

@@ -172,11 +172,17 @@ deploy_stack() {
 }
 
 report_success() {
+  _rs_parent="${CHOSEN_IFACE:-${PARENT_INTERFACE:-}}"
+  [ -n "$_rs_parent" ] \
+    || _rs_parent="$(detect_parent_interface "${ROUTER_IP:-}")"
+  _rs_nas_ip="$(_iface_ipv4 "$_rs_parent")"
+  [ -n "$_rs_nas_ip" ] || _rs_nas_ip='<NAS-IP>'
+
   ui_step "$(msg step_deploy_done)"
   ui_ok  "$(msg ok_gateway_up)"
   ui_say ""
   ui_say "$(msg rep_dashboard)"
-  ui_say "$(msgf rep_dashboard_url "${WEB_UI_PORT:-8080}")"
+  ui_say "$(msgf rep_dashboard_url "$_rs_nas_ip" "${WEB_UI_PORT:-8080}")"
   ui_say "$(msg rep_add_backend)"
   ui_say "$(msgf rep_backend_line "${MIHOMO_IP:-<mihomo-ip>}" "${CONTROLLER_PORT:-9090}")"
   ui_say ""
