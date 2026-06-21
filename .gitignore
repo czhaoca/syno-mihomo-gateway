@@ -14,6 +14,11 @@ logs/
 *.log
 .update_state
 
+# Persistent runtime state. The canonical location is a SIBLING of the repo
+# (../syno-mihomo-gateway-data); ignore any stray copy that lands inside the tree
+# from a manual misrun or a test that resolves GATEWAY_DATA_DIR under the repo.
+syno-mihomo-gateway-data/
+
 # Release artifacts (scripts/package.sh output)
 dist/
 

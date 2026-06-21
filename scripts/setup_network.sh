@@ -50,6 +50,12 @@ if [ -z "$PARENT_INTERFACE" ]; then
 fi
 echo "      Using interface: $PARENT_INTERFACE"
 
+# Flag an Open vSwitch parent here too (not only on the interactive first-deploy
+# path): a macvlan on ovs_eth0 is unreachable by LAN peers, so the dashboard and
+# client routing time out. Non-fatal - the operator may have deliberately accepted
+# ipvlan (dashboard-only) - but it must never silently rebuild an unreachable macvlan.
+warn_if_ovs_parent "$PARENT_INTERFACE"
+
 if ! validate_network_plan "$PARENT_INTERFACE" "${SUBNET_CIDR:-}" \
     "${ROUTER_IP:-}" "${MIHOMO_IP:-}"; then
   log_error "network settings are inconsistent; run sh ./install.sh and re-enter them"

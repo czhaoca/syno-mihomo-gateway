@@ -68,8 +68,10 @@ with the static `MIHOMO_IP`, so it appears as a **first-class device on your LAN
 
 > **Open vSwitch caveat.** When the parent is an Open vSwitch port (`ovs_eth0`, present when DSM's
 > Open vSwitch is enabled for VMM), a *macvlan* child is reachable by the router but **not** by
-> peer LAN devices, so the dashboard and the gateway time out from clients. Set `TPROXY_DRIVER=ipvlan`
-> (the installer offers this automatically) — ipvlan L2 shares the parent MAC and traverses OVS.
+> peer LAN devices, so the dashboard and the gateway time out from clients. macvlan is required for
+> the forwarding role (ipvlan L2 demuxes by destination IP and will not deliver clients' forwarded
+> frames), so the fix is a **non-OVS parent NIC or disabling Open vSwitch**. `TPROXY_DRIVER=ipvlan`
+> restores the dashboard but does **not** route LAN clients — use it only for dashboard-only setups.
 > See [Troubleshooting](troubleshooting.md).
 
 Inside the container, Mihomo enables its `mihomo-tun` interface with `auto-route`. That is the

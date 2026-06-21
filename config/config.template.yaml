@@ -25,6 +25,16 @@ tun:
   dns-hijack:
     - any:53
     - tcp://any:53
+  # If a NON-NAS LAN device still times out reaching the controller at
+  # ${MIHOMO_IP}:${CONTROLLER_PORT} AFTER you've ruled out Open vSwitch (see
+  # docs/troubleshooting.md), auto-route may be capturing the controller's reply
+  # into mihomo-tun. Exclude the LAN subnet from the tun so same-subnet replies stay
+  # on the physical NIC. Uncomment and set to your SUBNET_CIDR, then re-render
+  # (docker compose up -d --force-recreate mihomo) and confirm with
+  # `docker exec mihomo ip rule` that it took effect (unreliable on some versions —
+  # mihomo #2617). Set the value to your LAN's SUBNET_CIDR (from .env):
+  # route-exclude-address:
+  #   - <SUBNET_CIDR, e.g. your LAN /24>
 
 # RESTful controller used by the MetaCubeXD dashboard.
 # Bound to 0.0.0.0 so LAN clients reach it at ${MIHOMO_IP}:${CONTROLLER_PORT}

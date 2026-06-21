@@ -95,8 +95,32 @@ but does **not** flood to peer ports — so no other LAN device can reach `MIHOM
 CORS: CORS = reachable but the browser blocks it; this = unreachable at TCP. The `curl` above tells
 them apart (JSON ⇒ CORS, timeout ⇒ this).
 
-**Fix — use the ipvlan driver (recommended).** ipvlan L2 children share the parent's already-known
-MAC, so they traverse Open vSwitch. Set `TPROXY_DRIVER=ipvlan` in `.env` and redeploy, or one-shot:
+Confirm the driver/parent on the NAS:
+
+```sh
+docker network inspect tproxy_network -f '{{.Driver}} {{index .Options "parent"}}'
+# macvlan ovs_eth0  ⇒  this is your problem
+```
+
+> ⚠️ **ipvlan is NOT a clean fix here.** A transparent gateway also *forwards* LAN-client traffic:
+> clients set their default gateway to `MIHOMO_IP`, so the container must receive frames whose L3
+> destination is an arbitrary **external** IP. `macvlan` switches on the child's own MAC and delivers
+> them; **`ipvlan` L2 demultiplexes by destination IP and shares the parent MAC, so it will not hand
+> those forwarded frames to mihomo** — the dashboard starts working but the proxy *silently stops
+> routing clients*. Use ipvlan **only** if you want the dashboard and do not route LAN clients.
+
+**Fix (recommended) — give the gateway a non-OVS macvlan parent.** macvlan is required for the
+forwarding role, so remove OVS from the equation:
+
+- **Use a non-OVS NIC.** If the NAS has a second physical interface that is not enslaved to Open
+  vSwitch, re-run `sudo sh ./install.sh` and select that interface as the parent. Keeps OVS for VMM.
+- **Or disable Open vSwitch.** Control Panel → Network → uncheck *Enable Open vSwitch*, reboot so the
+  NIC returns as a plain `eth0`, then redeploy with `eth0` as the parent (you lose VMM bridged
+  networking). Verify from a LAN device: `curl http://MIHOMO_IP:CONTROLLER_PORT/version` returns JSON
+  **and** a client using `MIHOMO_IP` as its gateway reaches the internet.
+
+**Dashboard-only escape hatch — ipvlan.** If you only need the dashboard (not client routing through
+this gateway), ipvlan L2 children share the parent MAC and traverse OVS:
 
 ```sh
 docker rm -f mihomo mihomo-ui 2>/dev/null
@@ -106,12 +130,30 @@ docker network create -d ipvlan -o ipvlan_mode=l2 -o parent=ovs_eth0 \
 sudo docker compose --env-file ../syno-mihomo-gateway-data/.env up -d
 ```
 
-The installer offers this automatically when it detects an `ovs_*` parent. Then verify from a LAN
-device: `curl http://MIHOMO_IP:CONTROLLER_PORT/version` should return JSON.
+or set `TPROXY_DRIVER=ipvlan` in `.env` and redeploy. The dashboard becomes reachable, but
+LAN clients pointed at `MIHOMO_IP` will **not** be proxied.
 
-**Fallback — disable Open vSwitch.** If ipvlan still can't be reached on your OVS setup, disable
-Open vSwitch (Control Panel → Network → uncheck *Enable Open vSwitch*), reboot so the NIC returns as
-a plain `eth0`, and redeploy with `eth0` as the parent (you lose VMM bridged networking).
+## Backend still times out after the OVS fix (TUN auto-route)
+
+If a **non-NAS LAN device** still times out on `curl http://MIHOMO_IP:CONTROLLER_PORT/version`
+after you have ruled out Open vSwitch (parent is a plain NIC, or ipvlan is reachable), the
+TUN dataplane may be capturing the controller's reply. With `tun.auto-route: true`, mihomo installs
+policy-routing rules that *can* pull the controller's response packets into `mihomo-tun` instead of
+back out the LAN NIC, so the inbound connection never completes. Inspect from inside the container:
+
+```sh
+docker exec mihomo ip -br addr            # MIHOMO_IP must be on eth0, NOT mihomo-tun
+docker exec mihomo ip rule                # expect a 'suppress_prefixlength 0' rule (lets the
+                                          # connected LAN /24 keep same-subnet replies on eth0)
+docker exec mihomo ip route show table all
+```
+
+If a default/blackhole route via `mihomo-tun` shadows the LAN subnet for same-subnet replies, exclude
+the LAN from the tun by adding `route-exclude-address: [ "$SUBNET_CIDR" ]` to the `tun:` block in
+`config/config.template.yaml` and re-render (`docker compose up -d --force-recreate mihomo`), then
+re-verify. Note `route-exclude-address` is reported unreliable on some mihomo versions
+([#2617](https://github.com/MetaCubeX/mihomo/issues/2617)) — confirm with `ip rule` that it took
+effect; if it does not, the robust path is to terminate the dashboard on a non-TUN-affected interface.
 
 ## Containers are healthy but LAN clients have no internet
 

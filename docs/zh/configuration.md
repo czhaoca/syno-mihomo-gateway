@@ -37,7 +37,7 @@ Compose 兼容的引号，因此包含空格、`&`、`#`、`$`、引号或反斜
 | `SUBNET_CIDR` | ✅ | 用于 macvlan 网络的局域网子网。 | `192.168.1.0/24` |
 | `MIHOMO_IP` | ✅ | 分配给 mihomo 容器的静态局域网 IP。**必须是未被占用的地址**——安装器会在所选接口上，基于 NAS 自身 IP 之上推荐下一个空闲地址（用 arping/ping 扫描），并在部署前再次检测冲突。 | `192.168.1.100` |
 | `PARENT_INTERFACE` | | macvlan 父接口（局域网网卡）。安装器会从接口扫描结果填入（无 IP 地址的网卡会被隐藏）；留空则自动检测（开机自愈任务也会自动检测）。 | `eth0` |
-| `TPROXY_DRIVER` | | 网关网络的二层驱动：`macvlan`（默认）或 `ipvlan`。当父接口是 **Open vSwitch** 端口（`ovs_eth0`）时请用 `ipvlan`——其上的 macvlan 子接口路由器可达，但**其他局域网设备无法访问**，导致仪表盘和网关从客户端超时。ipvlan L2 共享父接口 MAC 并可穿越 OVS。检测到 `ovs_*` 父接口时安装器会自动建议。 | `macvlan` |
+| `TPROXY_DRIVER` | | 网关网络的二层驱动：`macvlan`（默认）或 `ipvlan`。网关的**转发**角色必须用 macvlan；在 **Open vSwitch** 父接口（`ovs_eth0`）上 macvlan 子接口无法被局域网其他设备访问，因此优先**改用非 OVS 网卡或关闭 OVS**。`ipvlan` 可穿越 OVS 并恢复**仅仪表盘**访问——它按目的 IP 解复用，**不会**为局域网客户端经代理路由。 | `macvlan` |
 
 ### Mihomo TUN
 

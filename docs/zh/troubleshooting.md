@@ -77,8 +77,27 @@ external-controller-cors:
 `MIHOMO_IP`。这**不是** CORS：CORS 是可达但被浏览器拦截，这里是 TCP 层不可达。上面的 `curl` 即可区分（返回 JSON ⇒
 CORS；超时 ⇒ 本问题）。
 
-**解决——改用 ipvlan 驱动（推荐）。** ipvlan L2 子接口共享父接口已知的 MAC，因此能穿越 Open vSwitch。在 `.env` 中设
-`TPROXY_DRIVER=ipvlan` 后重新部署，或一次性执行：
+在 NAS 上确认驱动/父接口：
+
+```sh
+docker network inspect tproxy_network -f '{{.Driver}} {{index .Options "parent"}}'
+# macvlan ovs_eth0  ⇒  即为本问题
+```
+
+> ⚠️ **ipvlan 不是干净的解决方案。** 透明网关还要*转发*局域网客户端流量：客户端把默认网关指向 `MIHOMO_IP`，
+> 因此容器必须接收三层目的地为任意**外部** IP 的帧。`macvlan` 按子接口自身的 MAC 交换并投递这些帧；而
+> **`ipvlan` L2 按目的 IP 解复用且共享父接口 MAC，因此不会把这些转发帧交给 mihomo**——仪表盘恢复了，但代理会
+> *悄悄停止为客户端路由*。仅当你只需要仪表盘、不通过本网关路由客户端时才使用 ipvlan。
+
+**解决（推荐）——给网关一个非 OVS 的 macvlan 父接口。** 转发角色必须用 macvlan，所以要让 OVS 退出等式：
+
+- **使用非 OVS 网卡。** 若 NAS 还有一块未被 Open vSwitch 接管的物理网卡，重新运行 `sudo sh ./install.sh` 并选择
+  该接口作为父接口（可保留 OVS 供 VMM 使用）。
+- **或关闭 Open vSwitch。** 控制面板 → 网络 → 取消勾选*启用 Open vSwitch*，重启使网卡恢复为普通 `eth0`，再以
+  `eth0` 作为父接口重新部署（会失去 VMM 桥接网络）。随后在局域网设备上验证：`curl
+  http://MIHOMO_IP:CONTROLLER_PORT/version` 返回 JSON，**并且**以 `MIHOMO_IP` 为网关的客户端能正常上网。
+
+**仅仪表盘的退路——ipvlan。** 若只需要仪表盘（不通过本网关路由客户端），ipvlan L2 子接口共享父接口 MAC，可穿越 OVS：
 
 ```sh
 docker rm -f mihomo mihomo-ui 2>/dev/null
@@ -88,11 +107,27 @@ docker network create -d ipvlan -o ipvlan_mode=l2 -o parent=ovs_eth0 \
 sudo docker compose --env-file ../syno-mihomo-gateway-data/.env up -d
 ```
 
-检测到 `ovs_*` 父接口时安装器会自动建议。随后在局域网设备上验证：`curl http://MIHOMO_IP:CONTROLLER_PORT/version`
-应返回 JSON。
+或在 `.env` 中设 `TPROXY_DRIVER=ipvlan` 后重新部署。仪表盘会变得可达，但指向 `MIHOMO_IP` 的客户端**不会**被代理。
 
-**退路——关闭 Open vSwitch。** 若在你的 OVS 配置上 ipvlan 仍不可达，请关闭 Open vSwitch（控制面板 → 网络 → 取消勾选
-*启用 Open vSwitch*），重启使网卡恢复为普通 `eth0`，再以 `eth0` 作为父接口重新部署（会失去 VMM 桥接网络）。
+## OVS 修复后后端仍然超时（TUN auto-route）
+
+若已排除 Open vSwitch（父接口是普通网卡，或 ipvlan 已可达）后，**非 NAS 的局域网设备**仍对
+`curl http://MIHOMO_IP:CONTROLLER_PORT/version` 超时，可能是 TUN 数据面截走了控制器的回包。开启
+`tun.auto-route: true` 时，mihomo 会安装策略路由规则，*可能*把控制器的回包导入 `mihomo-tun` 而非经局域网网卡发回，
+导致入站连接无法完成。在容器内排查：
+
+```sh
+docker exec mihomo ip -br addr            # MIHOMO_IP 必须在 eth0，而非 mihomo-tun
+docker exec mihomo ip rule                # 应有 'suppress_prefixlength 0' 规则（让本网段 /24 的
+                                          # 同子网回包仍走 eth0）
+docker exec mihomo ip route show table all
+```
+
+若有经 `mihomo-tun` 的默认/黑洞路由遮蔽了同子网回包，请在 `config/config.template.yaml` 的 `tun:` 段加入
+`route-exclude-address: [ "$SUBNET_CIDR" ]` 把局域网排除出 tun，并重新渲染
+（`docker compose up -d --force-recreate mihomo`）后再验证。注意 `route-exclude-address` 在部分 mihomo 版本上
+被报告不可靠（[#2617](https://github.com/MetaCubeX/mihomo/issues/2617)）——请用 `ip rule` 确认其已生效；若无效，
+稳健的做法是把仪表盘放到不受 TUN 影响的接口上。
 
 ## mihomo 无法启动 / 反复崩溃重启
 

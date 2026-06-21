@@ -89,14 +89,19 @@ scan_and_prefill() {
 
   # macvlan over Open vSwitch (ovs_eth0) is reachable by the router but NOT by peer
   # LAN devices, so the dashboard backend AND the gateway role time out from clients.
-  # Steer the operator to ipvlan L2, which shares the parent MAC and traverses OVS.
+  # The reliable fix is a non-OVS parent or disabling OVS, because the gateway role
+  # REQUIRES macvlan: ipvlan L2 restores dashboard reachability but cannot forward
+  # LAN-client traffic. So default to NO and offer ipvlan only as a dashboard-only
+  # escape hatch.
   if iface_is_ovs "$CHOSEN_IFACE"; then
     ui_warn "$(msgf warn_ovs_macvlan "$CHOSEN_IFACE")"
-    if ui_yesno "$(msg ask_use_ipvlan)" y; then
+    if ui_yesno "$(msg ask_use_ipvlan)" n; then
       env_set TPROXY_DRIVER ipvlan
       TPROXY_DRIVER=ipvlan; export TPROXY_DRIVER
-      ui_ok "$(msg info_ipvlan_set)"
+      ui_warn "$(msg info_ipvlan_set)"
     else
+      env_set TPROXY_DRIVER macvlan
+      TPROXY_DRIVER=macvlan; export TPROXY_DRIVER
       ui_info "$(msg info_ovs_manual)"
     fi
   fi
@@ -135,6 +140,9 @@ create_network() {
   fi
   _pi="${CHOSEN_IFACE:-$(env_get PARENT_INTERFACE 2>/dev/null || detect_parent_interface "${ROUTER_IP:-}")}"
   [ -n "$_pi" ] || { diagnose "$(msg diag_no_iface_sel)" "$(msg diag_no_iface_sel_fix)"; return 1; }
+  # Safety net for the redeploy/modify paths, which reach create_network without
+  # re-running scan_and_prefill's interactive OVS prompt: flag an OVS parent here too.
+  warn_if_ovs_parent "$_pi"
   validate_network_plan "$_pi" "$SUBNET_CIDR" "$ROUTER_IP" "$MIHOMO_IP" || {
     diagnose "network settings are internally inconsistent" "correct the interface, subnet, router, and Mihomo IP"
     return 1

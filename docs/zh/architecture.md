@@ -67,8 +67,9 @@ NAS 主机做 NAT，也不会干扰主机网络。
 
 > **Open vSwitch 注意事项。** 当父接口是 Open vSwitch 端口（`ovs_eth0`，在 DSM 为 VMM 启用
 > Open vSwitch 时出现）时，*macvlan* 子接口路由器可达，但**其他局域网设备无法访问**，导致仪表盘
-> 和网关从客户端超时。请设 `TPROXY_DRIVER=ipvlan`（安装器会自动建议）——ipvlan L2 共享父接口 MAC
-> 并可穿越 OVS。见[故障排查](troubleshooting.md)。
+> 和网关从客户端超时。转发角色必须用 macvlan（ipvlan L2 按目的 IP 解复用，不会投递客户端的转发帧），
+> 因此正确做法是**改用非 OVS 网卡或关闭 Open vSwitch**。`TPROXY_DRIVER=ipvlan` 只能恢复仪表盘，
+> **不会**为局域网客户端路由——仅适用于只需仪表盘的场景。见[故障排查](troubleshooting.md)。
 
 容器内部由 Mihomo 启用 `mihomo-tun`，并使用 `auto-route` 接管局域网客户端转发来的
 流量。仅有 macvlan 地址只能让容器可达，并不能实现透明代理。Linux `auto-redirect`

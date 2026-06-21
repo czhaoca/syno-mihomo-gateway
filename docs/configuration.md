@@ -37,7 +37,7 @@ backslashes round-trip safely. When editing by hand, keep one `KEY=VALUE` assign
 | `SUBNET_CIDR` | ✅ | Your LAN subnet for the macvlan network. | `192.168.1.0/24` |
 | `MIHOMO_IP` | ✅ | Static LAN IP assigned to the mihomo container. **Must be unused** — the installer suggests the next free address above the NAS's own IP on the chosen interface (scanned with arping/ping) and re-checks for a conflict before deploy. | `192.168.1.100` |
 | `PARENT_INTERFACE` | | Macvlan parent NIC. The installer fills this from the interface scan (address-less NICs are hidden); blank = auto-detect (the boot-up self-heal task auto-detects too). | `eth0` |
-| `TPROXY_DRIVER` | | L2 driver for the gateway network: `macvlan` (default) or `ipvlan`. Use `ipvlan` when the parent is an **Open vSwitch** port (`ovs_eth0`) — a macvlan child there is reachable by the router but **not** by other LAN devices, so the dashboard and the gateway time out from clients. ipvlan L2 shares the parent MAC and traverses OVS. The installer offers this automatically on an `ovs_*` parent. | `macvlan` |
+| `TPROXY_DRIVER` | | L2 driver for the gateway network: `macvlan` (default) or `ipvlan`. macvlan is required for the gateway's **forwarding** role; on an **Open vSwitch** parent (`ovs_eth0`) a macvlan child is unreachable by LAN peers, so prefer a **non-OVS NIC or disabling OVS**. `ipvlan` traverses OVS and restores the **dashboard only** — it demuxes by destination IP and will **not** route LAN clients through the proxy. | `macvlan` |
 
 ### Mihomo TUN
 

@@ -14,10 +14,16 @@
 # works whether or not registry.sh:detect_compose has run yet.
 
 TPROXY_NETWORK="${TPROXY_NETWORK:-tproxy_network}"
-# L2 driver for the gateway network. macvlan is the default; ipvlan (L2 mode) is the
-# fix for an Open vSwitch parent (ovs_eth0): ipvlan children share the parent's
-# already-learned MAC, so they traverse OVS and stay reachable by peer LAN devices,
-# whereas a macvlan child's fresh MAC is not flooded to peer ports.
+# L2 driver for the gateway network. macvlan is the default AND the only driver that
+# supports the transparent-gateway role: LAN clients set their default gateway to
+# MIHOMO_IP, so the container must receive frames whose L3 destination is an arbitrary
+# external IP. macvlan switches on the child's own MAC and delivers them; ipvlan L2
+# demultiplexes by DESTINATION IP and shares the parent MAC, so it will NOT hand those
+# forwarded frames to the container - the proxy silently stops routing clients.
+# ipvlan therefore only restores controller/dashboard reachability on an Open vSwitch
+# parent (ovs_eth0), where a macvlan child's fresh MAC is not flooded to peer ports;
+# it is a dashboard-only workaround, never a fix for the forwarding role. For a working
+# gateway on OVS, use a non-OVS parent NIC or disable Open vSwitch. See warn_if_ovs_parent.
 TPROXY_DRIVER="${TPROXY_DRIVER:-macvlan}"
 
 # Resolve a docker binary without depending on detect_compose having run.
@@ -203,9 +209,29 @@ interface_exists() {
 
 # iface_is_ovs IFACE - 0 if IFACE is an Open vSwitch port (Synology names it
 # ovs_eth0 when OVS is enabled). A macvlan child on an OVS parent is reachable by
-# the router but NOT by peer LAN hosts; the installer steers these to ipvlan.
+# the router but NOT by peer LAN hosts, so both the dashboard and the gateway role
+# time out from clients. The reliable fix is a non-OVS parent or disabling OVS.
 iface_is_ovs() {
   case "$1" in ovs*|*-ovs|ovs_*) return 0 ;; *) return 1 ;; esac
+}
+
+# warn_if_ovs_parent IFACE - emit a loud, non-fatal warning when IFACE is an Open
+# vSwitch port: a macvlan gateway on it is unreachable by LAN peers (dashboard AND
+# client routing time out). The reliable fix is a non-OVS parent NIC or disabling
+# Open vSwitch - NOT ipvlan, which only restores dashboard reachability while
+# silently breaking the transparent-forwarding role (see the TPROXY_DRIVER note).
+# Always returns 0. Used by the non-interactive paths (headless boot self-heal,
+# redeploy/modify) that lack the installer's interactive OVS prompt, so an OVS
+# parent is flagged on EVERY network-creation path, not only first-deploy.
+warn_if_ovs_parent() {
+  _wo_if="$1"; [ -n "$_wo_if" ] || return 0
+  iface_is_ovs "$_wo_if" || return 0
+  log_warn "parent '$_wo_if' is an Open vSwitch port: a macvlan gateway on it is NOT reachable by LAN peers - the dashboard AND client routing will time out"
+  case "${TPROXY_DRIVER:-macvlan}" in
+    ipvlan) log_warn "TPROXY_DRIVER=ipvlan restores dashboard reachability but does NOT forward LAN-client traffic; the transparent proxy will not route clients" ;;
+    *)      log_warn "fix: use a non-OVS parent NIC, or disable Open vSwitch (DSM > Control Panel > Network) and redeploy - see docs/troubleshooting.md" ;;
+  esac
+  return 0
 }
 
 # BusyBox-compatible IPv4/CIDR relationship checks. awk uses exact integer
