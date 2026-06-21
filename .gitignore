@@ -22,6 +22,16 @@ syno-mihomo-gateway-data/
 # Release artifacts (scripts/package.sh output)
 dist/
 
+# Local working copy of a known-good deployment kept for reference only (NEVER shipped).
+legacy/
+
+# Ad-hoc backend-reachability triage tooling + reports (local only; never shipped).
+diagnose-backend.sh
+legacy-capture.sh
+mihomo-legacy-test.sh
+diagnose-backend-*.txt
+legacy-capture-*.txt
+
 # Editor / OS noise
 .DS_Store
 .ruff_cache/

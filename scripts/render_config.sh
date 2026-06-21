@@ -17,10 +17,10 @@ PRE="$CFG_DIR/.config.yaml.pre"
 # Port/secret may default; DNS must come from .env (CLAUDE.md: no hardcoded DNS).
 : "${CONTROLLER_PORT:=9090}"
 : "${CONTROLLER_SECRET:=}"
-# TUN is OPT-IN and OFF by default: tun.auto-route hijacks the external-controller's
-# reply path (mihomo #1493), so the default render OMITS the tun block entirely and
-# mihomo serves a reachable proxy + controller. TUN_ENABLE=true keeps the block.
-: "${TUN_ENABLE:=false}"
+# TUN is ON by default: this is a transparent gateway, so the default render KEEPS the
+# tun block (stack: system, which does NOT hijack the controller reply path - mihomo
+# #1493). Set TUN_ENABLE=false to render WITHOUT tun and run as a plain proxy instead.
+: "${TUN_ENABLE:=true}"
 case "$TUN_ENABLE" in
   true|false) : ;;
   *) echo "ERROR: TUN_ENABLE must be true or false" >&2; exit 1 ;;

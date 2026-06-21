@@ -72,13 +72,15 @@ macvlan 父接口 / 接口不匹配
 --------------------------------------------------------------------------
 面板“无法连接后端”（从局域网设备访问超时）
 --------------------------------------------------------------------------
-  原因：启用了 TUN 的版本会打开 mihomo 的 tun auto-route，它可能截走控制器的
-        回包，使从局域网设备访问 MIHOMO_IP:PORT 超时（尽管容器内 127.0.0.1
-        可正常响应）。这不是 URL/密钥错误，也不是 CORS 拦截。
-  解决：本版本默认关闭 TUN（TUN_ENABLE=false），控制器即可访问，重新部署即可。
-        若你之前开启了 TUN，请在 .env 中设 TUN_ENABLE=false 后重新部署。
-        请从另一台局域网设备验证：curl http://MIHOMO_IP:CONTROLLER_PORT/version
-        应返回 JSON。
+  原因：TUN 块用的是带 auto-route 的 gvisor/mixed 栈，它可能截走控制器的回包，
+        使从局域网设备访问 MIHOMO_IP:PORT 超时（尽管容器内 127.0.0.1 可正常
+        响应）。这不是 URL/密钥错误，不是 CORS 拦截，也不是 Open vSwitch 问题。
+  解决：保持 TUN 开启（TUN_ENABLE=true，默认值）并使用 "system" TUN 栈。与
+        mixed/gvisor + auto-route 不同，system 栈不会截走控制器回包，因此仪表盘
+        后端保持可达，同时透明网关转发照常工作。这是经过验证、可正常工作的配置
+        —— 不要为绕开此问题而关闭 TUN。重新部署即可。请从另一台局域网设备验证：
+        curl http://MIHOMO_IP:CONTROLLER_PORT/version 应返回 JSON。
+        （设置 TUN_ENABLE=false 会运行普通的非网关代理，不会透明拦截局域网客户端。）
 
 --------------------------------------------------------------------------
 镜像拉取失败
@@ -117,7 +119,7 @@ macvlan 父接口 / 接口不匹配
         自动回滚。
         如果日志显示 "iptables (nf_tables): Could not fetch rule set
         generation id"（仅当 TUN_ENABLE=true 时相关），请在 .env 中设置
-        TUN_AUTO_REDIRECT=false 后重新部署，或保持 TUN 关闭。
+        TUN_AUTO_REDIRECT=false 后重新部署；system TUN 栈仍会提供网关数据通路。
 
 --------------------------------------------------------------------------
 容器看似健康，但局域网客户端无法上网

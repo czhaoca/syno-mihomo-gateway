@@ -40,13 +40,17 @@ Network settings
 Mihomo TUN (transparent gateway)
 --------------------------------------------------------------------------
   TUN_ENABLE
-      Transparent-gateway TUN. OFF by default. With TUN off, mihomo runs as a
-      reachable proxy + dashboard controller (use the redir/tproxy/mixed/socks
-      ports, or the dashboard), and the dashboard at MIHOMO_IP:CONTROLLER_PORT
-      stays reachable. Set true ONLY to have mihomo transparently intercept
-      traffic forwarded by LAN clients. Note: tun auto-route can make the
-      dashboard time out on some setups, so leave OFF unless you need it.
-      Only the lowercase values true and false are accepted.
+      Transparent-gateway TUN. ON by default (true). This IS the transparent
+      gateway: the rendered config carries a tun: block on the "system" stack
+      (with allow-lan: true and fake-ip DNS), so LAN devices set their gateway
+      and DNS to MIHOMO_IP and route to the internet through the airport. They
+      can also use MIHOMO_IP:7890 (http) / :7891 (socks) as an explicit proxy.
+      The "system" stack does NOT hijack the controller's reply path, so the
+      dashboard at MIHOMO_IP:CONTROLLER_PORT stays reachable -- this is how
+      mihomo #1493 is actually fixed, so keep TUN ON. Setting TUN_ENABLE=false
+      runs a plain, non-gateway proxy (reachable only via the
+      redir/tproxy/mixed/socks ports, no transparent interception of LAN
+      clients). Only the lowercase values true and false are accepted.
 
   TUN_AUTO_REDIRECT
       Only used when TUN_ENABLE=true: optional Linux TCP redirect optimization.

@@ -34,11 +34,14 @@
 Mihomo TUN（透明网关）
 --------------------------------------------------------------------------
   TUN_ENABLE
-      透明网关 TUN。默认关闭。关闭时，mihomo 作为可访问的代理 + 仪表盘控制器
-      运行（使用下方 redir/tproxy/mixed/socks 端口，或使用仪表盘），
-      MIHOMO_IP:CONTROLLER_PORT 上的仪表盘可正常访问。仅当需要让 mihomo
-      透明拦截局域网客户端转发的流量时才设为 true。注意：tun auto-route 在
-      某些环境会使仪表盘超时，除非确需，否则请保持关闭。只接受小写 true/false。
+      透明网关 TUN。默认开启（true）。这正是透明网关：渲染配置带有使用
+      "system" 栈的 tun: 块（并配 allow-lan: true 与 fake-ip DNS），局域网设备
+      把网关和 DNS 指向 MIHOMO_IP 即可经机场出网。它们也可把 MIHOMO_IP:7890
+      （http）/ :7891（socks）当作显式代理。"system" 栈不会截走控制器回包，因此
+      MIHOMO_IP:CONTROLLER_PORT 上的仪表盘保持可访问——这才是 mihomo #1493 的
+      真正修复方式，所以请保持 TUN 开启。设 TUN_ENABLE=false 会运行普通的非网关
+      代理（仅可通过 redir/tproxy/mixed/socks 端口访问，不会透明拦截局域网客户端）。
+      只接受小写 true/false。
 
   TUN_AUTO_REDIRECT
       仅当 TUN_ENABLE=true 时生效：可选的 Linux TCP 重定向优化。为兼容 DSM，

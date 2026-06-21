@@ -37,13 +37,13 @@ Compose 兼容的引号，因此包含空格、`&`、`#`、`$`、引号或反斜
 | `SUBNET_CIDR` | ✅ | 用于 macvlan 网络的局域网子网。 | `192.168.1.0/24` |
 | `MIHOMO_IP` | ✅ | 分配给 mihomo 容器的静态局域网 IP。**必须是未被占用的地址**——安装器会在所选接口上，基于 NAS 自身 IP 之上推荐下一个空闲地址（用 arping/ping 扫描），并在部署前再次检测冲突。 | `192.168.1.100` |
 | `PARENT_INTERFACE` | | macvlan 父接口（局域网网卡）。安装器会从接口扫描结果填入（无 IP 地址的网卡会被隐藏）；留空则自动检测（开机自愈任务也会自动检测）。 | `eth0` |
-| `TPROXY_DRIVER` | | 网关网络的二层驱动：`macvlan`（默认）或 `ipvlan`。网关的**转发**角色必须用 macvlan；在 **Open vSwitch** 父接口（`ovs_eth0`）上 macvlan 子接口无法被局域网其他设备访问，因此优先**改用非 OVS 网卡或关闭 OVS**。`ipvlan` 可穿越 OVS 并恢复**仅仪表盘**访问——它按目的 IP 解复用，**不会**为局域网客户端经代理路由。 | `macvlan` |
+| `TPROXY_DRIVER` | | 网关网络的二层驱动：`macvlan`（默认）或 `ipvlan`。请保持 `macvlan`——它是网关**转发**角色所必需，且即便在 **Open vSwitch** 父接口（`ovs_eth0`）上，macvlan 子接口的 IP **也可被局域网其他设备访问**（已实测；OVS 不会破坏这一点）。`ipvlan` 按目的 IP 解复用，**不会**为局域网客户端经代理路由，因此不要用它作为网关。 | `macvlan` |
 
 ### Mihomo TUN
 
 | 键 | Req | 说明 | 默认值 |
 |---|:--:|---|---|
-| `TUN_ENABLE` | | 透明网关 TUN，**可选**。默认 `false`：渲染配置会**省略** `tun:` 块，mihomo 作为可访问的代理 + 仪表盘控制器运行（通过 redir/tproxy/mixed 端口），`tun.auto-route` 不会截走控制器回包（mihomo #1493）。仅当需要让 mihomo 透明拦截局域网客户端转发的流量时（且 DSM 内核支持 TUN）才设为 `true`。仅小写 `true`/`false`。 | `false` |
+| `TUN_ENABLE` | | 透明网关 TUN。默认 **`true`**（开启）——渲染配置带有使用 **`system` 栈**的 `tun:` 块（并配 `allow-lan: true` 与 `enhanced-mode: fake-ip`），局域网设备把网关 + DNS 指向 `MIHOMO_IP` 即可经机场出网，也可把 `MIHOMO_IP:7890`/`:7891` 当作显式代理。`system` 栈**不会**截走控制器回包，因此仪表盘后端保持可达——这才是 mihomo #1493 的真正修复方式（不要关闭 TUN）。设 `TUN_ENABLE=false` 会运行**普通的非网关代理**（仅可通过 redir/tproxy/mixed/socks 端口访问，不会透明拦截局域网客户端）。仅小写 `true`/`false`。 | `true` |
 | `TUN_AUTO_REDIRECT` | | 仅当 `TUN_ENABLE=true` 时生效：可选的 Linux TCP 重定向优化。DSM 上应保持 `false`，除非安装程序的一次性 iptables 兼容性探测成功。仅接受小写 `true`/`false`。 | `false` |
 
 ### 端口与控制器

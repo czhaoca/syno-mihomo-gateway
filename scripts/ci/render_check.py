@@ -13,8 +13,9 @@ Enforces:
   * a controller secret containing `&`, `|`, `"` AND `\` renders verbatim
     (secret renders inside `secret: "..."`, so `"`/`\` must be YAML-escaped);
   * external-controller + DNS sections are present and correctly typed (lists);
-  * TUN is opt-in: the DEFAULT render OMITS the tun block (so auto-route never hijacks
-    the controller reply), TUN_ENABLE=true renders a valid transparent-gateway block,
+  * TUN is ON by default (transparent gateway): the DEFAULT render INCLUDES the tun block
+    with stack: system (which does NOT hijack the controller reply path), allow-lan true,
+    and dns enhanced-mode fake-ip; TUN_ENABLE=false OMITS the block (plain proxy);
     auto-redirect defaults to the DSM-safe false, and non-boolean TUN_* fail closed;
   * NO hardcoded DNS server / user network address remains in the committed template
     (CLAUDE.md rule) — only the generic bind/loopback constants are allowed.
@@ -33,7 +34,7 @@ import yaml
 REPO = Path(__file__).resolve().parents[2]
 TEMPLATE = REPO / "config" / "config.template.yaml"
 RENDERER = REPO / "scripts" / "render_config.sh"
-ALLOWED_IPS = {"0.0.0.0", "127.0.0.1"}  # bind-all / loopback are generic, not DNS/user addrs
+ALLOWED_IPS = {"0.0.0.0", "127.0.0.1", "198.18.0.1"}  # bind-all/loopback + fake-ip benchmark range (RFC 2544); generic, not DNS/user addrs
 IPV4 = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
 
 # A deliberately nasty fixture: label prefix + multiple `&`-joined params + `=`
@@ -127,14 +128,29 @@ def main() -> None:
         if not isinstance(servers, list) or not servers:
             fail(f"dns.{field} did not parse as a non-empty list: {servers!r}")
 
-    # 6) DEFAULT render is TUN-OFF (opt-in): the tun block MUST be omitted so
-    # tun.auto-route can never hijack the controller's reply path (mihomo #1493).
-    # The proxy stays usable via the redir/tproxy/mixed ports.
-    if doc.get("tun") is not None:
-        fail(f"default render must OMIT the tun block (TUN_ENABLE off); got {doc.get('tun')!r}")
+    # 6) DEFAULT render is TUN-ON (this is a transparent gateway). The tun block MUST be
+    # present with stack: system, which (unlike mixed/gvisor) does NOT hijack the
+    # external-controller reply path (mihomo #1493) - the VERIFIED working config.
+    dtun = doc.get("tun")
+    if not isinstance(dtun, dict) or dtun.get("enable") is not True:
+        fail(f"default render must INCLUDE an enabled tun block (TUN on by default); got {dtun!r}")
+    if dtun.get("stack") != "system":
+        fail(f"tun.stack must be 'system' to keep the controller reachable; got {dtun.get('stack')!r}")
+    # allow-lan lets LAN devices also use mihomo as an explicit proxy; fake-ip is the
+    # standard DNS mode for a clean TUN gateway.
+    if doc.get("allow-lan") is not True:
+        fail(f"allow-lan must be true for LAN clients; got {doc.get('allow-lan')!r}")
+    if (doc.get("dns") or {}).get("enhanced-mode") != "fake-ip":
+        fail(f"dns.enhanced-mode must be 'fake-ip' for the TUN gateway; got {(doc.get('dns') or {}).get('enhanced-mode')!r}")
     for port_field, expected in (("redir-port", 7892), ("tproxy-port", 7893)):
         if doc.get(port_field) != expected:
-            fail(f"{port_field}={doc.get(port_field)!r}, expected {expected!r} (restored for explicit-redirect proxy)")
+            fail(f"{port_field}={doc.get(port_field)!r}, expected {expected!r}")
+    # The toggle still works: TUN_ENABLE=false OMITS the block (plain-proxy mode).
+    proc_off, off = render(raw, tun_enable="false")
+    if proc_off.returncode != 0 or off is None:
+        fail(f"TUN_ENABLE=false render failed: {proc_off.stderr.strip()}")
+    if yaml.safe_load(off).get("tun") is not None:
+        fail("TUN_ENABLE=false must OMIT the tun block (plain-proxy mode)")
 
     # 7) TUN_ENABLE=true renders the full transparent-gateway block (auto-redirect
     # defaults to the DSM-safe false). A mounted /dev/net/tun alone is insufficient.
@@ -145,7 +161,7 @@ def main() -> None:
     required_tun = {
         "enable": True,
         "device": "mihomo-tun",
-        "stack": "mixed",
+        "stack": "system",
         "auto-route": True,
         "auto-redirect": False,
         "auto-detect-interface": True,
@@ -172,9 +188,10 @@ def main() -> None:
     if proc.returncode == 0 or invalid_te is not None:
         fail("invalid TUN_ENABLE was accepted or wrote config.yaml")
 
-    print("OK: renderer preserves URL/secrets; controller, DNS, CORS valid; TUN is opt-in "
-          "(default OFF omits the block, redir/tproxy restored; TUN_ENABLE=true renders a valid "
-          "transparent-gateway block); auto-redirect/enable opt-ins are strict; no hardcoded literals.")
+    print("OK: renderer preserves URL/secrets; controller, DNS, CORS valid; TUN is ON by "
+          "default (stack: system keeps the controller reachable, allow-lan + fake-ip set; "
+          "TUN_ENABLE=false omits the block); auto-redirect/enable opt-ins are strict; "
+          "no hardcoded literals.")
 
 
 if __name__ == "__main__":

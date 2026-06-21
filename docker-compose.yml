@@ -33,10 +33,10 @@ services:
       - DNS_DEFAULT_NAMESERVER=${DNS_DEFAULT_NAMESERVER}
       - DNS_NAMESERVER=${DNS_NAMESERVER}
       - DNS_FALLBACK=${DNS_FALLBACK}
-      # Transparent-gateway TUN is OPT-IN and OFF by default (a missing key on older
-      # .env files renders WITHOUT the tun block, so the controller stays reachable).
-      # Set TUN_ENABLE=true in .env to intercept LAN-client traffic via mihomo-tun.
-      - TUN_ENABLE=${TUN_ENABLE:-false}
+      # Transparent-gateway TUN is ON by default (stack: system keeps the controller
+      # reachable - mihomo #1493). LAN devices set their gateway + DNS to MIHOMO_IP and
+      # route through mihomo. Set TUN_ENABLE=false in .env to run as a plain proxy.
+      - TUN_ENABLE=${TUN_ENABLE:-true}
       # Only consulted when TUN_ENABLE=true: optional Linux TCP redirect optimization.
       - TUN_AUTO_REDIRECT=${TUN_AUTO_REDIRECT:-false}
       - MIHOMO_TEMPLATE=/etc/syno-mihomo/config.template.yaml

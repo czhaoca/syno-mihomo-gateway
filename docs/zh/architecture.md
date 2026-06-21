@@ -65,22 +65,27 @@ flowchart LR
 接入该网络，因此它会以**你 LAN 上的一等设备**的形式出现，拥有自己的 IP——它不会通过
 NAS 主机做 NAT，也不会干扰主机网络。
 
-> **Open vSwitch 注意事项。** 当父接口是 Open vSwitch 端口（`ovs_eth0`，在 DSM 为 VMM 启用
-> Open vSwitch 时出现）时，*macvlan* 子接口路由器可达，但**其他局域网设备无法访问**，导致仪表盘
-> 和网关从客户端超时。转发角色必须用 macvlan（ipvlan L2 按目的 IP 解复用，不会投递客户端的转发帧），
-> 因此正确做法是**改用非 OVS 网卡或关闭 Open vSwitch**。`TPROXY_DRIVER=ipvlan` 只能恢复仪表盘，
-> **不会**为局域网客户端路由——仅适用于只需仪表盘的场景。见[故障排查](troubleshooting.md)。
+> **Open vSwitch 说明。** 当父接口是 Open vSwitch 端口（`ovs_eth0`，在 DSM 为 VMM 启用
+> Open vSwitch 时出现）时，macvlan 子接口照常工作：在 OVS 父接口上，Docker macvlan 子接口的 IP
+> **可被其他局域网设备访问**（已实测——位于某个 macvlan IP 上的干净容器，能从另一台局域网设备
+> 应答 ping、ARP 和 HTTP）。OVS **不是**“仪表盘/网关超时”的原因。转发角色应使用 macvlan
+> （ipvlan L2 按目的 IP 解复用，不会投递客户端的转发帧），因此请保持 `TPROXY_DRIVER=macvlan`。
+> 见[故障排查](troubleshooting.md)。
 
-默认情况下（`TUN_ENABLE=false`）渲染配置**不含 `tun:` 块**：mihomo 作为可访问的
-代理 + 仪表盘控制器在 macvlan 地址上运行，通过 `redir`/`tproxy`/`mixed`/`socks`
-端口提供服务（把客户端指向其中之一，或使用仪表盘）。之所以默认关闭，是因为
-mihomo 的 `mihomo-tun` `auto-route` 会安装策略路由，可能**截走 `external-controller`
-的回包**，使仪表盘超时（mihomo #1493）。
+这是一个**透明网关**。默认情况下（`TUN_ENABLE=true`）渲染配置带有 `tun:` 块，使用
+**`system` TUN 栈**，并配合 `allow-lan: true` 与 `enhanced-mode: fake-ip` DNS。局域网设备
+把**网关 + DNS 指向 `MIHOMO_IP`**，即可经机场/订阅出网，无需任何客户端软件。由于设置了
+`allow-lan`，它们**也**可以把 `MIHOMO_IP:7890`（http）/ `MIHOMO_IP:7891`（socks）当作显式代理。
 
-设置 `TUN_ENABLE=true` 才重新启用 `mihomo-tun` + `auto-route`——用于透明拦截局域网
-客户端转发流量（且 DSM 内核支持 TUN）。`auto-redirect`（`TUN_AUTO_REDIRECT`）是进一步
-的可选 TCP 优化，默认关闭（当前 nft 后端 iptables 与较旧 DSM 内核不兼容）。**仅当
-`TUN_ENABLE=true` 时**健康检查才要求运行时 TUN 网卡；否则只检查控制器。
+关键在于 **`system` 栈**。与带 `auto-route` 的 `stack: mixed`/`gvisor` 不同，`system` 栈**不会**
+截走 `external-controller` 的回包，因此 `MIHOMO_IP:CONTROLLER_PORT` 上的仪表盘后端对局域网始终
+可达。这才是 [mihomo #1493](https://github.com/MetaCubeX/mihomo/issues/1493) 的真正修复方式：保持
+TUN **开启**并使用 `stack: system`，不要关闭 TUN。
+
+设置 `TUN_ENABLE=false` 会去掉 `tun:` 块，让 mihomo 作为**普通（非网关）代理**运行——仅可通过
+`redir`/`tproxy`/`mixed`/`socks` 端口访问，不会透明拦截局域网客户端。`auto-redirect`
+（`TUN_AUTO_REDIRECT`）是进一步的可选 TCP 优化，默认关闭（当前 nft 后端 iptables 与较旧 DSM
+内核不兼容）。**仅当 `TUN_ENABLE=true` 时**健康检查才要求运行时 TUN 网卡；否则只检查控制器。
 
 ```
         LAN 192.168.1.0/24

@@ -66,27 +66,32 @@ is the NAS's active interface (auto-detected via the route to `ROUTER_IP`). miho
 with the static `MIHOMO_IP`, so it appears as a **first-class device on your LAN** with its own IP
 — it does not NAT through the NAS host and does not disturb host networking.
 
-> **Open vSwitch caveat.** When the parent is an Open vSwitch port (`ovs_eth0`, present when DSM's
-> Open vSwitch is enabled for VMM), a *macvlan* child is reachable by the router but **not** by
-> peer LAN devices, so the dashboard and the gateway time out from clients. macvlan is required for
-> the forwarding role (ipvlan L2 demuxes by destination IP and will not deliver clients' forwarded
-> frames), so the fix is a **non-OVS parent NIC or disabling Open vSwitch**. `TPROXY_DRIVER=ipvlan`
-> restores the dashboard but does **not** route LAN clients — use it only for dashboard-only setups.
+> **Open vSwitch note.** When the parent is an Open vSwitch port (`ovs_eth0`, present when DSM's
+> Open vSwitch is enabled for VMM), the macvlan child still works: a Docker macvlan child IP **is
+> reachable from peer LAN devices** on an OVS-backed parent (verified empirically — a clean container
+> at a macvlan IP answered ping, ARP, and HTTP from a separate LAN device). OVS is **not** a cause of
+> "dashboard/gateway times out". macvlan is the right driver for the forwarding role (ipvlan L2 demuxes
+> by destination IP and will not deliver clients' forwarded frames), so keep `TPROXY_DRIVER=macvlan`.
 > See [Troubleshooting](troubleshooting.md).
 
-By default (`TUN_ENABLE=false`) the rendered config has **no `tun:` block**: mihomo runs as a
-reachable proxy + dashboard controller on the macvlan address, served through its `redir`/`tproxy`/
-`mixed`/`socks` ports (point a client at one of those, or use the dashboard). This default exists
-because mihomo's `mihomo-tun` `auto-route` installs policy routing that can **hijack the
-`external-controller`'s reply path**, making the dashboard time out
-([mihomo #1493](https://github.com/MetaCubeX/mihomo/issues/1493)).
+This is a **transparent gateway**. By default (`TUN_ENABLE=true`) the rendered config carries a
+`tun:` block using the **`system` TUN stack** plus `allow-lan: true` and `enhanced-mode: fake-ip`
+DNS. LAN devices point their **gateway + DNS at `MIHOMO_IP`** and route to the internet through the
+airport/subscription with no client software. They can **also** use `MIHOMO_IP:7890` (http) /
+`MIHOMO_IP:7891` (socks) as an explicit proxy, since `allow-lan` is set.
 
-Setting `TUN_ENABLE=true` opts back into the `mihomo-tun` interface with `auto-route` — the
-interception dataplane for packets *transparently forwarded* by LAN clients — for setups whose DSM
-kernel supports it. Linux `auto-redirect` (`TUN_AUTO_REDIRECT`) is a further optional TCP optimization,
-off by default because current nft-backed iptables userspace is incompatible with older DSM kernels.
-The health gate requires the runtime TUN interface **only when `TUN_ENABLE=true`**; otherwise it gates
-on the controller alone.
+The critical detail is the **`system` stack**. Unlike `stack: mixed`/`gvisor` with `auto-route`, the
+`system` stack does **not** hijack the `external-controller`'s reply path, so the dashboard backend at
+`MIHOMO_IP:CONTROLLER_PORT` stays reachable from the LAN. This is what actually fixes
+[mihomo #1493](https://github.com/MetaCubeX/mihomo/issues/1493): keep TUN **on** with `stack: system`,
+do not turn TUN off.
+
+Setting `TUN_ENABLE=false` drops the `tun:` block and runs mihomo as a **plain (non-gateway) proxy** —
+reachable only via the `redir`/`tproxy`/`mixed`/`socks` ports, with no transparent interception of LAN
+clients. Linux `auto-redirect` (`TUN_AUTO_REDIRECT`) is a further optional TCP optimization, off by
+default because current nft-backed iptables userspace is incompatible with older DSM kernels. The
+health gate requires the runtime TUN interface **only when `TUN_ENABLE=true`**; otherwise it gates on
+the controller alone.
 
 ```
         LAN 192.168.1.0/24

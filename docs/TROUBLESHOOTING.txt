@@ -79,15 +79,20 @@ Cannot open the dashboard from the NAS
 --------------------------------------------------------------------------
 Dashboard "Failed to connect to the backend" (times out from a LAN device)
 --------------------------------------------------------------------------
-  Cause: gateways built on the TUN releases enabled mihomo's tun auto-route,
-         which can capture the controller's reply and make MIHOMO_IP:PORT
-         time out from LAN devices (even though it answers on 127.0.0.1
-         inside the container). It is NOT a wrong URL/secret or a CORS block.
-  Fix:   this release keeps TUN OFF by default (TUN_ENABLE=false), so the
-         controller is reachable. Just redeploy. If you previously turned TUN
-         on, set TUN_ENABLE=false in .env and redeploy. Verify from another
-         LAN device: curl http://MIHOMO_IP:CONTROLLER_PORT/version returns
-         JSON.
+  Cause: the TUN block is using a gvisor/mixed stack with auto-route, which
+         can capture the controller's reply and make MIHOMO_IP:PORT time out
+         from LAN devices (even though it answers on 127.0.0.1 inside the
+         container). It is NOT a wrong URL/secret or a CORS block, and it is
+         NOT an Open vSwitch problem.
+  Fix:   keep TUN ON (TUN_ENABLE=true, the default) with the "system" TUN
+         stack. Unlike mixed/gvisor + auto-route, the system stack does NOT
+         hijack the controller's reply path, so the dashboard backend stays
+         reachable while transparent gateway forwarding keeps working. This is
+         the verified working configuration -- do NOT turn TUN off to work
+         around this. Redeploy. Verify from another LAN device:
+         curl http://MIHOMO_IP:CONTROLLER_PORT/version returns JSON.
+         (Setting TUN_ENABLE=false runs a plain, non-gateway proxy and does
+         not transparently intercept LAN clients.)
 
 --------------------------------------------------------------------------
 Image pull fails
@@ -126,7 +131,8 @@ Gateway is "unhealthy" after deploy
          and roll back automatically if it stays unhealthy.
          If the log says "iptables (nf_tables): Could not fetch rule set
          generation id" (only relevant with TUN_ENABLE=true), set
-         TUN_AUTO_REDIRECT=false in .env and redeploy, or leave TUN off.
+         TUN_AUTO_REDIRECT=false in .env and redeploy; the system TUN stack
+         still provides the gateway dataplane.
 
 --------------------------------------------------------------------------
 Containers look healthy but LAN clients have no internet

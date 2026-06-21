@@ -77,9 +77,9 @@ sudo ./scripts/setup_network.sh
 This script:
 - creates `/dev/net/tun` if missing and fixes its permissions;
 - auto-detects the parent interface (the one that routes to `ROUTER_IP`; falls back to the
-  default route). An **Open vSwitch** parent (`ovs_eth0`) cannot host a working macvlan gateway —
-  pick a **non-OVS NIC** or disable Open vSwitch; `TPROXY_DRIVER=ipvlan` only restores the dashboard,
-  not client routing — see [Troubleshooting](troubleshooting.md);
+  default route). An **Open vSwitch** parent (`ovs_eth0`) is fine — a macvlan child IS reachable
+  from LAN peers on OVS (verified empirically), so keep `TPROXY_DRIVER=macvlan` and do not switch to
+  `ipvlan` (`ipvlan` cannot route LAN clients) — see [Troubleshooting](troubleshooting.md);
 - creates or reuses a matching `tproxy_network` (macvlan by default, ipvlan when
   `TPROXY_DRIVER=ipvlan`) with your `SUBNET_CIDR` / `ROUTER_IP`; it refuses to remove a mismatched
   existing network;

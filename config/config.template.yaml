@@ -10,26 +10,30 @@ socks-port: 7891
 redir-port: 7892
 tproxy-port: 7893
 mixed-port: 7894
+# Rule-based routing, and accept connections from other LAN hosts so devices can use
+# mihomo as an explicit proxy (<MIHOMO_IP>:7890) in addition to the TUN gateway below.
+mode: rule
+allow-lan: true
 
-# Optional transparent-gateway dataplane (OPT-IN; default OFF). The renderer
-# (scripts/render_config.sh) OMITS everything between the two markers below unless
-# TUN_ENABLE=true in .env. This is deliberate: tun.auto-route installs policy routing
-# that can HIJACK the external-controller's reply packets into mihomo-tun, so the
-# dashboard at ${MIHOMO_IP}:${CONTROLLER_PORT} times out (mihomo #1493). With TUN off
-# (the default) mihomo runs as a reachable proxy + controller using the redir/tproxy/
-# mixed ports above. Set TUN_ENABLE=true ONLY to have mihomo transparently intercept
-# traffic forwarded by LAN clients (and only on a DSM kernel that supports it).
-# auto-redirect stays opt-in (TUN_AUTO_REDIRECT) because nft-backed iptables breaks on
-# older DSM kernels.
+# Transparent-gateway dataplane. ON by default (TUN_ENABLE=true) because the PURPOSE of
+# this gateway is to let LAN devices point their gateway + DNS at mihomo's own IP and
+# reach the internet through the airport. The renderer (scripts/render_config.sh) keeps
+# the block when TUN_ENABLE=true and OMITS it when false (run as a plain proxy instead).
+#
+# CRITICAL: stack MUST be `system`. With `stack: mixed`/`gvisor` + auto-route, mihomo's
+# policy routing HIJACKS the external-controller's reply packets, so the dashboard
+# backend at ${MIHOMO_IP}:${CONTROLLER_PORT} times out (mihomo #1493). The `system`
+# stack keeps the controller reachable from the LAN - this is the VERIFIED working
+# configuration. auto-redirect stays opt-in (TUN_AUTO_REDIRECT, default false) because
+# nft-backed iptables breaks on older DSM kernels.
 # {{TUN_BEGIN}}
 tun:
   enable: true
+  stack: system
   device: mihomo-tun
-  stack: mixed
   auto-route: true
   auto-redirect: {{TUN_AUTO_REDIRECT}}
   auto-detect-interface: true
-  strict-route: false
   dns-hijack:
     - any:53
     - tcp://any:53
@@ -56,7 +60,13 @@ external-controller-cors:
 dns:
   enable: true
   listen: 0.0.0.0:53
-  enhanced-mode: redir-host
+  ipv6: false
+  # fake-ip is the standard mode for a TUN transparent gateway: mihomo answers DNS with
+  # an address from the benchmark range below (RFC 2544 - NOT a real or user network) so
+  # the TUN dataplane cleanly captures every connection by destination. The range is a
+  # fixed mihomo constant, not a DNS server or your LAN.
+  enhanced-mode: fake-ip
+  fake-ip-range: 198.18.0.1/16
   # DNS servers are injected from .env as comma-separated lists -> YAML flow sequences.
   default-nameserver: [ {{DNS_DEFAULT_NAMESERVER}} ]
   nameserver: [ {{DNS_NAMESERVER}} ]

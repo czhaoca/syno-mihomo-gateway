@@ -148,9 +148,10 @@ load_env() {
   : "${HEALTH_INTERVAL:=10}"
   : "${HEALTH_MAX_RESTARTS:=3}"
   : "${TUN_DEVICE:=mihomo-tun}"
-  # Transparent-gateway TUN is opt-in; OFF by default so the controller reply path
-  # is never hijacked (see scripts/render_config.sh and docs/troubleshooting.md).
-  : "${TUN_ENABLE:=false}"
+  # Transparent-gateway TUN is ON by default (stack: system keeps the controller
+  # reachable - see scripts/render_config.sh and docs/troubleshooting.md). Set
+  # TUN_ENABLE=false to run as a plain (non-gateway) proxy.
+  : "${TUN_ENABLE:=true}"
   : "${TUN_AUTO_REDIRECT:=false}"
   : "${LOCK_DIR:=/tmp/syno-mihomo-update.lock}"
   export TUN_ENABLE TUN_AUTO_REDIRECT

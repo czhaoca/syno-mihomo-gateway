@@ -37,13 +37,13 @@ backslashes round-trip safely. When editing by hand, keep one `KEY=VALUE` assign
 | `SUBNET_CIDR` | ✅ | Your LAN subnet for the macvlan network. | `192.168.1.0/24` |
 | `MIHOMO_IP` | ✅ | Static LAN IP assigned to the mihomo container. **Must be unused** — the installer suggests the next free address above the NAS's own IP on the chosen interface (scanned with arping/ping) and re-checks for a conflict before deploy. | `192.168.1.100` |
 | `PARENT_INTERFACE` | | Macvlan parent NIC. The installer fills this from the interface scan (address-less NICs are hidden); blank = auto-detect (the boot-up self-heal task auto-detects too). | `eth0` |
-| `TPROXY_DRIVER` | | L2 driver for the gateway network: `macvlan` (default) or `ipvlan`. macvlan is required for the gateway's **forwarding** role; on an **Open vSwitch** parent (`ovs_eth0`) a macvlan child is unreachable by LAN peers, so prefer a **non-OVS NIC or disabling OVS**. `ipvlan` traverses OVS and restores the **dashboard only** — it demuxes by destination IP and will **not** route LAN clients through the proxy. | `macvlan` |
+| `TPROXY_DRIVER` | | L2 driver for the gateway network: `macvlan` (default) or `ipvlan`. Keep `macvlan` — it is required for the gateway's **forwarding** role, and a macvlan child IS reachable from LAN peers even on an **Open vSwitch** parent (`ovs_eth0`) (verified empirically; OVS does not break this). `ipvlan` demuxes by destination IP and will **not** route LAN clients through the proxy, so do not use it for the gateway. | `macvlan` |
 
 ### Mihomo TUN
 
 | Key | Req | Description | Default |
 |---|:--:|---|---|
-| `TUN_ENABLE` | | Transparent-gateway TUN, **opt-in**. Default `false`: the rendered config **omits** the `tun:` block, so mihomo runs as a reachable proxy + dashboard controller (via the redir/tproxy/mixed ports) and `tun.auto-route` can't hijack the controller's reply path (mihomo #1493). Set `true` only to have mihomo transparently intercept traffic forwarded by LAN clients (on a DSM kernel that supports TUN). Only lowercase `true`/`false`. | `false` |
+| `TUN_ENABLE` | | Transparent-gateway TUN. Default **`true`** (ON) — the rendered config carries a `tun:` block using the **`system` stack** (with `allow-lan: true` and `enhanced-mode: fake-ip`), so LAN devices set gateway + DNS to `MIHOMO_IP` and route to the internet through the airport, and may also use `MIHOMO_IP:7890`/`:7891` as an explicit proxy. The `system` stack does **not** hijack the controller's reply path, so the dashboard backend stays reachable — this is how mihomo #1493 is actually fixed (do not turn TUN off). Set `TUN_ENABLE=false` to run a **plain, non-gateway proxy** (reachable only via the redir/tproxy/mixed/socks ports, no transparent interception of LAN clients). Only lowercase `true`/`false`. | `true` |
 | `TUN_AUTO_REDIRECT` | | Only consulted when `TUN_ENABLE=true`: optional Linux TCP redirect optimization. Keep `false` on DSM unless the installer's disposable iptables compatibility probe succeeds. Only lowercase `true`/`false` are accepted. | `false` |
 
 ### Ports & controller
