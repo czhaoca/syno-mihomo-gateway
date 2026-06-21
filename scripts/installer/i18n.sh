@@ -80,10 +80,10 @@ _msg_en() {
     diag_no_iface)    printf '%s' 'no interface chosen' ;;
     diag_no_iface_fix) printf '%s' 're-run and pick a number, or type a valid interface name' ;;
     ok_iface)         printf '%s' 'interface: %s' ;;
-    warn_ovs_macvlan) printf '%s' "'%s' is an Open vSwitch port. A transparent gateway needs a macvlan parent, but a macvlan child on OVS is NOT reachable by LAN peers - so BOTH the dashboard and client routing time out. The reliable fix is a non-OVS parent NIC, or disabling Open vSwitch (DSM > Control Panel > Network) and redeploying." ;;
-    ask_use_ipvlan)   printf '%s' 'Use ipvlan instead? It restores the dashboard but does NOT route LAN clients through the proxy (dashboard-only).' ;;
-    info_ipvlan_set)  printf '%s' 'using ipvlan L2 - the dashboard will be reachable, but the transparent proxy will NOT forward LAN-client traffic' ;;
-    info_ovs_manual)  printf '%s' 'keeping macvlan - re-run the installer and pick a non-OVS NIC, or disable Open vSwitch and redeploy (see Troubleshooting)' ;;
+    warn_ovs_macvlan) printf '%s' "'%s' is an Open vSwitch port. On some OVS configs a macvlan child is not reachable by other LAN devices (the dashboard/gateway can time out from clients) - though many OVS setups work fine. If LAN devices can't reach the gateway after deploy, see Troubleshooting." ;;
+    ask_use_ipvlan)   printf '%s' 'If you hit that, try the ipvlan driver instead? (It can traverse OVS but does NOT route LAN clients through the proxy - dashboard-only.)' ;;
+    info_ipvlan_set)  printf '%s' 'using ipvlan L2 - the dashboard can be reachable, but the transparent proxy will NOT forward LAN-client traffic' ;;
+    info_ovs_manual)  printf '%s' 'keeping macvlan (works on most OVS setups) - if LAN devices cannot reach the gateway, see Troubleshooting' ;;
     warn_ip_taken)    printf '%s' 'IP %s already answers on the LAN - likely used by another device (DHCP?).' ;;
     ask_use_ip)       printf '%s' 'use %s anyway?' ;;
     info_ip_unverified) printf '%s' 'could not verify %s is free (no ping/arping here) - make sure it is unused' ;;
@@ -229,7 +229,7 @@ _msg_en() {
     rep_backend_line) printf '%s' '    Host=%s  Port=%s  Secret=<your controller secret>' ;;
     rep_point_client) printf '%s' "Point a client's gateway + DNS at %s to route it through the proxy." ;;
     rep_warn_isolation) printf '%s' 'The NAS itself cannot reach %s (macvlan isolation) - always test from another device.' ;;
-    rep_reach_test)   printf '%s' 'Verify from a LAN device (NOT the NAS): curl http://%s:%s/version returns JSON. If it times out, the IP is unreachable at L2 - on Open vSwitch use a non-OVS parent NIC or disable OVS and redeploy (ipvlan fixes only the dashboard, not client routing) - see Troubleshooting.' ;;
+    rep_reach_test)   printf '%s' 'Verify from a LAN device (NOT the NAS - macvlan hides the IP from the NAS itself): curl http://%s:%s/version returns JSON. If it still times out from another device, see Troubleshooting.' ;;
     rep_next)         printf '%s' 'Next: set up automatic image updates from the main menu (option 2).' ;;
     step_deploy_e2e)  printf '%s' 'End-to-end deploy' ;;
 
@@ -372,10 +372,10 @@ _msg_zh() {
     diag_no_iface)    printf '%s' '未选择任何接口' ;;
     diag_no_iface_fix) printf '%s' '请重新运行并选择一个编号，或输入有效的接口名称' ;;
     ok_iface)         printf '%s' '接口：%s' ;;
-    warn_ovs_macvlan) printf '%s' "'%s' 是 Open vSwitch 端口。透明网关需要 macvlan 父接口，但 OVS 上的 macvlan 子接口无法被局域网其他设备访问——因此仪表盘和客户端转发都会超时。可靠的解决办法是改用非 OVS 的物理网卡，或在 DSM（控制面板 > 网络）中关闭 Open vSwitch 后重新部署。" ;;
-    ask_use_ipvlan)   printf '%s' '改用 ipvlan？它能恢复仪表盘访问，但不会把局域网客户端流量经代理转发（仅限仪表盘）。' ;;
+    warn_ovs_macvlan) printf '%s' "'%s' 是 Open vSwitch 端口。在某些 OVS 配置下，其上的 macvlan 子接口无法被局域网其他设备访问（仪表盘/网关可能从客户端超时）——但多数 OVS 环境可正常工作。若部署后局域网设备无法访问网关，请见故障排查。" ;;
+    ask_use_ipvlan)   printf '%s' '如遇此问题，是否改用 ipvlan 驱动？（它可穿越 OVS，但不会把局域网客户端流量经代理转发——仅限仪表盘。）' ;;
     info_ipvlan_set)  printf '%s' '使用 ipvlan L2——仪表盘可访问，但透明代理不会转发局域网客户端流量' ;;
-    info_ovs_manual)  printf '%s' '保持 macvlan——请重新运行安装器并选择非 OVS 网卡，或关闭 Open vSwitch 后重新部署（见故障排查）' ;;
+    info_ovs_manual)  printf '%s' '保持 macvlan（多数 OVS 环境可用）——若局域网设备无法访问网关，请见故障排查' ;;
     warn_ip_taken)    printf '%s' 'IP %s 已在 LAN 上有响应 - 很可能被其他设备占用（DHCP？）。' ;;
     ask_use_ip)       printf '%s' '仍要使用 %s 吗？' ;;
     info_ip_unverified) printf '%s' '无法验证 %s 是否空闲（此处无 ping/arping）- 请确保它未被占用' ;;
@@ -521,7 +521,7 @@ _msg_zh() {
     rep_backend_line) printf '%s' '    Host=%s  Port=%s  Secret=<你的控制器密钥>' ;;
     rep_point_client) printf '%s' '将客户端的网关 + DNS 指向 %s，即可让其流量经由代理。' ;;
     rep_warn_isolation) printf '%s' 'NAS 自身无法访问 %s（macvlan 隔离）- 请始终从另一台设备测试。' ;;
-    rep_reach_test)   printf '%s' '请从局域网设备（非 NAS）验证：curl http://%s:%s/version 应返回 JSON。若超时，说明该 IP 在二层不可达——在 Open vSwitch 上请改用非 OVS 网卡或关闭 OVS 后重新部署（ipvlan 只能修复仪表盘，不能转发客户端流量）——见故障排查。' ;;
+    rep_reach_test)   printf '%s' '请从局域网设备（非 NAS——macvlan 使 NAS 自身无法访问该 IP）验证：curl http://%s:%s/version 应返回 JSON。若从其他设备仍超时，请见故障排查。' ;;
     rep_next)         printf '%s' '下一步：在主菜单设置自动镜像更新（选项 2）。' ;;
     step_deploy_e2e)  printf '%s' '端到端部署' ;;
 

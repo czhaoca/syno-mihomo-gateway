@@ -67,67 +67,45 @@ external-controller-cors:
 `config/config.template.yaml`（或已渲染的 `…-data/config/config.yaml`），然后用
 `docker compose up -d --force-recreate mihomo` 重新渲染——容器入口会在启动时按模板重新生成 `config.yaml`。
 
-## 仪表盘/网关从局域网超时（macvlan 跑在 Open vSwitch 上）
+## 仪表盘超时（TUN auto-route 截走控制器回包）—— 最常见
 
-**症状：** 仪表盘后端**以及**将 `MIHOMO_IP` 作为网关的客户端都超时——即使测试设备与网关**同一子网**。
-在局域网设备上 `curl http://MIHOMO_IP:CONTROLLER_PORT/version` 卡住，但部署时的代理出口测试通过、路由器也能访问该 IP。
+**症状：** 从**非 NAS 的局域网设备** `curl http://MIHOMO_IP:CONTROLLER_PORT/version` **超时**（不是
+"connection refused"、不是 CORS、不是 401），但部署报告健康，且容器内
+`docker exec mihomo wget -qO- http://127.0.0.1:9090/version` 返回 JSON。受影响的是 **v1.2.11 – v1.2.18** 部署的网关。
 
-**原因：** macvlan 的父接口是 **Open vSwitch** 端口（`ovs_eth0`）。OVS 桥上的 Docker *macvlan* 子接口会获得一个
-新 MAC，OVS 会把它转发给路由器（所以出口和回包正常），但**不会**泛洪到其他端口——因此其他局域网设备都无法访问
-`MIHOMO_IP`。这**不是** CORS：CORS 是可达但被浏览器拦截，这里是 TCP 层不可达。上面的 `curl` 即可区分（返回 JSON ⇒
-CORS；超时 ⇒ 本问题）。
+**原因：** 这些版本渲染了带 `auto-route: true` 的 `tun:` 块。mihomo 的 TUN auto-route 会安装策略路由
+（高优先级 `ip rule` → 表 2022），把控制器的回包**截入 `mihomo-tun`**，而不是经局域网网卡发回，
+导致外部 TCP 连接无法完成（[mihomo #1493](https://github.com/MetaCubeX/mihomo/issues/1493)）。容器内
+`127.0.0.1` 探测仍通过，是因为环回不经该策略规则——所以部署看起来健康，但仪表盘连不上。
 
-在 NAS 上确认驱动/父接口：
+**解决：** 升级到 **v1.2.19+**，其中 TUN **可选且默认关闭**——渲染配置不含 `tun:` 块，控制器即可访问
+（代理走 redir/tproxy/mixed 端口），重新部署即可。若要在不升级的情况下原地修复旧部署，在 `.env` 中设
+`TUN_ENABLE=false`（或从 `…-data/config/config.yaml` 删除 `tun:` 块）后
+`docker compose up -d --force-recreate mihomo`。用以下命令确认：
+
+```sh
+docker exec mihomo ip rule                       # 不应有把回包导入 tun 的高优先级规则
+docker network inspect tproxy_network -f '{{.Driver}} {{index .Options "parent"}}'
+```
+
+若确实需要 mihomo 透明拦截局域网客户端转发的流量（且 DSM 内核支持 TUN），设 `TUN_ENABLE=true`——但此时
+仪表盘在某些环境又会超时，除非把局域网排除出 tun（`route-exclude-address`，部分版本不可靠，
+[#2617](https://github.com/MetaCubeX/mihomo/issues/2617)）。
+
+## 仪表盘超时（macvlan 跑在 Open vSwitch 上）—— 较少见，依配置而定
+
+若你**不在**受影响的 TUN 版本上（或 `TUN_ENABLE=false`），而局域网设备仍超时，则 macvlan 父接口可能是
+**Open vSwitch** 端口（`ovs_eth0`）。在*某些* OVS 配置下，Docker macvlan 子接口的新 MAC 不会泛洪到其他端口，
+导致局域网设备无法访问 `MIHOMO_IP`——但多数 OVS 环境可正常工作（并非必然）。用同样的 `curl` 与 CORS 区分
+（返回 JSON ⇒ CORS；超时 ⇒ TCP 不可达），并确认父接口：
 
 ```sh
 docker network inspect tproxy_network -f '{{.Driver}} {{index .Options "parent"}}'
-# macvlan ovs_eth0  ⇒  即为本问题
 ```
 
-> ⚠️ **ipvlan 不是干净的解决方案。** 透明网关还要*转发*局域网客户端流量：客户端把默认网关指向 `MIHOMO_IP`，
-> 因此容器必须接收三层目的地为任意**外部** IP 的帧。`macvlan` 按子接口自身的 MAC 交换并投递这些帧；而
-> **`ipvlan` L2 按目的 IP 解复用且共享父接口 MAC，因此不会把这些转发帧交给 mihomo**——仪表盘恢复了，但代理会
-> *悄悄停止为客户端路由*。仅当你只需要仪表盘、不通过本网关路由客户端时才使用 ipvlan。
-
-**解决（推荐）——给网关一个非 OVS 的 macvlan 父接口。** 转发角色必须用 macvlan，所以要让 OVS 退出等式：
-
-- **使用非 OVS 网卡。** 若 NAS 还有一块未被 Open vSwitch 接管的物理网卡，重新运行 `sudo sh ./install.sh` 并选择
-  该接口作为父接口（可保留 OVS 供 VMM 使用）。
-- **或关闭 Open vSwitch。** 控制面板 → 网络 → 取消勾选*启用 Open vSwitch*，重启使网卡恢复为普通 `eth0`，再以
-  `eth0` 作为父接口重新部署（会失去 VMM 桥接网络）。随后在局域网设备上验证：`curl
-  http://MIHOMO_IP:CONTROLLER_PORT/version` 返回 JSON，**并且**以 `MIHOMO_IP` 为网关的客户端能正常上网。
-
-**仅仪表盘的退路——ipvlan。** 若只需要仪表盘（不通过本网关路由客户端），ipvlan L2 子接口共享父接口 MAC，可穿越 OVS：
-
-```sh
-docker rm -f mihomo mihomo-ui 2>/dev/null
-docker network rm tproxy_network
-docker network create -d ipvlan -o ipvlan_mode=l2 -o parent=ovs_eth0 \
-  --subnet="$SUBNET_CIDR" --gateway="$ROUTER_IP" tproxy_network
-sudo docker compose --env-file ../syno-mihomo-gateway-data/.env up -d
-```
-
-或在 `.env` 中设 `TPROXY_DRIVER=ipvlan` 后重新部署。仪表盘会变得可达，但指向 `MIHOMO_IP` 的客户端**不会**被代理。
-
-## OVS 修复后后端仍然超时（TUN auto-route）
-
-若已排除 Open vSwitch（父接口是普通网卡，或 ipvlan 已可达）后，**非 NAS 的局域网设备**仍对
-`curl http://MIHOMO_IP:CONTROLLER_PORT/version` 超时，可能是 TUN 数据面截走了控制器的回包。开启
-`tun.auto-route: true` 时，mihomo 会安装策略路由规则，*可能*把控制器的回包导入 `mihomo-tun` 而非经局域网网卡发回，
-导致入站连接无法完成。在容器内排查：
-
-```sh
-docker exec mihomo ip -br addr            # MIHOMO_IP 必须在 eth0，而非 mihomo-tun
-docker exec mihomo ip rule                # 应有 'suppress_prefixlength 0' 规则（让本网段 /24 的
-                                          # 同子网回包仍走 eth0）
-docker exec mihomo ip route show table all
-```
-
-若有经 `mihomo-tun` 的默认/黑洞路由遮蔽了同子网回包，请在 `config/config.template.yaml` 的 `tun:` 段加入
-`route-exclude-address: [ "$SUBNET_CIDR" ]` 把局域网排除出 tun，并重新渲染
-（`docker compose up -d --force-recreate mihomo`）后再验证。注意 `route-exclude-address` 在部分 mihomo 版本上
-被报告不可靠（[#2617](https://github.com/MetaCubeX/mihomo/issues/2617)）——请用 `ip rule` 确认其已生效；若无效，
-稳健的做法是把仪表盘放到不受 TUN 影响的接口上。
+若 OVS 上的 macvlan 子接口确实无法被局域网设备访问：使用非 OVS 网卡可避免该问题；或设
+`TPROXY_DRIVER=ipvlan`（ipvlan L2 共享父接口 MAC，可穿越 OVS）使**仪表盘**可达——但注意 ipvlan 按目的 IP
+解复用，**不会**为把 `MIHOMO_IP` 当网关的局域网客户端路由。ipvlan 仅适用于仪表盘，不适用于透明转发。
 
 ## mihomo 无法启动 / 反复崩溃重启
 

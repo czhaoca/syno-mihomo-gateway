@@ -127,21 +127,16 @@ CF_CONTAINER_NAME=has-token; cloudflared_token_present || fail "missed an existi
 CF_CONTAINER_NAME=no-token;  ! cloudflared_token_present || fail "invented a tunnel token"
 CF_CONTAINER_NAME=absent;    ! cloudflared_token_present || fail "saw a token on a missing container"
 
-# iface_is_ovs: an Open vSwitch parent breaks a macvlan gateway; a plain NIC does not.
+# iface_is_ovs: detects an Open vSwitch parent (a heads-up; reachability is config-dependent).
 iface_is_ovs ovs_eth0 || fail "ovs_eth0 not detected as Open vSwitch"
 ! iface_is_ovs eth0 || fail "eth0 wrongly detected as Open vSwitch"
 
-# warn_if_ovs_parent: warns (non-fatally) on an OVS parent and is silent on a plain
-# NIC. On the default driver it must steer to a NON-OVS parent (NOT recommend ipvlan
-# as a forwarding fix); with TPROXY_DRIVER=ipvlan it must flag the forwarding caveat.
+# warn_if_ovs_parent: non-fatal heads-up on an OVS parent, silent on a plain NIC, and
+# points at the troubleshooting guide rather than asserting a guaranteed failure.
 _ovs_warn="$(warn_if_ovs_parent ovs_eth0 2>&1)"
 printf '%s' "$_ovs_warn" | grep -q 'Open vSwitch' || fail "warn_if_ovs_parent did not warn on an OVS parent"
-printf '%s' "$_ovs_warn" | grep -qi 'non-OVS\|disable Open vSwitch' || fail "warn_if_ovs_parent did not steer to a non-OVS parent"
+printf '%s' "$_ovs_warn" | grep -q 'troubleshooting' || fail "warn_if_ovs_parent did not point at troubleshooting"
 [ -z "$(warn_if_ovs_parent eth0 2>&1)" ] || fail "warn_if_ovs_parent warned on a plain NIC"
-TPROXY_DRIVER=ipvlan
-printf '%s' "$(warn_if_ovs_parent ovs_eth0 2>&1)" | grep -qi 'forward' \
-  || fail "warn_if_ovs_parent(ipvlan) did not flag the broken forwarding role"
-TPROXY_DRIVER=macvlan
 
 # recreate_macvlan honors TPROXY_DRIVER: macvlan by default, ipvlan L2 for OVS parents.
 NET_CREATE_LOG="$TD/netcreate"
@@ -181,10 +176,16 @@ fake_docker() {
 }
 DOCKER_BIN=fake_docker
 MIHOMO_CONTAINER=mihomo
+# TUN is opt-in: the gateway probe only requires the in-container TUN when TUN_ENABLE=true.
+TUN_ENABLE=true
 FAKE_TUN=0
-! mihomo_gateway_probe >/dev/null 2>&1 || fail "missing runtime TUN was accepted"
+! mihomo_gateway_probe >/dev/null 2>&1 || fail "missing runtime TUN was accepted (TUN on)"
 FAKE_TUN=1
-mihomo_gateway_probe >/dev/null 2>&1 || fail "ready runtime TUN was rejected"
+mihomo_gateway_probe >/dev/null 2>&1 || fail "ready runtime TUN was rejected (TUN on)"
+# Default (TUN off): the probe is a no-op even when no tun interface exists.
+TUN_ENABLE=false
+FAKE_TUN=0
+mihomo_gateway_probe >/dev/null 2>&1 || fail "TUN-off gateway probe must pass without a tun interface"
 
 host_arch() { echo amd64; }
 image_arch() { echo arm64; }

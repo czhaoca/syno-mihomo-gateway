@@ -43,7 +43,8 @@ Compose 兼容的引号，因此包含空格、`&`、`#`、`$`、引号或反斜
 
 | 键 | Req | 说明 | 默认值 |
 |---|:--:|---|---|
-| `TUN_AUTO_REDIRECT` | | 可选的 Linux TCP 重定向优化。DSM 上应保持 `false`，除非安装程序的一次性 iptables 兼容性探测成功。无论此项为何值，TUN `auto-route` 都保持启用。仅接受小写 `true`/`false`。 | `false` |
+| `TUN_ENABLE` | | 透明网关 TUN，**可选**。默认 `false`：渲染配置会**省略** `tun:` 块，mihomo 作为可访问的代理 + 仪表盘控制器运行（通过 redir/tproxy/mixed 端口），`tun.auto-route` 不会截走控制器回包（mihomo #1493）。仅当需要让 mihomo 透明拦截局域网客户端转发的流量时（且 DSM 内核支持 TUN）才设为 `true`。仅小写 `true`/`false`。 | `false` |
+| `TUN_AUTO_REDIRECT` | | 仅当 `TUN_ENABLE=true` 时生效：可选的 Linux TCP 重定向优化。DSM 上应保持 `false`，除非安装程序的一次性 iptables 兼容性探测成功。仅接受小写 `true`/`false`。 | `false` |
 
 ### 端口与控制器
 

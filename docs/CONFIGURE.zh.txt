@@ -31,12 +31,19 @@
       安装程序在接口扫描中保存的 macvlan 父网卡。留空 = 自动识别。
 
 --------------------------------------------------------------------------
-Mihomo TUN
+Mihomo TUN（透明网关）
 --------------------------------------------------------------------------
+  TUN_ENABLE
+      透明网关 TUN。默认关闭。关闭时，mihomo 作为可访问的代理 + 仪表盘控制器
+      运行（使用下方 redir/tproxy/mixed/socks 端口，或使用仪表盘），
+      MIHOMO_IP:CONTROLLER_PORT 上的仪表盘可正常访问。仅当需要让 mihomo
+      透明拦截局域网客户端转发的流量时才设为 true。注意：tun auto-route 在
+      某些环境会使仪表盘超时，除非确需，否则请保持关闭。只接受小写 true/false。
+
   TUN_AUTO_REDIRECT
-      可选的 Linux TCP 重定向优化。为兼容 DSM，默认 false；TUN auto-route
-      仍保持启用。仅当安装程序的一次性 iptables 兼容性探测成功时才设为
-      true。只接受小写 true 和 false。
+      仅当 TUN_ENABLE=true 时生效：可选的 Linux TCP 重定向优化。为兼容 DSM，
+      默认 false。仅当安装程序的一次性 iptables 兼容性探测成功时才设为 true。
+      只接受小写 true 和 false。
 
 --------------------------------------------------------------------------
 安装程序

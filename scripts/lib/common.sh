@@ -148,9 +148,12 @@ load_env() {
   : "${HEALTH_INTERVAL:=10}"
   : "${HEALTH_MAX_RESTARTS:=3}"
   : "${TUN_DEVICE:=mihomo-tun}"
+  # Transparent-gateway TUN is opt-in; OFF by default so the controller reply path
+  # is never hijacked (see scripts/render_config.sh and docs/troubleshooting.md).
+  : "${TUN_ENABLE:=false}"
   : "${TUN_AUTO_REDIRECT:=false}"
   : "${LOCK_DIR:=/tmp/syno-mihomo-update.lock}"
-  export TUN_AUTO_REDIRECT
+  export TUN_ENABLE TUN_AUTO_REDIRECT
 
   # Backward compatibility with the pre-1.2.11 template. The strict loader
   # intentionally does not perform arbitrary shell expansion.

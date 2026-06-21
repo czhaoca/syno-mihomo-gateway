@@ -77,7 +77,11 @@ mihomo_controller_probe() {
 # Verify the transparent-gateway dataplane, not only the management API. A
 # healthy controller without the runtime TUN interface leaves LAN clients with
 # no route through the proxy while appearing healthy to Docker.
+# Only meaningful when TUN_ENABLE=true: the default deploy runs WITHOUT mihomo-tun
+# (reachable proxy + controller via the redir/tproxy/mixed ports), so there is no
+# TUN dataplane to verify and the probe is a no-op.
 mihomo_gateway_probe() {
+  [ "${TUN_ENABLE:-false}" = true ] || return 0
   _tun="${TUN_DEVICE:-mihomo-tun}"
   if ! "$DOCKER_BIN" exec "$MIHOMO_CONTAINER" sh -c \
       'test -d "/sys/class/net/$1"' sh "$_tun" 2>/dev/null; then

@@ -43,7 +43,8 @@ backslashes round-trip safely. When editing by hand, keep one `KEY=VALUE` assign
 
 | Key | Req | Description | Default |
 |---|:--:|---|---|
-| `TUN_AUTO_REDIRECT` | | Optional Linux TCP redirect optimization. Keep `false` on DSM unless the installer's disposable iptables compatibility probe succeeds. TUN `auto-route` remains enabled either way. Only lowercase `true`/`false` are accepted. | `false` |
+| `TUN_ENABLE` | | Transparent-gateway TUN, **opt-in**. Default `false`: the rendered config **omits** the `tun:` block, so mihomo runs as a reachable proxy + dashboard controller (via the redir/tproxy/mixed ports) and `tun.auto-route` can't hijack the controller's reply path (mihomo #1493). Set `true` only to have mihomo transparently intercept traffic forwarded by LAN clients (on a DSM kernel that supports TUN). Only lowercase `true`/`false`. | `false` |
+| `TUN_AUTO_REDIRECT` | | Only consulted when `TUN_ENABLE=true`: optional Linux TCP redirect optimization. Keep `false` on DSM unless the installer's disposable iptables compatibility probe succeeds. Only lowercase `true`/`false` are accepted. | `false` |
 
 ### Ports & controller
 

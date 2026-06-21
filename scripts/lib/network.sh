@@ -208,29 +208,24 @@ interface_exists() {
 }
 
 # iface_is_ovs IFACE - 0 if IFACE is an Open vSwitch port (Synology names it
-# ovs_eth0 when OVS is enabled). A macvlan child on an OVS parent is reachable by
-# the router but NOT by peer LAN hosts, so both the dashboard and the gateway role
-# time out from clients. The reliable fix is a non-OVS parent or disabling OVS.
+# ovs_eth0 when OVS is enabled). On SOME OVS configurations a macvlan child's fresh
+# MAC is not flooded to peer ports, so LAN peers can't reach it (the dashboard/gateway
+# time out) - but this is config-dependent and many OVS setups work fine. It is a
+# heads-up, not a guaranteed failure.
 iface_is_ovs() {
   case "$1" in ovs*|*-ovs|ovs_*) return 0 ;; *) return 1 ;; esac
 }
 
-# warn_if_ovs_parent IFACE - emit a loud, non-fatal warning when IFACE is an Open
-# vSwitch port: a macvlan gateway on it is unreachable by LAN peers (dashboard AND
-# client routing time out). The reliable fix is a non-OVS parent NIC or disabling
-# Open vSwitch - NOT ipvlan, which only restores dashboard reachability while
-# silently breaking the transparent-forwarding role (see the TPROXY_DRIVER note).
-# Always returns 0. Used by the non-interactive paths (headless boot self-heal,
-# redeploy/modify) that lack the installer's interactive OVS prompt, so an OVS
-# parent is flagged on EVERY network-creation path, not only first-deploy.
+# warn_if_ovs_parent IFACE - emit a non-fatal heads-up when IFACE is an Open vSwitch
+# port: on some OVS configs a macvlan child is not reachable by LAN peers. This is
+# NOT a guaranteed failure (many OVS setups work). If LAN peers can't reach the
+# gateway/dashboard, docs/troubleshooting.md covers it. Always returns 0. Called on
+# every network-creation path (incl. the headless boot self-heal) so an OVS parent is
+# surfaced consistently, not only on first-deploy.
 warn_if_ovs_parent() {
   _wo_if="$1"; [ -n "$_wo_if" ] || return 0
   iface_is_ovs "$_wo_if" || return 0
-  log_warn "parent '$_wo_if' is an Open vSwitch port: a macvlan gateway on it is NOT reachable by LAN peers - the dashboard AND client routing will time out"
-  case "${TPROXY_DRIVER:-macvlan}" in
-    ipvlan) log_warn "TPROXY_DRIVER=ipvlan restores dashboard reachability but does NOT forward LAN-client traffic; the transparent proxy will not route clients" ;;
-    *)      log_warn "fix: use a non-OVS parent NIC, or disable Open vSwitch (DSM > Control Panel > Network) and redeploy - see docs/troubleshooting.md" ;;
-  esac
+  log_warn "parent '$_wo_if' is an Open vSwitch port: on some OVS configs a macvlan child is not reachable by LAN peers (dashboard/gateway time out). If a LAN device can't reach the gateway, see docs/troubleshooting.md."
   return 0
 }
 

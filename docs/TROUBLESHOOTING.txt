@@ -77,6 +77,19 @@ Cannot open the dashboard from the NAS
          DIFFERENT device on the LAN.
 
 --------------------------------------------------------------------------
+Dashboard "Failed to connect to the backend" (times out from a LAN device)
+--------------------------------------------------------------------------
+  Cause: gateways built on the TUN releases enabled mihomo's tun auto-route,
+         which can capture the controller's reply and make MIHOMO_IP:PORT
+         time out from LAN devices (even though it answers on 127.0.0.1
+         inside the container). It is NOT a wrong URL/secret or a CORS block.
+  Fix:   this release keeps TUN OFF by default (TUN_ENABLE=false), so the
+         controller is reachable. Just redeploy. If you previously turned TUN
+         on, set TUN_ENABLE=false in .env and redeploy. Verify from another
+         LAN device: curl http://MIHOMO_IP:CONTROLLER_PORT/version returns
+         JSON.
+
+--------------------------------------------------------------------------
 Image pull fails
 --------------------------------------------------------------------------
   Cause A: wrong registry credentials in acr mode -> updater/login may report
@@ -112,8 +125,8 @@ Gateway is "unhealthy" after deploy
          redeploy. The deploy and auto-update flows health-gate the new image
          and roll back automatically if it stays unhealthy.
          If the log says "iptables (nf_tables): Could not fetch rule set
-         generation id", set TUN_AUTO_REDIRECT=false in .env and redeploy.
-         TUN auto-route remains enabled.
+         generation id" (only relevant with TUN_ENABLE=true), set
+         TUN_AUTO_REDIRECT=false in .env and redeploy, or leave TUN off.
 
 --------------------------------------------------------------------------
 Containers look healthy but LAN clients have no internet

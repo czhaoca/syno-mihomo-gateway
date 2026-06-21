@@ -33,8 +33,11 @@ services:
       - DNS_DEFAULT_NAMESERVER=${DNS_DEFAULT_NAMESERVER}
       - DNS_NAMESERVER=${DNS_NAMESERVER}
       - DNS_FALLBACK=${DNS_FALLBACK}
-      # Optional Linux TCP redirect optimization. Missing on older .env files
-      # intentionally defaults to the DSM-compatible TUN auto-route path.
+      # Transparent-gateway TUN is OPT-IN and OFF by default (a missing key on older
+      # .env files renders WITHOUT the tun block, so the controller stays reachable).
+      # Set TUN_ENABLE=true in .env to intercept LAN-client traffic via mihomo-tun.
+      - TUN_ENABLE=${TUN_ENABLE:-false}
+      # Only consulted when TUN_ENABLE=true: optional Linux TCP redirect optimization.
       - TUN_AUTO_REDIRECT=${TUN_AUTO_REDIRECT:-false}
       - MIHOMO_TEMPLATE=/etc/syno-mihomo/config.template.yaml
 

@@ -279,20 +279,32 @@ MOCK_IPTABLES_RC=4; export MOCK_IPTABLES_RC
 expect_failure "incompatible DSM nftables backend is rejected" mihomo_auto_redirect_probe "$MIHOMO_IMAGE"
 TUN_AUTO_REDIRECT=false MOCK_IPTABLES_RC=0; export MOCK_IPTABLES_RC
 
-# Health gate covers stability, authenticated controller access, TUN, forwarding,
-# and UI inspection with no real wait.
+# Health gate covers stability, authenticated controller access, forwarding, UI
+# inspection, and - only when TUN_ENABLE=true - the in-container TUN dataplane.
 sleep() { :; }
 MOCK_RUNNING=true MOCK_RESTART_COUNT=0 MOCK_CONTROLLER_RC=0 MOCK_TUN_RC=0 MOCK_FORWARD=1
 export MOCK_RUNNING MOCK_RESTART_COUNT MOCK_CONTROLLER_RC MOCK_TUN_RC MOCK_FORWARD
 CONTROLLER_PORT=9090 CONTROLLER_SECRET=token TUN_DEVICE=mihomo-tun
 HEALTH_RETRIES=1 HEALTH_INTERVAL=0 HEALTH_MAX_RESTARTS=1
+
+# Default (TUN opt-in OFF): a healthy controller passes and the in-container TUN
+# interface is NOT required (there is no tun dataplane in this mode).
+TUN_ENABLE=false; export TUN_ENABLE
 : > "$MOCK_DOCKER_CALLS"
-expect_success "healthy controller and TUN dataplane pass" health_gate
+expect_success "healthy controller passes with TUN off (no tun required)" health_gate
 HEALTH_CALLS="$(cat "$MOCK_DOCKER_CALLS")"
 assert_contains "controller secret is sent" "$HEALTH_CALLS" "Authorization: Bearer token"
 MOCK_TUN_RC=1; export MOCK_TUN_RC
-expect_failure "missing in-container TUN fails health gate" health_gate
+expect_success "missing in-container TUN is ignored when TUN off" health_gate
 MOCK_TUN_RC=0; export MOCK_TUN_RC
+
+# TUN_ENABLE=true: the transparent-gateway dataplane IS required again.
+TUN_ENABLE=true; export TUN_ENABLE
+expect_success "healthy controller and TUN dataplane pass with TUN on" health_gate
+MOCK_TUN_RC=1; export MOCK_TUN_RC
+expect_failure "missing in-container TUN fails health gate with TUN on" health_gate
+MOCK_TUN_RC=0; export MOCK_TUN_RC
+TUN_ENABLE=false; export TUN_ENABLE
 
 # Rollback success path validates old images, re-tags both, and recreates from
 # local cache without an implicit registry pull.

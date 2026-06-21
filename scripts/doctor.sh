@@ -75,7 +75,13 @@ if [ "$broken" -eq 0 ]; then
     bad "mihomo container state=${_state:-missing}"
   else
     ok "mihomo is running (restarts=${_restarts:-0})"
-    if mihomo_gateway_probe >/dev/null 2>&1; then ok "in-container TUN gateway is ready"; else bad "in-container TUN gateway is not ready"; fi
+    if [ "${TUN_ENABLE:-false}" != true ]; then
+      ok "TUN transparent gateway disabled (TUN_ENABLE=false) - reachable proxy + controller mode"
+    elif mihomo_gateway_probe >/dev/null 2>&1; then
+      ok "in-container TUN gateway is ready"
+    else
+      bad "in-container TUN gateway is not ready"
+    fi
     if mihomo_controller_probe >/dev/null 2>&1; then ok "controller API responds"; else bad "controller API does not respond"; fi
     _img="${MIHOMO_IMAGE:-}"
     if [ -n "$_img" ]; then

@@ -74,12 +74,19 @@ with the static `MIHOMO_IP`, so it appears as a **first-class device on your LAN
 > restores the dashboard but does **not** route LAN clients — use it only for dashboard-only setups.
 > See [Troubleshooting](troubleshooting.md).
 
-Inside the container, Mihomo enables its `mihomo-tun` interface with `auto-route`. That is the
-interception dataplane for packets forwarded by LAN clients; the macvlan address alone only makes
-the container reachable and does not transparently proxy traffic. Linux `auto-redirect` is an
-optional TCP optimization, disabled by default because current nft-backed iptables userspace is
-incompatible with older DSM kernels. The health gate therefore requires the controller **and**
-the runtime TUN interface before it reports the gateway healthy.
+By default (`TUN_ENABLE=false`) the rendered config has **no `tun:` block**: mihomo runs as a
+reachable proxy + dashboard controller on the macvlan address, served through its `redir`/`tproxy`/
+`mixed`/`socks` ports (point a client at one of those, or use the dashboard). This default exists
+because mihomo's `mihomo-tun` `auto-route` installs policy routing that can **hijack the
+`external-controller`'s reply path**, making the dashboard time out
+([mihomo #1493](https://github.com/MetaCubeX/mihomo/issues/1493)).
+
+Setting `TUN_ENABLE=true` opts back into the `mihomo-tun` interface with `auto-route` — the
+interception dataplane for packets *transparently forwarded* by LAN clients — for setups whose DSM
+kernel supports it. Linux `auto-redirect` (`TUN_AUTO_REDIRECT`) is a further optional TCP optimization,
+off by default because current nft-backed iptables userspace is incompatible with older DSM kernels.
+The health gate requires the runtime TUN interface **only when `TUN_ENABLE=true`**; otherwise it gates
+on the controller alone.
 
 ```
         LAN 192.168.1.0/24

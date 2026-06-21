@@ -12,10 +12,19 @@ TEMPLATE="${MIHOMO_TEMPLATE:-$CFG_DIR/config.template.yaml}"
 SUB_FILE="$CFG_DIR/subscription.txt"
 OUT="$CFG_DIR/config.yaml"
 TMP="$CFG_DIR/.config.yaml.tmp"
+PRE="$CFG_DIR/.config.yaml.pre"
 
 # Port/secret may default; DNS must come from .env (CLAUDE.md: no hardcoded DNS).
 : "${CONTROLLER_PORT:=9090}"
 : "${CONTROLLER_SECRET:=}"
+# TUN is OPT-IN and OFF by default: tun.auto-route hijacks the external-controller's
+# reply path (mihomo #1493), so the default render OMITS the tun block entirely and
+# mihomo serves a reachable proxy + controller. TUN_ENABLE=true keeps the block.
+: "${TUN_ENABLE:=false}"
+case "$TUN_ENABLE" in
+  true|false) : ;;
+  *) echo "ERROR: TUN_ENABLE must be true or false" >&2; exit 1 ;;
+esac
 : "${TUN_AUTO_REDIRECT:=false}"
 case "$TUN_AUTO_REDIRECT" in
   true|false) : ;;
@@ -54,6 +63,16 @@ esc() { printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/&/\\\&/g' -e 's/|/\\|/g'; 
 #   \" is only meaningful inside double quotes.
 yaml_dq() { printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'; }
 
+# Pass 1 - TUN block inclusion. The block is fenced by '# {{TUN_BEGIN}}' / '# {{TUN_END}}'
+# marker lines. Disabled (default): delete the whole fenced range. Enabled: delete only
+# the two marker lines and keep the block (its {{TUN_AUTO_REDIRECT}} token is filled below).
+if [ "$TUN_ENABLE" = true ]; then
+  sed -e '/{{TUN_BEGIN}}/d' -e '/{{TUN_END}}/d' "$TEMPLATE" > "$PRE"
+else
+  sed -e '/{{TUN_BEGIN}}/,/{{TUN_END}}/d' "$TEMPLATE" > "$PRE"
+fi
+
+# Pass 2 - token substitution (a TUN-off render simply has no {{TUN_AUTO_REDIRECT}} left).
 sed \
   -e "s|{{AIRPORT_URL}}|$(esc "$(yaml_dq "$SUB_URL")")|g" \
   -e "s|{{CONTROLLER_PORT}}|$(esc "$CONTROLLER_PORT")|g" \
@@ -62,6 +81,7 @@ sed \
   -e "s|{{DNS_NAMESERVER}}|$(esc "$DNS_NAMESERVER")|g" \
   -e "s|{{DNS_FALLBACK}}|$(esc "$DNS_FALLBACK")|g" \
   -e "s|{{TUN_AUTO_REDIRECT}}|$(esc "$TUN_AUTO_REDIRECT")|g" \
-  "$TEMPLATE" > "$TMP"
+  "$PRE" > "$TMP"
+rm -f "$PRE"
 mv "$TMP" "$OUT"
 echo "Rendered $OUT"

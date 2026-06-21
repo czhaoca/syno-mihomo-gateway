@@ -71,10 +71,16 @@ NAS 主机做 NAT，也不会干扰主机网络。
 > 因此正确做法是**改用非 OVS 网卡或关闭 Open vSwitch**。`TPROXY_DRIVER=ipvlan` 只能恢复仪表盘，
 > **不会**为局域网客户端路由——仅适用于只需仪表盘的场景。见[故障排查](troubleshooting.md)。
 
-容器内部由 Mihomo 启用 `mihomo-tun`，并使用 `auto-route` 接管局域网客户端转发来的
-流量。仅有 macvlan 地址只能让容器可达，并不能实现透明代理。Linux `auto-redirect`
-是可选的 TCP 优化；由于当前 nft 后端的 iptables 用户空间与较旧 DSM 内核不兼容，默认
-关闭。因此健康检查必须同时确认控制器和运行时 TUN 网卡均可用。
+默认情况下（`TUN_ENABLE=false`）渲染配置**不含 `tun:` 块**：mihomo 作为可访问的
+代理 + 仪表盘控制器在 macvlan 地址上运行，通过 `redir`/`tproxy`/`mixed`/`socks`
+端口提供服务（把客户端指向其中之一，或使用仪表盘）。之所以默认关闭，是因为
+mihomo 的 `mihomo-tun` `auto-route` 会安装策略路由，可能**截走 `external-controller`
+的回包**，使仪表盘超时（mihomo #1493）。
+
+设置 `TUN_ENABLE=true` 才重新启用 `mihomo-tun` + `auto-route`——用于透明拦截局域网
+客户端转发流量（且 DSM 内核支持 TUN）。`auto-redirect`（`TUN_AUTO_REDIRECT`）是进一步
+的可选 TCP 优化，默认关闭（当前 nft 后端 iptables 与较旧 DSM 内核不兼容）。**仅当
+`TUN_ENABLE=true` 时**健康检查才要求运行时 TUN 网卡；否则只检查控制器。
 
 ```
         LAN 192.168.1.0/24

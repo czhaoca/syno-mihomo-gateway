@@ -13,8 +13,9 @@ Enforces:
   * a controller secret containing `&`, `|`, `"` AND `\` renders verbatim
     (secret renders inside `secret: "..."`, so `"`/`\` must be YAML-escaped);
   * external-controller + DNS sections are present and correctly typed (lists);
-  * TUN auto-redirect defaults to the DSM-safe false value, accepts an explicit
-    true opt-in, and rejects non-boolean input before writing config.yaml;
+  * TUN is opt-in: the DEFAULT render OMITS the tun block (so auto-route never hijacks
+    the controller reply), TUN_ENABLE=true renders a valid transparent-gateway block,
+    auto-redirect defaults to the DSM-safe false, and non-boolean TUN_* fail closed;
   * NO hardcoded DNS server / user network address remains in the committed template
     (CLAUDE.md rule) — only the generic bind/loopback constants are allowed.
 
@@ -50,7 +51,8 @@ def fail(msg: str):
     sys.exit(1)
 
 
-def render(raw: str, tun_auto_redirect: str | None = None):
+def render(raw: str, tun_auto_redirect: str | None = None,
+           tun_enable: str | None = None):
     """Run the real renderer in an isolated config directory."""
     with tempfile.TemporaryDirectory() as td:
         tdp = Path(td)
@@ -66,8 +68,11 @@ def render(raw: str, tun_auto_redirect: str | None = None):
             "DNS_FALLBACK": "8.8.8.8,8.8.4.4",
         }
         env.pop("TUN_AUTO_REDIRECT", None)
+        env.pop("TUN_ENABLE", None)
         if tun_auto_redirect is not None:
             env["TUN_AUTO_REDIRECT"] = tun_auto_redirect
+        if tun_enable is not None:
+            env["TUN_ENABLE"] = tun_enable
         proc = subprocess.run(["sh", str(RENDERER)], env=env,
                               capture_output=True, text=True)
         out = tdp / "config.yaml"
@@ -122,9 +127,21 @@ def main() -> None:
         if not isinstance(servers, list) or not servers:
             fail(f"dns.{field} did not parse as a non-empty list: {servers!r}")
 
-    # 6) The advertised LAN-gateway behavior requires a real interception
-    # dataplane. A mounted /dev/net/tun and an open tproxy-port are insufficient.
-    tun = doc.get("tun") or {}
+    # 6) DEFAULT render is TUN-OFF (opt-in): the tun block MUST be omitted so
+    # tun.auto-route can never hijack the controller's reply path (mihomo #1493).
+    # The proxy stays usable via the redir/tproxy/mixed ports.
+    if doc.get("tun") is not None:
+        fail(f"default render must OMIT the tun block (TUN_ENABLE off); got {doc.get('tun')!r}")
+    for port_field, expected in (("redir-port", 7892), ("tproxy-port", 7893)):
+        if doc.get(port_field) != expected:
+            fail(f"{port_field}={doc.get(port_field)!r}, expected {expected!r} (restored for explicit-redirect proxy)")
+
+    # 7) TUN_ENABLE=true renders the full transparent-gateway block (auto-redirect
+    # defaults to the DSM-safe false). A mounted /dev/net/tun alone is insufficient.
+    proc, tun_on = render(raw, tun_enable="true")
+    if proc.returncode != 0 or tun_on is None:
+        fail(f"TUN_ENABLE=true render failed: {proc.stderr.strip()}")
+    tun = (yaml.safe_load(tun_on).get("tun") or {})
     required_tun = {
         "enable": True,
         "device": "mihomo-tun",
@@ -135,25 +152,29 @@ def main() -> None:
     }
     for field, expected in required_tun.items():
         if tun.get(field) != expected:
-            fail(f"tun.{field}={tun.get(field)!r}, expected {expected!r}")
+            fail(f"[TUN on] tun.{field}={tun.get(field)!r}, expected {expected!r}")
     hijack = tun.get("dns-hijack") or []
     for required in ("any:53", "tcp://any:53"):
         if required not in hijack:
-            fail(f"tun.dns-hijack missing {required!r}: {hijack!r}")
+            fail(f"[TUN on] tun.dns-hijack missing {required!r}: {hijack!r}")
 
-    # 7) A deliberate opt-in must render as a YAML boolean, while invalid
-    # spellings fail closed without producing a config file.
-    proc, opted_in = render(raw, "true")
+    # 8) auto-redirect opt-in must render as a YAML boolean (only meaningful with TUN
+    # on); invalid TUN_AUTO_REDIRECT / TUN_ENABLE fail closed without writing config.yaml.
+    proc, opted_in = render(raw, tun_auto_redirect="true", tun_enable="true")
     if proc.returncode != 0 or opted_in is None:
         fail(f"TUN auto-redirect opt-in failed: {proc.stderr.strip()}")
     if (yaml.safe_load(opted_in).get("tun") or {}).get("auto-redirect") is not True:
         fail("TUN_AUTO_REDIRECT=true did not render as YAML true")
-    proc, invalid = render(raw, "yes")
+    proc, invalid = render(raw, tun_auto_redirect="yes")
     if proc.returncode == 0 or invalid is not None:
         fail("invalid TUN_AUTO_REDIRECT was accepted or wrote config.yaml")
+    proc, invalid_te = render(raw, tun_enable="maybe")
+    if proc.returncode == 0 or invalid_te is not None:
+        fail("invalid TUN_ENABLE was accepted or wrote config.yaml")
 
-    print("OK: renderer preserves URL/secrets; controller, DNS, and DSM-safe TUN defaults are "
-          "valid; auto-redirect opt-in is strict; no hardcoded DNS/network literals.")
+    print("OK: renderer preserves URL/secrets; controller, DNS, CORS valid; TUN is opt-in "
+          "(default OFF omits the block, redir/tproxy restored; TUN_ENABLE=true renders a valid "
+          "transparent-gateway block); auto-redirect/enable opt-ins are strict; no hardcoded literals.")
 
 
 if __name__ == "__main__":

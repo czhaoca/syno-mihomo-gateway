@@ -37,13 +37,21 @@ Network settings
       Blank = auto-detect.
 
 --------------------------------------------------------------------------
-Mihomo TUN
+Mihomo TUN (transparent gateway)
 --------------------------------------------------------------------------
+  TUN_ENABLE
+      Transparent-gateway TUN. OFF by default. With TUN off, mihomo runs as a
+      reachable proxy + dashboard controller (use the redir/tproxy/mixed/socks
+      ports, or the dashboard), and the dashboard at MIHOMO_IP:CONTROLLER_PORT
+      stays reachable. Set true ONLY to have mihomo transparently intercept
+      traffic forwarded by LAN clients. Note: tun auto-route can make the
+      dashboard time out on some setups, so leave OFF unless you need it.
+      Only the lowercase values true and false are accepted.
+
   TUN_AUTO_REDIRECT
-      Optional Linux TCP redirect optimization. Default false for DSM
-      compatibility; TUN auto-route remains enabled. Set true only when the
-      installer's disposable iptables compatibility probe succeeds. Only the
-      lowercase values true and false are accepted.
+      Only used when TUN_ENABLE=true: optional Linux TCP redirect optimization.
+      Default false for DSM compatibility. Set true only when the installer's
+      disposable iptables compatibility probe succeeds. Only true/false.
 
 --------------------------------------------------------------------------
 Installer
