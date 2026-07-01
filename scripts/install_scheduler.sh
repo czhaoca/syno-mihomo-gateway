@@ -50,9 +50,14 @@ Recommended (persists across DSM upgrades, runs as root):
 
      $CMD
 
-   Enable "Send run details only when the script terminates abnormally" or
-   Task Scheduler Settings -> "Save output results". The updater writes its
-   own rotating log at UPDATE_LOG; do not add another >> redirection.
+   Enable "Send run details by email" + "only when the script terminates
+   abnormally" - this is the DEFAULT notification path: every entry point
+   exits non-zero on failure states (see the exit-code table in the README),
+   so DSM emails you exactly when something needs attention. The optional
+   webhook (NOTIFY_WEBHOOK_URL in .env) adds rich push on top; DSM 7's
+   synodsmnotify is NOT reliable from plain scripts and is best-effort only.
+   Task Scheduler Settings -> "Save output results" also works. The updater
+   writes its own rotating log at UPDATE_LOG; do not add another >> redirection.
 
  Also recommended: a second task with the "Boot-up" trigger (User = root) running
    $BOOT_CMD

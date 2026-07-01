@@ -111,11 +111,20 @@ tail -f logs/auto-update.log
 
 ## Notifications
 
-Results are pushed via Synology `synodsmnotify @administrators` (delivered to the DS finder /
-mobile app via Synology's relay — it does **not** route through the mihomo gateway, so it still
-arrives when the gateway is down). Set `NOTIFY_WEBHOOK_URL` for a Bark/Gotify/Slack fallback.
-Notifications fire on **failure and rollback**, not just success; set `NOTIFY_ON_NOCHANGE=1` to
-also get quiet "nothing changed" pings.
+**Default path — DSM Task Scheduler email.** Every entry point exits non-zero on failure
+states, so enable *"send run details by email (only when the script terminates abnormally)"* on
+the scheduled task — DSM then emails you exactly when something needs attention. This is the
+documented default because it needs nothing besides DSM's own notification settings.
+
+**Opt-in rich channel — webhook.** Set `NOTIFY_WEBHOOK_URL` in `.env` (Bark/Gotify/
+Slack-compatible JSON POST). It fires on **failure and rollback**, not just success; set
+`NOTIFY_ON_NOCHANGE=1` to also get quiet "nothing changed" pings. The URL (which often embeds a
+token) is passed to curl via a stdin config, never argv.
+
+**Best-effort only — DSM push.** `synodsmnotify` requires package-registered message strings on
+DSM 7, so from a plain script it can exit 0 without delivering anything. It is still attempted
+(it works on DSM 6 and does not route through the gateway), but it is never relied on and never
+suppresses the webhook.
 
 ## Manual health checks
 

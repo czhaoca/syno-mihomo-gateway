@@ -72,7 +72,10 @@ Each invocation, in order (everything is logged to `UPDATE_LOG`):
    health, and sends a failure notification.
 9. **Apply (cloudflared)** — [blue-green](#cloudflared-blue-green), only after its own pull/verify.
 10. **Prune** dangling layers (only on full success, so rollback targets remain available).
-11. **Notify** — Synology push (`synodsmnotify`) + log, on failure *and* success.
+11. **Notify** — webhook (when `NOTIFY_WEBHOOK_URL` is set) + best-effort Synology push + log,
+    on failure *and* success. The reliable default alert path is DSM Task Scheduler's
+    *send-run-details email*, driven by the exit codes below — `synodsmnotify` is unreliable on
+    DSM 7 (needs package-registered strings) and never gates the webhook.
 
 ### Architecture guard
 

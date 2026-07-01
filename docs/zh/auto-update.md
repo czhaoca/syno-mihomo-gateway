@@ -63,7 +63,10 @@ UPDATE_IMAGES="${MIHOMO_IMAGE} ${METACUBEXD_IMAGE} ${CF_IMAGE}"
    打标并在禁止隐式拉取的情况下重建，最后重新进行健康检查并发送失败通知。
 9. **应用（cloudflared）** — [蓝绿部署](#cloudflared-蓝绿部署)，仅在其自身的拉取/校验之后进行。
 10. **清理**悬空层（仅在完全成功时进行，因此回滚目标不会被提前删除）。
-11. **通知** — Synology 推送（`synodsmnotify`）+ 日志，在失败*和*成功时都会发出。
+11. **通知** — Webhook（设置了 `NOTIFY_WEBHOOK_URL` 时）+ 尽力而为的 Synology 推送 + 日志，
+    失败*和*成功时都会发出。可靠的默认告警途径是 DSM 任务计划的“发送运行详情”邮件（由下方
+    退出码驱动）——DSM 7 上 `synodsmnotify` 并不可靠（需要套件注册的字符串），且绝不会
+    抑制 Webhook。
 
 ### 架构守卫
 

@@ -106,10 +106,17 @@ tail -f logs/auto-update.log
 
 ## 通知
 
-运行结果通过 Synology `synodsmnotify @administrators` 推送（经由 Synology 的中继服务投递到
-DS finder / 移动应用 —— 它**不会**经过 mihomo 网关路由，因此即便网关宕机时通知仍可送达）。
-设置 `NOTIFY_WEBHOOK_URL` 可启用 Bark/Gotify/Slack 作为后备通道。通知会在**失败和回滚**时触发，
-而不仅仅是在成功时；将 `NOTIFY_ON_NOCHANGE=1` 设置开启后，还能收到安静的“无变化”提示。
+**默认途径——DSM 任务计划邮件。**每个入口脚本都会在故障状态下以非零码退出，因此请在计划
+任务上启用“仅在脚本异常终止时发送运行详情（邮件）”——DSM 会在真正需要关注时给你发邮件。
+这是文档化的默认方式，除 DSM 自身的通知设置外无需任何配置。
+
+**可选的富通知——Webhook。**在 `.env` 中设置 `NOTIFY_WEBHOOK_URL`（兼容 Bark/Gotify/Slack 的
+JSON POST）。通知会在**失败和回滚**时触发，而不仅仅是在成功时；设置 `NOTIFY_ON_NOCHANGE=1`
+还能收到安静的“无变化”提示。URL（常内嵌令牌）通过 stdin 配置传给 curl，绝不经过 argv。
+
+**尽力而为——DSM 推送。**DSM 7 上 `synodsmnotify` 需要套件注册的消息字符串，普通脚本调用
+可能返回 0 却什么也没送达。脚本仍会尝试它（DSM 6 可用，且不经过网关），但绝不依赖它，
+也绝不因此抑制 Webhook。
 
 ## 手动健康检查
 

@@ -469,6 +469,55 @@ APPLY_TRACE="$(tr '\n' ' ' < "$TRACE")"
 assert_contains "all configured images are pulled before apply" "$APPLY_TRACE" "pull:m pull:u compose-apply"
 assert_contains "failed apply triggers rollback and re-health" "$APPLY_TRACE" "compose-apply rollback health"
 
+# --- notification path (DSM 7 correctness) --------------------------------------
+# synodsmnotify on DSM 7 needs package-registered i18n strings: it can EXIST and
+# return 0 without delivering anything. It must therefore never gate the webhook,
+# and the webhook URL (often carrying a token) must never transit curl's argv.
+(
+  # shellcheck source=scripts/lib/common.sh
+  . "$ROOT/scripts/lib/common.sh"
+  # shellcheck source=scripts/lib/notify.sh
+  . "$ROOT/scripts/lib/notify.sh"
+  LOG_FILE="$TMP/notify.log"; : > "$LOG_FILE"
+  NFAIL=0
+  nfail() { printf 'FAIL: %s\n' "$*" >&2; NFAIL=$((NFAIL + 1)); }
+
+  CURL_ARGS="$TMP/curl.args"; CURL_STDIN="$TMP/curl.stdin"
+  # hollow synodsmnotify: present, exits 0, delivers nothing (the DSM 7 reality)
+  synodsmnotify() { return 0; }
+  curl() {
+    printf '%s\n' "$*" > "$CURL_ARGS"
+    cat > "$CURL_STDIN"
+    return 0
+  }
+  NOTIFY_WEBHOOK_URL='https://hook.example/send?token=SECRETTOKEN'
+
+  notify "t1" "b1"
+  [ -s "$CURL_ARGS" ] || nfail "webhook did not fire although synodsmnotify is hollow"
+  case "$(cat "$CURL_ARGS" 2>/dev/null)" in
+    *SECRETTOKEN*) nfail "webhook URL (token) leaked into curl argv" ;;
+  esac
+  case "$(cat "$CURL_STDIN" 2>/dev/null)" in
+    *SECRETTOKEN*) : ;;
+    *) nfail "webhook URL did not reach curl via stdin config" ;;
+  esac
+
+  # no channel at all -> the warning points at the DSM Task Scheduler email path
+  unset -f synodsmnotify curl
+  NOTIFY_WEBHOOK_URL=''
+  : > "$LOG_FILE"
+  notify "t2" "b2"
+  grep -qi 'task scheduler' "$LOG_FILE" \
+    || nfail "undelivered notification does not point at the Task Scheduler email path"
+  exit "$NFAIL"
+)
+_nrc=$?
+if [ "$_nrc" -eq 0 ]; then
+  PASS=$((PASS + 4))
+else
+  FAIL=$((FAIL + _nrc))
+fi
+
 if [ "$FAIL" -ne 0 ]; then
   printf 'FAILED: %s passed, %s failed\n' "$PASS" "$FAIL" >&2
   exit 1
