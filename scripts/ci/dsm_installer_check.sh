@@ -500,4 +500,99 @@ for _f in flow_deploy.sh; do
     && fail "$_f still carries hardcoded-English rollback strings"
 done
 
-echo "OK: BusyBox dotenv/network/arch/TUN/cloudflared/report checks, decision-first fail-before-mutation deployment order, and closed-loop regressions (teardown notice, cron false-success, modify apply summary, INT trap, bilingual keys)"
+# --- state banner + Status/Diagnose menu item -----------------------------------
+# install.sh is sourceable (INSTALL_SOURCE_ONLY=1 + SMG_INSTALL_ROOT) so the
+# banner, the adaptive deploy label, and the status flow are testable. This
+# re-sources the REAL module set, so it must stay the LAST section.
+(
+  set -eu
+  fail() { echo "FAIL: $*" >&2; exit 1; }
+  INSTALL_SOURCE_ONLY=1
+  SMG_INSTALL_ROOT="$ROOT"
+  INSTALLER_LANG=en
+  export INSTALL_SOURCE_ONLY SMG_INSTALL_ROOT INSTALLER_LANG
+  # shellcheck source=install.sh
+  . "$ROOT/install.sh"
+
+  ENV_FILE="$TD/absent.env"    # no .env -> banner must not try to load one
+  # deployed: banner shows the gateway IP and the dashboard URL
+  stack_state() { echo deployed; }
+  _iface_ipv4() { echo 192.168.1.10; }
+  detect_parent_interface() { echo eth0; }
+  MIHOMO_IP=192.168.1.100 WEB_UI_PORT=8080 PARENT_INTERFACE=eth0
+  _out="$(_mm_banner 2>&1)"
+  case "$_out" in
+    *192.168.1.100*) : ;;
+    *) fail "deployed banner lacks the gateway IP: $_out" ;;
+  esac
+  case "$_out" in
+    *192.168.1.10:8080*) : ;;
+    *) fail "deployed banner lacks the dashboard URL: $_out" ;;
+  esac
+  # fresh: banner says not deployed
+  stack_state() { echo fresh; }
+  case "$(_mm_banner 2>&1)" in
+    *'not deployed'*) : ;;
+    *) fail "fresh banner does not say 'not deployed'" ;;
+  esac
+  # partial: banner flags the partial state
+  stack_state() { echo partial; }
+  case "$(_mm_banner 2>&1)" in
+    *PARTIAL*|*partial*) : ;;
+    *) fail "partial banner does not flag the partial state" ;;
+  esac
+
+  # adaptive deploy label: with a saved .env the first menu item hints at reuse
+  _lbl="$(_mm_deploy_label)"
+  case "$_lbl" in *saved*) fail "deploy label hints at saved settings without a .env" ;; esac
+  ENV_FILE="$TD/present.env"; : > "$ENV_FILE"
+  _lbl="$(_mm_deploy_label)"
+  case "$_lbl" in
+    *saved*) : ;;
+    *) fail "deploy label does not adapt when a saved .env exists: $_lbl" ;;
+  esac
+
+  # status flow: reports state + dashboard and offers doctor (declined here)
+  stack_state() { echo deployed; }
+  lifecycle_inspect() {
+    LIFECYCLE_MIHOMO_STATUS=managed
+    LIFECYCLE_UI_STATUS=managed
+  }
+  ui_yesno() { return 1; }
+  _out="$(menu_status_flow 2>&1)" || fail "menu_status_flow returned non-zero"
+  case "$_out" in
+    *deployed*) : ;;
+    *) fail "status flow does not report the stack state: $_out" ;;
+  esac
+  case "$_out" in
+    *192.168.1.10:8080*) : ;;
+    *) fail "status flow does not report the dashboard URL" ;;
+  esac
+  # doctor accepted -> the doctor script actually runs
+  ui_yesno() { return 0; }
+  DOCTOR_RAN="$TD/doctor.ran"
+  rm -f "$DOCTOR_RAN"
+  _run_doctor() { : > "$DOCTOR_RAN"; }
+  menu_status_flow >/dev/null 2>&1 || fail "menu_status_flow failed with doctor accepted"
+  [ -e "$DOCTOR_RAN" ] || fail "accepting the doctor offer did not run diagnostics"
+
+  # the main menu carries the Status item and routes it (static assertions)
+  grep -q 'menu_status' "$ROOT/install.sh" || fail "main menu lacks the Status/Diagnose item"
+
+  # FUNCTIONAL bilingual check: msg falls through to the raw key when a catalog
+  # lacks it, so assert every new key renders as real text in BOTH languages
+  # (a grep count cannot tell which catalog a definition landed in).
+  for _lang in en zh; do
+    INSTALLER_LANG="$_lang"
+    for _k in menu_status menu_deploy_saved_hint st_fresh st_partial st_deployed \
+              status_title status_state status_mihomo status_ui status_dashboard \
+              status_tun ask_run_doctor ok_doctor_done warn_doctor_rc; do
+      [ "$(msg "$_k")" != "$_k" ] \
+        || fail "the $_lang catalog lacks '$_k' (msg falls through to the raw key)"
+    done
+  done
+  INSTALLER_LANG=en
+  exit 0
+) || exit 1
+
+echo "OK: BusyBox dotenv/network/arch/TUN/cloudflared/report checks, decision-first fail-before-mutation deployment order, closed-loop regressions (teardown notice, cron false-success, modify apply summary, INT trap, bilingual keys), and the state banner + Status menu"

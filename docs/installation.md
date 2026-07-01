@@ -86,6 +86,11 @@ This script:
 - optionally logs in to your registry and pulls images (non-interactive when `ACR_PASSWORD`
   is set, otherwise it prompts).
 
+The installer menu shows a live status banner (not deployed / partial / running with the
+gateway IP and dashboard URL) and includes a **Status / diagnose** item: a read-only summary of
+the containers, network, and TUN mode plus an optional `scripts/doctor.sh` run — so "is my
+gateway up?" never requires starting a flow.
+
 For an existing or partial deployment, use `sudo sh ./install.sh` instead. Its **first** step
 inventories the gateway containers and macvlan and asks independently whether to reuse them,
 dismantle verified project resources automatically, or show commands for manual handling — running

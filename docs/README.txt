@@ -54,7 +54,11 @@ After the language step, install.sh opens an interactive menu:
   2) Redeploy (reuse saved settings; fix a conflicting IP)
   3) Set up automatic updates (cron)
   4) Modify an existing deployment
-  5) Quit
+  5) Status / diagnose (read-only summary + optional doctor run)
+  6) Quit
+
+A live status line above the menu shows: not deployed / partial / running
+(with the gateway IP and dashboard URL once running).
 
 You can press Ctrl-D at any prompt or menu to quit the installer cleanly.
 
