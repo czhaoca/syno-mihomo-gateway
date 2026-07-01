@@ -102,22 +102,21 @@ prepare_stack() {
   done
 
   pf_compose_config || return 1
-  ui_info "validating the rendered Mihomo configuration"
+  ui_info "$(msg info_cfg_validate)"
   _cfg_test="$(mktemp -d "${TMPDIR:-/tmp}/smg-config.XXXXXX" 2>/dev/null)" || {
-    diagnose "could not create a private temporary config directory" "check free space and /tmp permissions"
+    diagnose "$(msg diag_cfg_tmp)" "$(msg diag_cfg_tmp_fix)"
     return 1
   }
   chmod 700 "$_cfg_test" 2>/dev/null || true
   if ! cp "$REPO_ROOT/config/config.template.yaml" "$SUBSCRIPTION_FILE" "$_cfg_test/"; then
     rm -rf "$_cfg_test"
-    diagnose "could not stage the Mihomo configuration" "check config file permissions"
+    diagnose "$(msg diag_cfg_stage)" "$(msg diag_cfg_stage_fix)"
     return 1
   fi
   if ! MIHOMO_CONFIG_DIR="$_cfg_test" sh "$REPO_ROOT/scripts/render_config.sh" \
       >>"${LOG_FILE:-/dev/null}" 2>&1; then
     rm -rf "$_cfg_test"
-    diagnose "failed to render config/config.yaml" \
-      "check the subscription, DNS values, and write permissions"
+    diagnose "$(msg diag_cfg_render)" "$(msg diag_cfg_render_fix)"
     return 1
   fi
   if ! "$DOCKER_BIN" run --rm --entrypoint /mihomo \
@@ -126,8 +125,7 @@ prepare_stack() {
       >>"${LOG_FILE:-/dev/null}" 2>&1; then
     rm -rf "$_cfg_test"
     _show_log_tail
-    diagnose "the pulled Mihomo image rejected the rendered configuration" \
-      "review config/config.yaml and the error above"
+    diagnose "$(msg diag_cfg_reject)" "$(msg diag_cfg_reject_fix)"
     return 1
   fi
   if ! mihomo_auto_redirect_probe "$MIHOMO_IMAGE"; then
@@ -140,9 +138,20 @@ prepare_stack() {
   return 0
 }
 
+# _deploy_teardown_notice - the closed-loop guarantee: when pre-deployment
+# cleanup already removed the old stack (a cleanup mode was 'auto') and a later
+# step fails, say so explicitly - the operator must know the gateway is DOWN,
+# not assume the previous deployment still runs. Shared by deploy and redeploy.
+_deploy_teardown_notice() {
+  case "${CLEANUP_CONTAINERS_MODE:-preserve}:${CLEANUP_NETWORK_MODE:-preserve}" in
+    *auto*) ui_warn "$(msg warn_prev_removed)"; ui_warn "$(msg warn_prev_removed_fix)" ;;
+  esac
+  return 1
+}
+
 rollback_installer_stack() {
   [ -n "${PREVIOUS_MIHOMO_IMAGE_ID:-}${PREVIOUS_METACUBEXD_IMAGE_ID:-}" ] || return 1
-  ui_warn "deployment failed structural health checks; attempting the last running images"
+  ui_warn "$(msg warn_rollback_attempt)"
   rollback_compose "${PREVIOUS_MIHOMO_IMAGE_ID:-}" "${PREVIOUS_METACUBEXD_IMAGE_ID:-}" \
     && health_gate
 }
@@ -153,7 +162,7 @@ deploy_stack() {
   if ! compose_recreate; then
     _show_log_tail
     diagnose "$(msg diag_compose_up)" "$(msgf diag_compose_up_fix "$INSTALL_LOG")"
-    rollback_installer_stack && ui_warn "previous images restored and healthy"
+    rollback_installer_stack && ui_warn "$(msg warn_rollback_ok)"
     return 1
   fi
   if health_gate; then
@@ -164,9 +173,9 @@ deploy_stack() {
   _show_mihomo_logs
   diagnose "$(msg diag_unhealthy)" "$(msg diag_unhealthy_fix)"
   if rollback_installer_stack; then
-    ui_warn "previous images restored and healthy"
+    ui_warn "$(msg warn_rollback_ok)"
   else
-    ui_error "automatic rollback was unavailable or did not restore health"
+    ui_error "$(msg err_rollback_failed)"
   fi
   return 1
 }
@@ -223,9 +232,14 @@ flow_deploy() {
   prepare_stack     || return 1             # pull + validate NEW images (non-destructive)
 
   apply_predeployment_cleanup || return 1   # TEAR DOWN only after validation (safety kept)
-  create_network    || return 1             # root: TUN + macvlan (final IP guard inside)
+  if ! create_network; then                 # root: TUN + macvlan (final IP guard inside)
+    _deploy_teardown_notice                 # closed loop: say the old stack is gone
+    return 1
+  fi
   load_env
 
+  # deploy_stack's own rollback messaging (warn_rollback_ok/err_rollback_failed)
+  # already states the outcome, so no teardown notice is layered on top here.
   deploy_stack      || return 1
   report_success
   return 0

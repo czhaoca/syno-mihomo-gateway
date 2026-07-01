@@ -89,6 +89,13 @@ flow_cron() {
   ui_ok "$(msgf ok_schedule "${_time}" "${UPDATE_TZ}")"
 
   # --- how to schedule it ---
+  # Track what actually happened so choosing "Done" cannot masquerade as
+  # success when nothing was scheduled (closed-loop guarantee):
+  #   _fc_installed=1  a crontab entry really landed
+  #   _fc_shown=1      the DSM Task Scheduler instructions were displayed
+  #                    (the task itself is created manually in the web UI)
+  _fc_installed=0
+  _fc_shown=0
   while :; do
     ui_say ""
     ui_menu_select _how "$(msg cron_how)" \
@@ -98,8 +105,16 @@ flow_cron() {
       "$(msg cron_how_done)"
     case "$UI_MENU_INDEX" in
       1) ui_step "$(msg step_dsm_sched)"
-         sh "$REPO_ROOT/scripts/install_scheduler.sh" ;;
-      2) install_fallback_crontab || ui_warn "$(msg warn_cron_not_installed)" ;;
+         if sh "$REPO_ROOT/scripts/install_scheduler.sh"; then
+           _fc_shown=1
+         else
+           ui_warn "$(msg warn_sched_show_failed)"
+         fi ;;
+      2) if install_fallback_crontab; then
+           _fc_installed=1
+         else
+           ui_warn "$(msg warn_cron_not_installed)"
+         fi ;;
       3) ui_info "$(msg info_dry_run)"
          sh "$REPO_ROOT/scripts/auto_update.sh" --dry-run \
            || ui_warn "$(msg warn_dry_run_nonzero)" ;;
@@ -107,6 +122,22 @@ flow_cron() {
     esac
   done
 
-  ui_ok "$(msg ok_cron_complete)"
+  if [ "$_fc_installed" = 1 ]; then
+    ui_ok "$(msg ok_cron_complete)"
+    return 0
+  fi
+  if [ "$(env_get UPDATE_ENABLED 2>/dev/null || echo true)" = true ]; then
+    if [ "$_fc_shown" = 1 ]; then
+      # Instructions were displayed; the DSM task is created manually.
+      ui_warn "$(msg warn_cron_manual_pending)"
+    else
+      ui_warn "$(msg warn_cron_none)"
+      if ui_yesno "$(msg ask_disable_updates)" n; then
+        env_set UPDATE_ENABLED false
+        ui_warn "$(msg warn_updates_disabled)"
+      fi
+    fi
+  fi
+  ui_ok "$(msg ok_cron_partial)"
   return 0
 }

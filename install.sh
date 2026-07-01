@@ -74,10 +74,20 @@ INSTALL_LOG="${INSTALL_LOG:-$GATEWAY_DATA_DIR/logs/install.log}"
 mkdir -p "$(dirname "$INSTALL_LOG")" 2>/dev/null
 export INSTALL_LOG
 
-# Restore terminal echo if a secret prompt or Ctrl-C left it off.
+# Restore terminal echo if a secret prompt or Ctrl-C left it off. On an
+# interrupt (Ctrl-C mid-mutation), additionally close the loop: tell the
+# operator that any partial state is detected and offered for cleanup on the
+# next run (the preprocessing step's inventory), instead of exiting silently.
 # shellcheck disable=SC2329  # invoked indirectly via trap
 _on_exit() { stty echo </dev/tty 2>/dev/null; }
-trap _on_exit EXIT INT TERM
+# shellcheck disable=SC2329  # invoked indirectly via trap
+_on_int() {
+  stty echo </dev/tty 2>/dev/null
+  printf '\n%s\n' "$(msg warn_interrupted 2>/dev/null || echo 'interrupted - partial state is detected on the next run')" >&2
+  exit 130
+}
+trap _on_exit EXIT
+trap _on_int INT TERM
 
 # This installer is interactive: it reads choices from the terminal even when
 # stdin is piped. Bail clearly if there is no controlling terminal.

@@ -222,6 +222,22 @@ to a ref that differs from those three, it's pulled **cache-only** and you'll se
 them (see [Auto-Update › image refs](auto-update.md#image-refs)). Also confirm the mirror actually
 pushed a new digest (check the `docker-china-sync` GitHub Actions run).
 
+## "the previous deployment was ALREADY REMOVED during cleanup"
+
+The installer tears the old stack down only after all non-destructive validation passed, but a
+late failure (usually macvlan creation) can still land after that teardown. This message means
+the gateway is **down** — nothing is serving LAN clients. Fix the reported issue (typically the
+parent interface or an IP conflict) and run Deploy again; `sh scripts/doctor.sh` shows what is
+currently present. The next installer run's preprocessing step re-inventories any partial state.
+
+## Cron setup said "no schedule is active yet"
+
+The cron flow saves `UPDATE_SCHEDULE`/`UPDATE_TZ`/`UPDATE_ENABLED` to `.env`, but a schedule only
+runs once a DSM Task Scheduler task (recommended) or a crontab entry exists. If you chose *Done*
+without either, the installer warns and offers to set `UPDATE_ENABLED=false` so the state stays
+honest. Re-run the cron flow and pick one of the two scheduling methods, or use
+`sh scripts/gateway.sh cron --apply-crontab --yes` as root.
+
 ## CI didn't run
 
 The pipeline triggers on branches `main` **and** `master`. If you use another branch name, add

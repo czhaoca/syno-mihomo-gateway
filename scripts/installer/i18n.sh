@@ -40,6 +40,8 @@ _msg_en() {
     warn_deploy_unfinished)   printf '%s' 'deploy did not finish - fix the issue above, then choose Deploy again' ;;
     warn_redeploy_unfinished) printf '%s' 'deploy did not finish - see the message above' ;;
     warn_cron_unfinished)     printf '%s' 'cron setup did not finish' ;;
+    warn_interrupted)         printf '%s' 'interrupted - any partial state will be detected and offered for cleanup on the next run' ;;
+    warn_sched_show_failed)   printf '%s' 'could not display the DSM scheduler instructions' ;;
     step_installer)   printf '%s' 'Mihomo Gateway installer' ;;
     info_check_loc)   printf '%s' "checking this folder's location..." ;;
     err_loc_blocked)  printf '%s' 'cannot continue until the folder location is fixed (see above).' ;;
@@ -213,6 +215,20 @@ _msg_en() {
     warn_no_sub)      printf '%s' 'no subscription URL is configured yet - mihomo needs one to start' ;;
     diag_compose_up)  printf '%s' 'docker compose up -d failed' ;;
     diag_compose_up_fix) printf '%s' 'review the output above and %s; verify the macvlan network and .env image refs' ;;
+    warn_prev_removed) printf '%s' 'the previous deployment was ALREADY REMOVED during cleanup - the gateway is down until a deploy succeeds' ;;
+    warn_prev_removed_fix) printf '%s' 'fix the issue above and choose Deploy again, or diagnose with: sh scripts/doctor.sh' ;;
+    warn_rollback_attempt) printf '%s' 'deployment failed structural health checks; attempting the last running images' ;;
+    warn_rollback_ok) printf '%s' 'previous images restored and healthy' ;;
+    err_rollback_failed) printf '%s' 'automatic rollback was unavailable or did not restore health' ;;
+    info_cfg_validate) printf '%s' 'validating the rendered Mihomo configuration' ;;
+    diag_cfg_tmp) printf '%s' 'could not create a private temporary config directory' ;;
+    diag_cfg_tmp_fix) printf '%s' 'check free space and /tmp permissions' ;;
+    diag_cfg_stage) printf '%s' 'could not stage the Mihomo configuration' ;;
+    diag_cfg_stage_fix) printf '%s' 'check config file permissions' ;;
+    diag_cfg_render) printf '%s' 'failed to render config/config.yaml' ;;
+    diag_cfg_render_fix) printf '%s' 'check the subscription, DNS values, and write permissions' ;;
+    diag_cfg_reject) printf '%s' 'the pulled Mihomo image rejected the rendered configuration' ;;
+    diag_cfg_reject_fix) printf '%s' 'review config/config.yaml and the error above' ;;
     ok_mihomo_healthy) printf '%s' 'mihomo is running and healthy' ;;
     diag_unhealthy)   printf '%s' 'mihomo did not become healthy' ;;
     diag_unhealthy_fix) printf '%s' "see the mihomo log above; check subscription/DNS/geo-data errors and any TUN or iptables failure" ;;
@@ -262,10 +278,15 @@ _msg_en() {
     warn_cron_not_installed) printf '%s' 'fallback crontab not installed - use the DSM web UI instead' ;;
     info_dry_run)     printf '%s' 'running: scripts/auto_update.sh --dry-run' ;;
     warn_dry_run_nonzero) printf '%s' 'dry-run exited non-zero - review the output above (this does not change the deploy)' ;;
+    warn_cron_none) printf '%s' 'updates are ENABLED but no schedule was installed - nothing will actually run' ;;
+    ask_disable_updates) printf '%s' 'set UPDATE_ENABLED=false until you schedule it' ;;
+    warn_cron_manual_pending) printf '%s' 'reminder: create the DSM Task Scheduler task shown above - updates will not run until you do' ;;
+    ok_cron_partial) printf '%s' 'cron settings saved, but NO schedule is active yet - install the DSM task or crontab entry to activate' ;;
     ok_cron_complete) printf '%s' 'cron setup complete. The DSM Task Scheduler (web UI) is the recommended, upgrade-persistent method.' ;;
 
     # --- flow_modify.sh ---
     step_apply)       printf '%s' 'Apply changes (redeploy)' ;;
+    warn_apply_failed) printf '%s' 'change NOT applied - the stack may still be running the OLD configuration; fix the issue above and choose Apply again' ;;
     warn_nothing_deployed) printf '%s' 'nothing is deployed yet - use the end-to-end deploy (main menu option 1) instead' ;;
     warn_acr_login_soft) printf '%s' 'ACR login failed - a changed image may fail to pull' ;;
     info_redeploying) printf '%s' 'redeploying (docker compose up -d; re-renders config, pulls changed images)' ;;
@@ -332,6 +353,8 @@ _msg_zh() {
     warn_deploy_unfinished)   printf '%s' '部署未完成 - 请修复上面的问题后再次选择"部署"' ;;
     warn_redeploy_unfinished) printf '%s' '部署未完成 - 请查看上面的提示' ;;
     warn_cron_unfinished)     printf '%s' 'cron 设置未完成' ;;
+    warn_interrupted)         printf '%s' '已中断——下次运行时会检测到任何未完成状态并提供清理选项' ;;
+    warn_sched_show_failed)   printf '%s' '无法显示 DSM 计划任务说明' ;;
     step_installer)   printf '%s' 'Mihomo 网关安装程序' ;;
     info_check_loc)   printf '%s' '正在检查此文件夹的位置...' ;;
     err_loc_blocked)  printf '%s' '文件夹位置修复前无法继续（见上文）。' ;;
@@ -505,6 +528,20 @@ _msg_zh() {
     warn_no_sub)      printf '%s' '尚未配置订阅 URL - mihomo 启动需要它' ;;
     diag_compose_up)  printf '%s' 'docker compose up -d 失败' ;;
     diag_compose_up_fix) printf '%s' '请查看上面的输出以及 %s；核对 macvlan 网络和 .env 中的镜像引用' ;;
+    warn_prev_removed) printf '%s' '旧部署已在清理阶段被移除——在一次部署成功之前，网关处于停机状态' ;;
+    warn_prev_removed_fix) printf '%s' '请修复上面的问题后再次选择"部署"，或运行诊断：sh scripts/doctor.sh' ;;
+    warn_rollback_attempt) printf '%s' '部署未通过结构性健康检查；尝试回滚到最近运行的镜像' ;;
+    warn_rollback_ok) printf '%s' '已恢复此前的镜像且运行健康' ;;
+    err_rollback_failed) printf '%s' '自动回滚不可用或未能恢复健康状态' ;;
+    info_cfg_validate) printf '%s' '正在校验渲染后的 Mihomo 配置' ;;
+    diag_cfg_tmp) printf '%s' '无法创建私有临时配置目录' ;;
+    diag_cfg_tmp_fix) printf '%s' '请检查剩余空间与 /tmp 权限' ;;
+    diag_cfg_stage) printf '%s' '无法暂存 Mihomo 配置' ;;
+    diag_cfg_stage_fix) printf '%s' '请检查配置文件权限' ;;
+    diag_cfg_render) printf '%s' '渲染 config/config.yaml 失败' ;;
+    diag_cfg_render_fix) printf '%s' '请检查订阅、DNS 取值与写入权限' ;;
+    diag_cfg_reject) printf '%s' '拉取的 Mihomo 镜像拒绝了渲染出的配置' ;;
+    diag_cfg_reject_fix) printf '%s' '请检查 config/config.yaml 与上面的错误' ;;
     ok_mihomo_healthy) printf '%s' 'mihomo 正在运行且健康' ;;
     diag_unhealthy)   printf '%s' 'mihomo 未能进入健康状态' ;;
     diag_unhealthy_fix) printf '%s' '请查看上面的 mihomo 日志；检查订阅/DNS/geo 数据错误以及 TUN 或 iptables 故障' ;;
@@ -554,10 +591,15 @@ _msg_zh() {
     warn_cron_not_installed) printf '%s' '未安装回退 crontab - 请改用 DSM 网页界面' ;;
     info_dry_run)     printf '%s' '正在运行：scripts/auto_update.sh --dry-run' ;;
     warn_dry_run_nonzero) printf '%s' 'dry-run 以非零状态退出 - 请查看上面的输出（这不会改变部署）' ;;
+    warn_cron_none) printf '%s' '已启用自动更新，但没有安装任何计划任务——实际上不会运行' ;;
+    ask_disable_updates) printf '%s' '在安排计划任务之前，是否先设置 UPDATE_ENABLED=false' ;;
+    warn_cron_manual_pending) printf '%s' '提醒：请按上面的说明创建 DSM 任务计划程序任务，否则更新不会运行' ;;
+    ok_cron_partial) printf '%s' 'cron 设置已保存，但尚无生效的计划——请安装 DSM 任务或 crontab 条目以启用' ;;
     ok_cron_complete) printf '%s' 'cron 设置完成。推荐使用 DSM 任务计划程序（网页界面），它在升级后仍能保留。' ;;
 
     # --- flow_modify.sh ---
     step_apply)       printf '%s' '应用更改（重新部署）' ;;
+    warn_apply_failed) printf '%s' '更改未生效——当前栈可能仍在运行旧配置；请修复上面的问题后再次选择"应用"' ;;
     warn_nothing_deployed) printf '%s' '尚未部署任何内容 - 请改用端到端部署（主菜单选项 1）' ;;
     warn_acr_login_soft) printf '%s' 'ACR 登录失败 - 已更改的镜像可能拉取失败' ;;
     info_redeploying) printf '%s' '正在重新部署（docker compose up -d；重新渲染配置，拉取已更改的镜像）' ;;

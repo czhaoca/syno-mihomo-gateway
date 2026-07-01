@@ -390,4 +390,114 @@ case "$_report" in
   *) fail "success report lost the NAS-IP fallback: $_report" ;;
 esac
 
-echo "OK: BusyBox dotenv/network/arch/TUN/cloudflared/report checks and decision-first, fail-before-mutation deployment order"
+# --- closed-loop regressions --------------------------------------------------
+# 1) teardown-then-fail: when pre-deployment cleanup already removed the old
+#    stack (a cleanup mode was 'auto') and a LATER step fails, the operator must
+#    be told the previous deployment is gone - and must NOT be told when nothing
+#    was torn down.
+. "$ROOT/scripts/installer/flow_deploy.sh"   # fresh copies of the flow functions
+msg() { echo "$1"; }
+msgf() { echo "$1"; }
+ui_step() { :; }; ui_say() { :; }; ui_info() { :; }; ui_ok() { :; }
+ui_warn() { printf '%s\n' "$*"; }
+diagnose() { printf '%s\n' "$1"; }
+is_root() { return 0; }
+seed_config() { return 0; }
+load_env() { return 0; }
+pf_docker() { return 0; }; pf_arch() { return 0; }; pf_web_port() { return 0; }
+wizard_env() { return 0; }; wizard_images() { return 0; }; wizard_subscription() { return 0; }
+validate_selected_network() { return 0; }
+scan_and_prefill() { return 0; }
+plan_predeployment_cleanup() { return 0; }
+apply_predeployment_cleanup() { return 0; }
+prepare_stack() { return 0; }
+create_network() { return 1; }
+deploy_stack() { return 0; }
+report_success() { :; }
+
+CLEANUP_CONTAINERS_MODE=preserve CLEANUP_NETWORK_MODE=auto
+_out="$(flow_deploy 2>&1)" && fail "flow_deploy succeeded despite a network failure"
+case "$_out" in
+  *warn_prev_removed*) : ;;
+  *) fail "teardown-then-fail did not warn that the previous deployment was removed" ;;
+esac
+CLEANUP_CONTAINERS_MODE=preserve CLEANUP_NETWORK_MODE=preserve
+_out="$(flow_deploy 2>&1)" && fail "flow_deploy succeeded despite a network failure (preserve)"
+case "$_out" in
+  *warn_prev_removed*) fail "teardown notice printed although nothing was torn down" ;;
+esac
+
+# The redeploy flow shares the guard (the audit flagged it as inheriting the gap).
+. "$ROOT/scripts/installer/flow_redeploy.sh"
+precheck_deploy() { return 0; }
+UI_MENU_SEQ="1"
+ui_menu_select() {
+  UI_MENU_INDEX="${UI_MENU_SEQ%% *}"
+  case "$UI_MENU_SEQ" in *' '*) UI_MENU_SEQ="${UI_MENU_SEQ#* }" ;; *) UI_MENU_SEQ='' ;; esac
+}
+env_get() { echo ''; return 1; }
+CLEANUP_CONTAINERS_MODE=auto CLEANUP_NETWORK_MODE=preserve
+_out="$(flow_redeploy 2>&1)" && fail "flow_redeploy succeeded despite a network failure"
+case "$_out" in
+  *warn_prev_removed*) : ;;
+  *) fail "redeploy teardown-then-fail did not warn about the removed deployment" ;;
+esac
+
+# 2) cron flow: choosing Done with updates enabled but NOTHING scheduled must
+#    warn and offer to flip UPDATE_ENABLED=false - never report plain success.
+. "$ROOT/scripts/lib/scheduler.sh"
+. "$ROOT/scripts/installer/flow_cron.sh"
+ENV_FILE="$TD/cron.env"; : > "$ENV_FILE"
+ui_error() { echo "ERROR: $*" >&2; }
+. "$ROOT/scripts/installer/envedit.sh"
+load_env() { return 0; }
+ui_ask_validated() { eval "$1=02:30"; }
+ui_ask() { eval "$1=UTC"; }
+UI_MENU_SEQ="4 4"        # timezone: UTC, then how-to-schedule: Done
+YESNO_SEQ="0 0"          # enable updates: yes, then disable-until-scheduled: yes
+ui_yesno() {
+  _yn="${YESNO_SEQ%% *}"
+  case "$YESNO_SEQ" in *' '*) YESNO_SEQ="${YESNO_SEQ#* }" ;; *) YESNO_SEQ='' ;; esac
+  return "$_yn"
+}
+_out="$(flow_cron 2>&1)" || fail "flow_cron returned non-zero"
+case "$_out" in
+  *warn_cron_none*) : ;;
+  *) fail "cron Done with nothing scheduled did not warn" ;;
+esac
+case "$_out" in
+  *ok_cron_complete*) fail "cron flow still reported unconditional success with nothing scheduled" ;;
+esac
+[ "$(dotenv_get UPDATE_ENABLED)" = false ] \
+  || fail "declining an active schedule did not offer/flip UPDATE_ENABLED=false"
+
+# 3) modify flow: a failed apply must print a change-NOT-applied summary.
+. "$ROOT/scripts/installer/flow_modify.sh"
+stack_state() { echo deployed; }
+apply_changes() { return 1; }
+UI_MENU_SEQ="5 6"        # Apply (fails), then Back
+_out="$(flow_modify 2>&1)" || fail "flow_modify should return 0 via Back"
+case "$_out" in
+  *warn_apply_failed*) : ;;
+  *) fail "modify apply failure did not print the change-not-applied summary" ;;
+esac
+
+# 4) Ctrl-C notice: install.sh must trap INT/TERM with the partial-state notice,
+#    and every new closed-loop message must exist in BOTH language catalogs.
+grep -q '_on_int' "$ROOT/install.sh" || fail "install.sh lacks the INT/TERM notice handler"
+grep -Eq 'trap +_on_int +INT +TERM' "$ROOT/install.sh" || fail "install.sh does not trap INT/TERM to _on_int"
+for _k in warn_prev_removed warn_prev_removed_fix warn_apply_failed warn_cron_none \
+          ask_disable_updates ok_cron_partial warn_cron_manual_pending warn_interrupted \
+          warn_rollback_attempt warn_rollback_ok err_rollback_failed info_cfg_validate \
+          diag_cfg_tmp diag_cfg_tmp_fix diag_cfg_stage diag_cfg_stage_fix \
+          diag_cfg_render diag_cfg_render_fix diag_cfg_reject diag_cfg_reject_fix; do
+  _n="$(grep -c "^[[:space:]]*${_k})" "$ROOT/scripts/installer/i18n.sh" || true)"
+  [ "$_n" -ge 2 ] || fail "i18n key '$_k' is not present in both language catalogs (found $_n)"
+done
+for _f in flow_deploy.sh; do
+  grep -n 'ui_warn "deployment failed\|ui_warn "previous images\|ui_error "automatic rollback' \
+    "$ROOT/scripts/installer/$_f" >/dev/null \
+    && fail "$_f still carries hardcoded-English rollback strings"
+done
+
+echo "OK: BusyBox dotenv/network/arch/TUN/cloudflared/report checks, decision-first fail-before-mutation deployment order, and closed-loop regressions (teardown notice, cron false-success, modify apply summary, INT trap, bilingual keys)"

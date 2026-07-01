@@ -55,7 +55,7 @@ flow_modify() {
       2) wizard_images && load_env ;;
       3) wizard_subscription ;;
       4) setup_network_interactive ;;
-      5) apply_changes ;;
+      5) apply_changes || ui_warn "$(msg warn_apply_failed)" ;;
       6) return 0 ;;
     esac
   done

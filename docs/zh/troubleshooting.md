@@ -170,6 +170,20 @@ docker logs --tail 100 cloudflared-candidate
 
 更新器会将**正在运行**的容器镜像与新拉取的标签进行比较，并且只会部署与 `MIHOMO_IMAGE`/`METACUBEXD_IMAGE`/`CF_IMAGE` 匹配的引用。如果你将 `UPDATE_IMAGES` 设置为与这三者不同的引用，它会被**仅缓存**拉取，你会看到一条 `WARN`。请将它们对齐（参见 [自动更新 › 镜像引用](auto-update.md)）。同时确认镜像同步确实推送了新的摘要（检查 `docker-china-sync` 的 GitHub Actions 运行记录）。
 
+## “旧部署已在清理阶段被移除”
+
+安装器只有在所有非破坏性校验通过后才会拆除旧栈，但之后的步骤（通常是 macvlan 创建）仍可能失败。
+出现此消息意味着网关处于**停机**状态——没有任何组件在为局域网客户端服务。请修复上面报告的问题
+（通常是父接口或 IP 冲突）后再次选择“部署”；`sh scripts/doctor.sh` 可查看当前实际存在的组件。
+下次运行安装器时，预处理步骤会重新盘点任何未完成状态。
+
+## cron 设置提示“尚无生效的计划”
+
+cron 流程会把 `UPDATE_SCHEDULE`/`UPDATE_TZ`/`UPDATE_ENABLED` 保存到 `.env`，但只有在 DSM
+任务计划程序任务（推荐）或 crontab 条目存在后，计划才会真正运行。如果在两者都未创建时选择
+“完成”，安装器会给出警告，并提议设置 `UPDATE_ENABLED=false` 以保持状态一致。请重新运行 cron
+流程并选择其中一种调度方式，或以 root 运行 `sh scripts/gateway.sh cron --apply-crontab --yes`。
+
 ## CI 没有运行
 
 流水线在分支 `main` **和** `master` 上触发。如果你使用其他分支名称，请将其加入 `.woodpecker.yml` 的 `when.branch`。

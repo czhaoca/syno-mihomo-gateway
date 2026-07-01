@@ -59,7 +59,10 @@ flow_redeploy() {
   plan_predeployment_cleanup || return 1
   prepare_stack || return 1
   apply_predeployment_cleanup || return 1
-  create_network || return 1     # root: TUN + macvlan (re-runs the final IP guard)
+  if ! create_network; then      # root: TUN + macvlan (re-runs the final IP guard)
+    _deploy_teardown_notice      # closed loop: say the old stack is gone (flow_deploy.sh)
+    return 1
+  fi
   load_env
   deploy_stack || return 1
   report_success
