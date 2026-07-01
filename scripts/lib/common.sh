@@ -46,12 +46,26 @@ ensure_persistent_state() {
   return 0
 }
 
-# Exit codes (see README / DSM Task Scheduler email-on-nonzero).
+# Exit codes (see README / DSM Task Scheduler email-on-nonzero). The meanings
+# of 0/2/3/4/5 are load-bearing for existing scheduled tasks - never repurpose
+# them; new conditions get NEW codes (6/7 below, added for gateway.sh).
 EXIT_OK=0            # success or clean no-op
 EXIT_PARTIAL=2      # one component failed, others applied
 EXIT_CONFIG=3       # config / preflight error - nothing changed
 EXIT_LOCKED=4       # another run holds the lock
 EXIT_LOGIN=5        # ACR login failed - nothing attempted
+EXIT_ROOT=6         # verb needs root - nothing changed
+EXIT_CONFIRM=7      # mutating verb refused without explicit --yes - nothing changed
+
+# is_root / need_root - the per-verb privilege gate for headless callers.
+# (scripts/installer/preflight.sh keeps its own identical is_root for the
+# interactive path; both are trivial and behaviorally identical.)
+is_root() { [ "$(id -u 2>/dev/null)" = "0" ]; }
+need_root() {
+  is_root && return 0
+  log_error "this action requires root - re-run with sudo"
+  return "$EXIT_ROOT"
+}
 
 # --- strict dotenv parsing ---------------------------------------------------
 # .env is shared with Docker Compose, but it is data, not a shell program. Do
@@ -172,17 +186,28 @@ load_env() {
   # Under the interactive installer, send all library output (compose up, image
   # pull, ACR login) to the install log so the on-screen "Details: <file>"
   # pointer actually points at the file that holds the error. The cron/boot path
-  # never sets INSTALL_LOG, so it keeps logging to UPDATE_LOG.
+  # never sets INSTALL_LOG, so it keeps logging to UPDATE_LOG. The gateway CLI
+  # (scripts/gateway.sh) sets GATEWAY_LOG, which wins over both: every verb of
+  # the unified CLI logs to one file, logs/gateway.log.
   [ -n "${INSTALL_LOG:-}" ] && LOG_FILE="$INSTALL_LOG"
+  [ -n "${GATEWAY_LOG:-}" ] && LOG_FILE="$GATEWAY_LOG"
   LOG_DIR="$(dirname "$LOG_FILE")"
   [ "${NO_LOG_INIT:-0}" = 1 ] || mkdir -p "$LOG_DIR" 2>/dev/null || true
 }
 
 _ts() { date '+%Y-%m-%d %H:%M:%S %z'; }
 log() {
-  # log LEVEL message...
+  # log LEVEL message... GATEWAY_VERB/GATEWAY_RUN_ID (set by gateway.sh) add a
+  # per-verb audit field. GATEWAY_LOG_QUIET=1 (set under --json) keeps stdout
+  # clean for the single JSON result object: lines go to the file + stderr only.
   _lvl="$1"; shift
-  printf '%s [%s] %s\n' "$(_ts)" "$_lvl" "$*" | tee -a "${LOG_FILE:-/dev/stderr}"
+  _line="$(printf '%s [%s]%s %s' "$(_ts)" "$_lvl" "${GATEWAY_VERB:+ verb=$GATEWAY_VERB run=$GATEWAY_RUN_ID}" "$*")"
+  if [ "${GATEWAY_LOG_QUIET:-0}" = 1 ]; then
+    [ -n "${LOG_FILE:-}" ] && printf '%s\n' "$_line" >> "$LOG_FILE" 2>/dev/null
+    printf '%s\n' "$_line" >&2
+  else
+    printf '%s\n' "$_line" | tee -a "${LOG_FILE:-/dev/stderr}"
+  fi
 }
 log_info()  { log INFO  "$@"; }
 log_warn()  { log WARN  "$@"; }

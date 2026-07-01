@@ -18,6 +18,7 @@ config/
   config.template.yaml        # mihomo config with {{PLACEHOLDERS}}
   subscription.txt.example    # subscription template (copy to subscription.txt)
 scripts/
+  gateway.sh                  # non-interactive CLI: deploy/redeploy/modify/cron/status/doctor/update
   setup_network.sh            # macvlan + TUN setup, optional ACR login/pull
   render_config.sh            # renders config.yaml from the template (entrypoint + CI both call it)
   auto_update.sh              # the DSM auto-update orchestrator (entry point)
@@ -37,6 +38,7 @@ scripts/
     render_check.py           # CI: runs the real renderer + structural/rule assertions
     auto_update_check.sh      # fake-Docker TDD suite for scheduler/update/rollback paths
     cloudflared_check.sh      # fake-Docker TDD suite for blue-green behavior
+    gateway_cli_check.sh      # PATH-stub suite for the gateway.sh CLI contract
     lifecycle_check.sh       # fake-Docker inventory/cleanup safety suite
     privacy_check.py         # tracked-content/history privacy gate
 .woodpecker.yml               # CI: compose/yaml validate, render check, shellcheck
