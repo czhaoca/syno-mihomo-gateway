@@ -28,6 +28,7 @@ your NAS, and a DSM-scheduled job keeps everything current and safely self-heali
 | [Configuration](docs/configuration.md) | **complete `.env` reference**, template, subscription, rules |
 | [Auto-Update](docs/auto-update.md) | ACR setup, the run sequence, health-gate/rollback, cloudflared blue-green, exit codes |
 | [Operations](docs/operations.md) | runbook: scheduling, dry-run, kill-switch, logs, notifications, rollback |
+| [CLI Reference](docs/cli.md) | `gateway.sh` verbs, options, guardrails, exit codes (generated from `scripts/cli/spec.yaml`) |
 | [Troubleshooting](docs/troubleshooting.md) | FAQ + exit codes + concrete failure fixes |
 | [Development](docs/development.md) | internals (scripts, renderer, CI), coding rules, how to extend |
 

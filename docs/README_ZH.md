@@ -26,6 +26,7 @@
 | [配置](zh/configuration.md) | **完整 `.env` 参考**、模板、订阅、规则 |
 | [自动更新](zh/auto-update.md) | ACR 配置、运行流程、健康检查/回滚、cloudflared 蓝绿、退出码 |
 | [运维](zh/operations.md) | 运维手册：计划任务、试运行、开关、日志、通知、回滚 |
+| [命令行参考](zh/cli.md) | `gateway.sh` 子命令、选项、安全护栏、退出码（由 `scripts/cli/spec.yaml` 生成） |
 | [故障排查](zh/troubleshooting.md) | FAQ + 退出码 + 具体故障处理 |
 | [开发](zh/development.md) | 内部实现（脚本、渲染器、CI）、编码规范、如何扩展 |
 

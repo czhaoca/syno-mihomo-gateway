@@ -57,37 +57,16 @@ SELF_DIR="${GATEWAY_SELF_DIR:-$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)}"
 . "$SELF_DIR/lib/scheduler.sh"
 # shellcheck source=scripts/lib/resolve.sh
 . "$SELF_DIR/lib/resolve.sh"
+# help.sh is GENERATED from scripts/cli/spec.yaml (usage + gw_help) - the CLI
+# contract gate (scripts/ci/cli_contract_check.py) keeps it byte-fresh.
+# shellcheck source=scripts/lib/help.sh
+. "$SELF_DIR/lib/help.sh"
 # envedit.sh reports errors through ui_error; headless callers route it to the log.
 ui_error() { log_error "$@"; }
 # shellcheck source=scripts/installer/envedit.sh
 . "$SELF_DIR/installer/envedit.sh"
 
-usage() {
-  cat <<'EOF'
-Usage: gateway.sh <verb> [options]
-
-Verbs:
-  deploy      Bring the gateway up from the saved .env.
-              --cleanup-containers preserve|auto   --cleanup-network preserve|auto
-              --interface IFACE   --yes   --dry-run
-  redeploy    Deploy strictly from the saved, complete .env. Same options.
-  modify      Change one thing, then re-apply the full pipeline.
-              --network | --images [--mihomo-tag T] [--metacubexd-tag T]
-              | --subscription URL   --yes   --dry-run
-  cron        Persist the auto-update schedule.
-              --time HH:MM | --schedule 'M H * * *'   --tz ZONE
-              --enable | --disable   --apply-crontab (needs --yes + root)
-  status      Read-only deployment state.   --json
-  doctor      Read-only diagnostics.        --json   --egress
-  update      Run the unattended updater (scripts/auto_update.sh).
-              --yes   (--dry-run / --force pass through)
-
-Guardrails: mutating verbs need --yes (exit 7 without) and root (exit 6);
---dry-run never mutates; secrets are set in .env, never on the command line.
-Exit codes: 0 ok, 2 partial, 3 config, 4 locked, 5 login, 6 needs-root, 7 needs --yes.
-Logs: <data-dir>/logs/gateway.log (verb= and run= fields on every line).
-EOF
-}
+# usage()/gw_help() come from the generated scripts/lib/help.sh above.
 
 _gw_fail() { # CODE MESSAGE...
   _gwf_rc="$1"; shift
@@ -524,6 +503,7 @@ gateway_main() {
     # Everything except --yes passes through to auto_update.sh verbatim.
     for _a in "$@"; do
       case "$_a" in
+        --help|-h) gw_help update; exit "$EXIT_OK" ;;
         --yes|-y) GW_YES=1 ;;
         --dry-run) GW_DRY_RUN=1; GW_PASS="$GW_PASS $_a" ;;
         *) GW_PASS="$GW_PASS $_a" ;;
@@ -533,6 +513,7 @@ gateway_main() {
     while [ $# -gt 0 ]; do
       _a="$1"
       case "$GW_VERB:$_a" in
+        *:--help|*:-h) gw_help "$GW_VERB"; exit "$EXIT_OK" ;;
         *:--yes|*:-y) GW_YES=1 ;;
         deploy:--dry-run|redeploy:--dry-run|modify:--dry-run) GW_DRY_RUN=1 ;;
         status:--json|doctor:--json) GW_JSON=1 ;;

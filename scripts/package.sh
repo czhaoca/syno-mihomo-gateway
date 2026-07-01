@@ -44,7 +44,7 @@ PROFILE=enduser
 # and the maintainer-only packager. The leak-gate below is the belt-and-suspenders
 # that fails the build if any identifying string survives anyway. ('.' = include
 # everything tracked, then subtract.) No entry contains a space.
-ENDUSER_EXCLUDES=". :(exclude)README.md :(exclude)AGENTS.md :(exclude)CLAUDE.md :(exclude).woodpecker.yml :(exclude).gitignore :(exclude)docs/*.md :(exclude)docs/zh :(exclude)scripts/ci :(exclude)scripts/package.sh"
+ENDUSER_EXCLUDES=". :(exclude)README.md :(exclude)AGENTS.md :(exclude)CLAUDE.md :(exclude).woodpecker.yml :(exclude).gitignore :(exclude)docs/*.md :(exclude)docs/zh :(exclude)scripts/ci :(exclude)scripts/cli :(exclude)scripts/package.sh"
 
 _ts() { date '+%Y-%m-%d %H:%M:%S %z'; }
 log()       { printf '%s [%s] %s\n' "$(_ts)" "$1" "$2" >&2; }

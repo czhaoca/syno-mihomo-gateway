@@ -62,6 +62,10 @@ EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 
 ENDUSER_MUST_INCLUDE = [
     PREFIX + "install.sh",
+    PREFIX + "scripts/gateway.sh",
+    PREFIX + "scripts/lib/help.sh",
+    PREFIX + "docs/CLI.txt",
+    PREFIX + "docs/CLI.zh.txt",
     PREFIX + "scripts/installer/ui.sh",
     PREFIX + "scripts/installer/i18n.sh",
     PREFIX + "scripts/installer/flow_redeploy.sh",
@@ -78,6 +82,8 @@ ENDUSER_MUST_INCLUDE = [
     PREFIX + "VERSION",
 ]
 ENDUSER_MUST_EXCLUDE = [
+    PREFIX + "scripts/cli/spec.yaml",
+    PREFIX + "docs/cli.md",
     PREFIX + "README.md",
     PREFIX + "AGENTS.md",
     PREFIX + "CLAUDE.md",
@@ -280,8 +286,15 @@ def build_enduser_fixture(root: Path):
         "Default=https://example.com/sub?token=REPLACE_ME\n")
     for s in ("ui.sh", "i18n.sh", "flow_redeploy.sh", "flow_deploy.sh", "preprocess.sh"):
         (root / "scripts" / "installer" / s).write_text("#!/bin/sh\n:\n")
-    for s in ("common.sh", "network.sh", "registry.sh", "compose.sh", "scheduler.sh", "lifecycle.sh"):
+    for s in ("common.sh", "network.sh", "registry.sh", "compose.sh", "scheduler.sh", "lifecycle.sh",
+              "resolve.sh"):
         (root / "scripts" / "lib" / s).write_text("#!/bin/sh\n:\n")
+    # The generated runtime help + the CLI entry point ship; the spec does not.
+    (root / "scripts" / "lib" / "help.sh").write_text(
+        "#!/bin/sh\n# help.sh - generated runtime help\nusage() { :; }\ngw_help() { usage; }\n")
+    (root / "scripts" / "gateway.sh").write_text("#!/bin/sh\n# non-interactive CLI\n:\n")
+    (root / "docs" / "CLI.txt").write_text("Command-line reference for gateway.sh.\n")
+    (root / "docs" / "CLI.zh.txt").write_text("gateway.sh command line reference (zh).\n")
     for s in ("auto_update.sh", "render_config.sh", "install_scheduler.sh", "setup_network.sh"):
         (root / "scripts" / s).write_text("#!/bin/sh\n:\n")
     (root / "scripts" / "doctor.sh").write_text("#!/bin/sh\n:\n")
@@ -296,6 +309,11 @@ def build_enduser_fixture(root: Path):
     (root / "docs" / "installation.md").write_text("git clone https://github.com/czhaoca/x.git\n")
     (root / "docs" / "zh" / "installation.md").write_text("clone https://github.com/czhaoca/x\n")
     (root / "scripts" / "ci" / "check.py").write_text("# woodpecker ci helper\n")
+    (root / "scripts" / "cli").mkdir(parents=True)
+    (root / "scripts" / "cli" / "spec.yaml").write_text(
+        "# CLI contract spec - dev-only; see github.com/czhaoca upstream\n")
+    (root / "docs" / "cli.md").write_text("# CLI reference (generated) - github.com/czhaoca\n")
+    (root / "docs" / "zh" / "cli.md").write_text("# CLI reference zh - github.com/czhaoca\n")
 
     # --- untracked planted secrets (gitignored -> must never ship) ---
     (root / ".env").write_text(f"ACR_PASSWORD={ENV_SENTINEL}\n")
@@ -323,6 +341,8 @@ def check_enduser_archive(path: Path):
             fail(f"{label}: enduser bundle ships a .md doc: {n}")
         if n.startswith(PREFIX + "scripts/ci/"):
             fail(f"{label}: enduser bundle ships scripts/ci: {n}")
+        if n.startswith(PREFIX + "scripts/cli/"):
+            fail(f"{label}: enduser bundle ships the CLI spec dir scripts/cli: {n}")
         if n.startswith(PREFIX + "docs/zh/"):
             fail(f"{label}: enduser bundle ships docs/zh: {n}")
     blob = archive_blob(path)

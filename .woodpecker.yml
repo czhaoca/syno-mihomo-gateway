@@ -24,6 +24,16 @@ steps:
       - pip install --quiet pyyaml
       - python scripts/ci/render_check.py
 
+  - name: cli-contract
+    image: python:3.12-slim
+    commands:
+      # The CLI contract: scripts/cli/spec.yaml is the source of truth; the
+      # committed help.sh/cli.md(en+zh)/CLI.txt(en+zh) must regenerate
+      # byte-identical, spec exit codes must match common.sh, and gateway.sh
+      # --help must serve the spec text verbatim. Regenerate with --write.
+      - pip install --quiet pyyaml
+      - python scripts/ci/cli_contract_check.py
+
   - name: compose-policy
     image: python:3.12-slim
     commands:
