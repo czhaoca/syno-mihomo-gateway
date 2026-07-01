@@ -20,6 +20,11 @@ default, plus other common zones, or type your own).
 --------------------------------------------------------------------------
 Recommended: DSM Task Scheduler (survives system upgrades)
 --------------------------------------------------------------------------
+Note: do NOT use Container Manager's "Project" Build/Update as an update
+method - it has no digest gate, no health check, and no rollback. The
+scheduled script below is the safe path, and its non-zero exit codes drive
+DSM's "send run details" email (the default way you get notified).
+
 On Synology the recommended, upgrade-persistent way to schedule updates is a
 user-defined script in DSM:
 

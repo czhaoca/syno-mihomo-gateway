@@ -40,6 +40,13 @@ If an `UPDATE_IMAGES` entry doesn't match any of the three, it is **pulled but n
 (cache-only) and the run logs a `WARN`. That's the signal you set `UPDATE_IMAGES` to a ref that
 differs from the deploy vars. Keep them aligned with `docker-china-sync/images.txt`.
 
+## Why not Container Manager's own update button?
+
+Container Manager's *Project* tab offers a Build/Update flow — do **not** use it on this stack.
+It re-pulls `:latest` and recreates containers with no digest comparison, no health gate, and no
+rollback; a bad upstream image would take the gateway (and the whole LAN's egress) down with no
+automatic recovery. The scheduled `auto_update.sh` below exists precisely to add those gates.
+
 ## The run sequence
 
 Each invocation, in order (everything is logged to `UPDATE_LOG`):

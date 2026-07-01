@@ -32,6 +32,16 @@
 
 ---
 
+## DSM 兼容性
+
+- **最低要求：DSM 7.2**（Container Manager 时代）。**推荐：DSM 7.3.1+**（自带更新的
+  Docker 引擎，约 24.x）。
+- 本栈的容器会**显示**在 Container Manager 的“容器”页签中，但绝不要通过“项目（Project）”
+  页签管理它：其 *构建/更新* 操作会在**没有摘要门、健康门和回滚**的情况下重新拉取并重建
+  容器，绕过本项目的安全模型。Container Manager 的图形界面也无法创建 macvlan 网络或管理
+  特权能力，而且 CLI 创建的 compose 栈本来就不会注册为项目——受支持的管理入口是 SSH
+  安装器（`sh ./install.sh`）与 `scripts/gateway.sh`。
+
 ## 快速开始
 
 > 精简版；详见[安装](zh/installation.md)，每个配置项见[配置](zh/configuration.md)。

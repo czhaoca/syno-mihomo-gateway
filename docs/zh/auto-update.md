@@ -36,6 +36,13 @@ UPDATE_IMAGES="${MIHOMO_IMAGE} ${METACUBEXD_IMAGE} ${CF_IMAGE}"
 （仅缓存），并且该次运行会记录一条 `WARN`。这是一个信号，说明你把 `UPDATE_IMAGES` 设置成了与
 部署变量不同的引用。请让它们与 `docker-china-sync/images.txt` 保持一致。
 
+## 为什么不用 Container Manager 自带的更新按钮？
+
+Container Manager 的*项目*页签提供“构建/更新”——请**不要**对本栈使用它。它会重新拉取
+`:latest` 并重建容器，既不比较摘要，也没有健康门和回滚；一旦上游镜像有问题，网关（以及
+整个局域网的出口）会在没有自动恢复的情况下瘫痪。下面的计划脚本 `auto_update.sh` 存在的
+意义正是补上这些防护。
+
 ## 运行序列
 
 每次调用都会按顺序执行以下步骤（所有内容都会记录到 `UPDATE_LOG`）：

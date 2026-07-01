@@ -34,6 +34,18 @@ your NAS, and a DSM-scheduled job keeps everything current and safely self-heali
 
 ---
 
+## DSM compatibility
+
+- **Minimum: DSM 7.2** (the Container Manager era). **Recommended: DSM 7.3.1+** (ships a newer
+  Docker engine, ~24.x).
+- The stack's containers are **visible** in Container Manager's *Container* tab, but the stack
+  must **never** be managed from the *Project* tab: the UI's *Build/Update* flow re-pulls and
+  recreates containers with **no digest gate, no health gate, and no rollback**, bypassing the
+  safety model this project exists for. Container Manager also cannot create the macvlan network
+  or manage privileged capabilities from its GUI, and CLI-created compose stacks do not appear as
+  Projects anyway — the SSH installer (`sh ./install.sh`) and `scripts/gateway.sh` are the
+  supported management surfaces.
+
 ## Quick Start
 
 > Condensed; see [Installation](docs/installation.md) for the detailed walkthrough and

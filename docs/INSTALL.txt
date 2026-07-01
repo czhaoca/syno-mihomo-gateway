@@ -4,6 +4,13 @@ Installing the Mihomo Gateway
 This guide walks you through installing the gateway on a Synology NAS from
 this release bundle.
 
+Requirements: DSM 7.2 or newer (7.3.1+ recommended) with Container Manager
+installed. IMPORTANT: after deployment the containers appear in Container
+Manager's "Container" tab (viewing is fine), but NEVER manage this stack from
+the "Project" tab - its Build/Update re-pulls and recreates containers with
+no health check and no rollback, bypassing this project's safe update path.
+Use install.sh (or the scheduled updater) for every change.
+
 Overview of the steps
 ---------------------
   1. Transfer this folder to the NAS.

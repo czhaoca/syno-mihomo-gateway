@@ -10,13 +10,24 @@ This is the detailed walkthrough. For the condensed version see the
 
 ## Prerequisites
 
-1. **Synology NAS** with **Container Manager** (Docker) installed (Package Center).
+1. **Synology NAS** on **DSM 7.2 or newer** (7.3.1+ recommended - newer Docker engine) with
+   **Container Manager** installed (Package Center).
 2. **SSH access** enabled: Control Panel → Terminal & SNMP → *Enable SSH service*.
 3. **Root / sudo** — creating the macvlan network and the TUN device requires root.
 4. An **x86_64 (Intel) NAS** is assumed by default (`EXPECTED_ARCH=amd64`). If your model is ARM,
    see [Auto-Update › architecture guard](auto-update.md#architecture-guard).
 5. (China) An **Alibaba Container Registry (ACR)** namespace and the `docker-china-sync` mirror
    already pushing your images — see [Auto-Update › ACR setup](auto-update.md#acr-setup).
+
+### Container Manager coexistence (important)
+
+After deployment the containers show up in Container Manager's **Container** tab - that is fine
+for viewing logs or state. Do **not** manage the stack from the **Project** tab, and never press
+its *Build/Update* action: the UI flow re-pulls and recreates containers with no digest gate, no
+health gate, and no rollback, bypassing this project's gated update path (`auto_update.sh`).
+Container Manager's GUI also cannot create macvlan networks or manage privileged capabilities,
+and a CLI-created compose stack does not register as a Project. Use `sh ./install.sh`,
+`scripts/gateway.sh`, or the scheduled updater instead.
 
 ## 1. Get the code
 

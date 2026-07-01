@@ -27,6 +27,12 @@ docker compose up -d
 > 请使用 `docker compose`（v2）。在较旧的环境中，可能只存在 v1 二进制文件 `docker-compose`；
 > 自动更新器会自动检测两者中的任意一个，但在手动执行命令时请优先使用 v2。
 
+## Container Manager：只看不动
+
+容器会显示在 DSM 的 Container Manager（“容器”页签）中——在那里查看状态和日志没有问题。
+绝不要对本栈使用“项目”页签的**构建/更新**：它会在没有摘要门、健康门和回滚的情况下重新
+拉取并重建容器。所有更新都应经由 `scripts/auto_update.sh`（计划任务）或安装器/CLI 进行。
+
 ## 更新订阅
 
 ```bash

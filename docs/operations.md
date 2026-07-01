@@ -27,6 +27,13 @@ docker compose up -d
 > Use `docker compose` (v2). On older setups the v1 binary `docker-compose` may exist instead;
 > the auto-updater auto-detects either, but prefer v2 in manual commands.
 
+## Container Manager: look, don't touch
+
+The containers are visible in DSM's Container Manager (*Container* tab) - viewing state and logs
+there is fine. Never use the *Project* tab's **Build/Update** on this stack: it re-pulls and
+recreates containers with no digest gate, no health gate, and no rollback. All updates go through
+`scripts/auto_update.sh` (scheduled) or the installer/CLI.
+
 ## Update the subscription
 
 ```bash

@@ -184,6 +184,14 @@ cron 流程会把 `UPDATE_SCHEDULE`/`UPDATE_TZ`/`UPDATE_ENABLED` 保存到 `.env
 “完成”，安装器会给出警告，并提议设置 `UPDATE_ENABLED=false` 以保持状态一致。请重新运行 cron
 流程并选择其中一种调度方式，或以 root 运行 `sh scripts/gateway.sh cron --apply-crontab --yes`。
 
+## Container Manager 显示异常 / 项目“卡住”
+
+CLI 创建的 compose 栈不会注册为 Container Manager 的*项目*；脚本驱动的重建（自动更新器的
+受控部署）也可能让手工创建的项目条目失去同步（“卡住”）。这只是外观问题：真实状态以
+`docker`/`docker compose` 为准，`sh scripts/doctor.sh` 与安装器的“状态”菜单都会如实报告。
+不要用项目页签的“构建/更新”去“修复”它——那会绕过摘要门、健康门和回滚。如果你曾手工创建
+项目条目，删除该项目（不要删除容器），此后仅通过安装器/CLI 管理本栈。
+
 ## CI 没有运行
 
 流水线在分支 `main` **和** `master` 上触发。如果你使用其他分支名称，请将其加入 `.woodpecker.yml` 的 `when.branch`。

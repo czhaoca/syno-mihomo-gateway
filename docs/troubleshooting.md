@@ -238,6 +238,16 @@ without either, the installer warns and offers to set `UPDATE_ENABLED=false` so 
 honest. Re-run the cron flow and pick one of the two scheduling methods, or use
 `sh scripts/gateway.sh cron --apply-crontab --yes` as root.
 
+## Container Manager shows the containers oddly / a "stuck" Project
+
+CLI-created compose stacks do not register as Container Manager *Projects*, and script-driven
+recreates (the auto-updater's gated deploys) can leave a manually created Project entry out of
+sync ("stuck"). That is cosmetic: the source of truth is `docker`/`docker compose` state, which
+`sh scripts/doctor.sh` and the installer's Status menu report. Do not press the Project tab's
+Build/Update to "fix" it - that bypasses the digest gate, health gate, and rollback. If you
+created a Project entry manually, delete the Project (not the containers) and manage the stack
+via the installer/CLI only.
+
 ## CI didn't run
 
 The pipeline triggers on branches `main` **and** `master`. If you use another branch name, add

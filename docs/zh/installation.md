@@ -10,13 +10,22 @@
 
 ## 前置条件
 
-1. 已安装 **Container Manager**（Docker）的 **Synology NAS**（套件中心）。
+1. 运行 **DSM 7.2 或更新版本**（推荐 7.3.1+，自带更新的 Docker 引擎）并已安装
+   **Container Manager** 的 **Synology NAS**（套件中心）。
 2. 已启用 **SSH 访问**：控制面板 → 终端机和 SNMP → *启用 SSH 服务*。
 3. **Root / sudo** —— 创建 macvlan 网络和 TUN 设备需要 root 权限。
 4. 默认假设使用 **x86_64（Intel）NAS**（`EXPECTED_ARCH=amd64`）。如果你的型号是 ARM，
    请参阅 [自动更新 › 架构守卫](auto-update.md)。
 5. （中国大陆）已有一个 **阿里云容器镜像服务（ACR）** 命名空间，并且 `docker-china-sync` 镜像
    已经在推送你的镜像 —— 请参阅 [自动更新 › ACR 设置](auto-update.md)。
+
+### 与 Container Manager 共存（重要）
+
+部署完成后，容器会出现在 Container Manager 的**容器**页签——在那里查看日志和状态没有问题。
+但不要通过**项目（Project）**页签管理本栈，更不要点击其 *构建/更新*：该流程会在没有摘要门、
+健康门和回滚的情况下重新拉取并重建容器，绕过本项目的受控更新路径（`auto_update.sh`）。
+Container Manager 的图形界面也无法创建 macvlan 网络或管理特权能力，CLI 创建的 compose 栈
+也不会注册为项目。请使用 `sh ./install.sh`、`scripts/gateway.sh` 或计划任务更新器。
 
 ## 1. 获取代码
 
