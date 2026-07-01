@@ -180,6 +180,45 @@ deploy_stack() {
   return 1
 }
 
+# _ui_running - seam: is the dashboard container running? (tests stub this)
+_ui_running() {
+  "$DOCKER_BIN" inspect -f '{{.State.Running}}' "$METACUBEXD_CONTAINER" 2>/dev/null
+}
+
+# _report_verify_table - the post-deploy verification table: re-probe what the
+# health gate proved and show it as explicit rows, so success is demonstrated,
+# not asserted. Informational only - never fails the deploy.
+_report_verify_table() {
+  ui_say "$(msg verify_title)"
+  _vt_rc=0
+  mihomo_controller_probe || _vt_rc=$?   # set -e-safe (the CI harness runs -eu)
+  case "$_vt_rc" in
+    0) ui_say "$(msgf verify_ok "$(msg verify_controller)")" ;;
+    2) ui_say "$(msgf verify_skip "$(msg verify_controller)")" ;;
+    *) ui_say "$(msgf verify_failed "$(msg verify_controller)")" ;;
+  esac
+  if [ "${TUN_ENABLE:-true}" = true ]; then
+    if mihomo_gateway_probe; then
+      ui_say "$(msgf verify_ok "$(msg verify_tun)")"
+    else
+      ui_say "$(msgf verify_failed "$(msg verify_tun)")"
+    fi
+  else
+    ui_say "$(msgf verify_skip "$(msg verify_tun_off)")"
+  fi
+  if [ "$(_ui_running)" = "true" ]; then
+    ui_say "$(msgf verify_ok "$(msg verify_ui)")"
+  else
+    ui_say "$(msgf verify_failed "$(msg verify_ui)")"
+  fi
+  if [ -n "${CONTROLLER_SECRET:-}" ]; then
+    ui_say "$(msg rep_secret_loc)"
+  else
+    ui_warn "$(msg warn_dashboard_open)"
+  fi
+  return 0
+}
+
 report_success() {
   _rs_parent="${CHOSEN_IFACE:-${PARENT_INTERFACE:-}}"
   [ -n "$_rs_parent" ] \
@@ -189,6 +228,8 @@ report_success() {
 
   ui_step "$(msg step_deploy_done)"
   ui_ok  "$(msg ok_gateway_up)"
+  ui_say ""
+  _report_verify_table
   ui_say ""
   ui_say "$(msg rep_dashboard)"
   ui_say "$(msgf rep_dashboard_url "$_rs_nas_ip" "${WEB_UI_PORT:-8080}")"
@@ -221,9 +262,25 @@ flow_deploy() {
   scan_and_prefill  || return 1             # interface -> derive router/subnet
   load_env                                  # pick up derived ROUTER_IP/SUBNET_CIDR
 
-  wizard_env        || return 1             # MIHOMO_IP suggested from the NAS IP
-  wizard_images     || return 1
-  wizard_subscription || return 1
+  # Express fast path (one confirmation screen of all detected/saved values);
+  # declining - or incomplete detection - falls back to the per-item wizards.
+  _fd_express=0
+  if wizard_express; then _fd_express=1; fi
+  if [ "$_fd_express" = 0 ]; then
+    wizard_env      || return 1             # MIHOMO_IP suggested from the NAS IP
+  fi
+  if [ "$_fd_express" = 1 ] \
+     && [ -n "$(env_get MIHOMO_IMAGE 2>/dev/null || echo '')" ] \
+     && [ -n "$(env_get METACUBEXD_IMAGE 2>/dev/null || echo '')" ]; then
+    :                                       # image refs already resolved + shown
+  else
+    wizard_images   || return 1
+  fi
+  if [ "$_fd_express" = 1 ] && resolve_subscription_url "$(subscription_current)" >/dev/null 2>&1; then
+    :                                       # a valid stored URL was part of the screen
+  else
+    wizard_subscription || return 1
+  fi
   load_env                                  # re-load after the wizards wrote .env
 
   pf_arch           || return 1

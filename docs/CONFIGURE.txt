@@ -76,6 +76,9 @@ Dashboard / controller
       the dashboard.
 
   CONTROLLER_SECRET
+      Empty = no dashboard auth. The installer offers to auto-generate a
+      random secret when left empty (stored here); the post-deploy summary
+      says where it lives.
       Optional dashboard auth secret. If set, enter it as the backend Secret.
       It must NOT contain a '|' character.
 

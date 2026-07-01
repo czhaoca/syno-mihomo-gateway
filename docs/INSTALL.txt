@@ -72,14 +72,20 @@ option 2 can reuse them.
 --------------------------------------------------------------------------
 4. The deploy flow (option 1)
 --------------------------------------------------------------------------
-Deploy walks through these steps in order:
+Deploy walks through these steps in order. When every value is already
+detected or saved, an EXPRESS screen first shows them all for one single
+confirmation - accept to skip the per-item prompts below, or answer No to
+edit each value step by step:
 
   1.  Prepare persistent config files in ../syno-mihomo-gateway-data.
   2.  Scan the network interface FIRST - you pick the LAN interface from the
       scanned list (or type one). The installer then AUTO-FILLS the router /
       gateway IP and the LAN subnet (CIDR) from that interface, so you just
       confirm them rather than typing them.
-  3.  Gateway IP & DNS - set mihomo's LAN IP and the DNS servers. When you set
+  3.  Gateway IP & DNS - set mihomo's LAN IP and the DNS servers. If you
+      leave the dashboard secret empty, the installer offers to GENERATE a
+      random one (stored in .env as CONTROLLER_SECRET); declining leaves the
+      dashboard unauthenticated by explicit choice. When you set
       mihomo's IP, the installer checks whether that IP is already answering
       on the LAN (e.g. a DHCP-assigned device) and warns you before
       deploying. You can pick another IP or override the warning.

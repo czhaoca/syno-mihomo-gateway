@@ -52,7 +52,7 @@ backslashes round-trip safely. When editing by hand, keep one `KEY=VALUE` assign
 |---|:--:|---|---|
 | `WEB_UI_PORT` | ✅ | Host port for the MetaCubeXD dashboard (published on the NAS IP). | `8080` |
 | `CONTROLLER_PORT` | ✅ | Mihomo RESTful controller port (bound `0.0.0.0`; reached at `MIHOMO_IP:PORT`). | `9090` |
-| `CONTROLLER_SECRET` | | Controller auth secret. Empty = no auth. `&`, `\|`, `\` are handled by the renderer. | `` |
+| `CONTROLLER_SECRET` | | Controller auth secret. Empty = no auth; the installer offers to auto-generate a random one when left empty (explicit opt-out keeps it open). `&`, `\|`, `\` are handled by the renderer. | `` |
 
 ### DNS (injected into the config template)
 

@@ -328,6 +328,7 @@ ui_step() { :; }
 is_root() { return 0; }
 seed_config() { return 0; }
 load_env() { return 0; }
+wizard_express() { return 1; }
 wizard_env() { return 0; }
 wizard_images() { return 0; }
 wizard_subscription() { return 0; }
@@ -405,6 +406,7 @@ is_root() { return 0; }
 seed_config() { return 0; }
 load_env() { return 0; }
 pf_docker() { return 0; }; pf_arch() { return 0; }; pf_web_port() { return 0; }
+wizard_express() { return 1; }
 wizard_env() { return 0; }; wizard_images() { return 0; }; wizard_subscription() { return 0; }
 validate_selected_network() { return 0; }
 scan_and_prefill() { return 0; }
@@ -500,6 +502,110 @@ for _f in flow_deploy.sh; do
     && fail "$_f still carries hardcoded-English rollback strings"
 done
 
+# --- express deploy + secret guard + verification table -------------------------
+# All three run in an isolated subshell sourcing the real wizards + flow_deploy.
+(
+  set -eu
+  fail() { echo "FAIL: $*" >&2; exit 1; }
+  ENV_FILE="$TD/express.env"; : > "$ENV_FILE"
+  ui_error() { echo "ERROR: $*" >&2; }
+  # shellcheck source=scripts/installer/envedit.sh
+  . "$ROOT/scripts/installer/envedit.sh"
+  # shellcheck source=scripts/lib/resolve.sh
+  . "$ROOT/scripts/lib/resolve.sh"
+  # shellcheck source=scripts/installer/wizards.sh
+  . "$ROOT/scripts/installer/wizards.sh"
+  msg() { echo "$1"; }
+  msgf() { _mk="$1"; shift; echo "$_mk $*"; }
+  ui_step() { :; }; ui_info() { :; }; ui_ok() { :; }
+  ui_say() { printf '%s\n' "$*"; }
+  ui_warn() { printf '%s\n' "$*"; }
+  diagnose() { printf '%s\n' "$1"; }
+
+  # express: everything detected/saved -> ONE confirmation, zero per-item prompts
+  env_set ROUTER_IP 192.168.1.1
+  env_set SUBNET_CIDR 192.168.1.0/24
+  env_set MIHOMO_IP 192.168.1.100
+  env_set CONTROLLER_SECRET presetsecret
+  PARENT_INTERFACE=eth0 IFACE_MANUAL=0
+  _iface_ipv4() { echo 192.168.1.10; }
+  mihomo_owns_ip() { return 1; }
+  ip_in_use() { return 1; }
+  check_ip_conflict() { return 0; }
+  ui_ask() { fail "express mode asked a per-item question ($2)"; }
+  ui_ask_validated() { fail "express mode asked a per-item question ($2)"; }
+  ui_ask_secret() { fail "express mode asked for a secret"; }
+  ui_yesno() { return 0; }   # accept the express screen
+  _out="$(wizard_express 2>&1)" || fail "wizard_express declined with complete detections"
+  case "$_out" in
+    *192.168.1.100*) : ;;
+    *) fail "express screen does not show the resolved gateway IP: $_out" ;;
+  esac
+  [ "$(dotenv_get MIHOMO_IP)" = 192.168.1.100 ] || fail "express did not persist MIHOMO_IP"
+  [ "$(dotenv_get WEB_UI_PORT)" = 8080 ] || fail "express did not persist the default web port"
+
+  # declining the express screen falls back to the wizard chain (rc 1)
+  ui_yesno() { return 1; }
+  wizard_express >/dev/null 2>&1 && fail "declining express did not fall back"
+
+  # incomplete detections (no subnet) -> express never offers
+  ENV_FILE="$TD/express2.env"; : > "$ENV_FILE"
+  env_set ROUTER_IP 192.168.1.1
+  ui_yesno() { fail "express offered despite incomplete detections"; }
+  wizard_express >/dev/null 2>&1 && fail "express accepted with no subnet"
+
+  # secret guard: empty secret -> auto-generate (opt-out preserved)
+  ENV_FILE="$TD/secret.env"; : > "$ENV_FILE"
+  ui_yesno() { return 0; }   # yes, generate
+  _secret_guard || fail "_secret_guard failed"
+  _sg="$(dotenv_get CONTROLLER_SECRET)" || fail "no generated secret persisted"
+  [ "${#_sg}" -ge 16 ] || fail "generated secret is too short: ${#_sg} chars"
+  # a preset secret is never touched
+  env_set CONTROLLER_SECRET keepme
+  _secret_guard || fail "_secret_guard failed on a preset secret"
+  [ "$(dotenv_get CONTROLLER_SECRET)" = keepme ] || fail "secret guard clobbered a preset secret"
+  # explicit opt-out leaves it empty
+  env_set CONTROLLER_SECRET ''
+  ui_yesno() { return 1; }   # no, stay unauthenticated
+  _out="$(_secret_guard 2>&1)" || fail "_secret_guard opt-out failed"
+  [ -z "$(dotenv_get CONTROLLER_SECRET 2>/dev/null || echo '')" ] || fail "opt-out still generated a secret"
+  case "$_out" in
+    *warn_secret_none*) : ;;
+    *) fail "opt-out did not warn about the unauthenticated dashboard" ;;
+  esac
+
+  # post-deploy verification table: rows reflect the stubbed probe results
+  # shellcheck source=scripts/installer/flow_deploy.sh
+  . "$ROOT/scripts/installer/flow_deploy.sh"
+  ui_step() { :; }; ui_ok() { :; }
+  ui_say() { printf '%s\n' "$*"; }
+  DOCKER_BIN=true
+  MIHOMO_CONTAINER=mihomo METACUBEXD_CONTAINER=mihomo-ui
+  mihomo_controller_probe() { return 0; }
+  mihomo_gateway_probe() { return 0; }
+  TUN_ENABLE=true
+  _ui_running() { echo true; }
+  detect_parent_interface() { echo eth0; }
+  _iface_ipv4() { echo 192.168.1.10; }
+  CONTROLLER_SECRET=set WEB_UI_PORT=8080 MIHOMO_IP=192.168.1.100 CONTROLLER_PORT=9090
+  _out="$(report_success 2>&1)"
+  case "$_out" in
+    *verify_title*) : ;;
+    *) fail "report_success lacks the verification table" ;;
+  esac
+  case "$_out" in
+    *verify_ok*) : ;;
+    *) fail "verification table lacks passing rows: $_out" ;;
+  esac
+  mihomo_controller_probe() { return 1; }
+  _out="$(report_success 2>&1)"
+  case "$_out" in
+    *verify_failed*) : ;;
+    *) fail "verification table does not surface a failing controller probe" ;;
+  esac
+  exit 0
+) || exit 1
+
 # --- state banner + Status/Diagnose menu item -----------------------------------
 # install.sh is sourceable (INSTALL_SOURCE_ONLY=1 + SMG_INSTALL_ROOT) so the
 # banner, the adaptive deploy label, and the status flow are testable. This
@@ -586,7 +692,13 @@ done
     INSTALLER_LANG="$_lang"
     for _k in menu_status menu_deploy_saved_hint st_fresh st_partial st_deployed \
               status_title status_state status_mihomo status_ui status_dashboard \
-              status_tun ask_run_doctor ok_doctor_done warn_doctor_rc; do
+              status_tun ask_run_doctor ok_doctor_done warn_doctor_rc \
+              step_express ask_express express_edit_hint express_images_wizard \
+              express_iface express_net express_ip express_ports express_dns \
+              express_tz express_images warn_gen_secret_failed \
+              warn_secret_empty ask_gen_secret ok_secret_generated warn_secret_none \
+              verify_title verify_ok verify_failed verify_skip verify_controller \
+              verify_tun verify_tun_off verify_ui rep_secret_loc warn_dashboard_open; do
       [ "$(msg "$_k")" != "$_k" ] \
         || fail "the $_lang catalog lacks '$_k' (msg falls through to the raw key)"
     done

@@ -39,6 +39,91 @@ seed_config() {
   return 0
 }
 
+# _gen_secret - print a random 32-hex dashboard secret (empty on failure so
+# callers can degrade gracefully). POSIX/BusyBox-safe.
+_gen_secret() {
+  [ -r /dev/urandom ] || return 0
+  head -c 16 /dev/urandom 2>/dev/null | od -An -tx1 2>/dev/null | tr -d ' \n'
+}
+
+# _secret_guard - never let an empty CONTROLLER_SECRET slip through silently:
+# offer to auto-generate one (default yes); declining is the explicit
+# "leave the dashboard unauthenticated" opt-out. A preset secret is untouched.
+_secret_guard() {
+  _sg_cur="$(env_get CONTROLLER_SECRET 2>/dev/null || echo '')"
+  [ -z "$_sg_cur" ] || return 0
+  ui_warn "$(msg warn_secret_empty)"
+  if ui_yesno "$(msg ask_gen_secret)" y; then
+    _sg_new="$(_gen_secret)"
+    if [ -n "$_sg_new" ]; then
+      env_set CONTROLLER_SECRET "$_sg_new"
+      CONTROLLER_SECRET="$_sg_new"; export CONTROLLER_SECRET
+      ui_ok "$(msg ok_secret_generated)"
+    else
+      ui_warn "$(msg warn_gen_secret_failed)"
+    fi
+  else
+    ui_warn "$(msg warn_secret_none)"
+  fi
+  return 0
+}
+
+# wizard_express - the one-screen fast path (DEC-A on the work order): when
+# every value is detected or saved, show them ALL on a single confirmation
+# screen and persist on accept. Returns 1 (without persisting) when detections
+# are incomplete or the operator declines - the full wizard chain is the
+# per-item edit escape. This screen IS the explicit confirmation of the
+# LAN-affecting change; it never silently applies anything.
+wizard_express() {
+  _we_router="$(env_get ROUTER_IP 2>/dev/null || echo '')"
+  _we_cidr="$(env_get SUBNET_CIDR 2>/dev/null || echo '')"
+  [ -n "$_we_router" ] && [ -n "$_we_cidr" ] || return 1
+  _we_iface=""
+  [ "${IFACE_MANUAL:-0}" = 1 ] || _we_iface="${PARENT_INTERFACE:-${CHOSEN_IFACE:-}}"
+  resolve_notify_scan() { ui_info "$(msg info_ip_suggest_scan)"; }
+  _we_cur="$(env_get MIHOMO_IP 2>/dev/null || echo '')"
+  _we_ip="$(resolve_mihomo_ip "$_we_cur" "$_we_cidr" "$_we_router" "$_we_iface")"
+  [ -n "$_we_ip" ] || return 1
+  _we_web="$(env_get WEB_UI_PORT 2>/dev/null || echo 8080)"
+  _we_ctl="$(env_get CONTROLLER_PORT 2>/dev/null || echo 9090)"
+  _we_dns_b="$(env_get DNS_DEFAULT_NAMESERVER 2>/dev/null || echo 1.1.1.1)"
+  _we_dns_d="$(env_get DNS_NAMESERVER 2>/dev/null || echo 1.1.1.1)"
+  _we_dns_f="$(env_get DNS_FALLBACK 2>/dev/null || echo 1.1.1.1)"
+  _we_tz="$(env_get TZ 2>/dev/null || echo Asia/Shanghai)"
+
+  ui_step "$(msg step_express)"
+  ui_say "$(msgf express_iface "${_we_iface:-${PARENT_INTERFACE:-?}}")"
+  ui_say "$(msgf express_net "$_we_router" "$_we_cidr")"
+  ui_say "$(msgf express_ip "$_we_ip")"
+  ui_say "$(msgf express_ports "$_we_web" "$_we_ctl")"
+  ui_say "$(msgf express_dns "$_we_dns_b" "$_we_dns_d" "$_we_dns_f")"
+  ui_say "$(msgf express_tz "$_we_tz")"
+  _we_img="$(env_get MIHOMO_IMAGE 2>/dev/null || echo '')"
+  if [ -n "$_we_img" ]; then
+    ui_say "$(msgf express_images "$_we_img")"
+  else
+    ui_say "$(msg express_images_wizard)"
+  fi
+  ui_say "$(msg express_edit_hint)"
+  ui_yesno "$(msg ask_express)" y || return 1
+
+  while :; do
+    check_ip_conflict "$_we_ip" && break
+    return 1   # conflict declined -> edit per item in the full wizard
+  done
+  env_set MIHOMO_IP "$_we_ip"
+  env_set WEB_UI_PORT "$_we_web"
+  env_set CONTROLLER_PORT "$_we_ctl"
+  env_set DNS_DEFAULT_NAMESERVER "$_we_dns_b"
+  env_set DNS_NAMESERVER "$_we_dns_d"
+  env_set DNS_FALLBACK "$_we_dns_f"
+  env_set TZ "$_we_tz"
+  MIHOMO_IP="$_we_ip"; export MIHOMO_IP
+  _secret_guard
+  ui_ok "$(msg ok_env_saved)"
+  return 0
+}
+
 # wizard_env - prompt + persist the network / DNS / port / secret settings.
 wizard_env() {
   ui_step "$(msg step_env)"
@@ -79,6 +164,7 @@ wizard_env() {
     esac
   done
   env_set CONTROLLER_SECRET "$CONTROLLER_SECRET"
+  _secret_guard   # empty -> offer to generate (explicit opt-out preserved)
 
   ui_ask DNS_DEFAULT_NAMESERVER "$(msg q_dns_bootstrap)" "$(env_get DNS_DEFAULT_NAMESERVER || echo 1.1.1.1)"
   env_set DNS_DEFAULT_NAMESERVER "$DNS_DEFAULT_NAMESERVER"
