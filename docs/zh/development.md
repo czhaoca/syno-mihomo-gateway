@@ -24,13 +24,14 @@ scripts/
   install_scheduler.sh        # prints DSM Task Scheduler / crontab settings
   package.sh                  # build-host: builds the offline release zip (docs/release-packaging.md)
   installer/
-    preprocess.sh             # 分资源清理选择；延后所有变更
+    preprocess.sh             # 分资源清理菜单；决策策略位于 lib/resolve.sh
   lib/
     common.sh                 # env load, logging+rotation, mkdir lock, exit codes
     registry.sh               # preflight (compose/arch/network/tun), ACR login, pull + change detect
     compose.sh                # compose up, health gate, rollback
     cloudflared.sh            # blue-green reprovision of the external cloudflared
     lifecycle.sh              # 部署盘点 + 已验证的定向拆除
+    resolve.sh                # 无 UI 的配置解析：IP 建议、镜像引用、订阅 URL、清理计划策略
     scheduler.sh              # 安全解析 DSM/BusyBox cron 并生成任务命令
   ci/
     render_check.py           # CI: runs the real renderer + structural/rule assertions
@@ -82,6 +83,7 @@ docs/                         # this manual (EN) + docs/zh (中文)
 | `lib/compose.sh` | `compose_config_check`、`compose_up_local`、`health_gate`（含 `mihomo_controller_probe`）、`rollback_compose` |
 | `lib/cloudflared.sh` | `cloudflared_blue_green`、`cloudflared_wait_connected`、安全规格捕获/重放、回滚、候选/临时目录清理 |
 | `lib/lifecycle.sh` | `lifecycle_inspect`、已验证的容器/网络移除、手动命令输出 |
+| `lib/resolve.sh` | `resolve_mihomo_ip`、`resolve_images`/`resolve_update_images`、`resolve_subscription_url`/`subscription_current`、`resolve_cleanup_plan`（无 UI；向导负责呈现结果） |
 | `lib/scheduler.sh` | `cron_normalize`、`scheduler_update_command`、`scheduler_network_command`、`scheduler_reload_crond` |
 
 并发：只有持锁者才会释放锁（`LOCK_HELD`）；当候选可能是唯一已连接隧道时，EXIT 陷阱不会

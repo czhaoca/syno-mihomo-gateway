@@ -8,6 +8,7 @@ ROOT="$(CDPATH='' cd -- "$(dirname -- "$0")/../.." && pwd)"
 . "$ROOT/scripts/lib/registry.sh"
 . "$ROOT/scripts/lib/compose.sh"
 . "$ROOT/scripts/lib/cloudflared.sh"
+. "$ROOT/scripts/lib/resolve.sh"
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 ui_error() { echo "ERROR: $*" >&2; }
@@ -111,6 +112,133 @@ _iface_ipv4() { case "$1" in eth0) echo 192.168.1.10 ;; *) echo '' ;; esac; }
 [ "$(scan_interfaces)" = 'eth0 192.168.1.10' ] \
   || fail "scan_interfaces kept an address-less or filtered NIC: $(scan_interfaces)"
 unset -f ip
+
+# --- resolve.sh: UI-free config resolution -------------------------------------
+# Every resolve_* function must be callable with env/args only. Prove it by
+# unsetting every ui.sh/i18n widget inside the subshell before exercising them
+# (ui_error stays: it is envedit.sh's error channel, and headless callers
+# provide their own). The whole block runs in a subshell so its ENV_FILE and
+# LIFECYCLE_* stubs cannot leak into later tests.
+grep -v '^[[:space:]]*#' "$ROOT/scripts/lib/resolve.sh" \
+  | grep -E '\bui_(say|info|ok|warn|step|menu|ask|yesno)|\bmsgf? ' \
+  && fail "resolve.sh calls interactive ui/i18n helpers"
+(
+  unset -f ui_info ui_ok ui_warn ui_say ui_step ui_menu_select \
+           ui_ask ui_ask_validated ui_ask_secret ui_yesno msg msgf 2>/dev/null
+
+  # resolve_mihomo_ip: a saved value that is still a usable host in the subnet
+  # is kept verbatim; no scan happens.
+  rm -f "$TD/hooked"
+  resolve_notify_scan() { : > "$TD/hooked"; }
+  mihomo_owns_ip() { return 1; }
+  ip_in_use() { return 1; }
+  _iface_ipv4() { echo 192.168.1.10; }
+  [ "$(resolve_mihomo_ip 192.168.1.100 192.168.1.0/24 192.168.1.1 eth0)" = 192.168.1.100 ] \
+    || fail "resolve_mihomo_ip discarded a still-valid saved IP"
+  [ ! -e "$TD/hooked" ] || fail "resolve_mihomo_ip scanned despite a valid saved IP"
+
+  # Saved value collides with the router -> rescan above the NAS IP, and the
+  # scan-notify hook fires exactly once on this path.
+  [ "$(resolve_mihomo_ip 192.168.1.1 192.168.1.0/24 192.168.1.1 eth0)" = 192.168.1.11 ] \
+    || fail "resolve_mihomo_ip kept a router-colliding IP"
+  [ -e "$TD/hooked" ] || fail "resolve_mihomo_ip scan did not fire the notify hook"
+
+  # No interface (manual entry) or NAS IP outside the subnet -> empty, so the
+  # caller applies its own fallback.
+  [ -z "$(resolve_mihomo_ip 10.0.0.5 192.168.1.0/24 192.168.1.1 '')" ] \
+    || fail "resolve_mihomo_ip suggested without an interface"
+  _iface_ipv4() { echo 10.9.9.9; }
+  [ -z "$(resolve_mihomo_ip '' 192.168.1.0/24 192.168.1.1 eth0)" ] \
+    || fail "resolve_mihomo_ip scanned from a NAS IP outside the subnet"
+
+  # resolve_images + resolve_update_images: env-file driven, no prompts.
+  ENV_FILE="$TD/resolve.env"
+  : > "$ENV_FILE"
+  env_set DOCKER_REGISTRY registry.example
+  env_set ACR_NAMESPACE ns
+  env_set MIHOMO_TAG v1
+  env_set METACUBEXD_TAG v2
+  REGISTRY_MODE=acr
+  resolve_images || fail "resolve_images failed with a complete acr config"
+  [ "$MIHOMO_IMAGE" = registry.example/ns/mihomo:v1 ] \
+    || fail "resolve_images derived the wrong mihomo ref: $MIHOMO_IMAGE"
+  [ "$(env_get METACUBEXD_IMAGE)" = registry.example/ns/metacubexd:v2 ] \
+    || fail "resolve_images did not persist the metacubexd ref"
+  resolve_update_images || fail "resolve_update_images failed"
+  [ "$(env_get UPDATE_IMAGES)" = 'registry.example/ns/mihomo:v1 registry.example/ns/metacubexd:v2' ] \
+    || fail "UPDATE_IMAGES wrong without cloudflared: $(env_get UPDATE_IMAGES)"
+  env_set CF_IMAGE registry.example/ns/cloudflared:v3
+  resolve_update_images || fail "resolve_update_images failed with CF_IMAGE"
+  case "$(env_get UPDATE_IMAGES)" in
+    *cloudflared:v3) : ;;
+    *) fail "UPDATE_IMAGES did not append the cloudflared ref" ;;
+  esac
+  ( REGISTRY_MODE=acr; env_set ACR_NAMESPACE ''; resolve_images >/dev/null 2>&1 ) \
+    && fail "resolve_images accepted acr mode without a namespace"
+  REGISTRY_MODE=docker
+  resolve_images || fail "resolve_images failed in docker mode"
+  [ "$MIHOMO_IMAGE" = docker.io/metacubex/mihomo:v1 ] \
+    || fail "docker mode did not derive the upstream mihomo ref: $MIHOMO_IMAGE"
+
+  # resolve_subscription_url: cleans paste artifacts, validates the scheme.
+  [ "$(resolve_subscription_url '"https://sub.example/token"')" = 'https://sub.example/token' ] \
+    || fail "resolve_subscription_url did not strip quotes"
+  _raw="$(printf '\033[200~https://sub.example/p\033[201~')"
+  [ "$(resolve_subscription_url "$_raw")" = 'https://sub.example/p' ] \
+    || fail "resolve_subscription_url did not strip bracketed-paste markers"
+  [ "$(resolve_subscription_url 'Airport=https://sub.example/q')" = 'https://sub.example/q' ] \
+    || fail "resolve_subscription_url did not strip the label prefix"
+  resolve_subscription_url 'ftp://sub.example/x' >/dev/null \
+    && fail "resolve_subscription_url accepted a non-http scheme"
+  resolve_subscription_url '' >/dev/null \
+    && fail "resolve_subscription_url accepted an empty URL"
+
+  # subscription_current: '' for missing file or the shipped placeholder,
+  # else the first real line.
+  _APP="$TD/subapp"
+  mkdir -p "$_APP/config"
+  printf '%s\n' 'Default=https://example.invalid/CHANGE_ME' > "$_APP/config/subscription.txt.example"
+  REPO_ROOT="$_APP"
+  SUBSCRIPTION_FILE="$_APP/config/subscription.txt"
+  [ -z "$(subscription_current)" ] || fail "subscription_current invented a URL for a missing file"
+  cp "$_APP/config/subscription.txt.example" "$SUBSCRIPTION_FILE"
+  [ -z "$(subscription_current)" ] || fail "subscription_current returned the shipped placeholder"
+  printf '%s\n' 'https://sub.example/real' > "$SUBSCRIPTION_FILE"
+  [ "$(subscription_current)" = 'https://sub.example/real' ] \
+    || fail "subscription_current missed the stored URL"
+
+  # resolve_cleanup_*: validate a requested plan against the lifecycle
+  # inventory, with machine-readable reasons (no menus).
+  LIFECYCLE_CONTAINERS_PRESENT=1 LIFECYCLE_CONTAINERS_SAFE=0
+  resolve_cleanup_containers preserve && fail "ambiguous containers accepted for preserve"
+  [ "$RESOLVE_CLEANUP_REASON" = ambiguous ] || fail "wrong reason for ambiguous preserve: $RESOLVE_CLEANUP_REASON"
+  resolve_cleanup_containers auto && fail "ambiguous containers accepted for auto"
+  LIFECYCLE_CONTAINERS_SAFE=1
+  resolve_cleanup_containers auto || fail "safe containers rejected for auto"
+  [ "$CLEANUP_CONTAINERS_MODE" = auto ] || fail "containers mode not recorded"
+  LIFECYCLE_CONTAINERS_PRESENT=0
+  resolve_cleanup_containers auto || fail "absent containers rejected"
+  [ "$CLEANUP_CONTAINERS_MODE" = preserve ] || fail "absent containers not normalized to preserve"
+  LIFECYCLE_NETWORK_PRESENT=1 LIFECYCLE_NETWORK_MATCHES=0 LIFECYCLE_NETWORK_SAFE=1 LIFECYCLE_ATTACHMENTS=''
+  resolve_cleanup_network preserve && fail "drifted network accepted for preserve"
+  [ "$RESOLVE_CLEANUP_REASON" = drift ] || fail "wrong reason for drifted preserve: $RESOLVE_CLEANUP_REASON"
+  LIFECYCLE_NETWORK_SAFE=0
+  resolve_cleanup_network auto && fail "unrelated network accepted for auto"
+  [ "$RESOLVE_CLEANUP_REASON" = unrelated ] || fail "wrong reason for unrelated auto: $RESOLVE_CLEANUP_REASON"
+  LIFECYCLE_NETWORK_SAFE=1 LIFECYCLE_ATTACHMENTS='mihomo'
+  CLEANUP_CONTAINERS_MODE=preserve
+  resolve_cleanup_network auto && fail "attached network removal accepted without container cleanup"
+  [ "$RESOLVE_CLEANUP_REASON" = needs_containers ] || fail "wrong reason: $RESOLVE_CLEANUP_REASON"
+  CLEANUP_CONTAINERS_MODE=auto
+  resolve_cleanup_network auto || fail "network auto rejected despite container auto"
+  [ "$CLEANUP_NETWORK_MODE" = auto ] || fail "network mode not recorded"
+  LIFECYCLE_CONTAINERS_PRESENT=1 LIFECYCLE_CONTAINERS_SAFE=1
+  LIFECYCLE_NETWORK_PRESENT=1 LIFECYCLE_NETWORK_MATCHES=1 LIFECYCLE_ATTACHMENTS=''
+  resolve_cleanup_plan preserve preserve || fail "a fully-valid preserve plan was rejected"
+  resolve_cleanup_plan bogus preserve && fail "an unknown cleanup mode was accepted"
+  [ "$RESOLVE_CLEANUP_REASON" = invalid ] || fail "wrong reason for unknown mode: $RESOLVE_CLEANUP_REASON"
+  exit 0
+) || exit 1
 
 # cloudflared_token_present: reuse the token only when a container actually has one.
 _net_docker() { echo _fake_cf_docker; }

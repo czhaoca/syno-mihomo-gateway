@@ -46,24 +46,17 @@ wizard_env() {
   env_set ROUTER_IP "$ROUTER_IP"
   ui_ask_validated SUBNET_CIDR "$(msg q_subnet)" "$(env_get SUBNET_CIDR || echo 192.168.1.0/24)" is_cidr
   env_set SUBNET_CIDR "$SUBNET_CIDR"
-  # Suggest a free static IP near the NAS instead of the stale placeholder. Keep a
-  # saved value that is still a usable host in THIS subnet (idempotent re-run);
-  # otherwise derive the next free address above the NAS's own IP on the chosen
-  # interface (skipped when the operator typed the interface name by hand).
+  # Suggest a free static IP near the NAS instead of the stale placeholder:
+  # resolve_mihomo_ip (lib/resolve.sh) keeps a saved value that is still a
+  # usable host in THIS subnet (idempotent re-run), else scans for the next
+  # free address above the NAS's own IP on the chosen interface (skipped when
+  # the operator typed the interface name by hand).
   _mihomo_cur="$(env_get MIHOMO_IP 2>/dev/null || echo '')"
-  _mihomo_def="$_mihomo_cur"
-  if [ -z "$_mihomo_def" ] || ! ipv4_in_cidr "$_mihomo_def" "$SUBNET_CIDR" \
-     || ipv4_is_edge_of_cidr "$_mihomo_def" "$SUBNET_CIDR" || [ "$_mihomo_def" = "$ROUTER_IP" ]; then
-    _mihomo_def=""
-    if [ "${IFACE_MANUAL:-0}" != 1 ]; then
-      _nas_ip="$(_iface_ipv4 "${PARENT_INTERFACE:-${CHOSEN_IFACE:-}}")"
-      if [ -n "$_nas_ip" ] && ipv4_in_cidr "$_nas_ip" "$SUBNET_CIDR"; then
-        ui_info "$(msg info_ip_suggest_scan)"
-        _mihomo_def="$(next_free_ipv4 "$_nas_ip" "$SUBNET_CIDR" "$ROUTER_IP")"
-      fi
-    fi
-    [ -n "$_mihomo_def" ] || _mihomo_def="${_mihomo_cur:-192.168.1.100}"
-  fi
+  _scan_iface=""
+  [ "${IFACE_MANUAL:-0}" = 1 ] || _scan_iface="${PARENT_INTERFACE:-${CHOSEN_IFACE:-}}"
+  resolve_notify_scan() { ui_info "$(msg info_ip_suggest_scan)"; }
+  _mihomo_def="$(resolve_mihomo_ip "$_mihomo_cur" "$SUBNET_CIDR" "$ROUTER_IP" "$_scan_iface")"
+  [ -n "$_mihomo_def" ] || _mihomo_def="${_mihomo_cur:-192.168.1.100}"
   while :; do
     ui_ask_validated MIHOMO_IP "$(msg q_mihomo_ip)" "$_mihomo_def" is_ipv4
     check_ip_conflict "$MIHOMO_IP" && break
@@ -139,14 +132,9 @@ wizard_images() {
   ui_ask METACUBEXD_TAG "$(msg q_metacubexd_tag)" "$(env_get METACUBEXD_TAG || echo latest)"
   env_set METACUBEXD_TAG "$METACUBEXD_TAG"
 
-  # refresh the shell vars derive_images reads, then resolve + persist refs.
+  # resolve + persist the image refs from the saved settings (lib/resolve.sh).
   REGISTRY_MODE="$_mode"
-  DOCKER_REGISTRY="$(env_get DOCKER_REGISTRY || echo '')"
-  ACR_NAMESPACE="$(env_get ACR_NAMESPACE || echo '')"
-  MIHOMO_TAG="$(env_get MIHOMO_TAG || echo latest)"
-  METACUBEXD_TAG="$(env_get METACUBEXD_TAG || echo latest)"
-  export REGISTRY_MODE DOCKER_REGISTRY ACR_NAMESPACE MIHOMO_TAG METACUBEXD_TAG
-  derive_images || { diagnose "$(msg diag_derive_images)" "$(msg diag_derive_images_fix)"; return 1; }
+  resolve_images || { diagnose "$(msg diag_derive_images)" "$(msg diag_derive_images_fix)"; return 1; }
   ui_ok "$(msgf ok_images "$MIHOMO_IMAGE")"
   ui_ok "$(msgf ok_images_cont "$METACUBEXD_IMAGE")"
 
@@ -172,62 +160,32 @@ wizard_images() {
       env_set CF_TUNNEL_TOKEN "$CF_TUNNEL_TOKEN"
     fi
   fi
-  # Persist concrete references. The strict dotenv loader does not perform
-  # arbitrary shell expansion, and the updater validates exact target mapping.
-  _wi_updates="$MIHOMO_IMAGE $METACUBEXD_IMAGE"
-  _wi_cf="$(env_get CF_IMAGE || echo '')"
-  [ -z "$_wi_cf" ] || _wi_updates="$_wi_updates $_wi_cf"
-  env_set UPDATE_IMAGES "$_wi_updates"
+  # Persist the concrete update-target references, including a cloudflared ref
+  # added just above (lib/resolve.sh).
+  resolve_update_images
   return 0
 }
 
-# _sanitize_url - clean the common paste artifacts that corrupt a pasted
-# subscription URL ("the https link is not properly copied"):
-#   * bracketed-paste wrappers: modern terminals send the pasted text wrapped in
-#     ESC[200~ ... ESC[201~; a bare `read` captures them literally. Strip ALL
-#     control chars (URLs never contain them; this also drops a stray CR) then
-#     remove the leftover [200~ / [201~ markers.
-#   * surrounding single/double quotes (users paste "https://...").
-#   * a leading "label=" prefix (the documented Name=URL file format) so the
-#     interactive wizard accepts the same form the file does.
-#   * leading/trailing whitespace.
-# Echoes the cleaned value; does not validate. POSIX/BusyBox-safe.
-_sanitize_url() {
-  printf '%s' "$1" \
-    | tr -d '[:cntrl:]' \
-    | sed -e 's/\[20[01]~//g' \
-          -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' \
-          -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'\$//" \
-          -e 's/^[A-Za-z0-9_.-]*=//' \
-          -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'
-}
-
 # wizard_subscription - capture the airport/subscription URL into
-# config/subscription.txt (never silently overwrite a real one).
+# config/subscription.txt (never silently overwrite a real one). URL cleanup
+# and the stored-value read live in lib/resolve.sh (_sanitize_url,
+# resolve_subscription_url, subscription_current).
 wizard_subscription() {
   ui_step "$(msg step_sub)"
   _sub="$SUBSCRIPTION_FILE"
-  _example="$REPO_ROOT/config/subscription.txt.example"
-  _cur=""
-  if [ -f "$_sub" ]; then
-    if [ -f "$_example" ] && cmp -s "$_sub" "$_example"; then
-      _cur=""   # still the shipped placeholder
-    else
-      _cur="$(grep -v '^#' "$_sub" 2>/dev/null | grep -v '^[[:space:]]*$' | head -n1)"
-    fi
-  fi
+  _cur="$(subscription_current)"
   if [ -n "$_cur" ]; then
     ui_say "$(msgf sub_current "$_cur")"
     ui_yesno "$(msg ask_replace_sub)" n || { ui_ok "$(msg ok_sub_kept)"; return 0; }
   fi
   while :; do
     ui_ask _raw "$(msg q_sub_url)" ""
-    _url="$(_sanitize_url "$_raw")"
-    case "$_url" in
-      http://*|https://*) : ;;
-      '') ui_warn "$(msg warn_sub_required)"; continue ;;
-      *)  ui_warn "$(msg warn_sub_scheme)";  continue ;;
-    esac
+    if ! _url="$(resolve_subscription_url "$_raw")"; then
+      case "$_url" in
+        '') ui_warn "$(msg warn_sub_required)"; continue ;;
+        *)  ui_warn "$(msg warn_sub_scheme)";  continue ;;
+      esac
+    fi
     # Echo EXACTLY what was captured so a truncated/garbled paste is caught NOW,
     # before a failed deploy. Default yes; answer no to re-enter.
     ui_say "$(msgf sub_confirm "$_url")"

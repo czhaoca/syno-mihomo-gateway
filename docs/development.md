@@ -24,13 +24,14 @@ scripts/
   install_scheduler.sh        # prints DSM Task Scheduler / crontab settings
   package.sh                  # build-host: builds the offline release zip (docs/release-packaging.md)
   installer/
-    preprocess.sh             # per-resource cleanup choices; mutations are deferred
+    preprocess.sh             # per-resource cleanup menus; the decision policy lives in lib/resolve.sh
   lib/
     common.sh                 # env load, logging+rotation, mkdir lock, exit codes
     registry.sh               # preflight (compose/arch/network/tun), ACR login, pull + change detect
     compose.sh                # compose up, health gate, rollback
     cloudflared.sh            # blue-green reprovision of the external cloudflared
     lifecycle.sh              # deployment inventory + verified scoped teardown
+    resolve.sh                # UI-free config resolution: IP suggestion, image refs, subscription URL, cleanup-plan policy
     scheduler.sh              # safe DSM/BusyBox cron parsing and task commands
   ci/
     render_check.py           # CI: runs the real renderer + structural/rule assertions
@@ -85,6 +86,7 @@ config → wait for Docker + preflight → pull/inspect/detect → local-only Co
 | `lib/compose.sh` | `compose_config_check`, `compose_up_local`, `health_gate` (+ `mihomo_controller_probe`), `rollback_compose` |
 | `lib/cloudflared.sh` | `cloudflared_blue_green`, `cloudflared_wait_connected`, secure spec capture/replay, rollback, candidate/workdir cleanup |
 | `lib/lifecycle.sh` | `lifecycle_inspect`, verified container/network removal, manual command rendering |
+| `lib/resolve.sh` | `resolve_mihomo_ip`, `resolve_images`/`resolve_update_images`, `resolve_subscription_url`/`subscription_current`, `resolve_cleanup_plan` (UI-free; the wizards render its results) |
 | `lib/scheduler.sh` | `cron_normalize`, `scheduler_update_command`, `scheduler_network_command`, `scheduler_reload_crond` |
 
 Concurrency: only the lock holder releases the lock (`LOCK_HELD`); the EXIT trap won't reap a

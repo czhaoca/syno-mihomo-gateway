@@ -43,6 +43,8 @@ INST="$REPO_ROOT/scripts/installer"
 . "$LIB/network.sh"
 # shellcheck source=scripts/lib/lifecycle.sh
 . "$LIB/lifecycle.sh"
+# shellcheck source=scripts/lib/resolve.sh
+. "$LIB/resolve.sh"
 # shellcheck source=scripts/installer/envedit.sh
 . "$INST/envedit.sh"
 # shellcheck source=scripts/installer/preflight.sh

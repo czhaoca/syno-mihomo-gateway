@@ -3,7 +3,10 @@
 #
 # Decisions are collected before image preparation, but mutations are deferred
 # until apply_predeployment_cleanup(), after every non-destructive validation has
-# passed. Requires ui.sh, i18n.sh, lifecycle.sh. POSIX /bin/sh.
+# passed. The decision POLICY (which plan is valid against the current
+# inventory) lives in lib/resolve.sh (resolve_cleanup_*); this module only owns
+# the menus and message rendering. Requires ui.sh, i18n.sh, lifecycle.sh,
+# resolve.sh. POSIX /bin/sh.
 
 CLEANUP_CONTAINERS_MODE=preserve
 CLEANUP_NETWORK_MODE=preserve
@@ -19,6 +22,28 @@ _preprocess_show_inventory() {
   fi
 }
 
+# _preprocess_warn_reason - render resolve.sh's machine-readable rejection
+# token (RESOLVE_CLEANUP_REASON) as the operator-facing localized warning.
+_preprocess_warn_reason() {
+  case "${RESOLVE_CLEANUP_REASON:-}" in
+    ambiguous)        ui_warn "$(msg prep_ambiguous)" ;;
+    drift)            ui_warn "$(msg prep_drift_requires_cleanup)" ;;
+    unrelated)        ui_warn "$(msg prep_unrelated)" ;;
+    needs_containers) ui_warn "$(msg prep_network_needs_containers)" ;;
+    *)                ui_warn "$(msg prep_manual_pending)" ;;
+  esac
+}
+
+# _preprocess_menu_mode - map the 3-item preserve/auto/manual menu onto the
+# mode token resolve_cleanup_* validates.
+_preprocess_menu_mode() {
+  case "$UI_MENU_INDEX" in
+    2) printf '%s' auto ;;
+    3) printf '%s' manual ;;
+    *) printf '%s' preserve ;;
+  esac
+}
+
 plan_predeployment_cleanup() {
   while :; do
     ui_step "$(msg step_preprocess)"
@@ -31,41 +56,25 @@ plan_predeployment_cleanup() {
     if [ "$LIFECYCLE_CONTAINERS_PRESENT" = 1 ]; then
       ui_menu_select _pp_containers "$(msg prep_containers_prompt)" \
         "$(msg prep_preserve)" "$(msg prep_auto)" "$(msg prep_manual)"
-      case "$UI_MENU_INDEX" in
-        1) if [ "$LIFECYCLE_CONTAINERS_SAFE" = 1 ]; then
-             CLEANUP_CONTAINERS_MODE=preserve
-           else
-             ui_warn "$(msg prep_ambiguous)"; continue
-           fi ;;
-        2) if [ "$LIFECYCLE_CONTAINERS_SAFE" = 1 ]; then
-             CLEANUP_CONTAINERS_MODE=auto
-           else
-             ui_warn "$(msg prep_ambiguous)"; continue
-           fi ;;
-        3) CLEANUP_CONTAINERS_MODE=manual; _pp_manual=1
-           ui_say "$(msg prep_manual_commands)"; lifecycle_print_container_commands >&2 ;;
-      esac
+      if ! resolve_cleanup_containers "$(_preprocess_menu_mode)"; then
+        _preprocess_warn_reason; continue
+      fi
+      if [ "$CLEANUP_CONTAINERS_MODE" = manual ]; then
+        _pp_manual=1
+        ui_say "$(msg prep_manual_commands)"; lifecycle_print_container_commands >&2
+      fi
     fi
 
     if [ "$LIFECYCLE_NETWORK_PRESENT" = 1 ]; then
       ui_menu_select _pp_network "$(msg prep_network_prompt)" \
         "$(msg prep_preserve)" "$(msg prep_auto)" "$(msg prep_manual)"
-      case "$UI_MENU_INDEX" in
-        1) if [ "$LIFECYCLE_NETWORK_MATCHES" = 1 ]; then
-             CLEANUP_NETWORK_MODE=preserve
-           else
-             ui_warn "$(msg prep_drift_requires_cleanup)"; continue
-           fi ;;
-        2) if [ "$LIFECYCLE_NETWORK_SAFE" != 1 ]; then
-             ui_warn "$(msg prep_unrelated)"; continue
-           elif [ -n "$LIFECYCLE_ATTACHMENTS" ] && [ "$CLEANUP_CONTAINERS_MODE" != auto ]; then
-             ui_warn "$(msg prep_network_needs_containers)"; continue
-           else
-             CLEANUP_NETWORK_MODE=auto
-           fi ;;
-        3) CLEANUP_NETWORK_MODE=manual; _pp_manual=1
-           ui_say "$(msg prep_manual_commands)"; lifecycle_print_network_commands >&2 ;;
-      esac
+      if ! resolve_cleanup_network "$(_preprocess_menu_mode)"; then
+        _preprocess_warn_reason; continue
+      fi
+      if [ "$CLEANUP_NETWORK_MODE" = manual ]; then
+        _pp_manual=1
+        ui_say "$(msg prep_manual_commands)"; lifecycle_print_network_commands >&2
+      fi
     fi
 
     if [ "$_pp_manual" = 1 ]; then
