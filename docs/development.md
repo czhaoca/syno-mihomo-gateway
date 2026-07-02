@@ -30,6 +30,7 @@ scripts/
     common.sh                 # env load, logging+rotation, mkdir lock, exit codes
     registry.sh               # preflight (compose/arch/network/tun), ACR login, pull + change detect
     compose.sh                # compose up, health gate, rollback
+    container.sh              # generic container spec capture/replay engine + parity guard
     cloudflared.sh            # blue-green reprovision of the external cloudflared
     lifecycle.sh              # deployment inventory + verified scoped teardown
     resolve.sh                # UI-free config resolution: IP suggestion, image refs, subscription URL, cleanup-plan policy
@@ -38,6 +39,7 @@ scripts/
     render_check.py           # CI: runs the real renderer + structural/rule assertions
     auto_update_check.sh      # fake-Docker TDD suite for scheduler/update/rollback paths
     cloudflared_check.sh      # fake-Docker TDD suite for blue-green behavior
+    generic_update_check.sh   # fake-Docker suite for the generic capture/replay engine
     gateway_cli_check.sh      # PATH-stub suite for the gateway.sh CLI contract
     lifecycle_check.sh       # fake-Docker inventory/cleanup safety suite
     privacy_check.py         # tracked-content/history privacy gate
@@ -86,6 +88,7 @@ config → wait for Docker + preflight → pull/inspect/detect → local-only Co
 | `lib/common.sh` | `load_env`, `log*`, `rotate_log`, `acquire_lock`/`release_lock` (guarded by `LOCK_HELD`), `EXIT_*` codes |
 | `lib/registry.sh` | `validate_update_config`, `wait_for_docker_ready`, `check_arch_expectation`/`arch_ok`, `check_network`, `check_tun`, `acr_login`, `pull_image`, `deploy_needed` |
 | `lib/compose.sh` | `compose_config_check`, `compose_up_local`, `health_gate` (+ `mihomo_controller_probe`), `rollback_compose` |
+| `lib/container.sh` | `container_capture_spec`, `container_run_saved`, `container_restore_old`, `container_parity_guard` (fail-closed on unreplayable settings), workdir management |
 | `lib/cloudflared.sh` | `cloudflared_blue_green`, `cloudflared_wait_connected`, secure spec capture/replay, rollback, candidate/workdir cleanup |
 | `lib/lifecycle.sh` | `lifecycle_inspect`, verified container/network removal, manual command rendering |
 | `lib/resolve.sh` | `resolve_mihomo_ip`, `resolve_images`/`resolve_update_images`, `resolve_subscription_url`/`subscription_current`, `resolve_cleanup_plan` (UI-free; the wizards render its results) |
@@ -151,6 +154,7 @@ python3 scripts/ci/package_check.py
 # scheduler/updater/cloudflared TDD suites (fake Docker/Compose; no NAS mutation)
 sh scripts/ci/auto_update_check.sh
 sh scripts/ci/cloudflared_check.sh
+sh scripts/ci/generic_update_check.sh
 sh scripts/ci/dsm_installer_check.sh
 sh scripts/ci/lifecycle_check.sh
 python3 scripts/ci/privacy_check.py

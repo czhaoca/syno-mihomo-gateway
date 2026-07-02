@@ -75,6 +75,7 @@ steps:
       - sh scripts/ci/lifecycle_check.sh
       - sh scripts/ci/auto_update_check.sh
       - sh scripts/ci/cloudflared_check.sh
+      - sh scripts/ci/generic_update_check.sh
       - sh scripts/ci/gateway_cli_check.sh
 
   - name: shellcheck
@@ -85,4 +86,4 @@ steps:
       # + scripts/lib/*.sh; auto_update.sh + setup_network.sh pull in their libs.
       # setup_network.sh is now POSIX /bin/sh (no more bash exception).
       - 'for f in $(find . -path ./.git -prune -o -name "*.sh" -print); do sh -n "$f" || exit 1; done'
-      - shellcheck -x install.sh scripts/gateway.sh scripts/auto_update.sh scripts/install_scheduler.sh scripts/setup_network.sh scripts/render_config.sh scripts/package.sh scripts/doctor.sh bootstrap.sh
+      - shellcheck -x install.sh scripts/gateway.sh scripts/auto_update.sh scripts/install_scheduler.sh scripts/setup_network.sh scripts/render_config.sh scripts/package.sh scripts/doctor.sh bootstrap.sh scripts/lib/container.sh
