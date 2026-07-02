@@ -32,15 +32,19 @@ _show_mihomo_logs() {
 # of wget/curl the image ships; empty output on any failure (incl. non-2xx).
 _ctrl_get() {
   _cg_u="$1"; _cg_h="$2"
+  # The auth header (bearer token) never rides the host-visible docker exec
+  # argv (no-secrets-on-argv rule): it is handed over on stdin instead.
   if "$DOCKER_BIN" exec "$MIHOMO_CONTAINER" sh -c 'command -v wget >/dev/null 2>&1' 2>/dev/null; then
     if [ -n "$_cg_h" ]; then
-      "$DOCKER_BIN" exec "$MIHOMO_CONTAINER" wget -q -T 8 -O - --header "$_cg_h" "$_cg_u" 2>/dev/null
+      printf '%s\n' "$_cg_h" | "$DOCKER_BIN" exec -i "$MIHOMO_CONTAINER" \
+        sh -c 'IFS= read -r SMG_AUTH; exec wget -q -T 8 -O - --header "$SMG_AUTH" "$1"' _ "$_cg_u" 2>/dev/null
     else
       "$DOCKER_BIN" exec "$MIHOMO_CONTAINER" wget -q -T 8 -O - "$_cg_u" 2>/dev/null
     fi
   elif "$DOCKER_BIN" exec "$MIHOMO_CONTAINER" sh -c 'command -v curl >/dev/null 2>&1' 2>/dev/null; then
     if [ -n "$_cg_h" ]; then
-      "$DOCKER_BIN" exec "$MIHOMO_CONTAINER" curl -fsS -m 8 -H "$_cg_h" "$_cg_u" 2>/dev/null
+      printf '%s\n' "$_cg_h" | "$DOCKER_BIN" exec -i "$MIHOMO_CONTAINER" \
+        sh -c 'IFS= read -r SMG_AUTH; exec curl -fsS -m 8 -H "$SMG_AUTH" "$1"' _ "$_cg_u" 2>/dev/null
     else
       "$DOCKER_BIN" exec "$MIHOMO_CONTAINER" curl -fsS -m 8 "$_cg_u" 2>/dev/null
     fi

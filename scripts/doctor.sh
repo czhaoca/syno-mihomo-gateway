@@ -103,7 +103,11 @@ if [ "$CHECK_EGRESS" -eq 1 ] && [ "$broken" -eq 0 ]; then
   [ -n "${CONTROLLER_SECRET:-}" ] && _header="Authorization: Bearer ${CONTROLLER_SECRET}"
   if "$DOCKER_BIN" exec "$MIHOMO_CONTAINER" sh -c 'command -v wget >/dev/null 2>&1' 2>/dev/null; then
     if [ -n "$_header" ]; then
-      _out="$("$DOCKER_BIN" exec "$MIHOMO_CONTAINER" wget -q -T 8 -O - --header "$_header" "$_url" 2>/dev/null)"
+      # The bearer token must not ride the host-visible docker exec argv
+      # (the project's no-secrets-on-argv rule): hand it over on stdin.
+      # shellcheck disable=SC2016 # $SMG_AUTH expands in the container shell
+      _out="$(printf '%s\n' "$_header" | "$DOCKER_BIN" exec -i "$MIHOMO_CONTAINER" \
+        sh -c 'IFS= read -r SMG_AUTH; exec wget -q -T 8 -O - --header "$SMG_AUTH" "$1"' _ "$_url" 2>/dev/null)"
     else
       _out="$("$DOCKER_BIN" exec "$MIHOMO_CONTAINER" wget -q -T 8 -O - "$_url" 2>/dev/null)"
     fi

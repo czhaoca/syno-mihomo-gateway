@@ -14,7 +14,8 @@ sh ./scripts/gateway.sh <verb> [options]
 
 - Mutating verbs (deploy, redeploy, modify, update, cron --apply-crontab) require an explicit --yes; without it they exit 7 and change nothing.
 - Mutating verbs require root (exit 6 otherwise); status and doctor do not.
-- --dry-run never mutates anything and needs neither --yes nor root.
+- --dry-run never mutates the gateway or any container and needs neither --yes nor root (update --dry-run still pulls images into the local cache - that is its job).
+- Every verb accepts --help/-h for its own help; -y is a short alias for --yes.
 - Secrets are never accepted on the command line (argv is visible in ps) - set them in .env.
 - --json (status and doctor only) prints exactly one JSON object on stdout; every log line goes to the log file and stderr.
 
@@ -85,12 +86,14 @@ Persist the auto-update schedule; optionally write a crontab entry.
 |---|---|
 | `--time HH:MM` | daily update time (24h clock; becomes a five-field cron expression) |
 | `--schedule 'M H * * *'` | a full five-field cron expression (validated) |
-| `--tz ZONE` | timezone the schedule runs in (e.g. Asia/Shanghai, UTC) |
+| `--tz ZONE` | sets UPDATE_TZ, which only labels the updater's log timestamps - DSM Task Scheduler and crontab fire on the NAS SYSTEM timezone (Control Panel > Regional Options) |
 | `--enable` | set UPDATE_ENABLED=true |
 | `--disable` | set UPDATE_ENABLED=false |
 | `--apply-crontab` | append the entry to the system crontab (mutating - needs --yes and root) |
 
 Without --apply-crontab the verb only writes .env and prints the DSM Task Scheduler command to schedule (the recommended, DSM-native path).
+
+Needs an existing .env (deploy first). When --time and --schedule are both given, --time wins. --apply-crontab manages its own entry: a changed schedule replaces the previous auto_update.sh line.
 
 
 ### `status`
@@ -101,10 +104,12 @@ Read-only deployment state (stack, containers, network, dashboard URL).
 |---|---|
 | `--json` | emit one machine-readable JSON object on stdout |
 
+Exits 2 (ok:false) when docker/compose is unavailable or .env is malformed - the JSON object is still emitted; else 0.
+
 
 ### `doctor`
 
-Read-only diagnostics (wraps scripts/doctor.sh; exit 0 healthy / 2 degraded / 3 broken).
+Read-only diagnostics (exit 0 healthy / 2 degraded / 3 broken). Human mode runs scripts/doctor.sh; --json runs the same check set natively.
 
 | Flag | Description |
 |---|---|
@@ -123,11 +128,13 @@ Run the unattended updater (execs scripts/auto_update.sh; args pass through) or 
 | `--force` | ignore the UPDATE_ENABLED=false kill-switch (forwarded) |
 | `--list-targets` | read-only, no --yes/root; list enrolled generic targets and their eligibility |
 | `--last` | read-only, no --yes/root; show the outcome of the last updater run |
-| `--enable NAME` | enroll a running container for generic auto-update (writes the managed list only) |
+| `--enable NAME` | enroll a container for generic auto-update (writes the managed list only; warns when NAME is not running or does not exist yet, and when the image looks like a database - recreate has no quiesce) |
 | `--disable NAME` | remove a container from generic auto-update (writes the managed list only) |
+
+--list-targets/--last/--enable/--disable are handled locally and reject any other flag; --dry-run cannot combine with them (it would bypass the --yes/root gates that protect the managed list).
 
 ## Machine-readable output (--json)
 
-status --json emits one flat object: {"verb","ok","exit_code","stack_state","mihomo_ip","dashboard_url", "checks":[{"name","value"},...],"last_update":{...}|null} (last_update mirrors state/last-run.json; null before the first run). doctor --json emits {"verb","ok","exit_code","checks":[...]}. Exactly one object on stdout; logs never interleave.
+status --json emits one flat object: {"verb","ok","exit_code","stack_state","mihomo_ip","dashboard_url", "checks":[{"name","value"},...],"last_update":{...}|null} (last_update mirrors state/last-run.json; null before the first run). Its check names are env, docker, mihomo_container, ui_container, network, subscription, tun_enable. last-run.json carries {"ts","exit_code","dry_run","updated","unchanged","failed", "rolled_back","updated_names","failed_names","rolled_back_names"}. doctor --json emits {"verb","ok","exit_code","checks":[...]} with check names env, docker, arch, tun_device, network, compose, mihomo, tun_gateway, controller, image_arch, dashboard, subscription. Exactly one object on stdout; logs never interleave.
 
-Logs: <data-dir>/logs/gateway.log (every line carries verb= and run= fields).
+Logs: <data-dir>/logs/gateway.log (lines from gateway.sh runs carry verb= and run= fields; direct auto_update.sh runs share the file via the auto-update.log symlink, without those fields).

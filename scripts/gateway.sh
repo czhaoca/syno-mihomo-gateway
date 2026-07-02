@@ -19,7 +19,8 @@
 #              --dry-run and --force pass through), or manage generic targets:
 #              --list-targets | --last (read-only) | --enable N | --disable N
 #
-# Guardrails (see docs/cli.md once generated - issue tracking):
+# Guardrails (authoritative reference: docs/cli.md, generated from
+# scripts/cli/spec.yaml - keep this header aligned when the spec changes):
 #   - Mutating verbs (deploy, redeploy, modify, update, cron --apply-crontab)
 #     require an explicit --yes; --dry-run is exempt and mutates nothing.
 #   - Mutating verbs require root (exit 6 otherwise); status/doctor do not.
@@ -116,9 +117,11 @@ _gw_load_config() {
       _gw_fail "$EXIT_CONFIG" "saved .env lacks resolved image refs - run 'gateway.sh deploy' or the installer"
     fi
     if [ "$GW_DRY_RUN" = 1 ]; then
-      # Plan only: compute the refs without persisting anything.
-      MIHOMO_TAG="$(env_get MIHOMO_TAG 2>/dev/null || echo "${GW_MIHOMO_TAG:-latest}")"
-      METACUBEXD_TAG="$(env_get METACUBEXD_TAG 2>/dev/null || echo "${GW_METACUBEXD_TAG:-latest}")"
+      # Plan only: compute the refs without persisting anything. The CLI tag
+      # wins over the saved one - the real run persists it first, so the plan
+      # must preview the SAME ref the real run would deploy.
+      MIHOMO_TAG="${GW_MIHOMO_TAG:-$(env_get MIHOMO_TAG 2>/dev/null || echo latest)}"
+      METACUBEXD_TAG="${GW_METACUBEXD_TAG:-$(env_get METACUBEXD_TAG 2>/dev/null || echo latest)}"
       MIHOMO_IMAGE="$(derive_ref mihomo "$MIHOMO_TAG")" \
         || _gw_fail "$EXIT_CONFIG" "cannot derive MIHOMO_IMAGE (check REGISTRY_MODE/DOCKER_REGISTRY/ACR_NAMESPACE)"
       METACUBEXD_IMAGE="$(derive_ref metacubexd "$METACUBEXD_TAG")" \
@@ -132,7 +135,15 @@ _gw_load_config() {
     eval "_v=\${$_k:-}"
     [ -n "$_v" ] || _gw_fail "$EXIT_CONFIG" "$_k is not set in $ENV_FILE"
   done
-  _gw_sub="$(subscription_current)"
+  # Under 'modify --subscription --dry-run' the file is deliberately not
+  # written yet; validate the PENDING value so the plan reflects the state
+  # the real run would produce (and never tells the operator to run the
+  # exact command they are running).
+  _gw_sub=""
+  if [ -n "${GW_SUB:-}" ]; then
+    _gw_sub="$(resolve_subscription_url "$GW_SUB" 2>/dev/null)" || _gw_sub=""
+  fi
+  [ -n "$_gw_sub" ] || _gw_sub="$(subscription_current)"
   [ -n "$_gw_sub" ] || _gw_fail "$EXIT_CONFIG" \
     "no subscription URL stored at $SUBSCRIPTION_FILE - use 'gateway.sh modify --subscription URL'"
   resolve_subscription_url "$_gw_sub" >/dev/null \
@@ -204,7 +215,9 @@ _gw_prepare() {
 _gw_apply_cleanup() {
   lifecycle_inspect
   case "${CLEANUP_CONTAINERS_MODE:-preserve}" in
-    auto) lifecycle_remove_containers || return "$EXIT_PARTIAL" ;;
+    auto)
+      [ "${LIFECYCLE_CONTAINERS_PRESENT:-0}" = 1 ] && GW_MUTATED=1
+      lifecycle_remove_containers || return "$EXIT_PARTIAL" ;;
     *)
       if [ "$LIFECYCLE_CONTAINERS_PRESENT" = 1 ] && [ "$LIFECYCLE_CONTAINERS_SAFE" != 1 ]; then
         log_error "existing containers are not verifiably ours"; return "$EXIT_CONFIG"
@@ -212,7 +225,9 @@ _gw_apply_cleanup() {
   esac
   lifecycle_inspect
   case "${CLEANUP_NETWORK_MODE:-preserve}" in
-    auto) lifecycle_remove_network || return "$EXIT_PARTIAL" ;;
+    auto)
+      [ "${LIFECYCLE_NETWORK_PRESENT:-0}" = 1 ] && GW_MUTATED=1
+      lifecycle_remove_network || return "$EXIT_PARTIAL" ;;
     *)
       if [ "$LIFECYCLE_NETWORK_PRESENT" = 1 ] && [ "$LIFECYCLE_NETWORK_MATCHES" != 1 ]; then
         log_error "network '$TPROXY_NETWORK' exists with a different configuration"; return "$EXIT_CONFIG"
@@ -287,7 +302,16 @@ gateway_deploy() {
   fi
   _gw_prepare || return $?
   _gw_apply_cleanup || return $?
-  _gw_create_network || return $?
+  if ! _gw_create_network; then
+    # Exit 3 is documented as 'nothing changed'. Once auto-cleanup has torn
+    # the old stack down, a network failure leaves the gateway DOWN - report
+    # partial (2) and say so, never 'nothing changed'.
+    if [ "${GW_MUTATED:-0}" = 1 ]; then
+      log_error "the previous deployment was already removed by cleanup and the network step failed - the gateway is DOWN until a deploy succeeds"
+      return "$EXIT_PARTIAL"
+    fi
+    return "$EXIT_CONFIG"
+  fi
   _gw_deploy_stack || return $?
   _gw_report
 }
@@ -295,6 +319,11 @@ gateway_deploy() {
 gateway_modify() {
   if [ "$GW_DO_NET" = 0 ] && [ "$GW_DO_IMG" = 0 ] && [ -z "$GW_SUB" ]; then
     _gw_fail "$EXIT_CONFIG" "modify needs one of --network, --images, --subscription URL"
+  fi
+  # The tag flags are documented as 'with --images'; persisting them on any
+  # other modify would silently desync MIHOMO_TAG from the deployed ref.
+  if [ "$GW_DO_IMG" = 0 ] && [ -n "$GW_MIHOMO_TAG$GW_METACUBEXD_TAG" ]; then
+    _gw_fail "$EXIT_CONFIG" "--mihomo-tag/--metacubexd-tag require --images"
   fi
   if [ -n "$GW_SUB" ]; then
     if ! _gwm_url="$(resolve_subscription_url "$GW_SUB")"; then
@@ -371,11 +400,16 @@ gateway_status() {
   _gws_rc=0
   _gws_ok=true
   GW_CHECKS=''
-  if [ -f "$ENV_FILE" ]; then
-    load_env
+  # status is the verb monitoring systems poll: it must emit its one object
+  # even when .env is malformed (load_env would exit 3 with no output), so
+  # it degrades to a 'broken' check like doctor does.
+  if [ ! -f "$ENV_FILE" ]; then
+    _gw_check_add env missing
+  elif dotenv_load "$ENV_FILE" >/dev/null 2>&1; then
     _gw_check_add env parsed
   else
-    _gw_check_add env missing
+    _gw_check_add env broken
+    _gws_rc="$EXIT_PARTIAL"; _gws_ok=false
   fi
   if detect_compose >/dev/null 2>&1 && "$DOCKER_BIN" info >/dev/null 2>&1; then
     _gw_check_add docker available
@@ -452,10 +486,49 @@ gateway_doctor() {
   fi
   if [ -c /dev/net/tun ]; then _gw_check_add tun_device ok; else _gw_check_add tun_device missing; _gwd_broken=1; fi
   if check_network >/dev/null 2>&1; then _gw_check_add network ok; else _gw_check_add network broken; _gwd_broken=1; fi
-  if [ "$("$(_net_docker)" inspect -f '{{.State.Running}}' "$MIHOMO_CONTAINER" 2>/dev/null)" = "true" ]; then
-    _gw_check_add mihomo running
+  # Check parity with the human doctor (scripts/doctor.sh): --json must never
+  # report ok=true for a state the human report calls BROKEN. The deep checks
+  # mirror doctor.sh's set and severities, gated the same way on the basics.
+  if [ "$_gwd_broken" = 0 ]; then
+    if compose_config_check >/dev/null 2>&1; then
+      _gw_check_add compose ok
+    else
+      _gw_check_add compose broken; _gwd_broken=1
+    fi
+    _gwd_mihomo_up=0
+    if [ "$("$(_net_docker)" inspect -f '{{.State.Running}}' "$MIHOMO_CONTAINER" 2>/dev/null)" = "true" ]; then
+      _gw_check_add mihomo running; _gwd_mihomo_up=1
+    else
+      _gw_check_add mihomo not-running; _gwd_broken=1
+    fi
+    if [ "$_gwd_mihomo_up" = 1 ]; then
+      if [ "${TUN_ENABLE:-false}" != true ]; then
+        _gw_check_add tun_gateway disabled
+      elif mihomo_gateway_probe >/dev/null 2>&1; then
+        _gw_check_add tun_gateway ok
+      else
+        _gw_check_add tun_gateway broken; _gwd_broken=1
+      fi
+      if mihomo_controller_probe >/dev/null 2>&1; then
+        _gw_check_add controller ok
+      else
+        _gw_check_add controller broken; _gwd_broken=1
+      fi
+      if [ -n "${MIHOMO_IMAGE:-}" ]; then
+        if arch_ok "$MIHOMO_IMAGE" >/dev/null 2>&1; then
+          _gw_check_add image_arch ok
+        else
+          _gw_check_add image_arch mismatch; _gwd_broken=1
+        fi
+      fi
+    fi
+    if [ "$("$(_net_docker)" inspect -f '{{.State.Running}}' "$METACUBEXD_CONTAINER" 2>/dev/null)" = "true" ]; then
+      _gw_check_add dashboard running
+    else
+      _gw_check_add dashboard not-running; _gwd_degraded=1
+    fi
   else
-    _gw_check_add mihomo not-running; _gwd_degraded=1
+    _gw_check_add mihomo unknown
   fi
   if [ -n "$(subscription_current 2>/dev/null)" ]; then
     _gw_check_add subscription ok
@@ -474,14 +547,29 @@ gateway_doctor() {
 _gw_apply_crontab() {
   _gac_ct="${CRONTAB_FILE:-/etc/crontab}"
   [ -f "$_gac_ct" ] || _gw_fail "$EXIT_CONFIG" "no crontab at $_gac_ct - use DSM Task Scheduler (sh scripts/install_scheduler.sh)"
-  if grep -Fq "scripts/auto_update.sh" "$_gac_ct" 2>/dev/null; then
-    log_info "an auto_update.sh entry already exists in $_gac_ct"
-    return 0
-  fi
   _gac_sched="$(cron_normalize "$(env_get UPDATE_SCHEDULE 2>/dev/null || echo '0 2 * * *')")" \
     || _gw_fail "$EXIT_CONFIG" "UPDATE_SCHEDULE is not a valid five-field cron expression"
   _gac_cmd="$(scheduler_update_command)" || return "$EXIT_CONFIG"
-  printf '%s\troot\t%s\n' "$_gac_sched" "$_gac_cmd" >> "$_gac_ct" \
+  _gac_line="$(printf '%s\troot\t%s' "$_gac_sched" "$_gac_cmd")"
+  if grep -Fq "scripts/auto_update.sh" "$_gac_ct" 2>/dev/null; then
+    if grep -Fq "$_gac_line" "$_gac_ct" 2>/dev/null; then
+      log_info "an auto_update.sh entry already exists in $_gac_ct (schedule unchanged)"
+      return 0
+    fi
+    # Managed rewrite: the entry is ours, so a schedule change in .env must
+    # replace it - silently keeping the old line would diverge forever.
+    # cat-overwrite (not mv) preserves /etc/crontab's inode and permissions.
+    grep -Fv "scripts/auto_update.sh" "$_gac_ct" >"$_gac_ct.next" 2>/dev/null || : >>"$_gac_ct.next"
+    printf '%s\n' "$_gac_line" >>"$_gac_ct.next" \
+      || { rm -f "$_gac_ct.next"; _gw_fail "$EXIT_CONFIG" "cannot write $_gac_ct"; }
+    cat "$_gac_ct.next" >"$_gac_ct" \
+      || { rm -f "$_gac_ct.next"; _gw_fail "$EXIT_CONFIG" "cannot write $_gac_ct"; }
+    rm -f "$_gac_ct.next"
+    scheduler_reload_crond || log_warn "crond was not reloaded - the entry applies after the next crond restart"
+    log_info "crontab entry UPDATED in $_gac_ct ($_gac_sched)"
+    return 0
+  fi
+  printf '%s\n' "$_gac_line" >> "$_gac_ct" \
     || _gw_fail "$EXIT_CONFIG" "cannot write $_gac_ct"
   scheduler_reload_crond || log_warn "crond was not reloaded - the entry applies after the next crond restart"
   log_info "crontab entry installed in $_gac_ct ($_gac_sched)"
@@ -492,6 +580,9 @@ gateway_cron() {
   [ -f "$ENV_FILE" ] || _gw_fail "$EXIT_CONFIG" ".env not found at $ENV_FILE - deploy first"
   load_env
   if [ -n "$GW_TIME" ]; then
+    # Without a colon both %%:*/#*: expansions return the WHOLE string, so
+    # '--time 7' would silently schedule 07:07 - require the separator.
+    case "$GW_TIME" in *:*) : ;; *) _gw_fail "$EXIT_CONFIG" "--time expects HH:MM (got '$GW_TIME')" ;; esac
     _gwc_hh="${GW_TIME%%:*}"; _gwc_mm="${GW_TIME#*:}"
     case "$_gwc_hh" in ''|*[!0-9]*) _gw_fail "$EXIT_CONFIG" "--time expects HH:MM (got '$GW_TIME')" ;; esac
     case "$_gwc_mm" in ''|*[!0-9]*) _gw_fail "$EXIT_CONFIG" "--time expects HH:MM (got '$GW_TIME')" ;; esac
@@ -548,15 +639,17 @@ gateway_main() {
   esac
 
   # Secrets never transit argv (argv is visible in ps): reject them up front.
+  # Match the FLAG NAME only (the part before '='): a legitimate value such as
+  # a subscription URL almost always carries '?token=...' and must pass.
   for _a in "$@"; do
-    case "$_a" in
+    case "${_a%%=*}" in
       --*secret*|--*password*|--*token*)
         echo "ERROR: secrets are never accepted on the command line - set them in .env ($ENV_FILE)" >&2
         exit "$EXIT_CONFIG" ;;
     esac
   done
 
-  GW_YES=0 GW_DRY_RUN=0 GW_JSON=0 GW_EGRESS=0
+  GW_YES=0 GW_DRY_RUN=0 GW_JSON=0 GW_EGRESS=0 GW_MUTATED=0
   GW_CLEAN_C=preserve GW_CLEAN_N=preserve GW_IFACE=''
   GW_DO_NET=0 GW_DO_IMG=0 GW_SUB='' GW_MIHOMO_TAG='' GW_METACUBEXD_TAG=''
   GW_TIME='' GW_SCHED='' GW_TZ='' GW_ENABLE='' GW_APPLY_CRON=0
@@ -587,6 +680,13 @@ gateway_main() {
     # writes the managed list (or the gates would be bypassed).
     if [ -n "$GW_UPD_MODE" ] && [ "$GW_DRY_RUN" = 1 ]; then
       log_error "--dry-run cannot be combined with --list-targets/--last/--enable/--disable"
+      exit "$EXIT_CONFIG"
+    fi
+    # Target-management modes never exec auto_update.sh, so any residual
+    # pass-through flag (--json, --force, a typo) would be SILENTLY dropped
+    # with exit 0 - reject it like every other verb rejects unknown options.
+    if [ -n "$GW_UPD_MODE" ] && [ -n "${GW_PASS# }" ]; then
+      log_error "unknown option for update --$GW_UPD_MODE:$GW_PASS"
       exit "$EXIT_CONFIG"
     fi
   else
@@ -624,7 +724,9 @@ gateway_main() {
         cron:--apply-crontab) GW_APPLY_CRON=1 ;;
         *) log_error "unknown option for $GW_VERB: $_a"; exit "$EXIT_CONFIG" ;;
       esac
-      shift
+      # A trailing value-taking flag has already consumed the last word: an
+      # unguarded shift past the end aborts dash-style shells with exit 2.
+      [ $# -eq 0 ] || shift
     done
   fi
 
@@ -669,9 +771,20 @@ gateway_main() {
         enable)
           [ -n "$GW_UPD_NAME" ] || { log_error "--enable requires a container name"; exit "$EXIT_CONFIG"; }
           target_enroll "$GW_UPD_NAME" || exit "$EXIT_CONFIG"
-          _gw_upd_img="$(detect_compose >/dev/null 2>&1 && "$DOCKER_BIN" inspect -f '{{.Config.Image}}' "$GW_UPD_NAME" 2>/dev/null)"
-          if [ -n "$_gw_upd_img" ] && targets_image_databaselike "$_gw_upd_img"; then
-            log_warn "'$GW_UPD_NAME' looks like a DATABASE ($_gw_upd_img): auto-recreate has no quiesce and can corrupt in-flight writes - enroll only if you accept that risk"
+          if detect_compose >/dev/null 2>&1; then
+            # Enrollment is name-based and deliberately does not require the
+            # container to exist yet, but a typo'd name would otherwise be
+            # enrolled with exit 0 and never update - warn loudly.
+            _gw_upd_run="$("$DOCKER_BIN" inspect -f '{{.State.Running}}' "$GW_UPD_NAME" 2>/dev/null || echo absent)"
+            case "$_gw_upd_run" in
+              true) : ;;
+              false) log_warn "'$GW_UPD_NAME' is enrolled but not running - updates skip it until it runs" ;;
+              *) log_warn "'$GW_UPD_NAME' is enrolled but no such container exists - check the name (updates skip it until it runs)" ;;
+            esac
+            _gw_upd_img="$("$DOCKER_BIN" inspect -f '{{.Config.Image}}' "$GW_UPD_NAME" 2>/dev/null)"
+            if [ -n "$_gw_upd_img" ] && targets_image_databaselike "$_gw_upd_img"; then
+              log_warn "'$GW_UPD_NAME' looks like a DATABASE ($_gw_upd_img): auto-recreate has no quiesce and can corrupt in-flight writes - enroll only if you accept that risk"
+            fi
           fi
           exit "$EXIT_OK" ;;
         disable)

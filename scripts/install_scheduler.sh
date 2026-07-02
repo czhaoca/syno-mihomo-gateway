@@ -52,7 +52,7 @@ Recommended (persists across DSM upgrades, runs as root):
 
    Enable "Send run details by email" + "only when the script terminates
    abnormally" - this is the DEFAULT notification path: every entry point
-   exits non-zero on failure states (see the exit-code table in the README),
+   exits non-zero on failure states (see the exit-code table in docs/TROUBLESHOOTING.txt or docs/troubleshooting.md),
    so DSM emails you exactly when something needs attention. The optional
    webhook (NOTIFY_WEBHOOK_URL in .env) adds rich push on top; DSM 7's
    synodsmnotify is NOT reliable from plain scripts and is best-effort only.

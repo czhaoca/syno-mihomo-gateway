@@ -14,7 +14,8 @@ sh ./scripts/gateway.sh <verb> [options]
 
 - 变更类子命令（deploy、redeploy、modify、update、cron --apply-crontab） 必须显式传入 --yes；否则以退出码 7 结束且不做任何更改。
 - 变更类子命令需要 root 权限（否则退出码 6）；status 与 doctor 不需要。
-- --dry-run 绝不做任何更改，也不需要 --yes 或 root。
+- --dry-run 绝不更改网关或任何容器，也不需要 --yes 或 root（update --dry-run 仍会把镜像拉取到本地缓存——这正是它的用途）。
+- 每个子命令都接受 --help/-h 查看其帮助；-y 是 --yes 的短别名。
 - 命令行绝不接受机密参数（argv 在 ps 中可见）——请写入 .env。
 - --json（仅 status 与 doctor）在标准输出只打印一个 JSON 对象； 所有日志写入日志文件与标准错误。
 
@@ -85,12 +86,14 @@ sh ./scripts/gateway.sh <verb> [options]
 |---|---|
 | `--time HH:MM` | 每日更新时间（24 小时制；转换为五段 cron 表达式） |
 | `--schedule 'M H * * *'` | 完整的五段 cron 表达式（会校验） |
-| `--tz ZONE` | 计划运行的时区（如 Asia/Shanghai、UTC） |
+| `--tz ZONE` | 设置 UPDATE_TZ——仅用于更新器日志时间戳；DSM 任务计划与 crontab 按 NAS 系统时区（控制面板 > 区域选项）触发 |
 | `--enable` | 设置 UPDATE_ENABLED=true |
 | `--disable` | 设置 UPDATE_ENABLED=false |
 | `--apply-crontab` | 将条目追加到系统 crontab（属变更操作——需要 --yes 与 root） |
 
 不带 --apply-crontab 时仅写入 .env 并打印用于 DSM 任务计划的命令 （推荐的 DSM 原生方式）。
+
+需要已存在的 .env（先部署）。--time 与 --schedule 同时给出时以 --time 为准。--apply-crontab 管理自己的条目：计划变更会替换旧的 auto_update.sh 行。
 
 
 ### `status`
@@ -101,10 +104,12 @@ sh ./scripts/gateway.sh <verb> [options]
 |---|---|
 | `--json` | 在标准输出打印一个机器可读的 JSON 对象 |
 
+当 docker/compose 不可用或 .env 损坏时以退出码 2（ok:false）结束—— JSON 对象仍会输出；否则为 0。
+
 
 ### `doctor`
 
-只读诊断（封装 scripts/doctor.sh；退出码 0 健康 / 2 降级 / 3 故障）。
+只读诊断（退出码 0 健康 / 2 降级 / 3 故障）。人读模式运行 scripts/doctor.sh；--json 以同一套检查原生输出。
 
 | 选项 | 说明 |
 |---|---|
@@ -123,11 +128,13 @@ sh ./scripts/gateway.sh <verb> [options]
 | `--force` | 忽略 UPDATE_ENABLED=false 开关（透传） |
 | `--list-targets` | 只读，无需 --yes/root；列出已登记的通用更新目标及其可用性 |
 | `--last` | 只读，无需 --yes/root；显示最近一次更新运行的结果 |
-| `--enable NAME` | 将一个运行中的容器登记为通用自动更新目标（仅写入管理列表） |
+| `--enable NAME` | 将容器登记为通用自动更新目标（仅写入管理列表；当 NAME 未运行或尚不 存在时会警告，镜像疑似数据库时也会警告——原地重建没有静默期） |
 | `--disable NAME` | 将一个容器从通用自动更新中移除（仅写入管理列表） |
+
+--list-targets/--last/--enable/--disable 在本地处理并拒绝其他任何 选项；--dry-run 不能与其组合（否则会绕过保护管理列表的 --yes/root 门槛）。
 
 ## 机器可读输出（--json）
 
-status --json 输出一个扁平对象： {"verb","ok","exit_code","stack_state","mihomo_ip","dashboard_url", "checks":[{"name","value"},...],"last_update":{...}|null} （last_update 与 state/last-run.json 一致；首次运行前为 null）。 doctor --json 输出 {"verb","ok","exit_code","checks":[...]}。 标准输出只有这一个对象，日志绝不混入。
+status --json 输出一个扁平对象： {"verb","ok","exit_code","stack_state","mihomo_ip","dashboard_url", "checks":[{"name","value"},...],"last_update":{...}|null} （last_update 与 state/last-run.json 一致；首次运行前为 null）。 其检查名为 env、docker、mihomo_container、ui_container、network、 subscription、tun_enable。last-run.json 携带 {"ts","exit_code","dry_run","updated","unchanged","failed", "rolled_back","updated_names","failed_names","rolled_back_names"}。 doctor --json 输出 {"verb","ok","exit_code","checks":[...]}，检查名为 env、docker、arch、tun_device、network、compose、mihomo、tun_gateway、 controller、image_arch、dashboard、subscription。 标准输出只有这一个对象，日志绝不混入。
 
-日志：<data-dir>/logs/gateway.log（每行携带 verb= 与 run= 字段）。
+日志：<data-dir>/logs/gateway.log（gateway.sh 运行的行携带 verb= 与 run= 字段；直接运行 auto_update.sh 经 auto-update.log 符号链接写入 同一文件，但不带这两个字段）。

@@ -56,16 +56,20 @@ mihomo_controller_probe() {
   _url="http://127.0.0.1:${CONTROLLER_PORT}/version"
   _auth=""
   [ -n "${CONTROLLER_SECRET:-}" ] && _auth="Authorization: Bearer ${CONTROLLER_SECRET}"
+  # The bearer token never rides the host-visible docker exec argv (the
+  # project's no-secrets-on-argv rule): it is handed over on stdin instead.
   if "$DOCKER_BIN" exec "$MIHOMO_CONTAINER" sh -c 'command -v wget >/dev/null 2>&1' 2>/dev/null; then
     if [ -n "$_auth" ]; then
-      "$DOCKER_BIN" exec "$MIHOMO_CONTAINER" wget -q -T 5 -O /dev/null --header "$_auth" "$_url" 2>/dev/null
+      printf '%s\n' "$_auth" | "$DOCKER_BIN" exec -i "$MIHOMO_CONTAINER" \
+        sh -c 'IFS= read -r SMG_AUTH; exec wget -q -T 5 -O /dev/null --header "$SMG_AUTH" "$1"' _ "$_url" 2>/dev/null
     else
       "$DOCKER_BIN" exec "$MIHOMO_CONTAINER" wget -q -T 5 -O /dev/null "$_url" 2>/dev/null
     fi
     return $?
   elif "$DOCKER_BIN" exec "$MIHOMO_CONTAINER" sh -c 'command -v curl >/dev/null 2>&1' 2>/dev/null; then
     if [ -n "$_auth" ]; then
-      "$DOCKER_BIN" exec "$MIHOMO_CONTAINER" curl -fsS -m 5 -o /dev/null -H "$_auth" "$_url" 2>/dev/null
+      printf '%s\n' "$_auth" | "$DOCKER_BIN" exec -i "$MIHOMO_CONTAINER" \
+        sh -c 'IFS= read -r SMG_AUTH; exec curl -fsS -m 5 -o /dev/null -H "$SMG_AUTH" "$1"' _ "$_url" 2>/dev/null
     else
       "$DOCKER_BIN" exec "$MIHOMO_CONTAINER" curl -fsS -m 5 -o /dev/null "$_url" 2>/dev/null
     fi

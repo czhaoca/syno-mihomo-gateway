@@ -280,7 +280,10 @@ TUN_ENABLE=false; export TUN_ENABLE
 : > "$MOCK_DOCKER_CALLS"
 expect_success "healthy controller passes with TUN off (no tun required)" health_gate
 HEALTH_CALLS="$(cat "$MOCK_DOCKER_CALLS")"
-assert_contains "controller secret is sent" "$HEALTH_CALLS" "Authorization: Bearer token"
+# The bearer token is handed over on stdin, never on the docker exec argv
+# (no-secrets-on-argv): the exec must reference the header var, not the value.
+assert_not_contains "controller secret is NOT on argv" "$HEALTH_CALLS" "Authorization: Bearer token"
+assert_contains "authenticated probe still references the header" "$HEALTH_CALLS" 'SMG_AUTH'
 MOCK_TUN_RC=1; export MOCK_TUN_RC
 expect_success "missing in-container TUN is ignored when TUN off" health_gate
 MOCK_TUN_RC=0; export MOCK_TUN_RC
