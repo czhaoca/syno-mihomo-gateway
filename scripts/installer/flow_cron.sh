@@ -88,6 +88,11 @@ flow_cron() {
   load_env
   ui_ok "$(msgf ok_schedule "${_time}" "${UPDATE_TZ}")"
 
+  # --- generic auto-update targets (optional per-container opt-in) ---
+  if ui_yesno "$(msg ask_manage_targets)" n; then
+    flow_targets
+  fi
+
   # --- how to schedule it ---
   # Track what actually happened so choosing "Done" cannot masquerade as
   # success when nothing was scheduled (closed-loop guarantee):

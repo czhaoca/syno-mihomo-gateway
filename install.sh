@@ -41,6 +41,8 @@ INST="$REPO_ROOT/scripts/installer"
 . "$LIB/compose.sh"
 # shellcheck source=scripts/lib/cloudflared.sh
 . "$LIB/cloudflared.sh"
+# shellcheck source=scripts/lib/targets.sh
+. "$LIB/targets.sh"
 # shellcheck source=scripts/lib/network.sh
 . "$LIB/network.sh"
 # shellcheck source=scripts/lib/lifecycle.sh
@@ -63,6 +65,8 @@ INST="$REPO_ROOT/scripts/installer"
 . "$INST/flow_redeploy.sh"
 # shellcheck source=scripts/installer/flow_cron.sh
 . "$INST/flow_cron.sh"
+# shellcheck source=scripts/installer/flow_targets.sh
+. "$INST/flow_targets.sh"
 # shellcheck source=scripts/installer/flow_modify.sh
 . "$INST/flow_modify.sh"
 

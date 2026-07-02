@@ -448,6 +448,8 @@ esac
 # 2) cron flow: choosing Done with updates enabled but NOTHING scheduled must
 #    warn and offer to flip UPDATE_ENABLED=false - never report plain success.
 . "$ROOT/scripts/lib/scheduler.sh"
+. "$ROOT/scripts/lib/targets.sh"
+. "$ROOT/scripts/installer/flow_targets.sh"
 . "$ROOT/scripts/installer/flow_cron.sh"
 ENV_FILE="$TD/cron.env"; : > "$ENV_FILE"
 ui_error() { echo "ERROR: $*" >&2; }
@@ -456,7 +458,7 @@ load_env() { return 0; }
 ui_ask_validated() { eval "$1=02:30"; }
 ui_ask() { eval "$1=UTC"; }
 UI_MENU_SEQ="4 4"        # timezone: UTC, then how-to-schedule: Done
-YESNO_SEQ="0 0"          # enable updates: yes, then disable-until-scheduled: yes
+YESNO_SEQ="0 1 0"        # enable updates: yes, manage targets: no, disable-until-scheduled: yes
 ui_yesno() {
   _yn="${YESNO_SEQ%% *}"
   case "$YESNO_SEQ" in *' '*) YESNO_SEQ="${YESNO_SEQ#* }" ;; *) YESNO_SEQ='' ;; esac
@@ -472,6 +474,62 @@ case "$_out" in
 esac
 [ "$(dotenv_get UPDATE_ENABLED)" = false ] \
   || fail "declining an active schedule did not offer/flip UPDATE_ENABLED=false"
+
+# 2b) targets flow: only standalone ACR containers are offerable; the trio is
+#     never offered; compose-managed shows as excluded; decline removes.
+TARGETS_FILE="$TD/update-targets"; rm -f "$TARGETS_FILE"
+DOCKER_REGISTRY=acr.example ACR_NAMESPACE=myns
+MIHOMO_CONTAINER=mihomo METACUBEXD_CONTAINER=mihomo-ui CF_CONTAINER_NAME=cloudflared
+GATEWAY_DATA_DIR="$TD"
+FT_DOCKER="$TD/ftdocker"
+cat > "$FT_DOCKER" <<'FTEOF'
+#!/bin/sh
+case "$1" in
+  info) exit 0 ;;
+  ps) printf '%s\n' webctr composedctr hubapp mihomo dbctr; exit 0 ;;
+  inspect)
+    case "$*" in
+      *"Config.Image"*hubapp) echo docker.io/library/nginx:latest ;;
+      *"Config.Image"*dbctr) echo acr.example/myns/postgres:16 ;;
+      *"Config.Image"*) echo acr.example/myns/web:latest ;;
+      *"compose.service"*composedctr) echo 'web|smg' ;;
+      *"compose.service"*) echo '|' ;;
+    esac
+    exit 0 ;;
+esac
+exit 0
+FTEOF
+chmod +x "$FT_DOCKER"
+_net_docker() { echo "$FT_DOCKER"; }
+ui_info() { printf '%s\n' "$*"; }
+ui_ok() { printf '%s\n' "$*"; }
+YESNO_SEQ="0 0 1"        # webctr: yes; dbctr: yes BUT decline the DB risk
+_out="$(flow_targets 2>&1)" || fail "flow_targets returned non-zero"
+grep -q '^webctr|recreate|' "$TARGETS_FILE" || fail "targets flow did not enroll webctr"
+grep -q '^dbctr|' "$TARGETS_FILE" && fail "declining the DB risk still enrolled dbctr"
+grep -q '^mihomo|' "$TARGETS_FILE" && fail "targets flow offered/enrolled a gateway container"
+grep -q '^composedctr|' "$TARGETS_FILE" && fail "targets flow enrolled a compose-managed container"
+case "$_out" in
+  *warn_target_db*) : ;;
+  *) fail "new database enrollment did not warn about the DEC-8 risk" ;;
+esac
+case "$_out" in
+  *targets_excluded*) : ;;
+  *) fail "compose-managed container was not shown as excluded" ;;
+esac
+case "$_out" in
+  *hubapp*) fail "non-ACR container leaked into the targets flow" ;;
+esac
+YESNO_SEQ="1 0 0"        # webctr: decline -> removal; dbctr: yes + accept risk
+_out="$(flow_targets 2>&1)" || fail "flow_targets re-run returned non-zero"
+if grep -q '^webctr|' "$TARGETS_FILE"; then fail "declining did not remove webctr"; fi
+grep -q '^dbctr|recreate|' "$TARGETS_FILE" || fail "accepting the DB risk did not enroll dbctr"
+YESNO_SEQ="1 0"          # webctr: no; dbctr already enrolled: keep (Enter default)
+_out="$(flow_targets 2>&1)" || fail "flow_targets third run returned non-zero"
+case "$_out" in
+  *warn_target_db*) fail "already-enrolled database was re-confirmed (defaults must be no-ops)" ;;
+esac
+grep -q '^dbctr|' "$TARGETS_FILE" || fail "keeping an enrolled database removed it"
 
 # 3) modify flow: a failed apply must print a change-NOT-applied summary.
 . "$ROOT/scripts/installer/flow_modify.sh"
@@ -691,6 +749,11 @@ done
   for _lang in en zh; do
     INSTALLER_LANG="$_lang"
     for _k in menu_status menu_deploy_saved_hint st_fresh st_partial st_deployed \
+              step_targets ask_manage_targets targets_no_acr targets_no_docker \
+              targets_none_found targets_excluded targets_reason_compose \
+              targets_reason_ambiguous q_target_optin warn_target_db \
+              q_target_db_confirm ok_target_enrolled ok_target_removed \
+              warn_target_enroll_failed ok_targets_done \
               status_title status_state status_mihomo status_ui status_dashboard \
               status_tun ask_run_doctor ok_doctor_done warn_doctor_rc \
               step_express ask_express express_edit_hint express_images_wizard \

@@ -289,6 +289,23 @@ _msg_en() {
     rep_next)         printf '%s' 'Next: set up automatic image updates from the main menu (option 2).' ;;
     step_deploy_e2e)  printf '%s' 'End-to-end deploy' ;;
 
+    # --- flow_targets.sh ---
+    step_targets)     printf '%s' 'Generic auto-update targets' ;;
+    ask_manage_targets) printf '%s' 'review which OTHER containers auto-update (generic targets)?' ;;
+    targets_no_acr)   printf '%s' 'no ACR registry configured (REGISTRY_MODE=docker) - generic targets need images already on your ACR' ;;
+    targets_no_docker) printf '%s' 'docker is not available - skipping the container scan' ;;
+    targets_none_found) printf '%s' 'no other running containers use your ACR registry - mirror the image via docker-china-sync/images.txt and redeploy it from the ACR ref first' ;;
+    targets_excluded) printf '%s' '  %s (%s) - excluded: %s' ;;
+    targets_reason_compose) printf '%s' 'compose-managed (its own project recreates it)' ;;
+    targets_reason_ambiguous) printf '%s' 'partial compose labels (ambiguous ownership)' ;;
+    q_target_optin)   printf '%s' 'auto-update %s (%s)?' ;;
+    warn_target_db)   printf '%s' '%s (%s) looks like a DATABASE: recreate has no quiesce and can corrupt in-flight writes' ;;
+    q_target_db_confirm) printf '%s' 'enroll it anyway, accepting that risk' ;;
+    ok_target_enrolled) printf '%s' 'enrolled for auto-update: %s' ;;
+    ok_target_removed)  printf '%s' 'removed from auto-update: %s' ;;
+    warn_target_enroll_failed) printf '%s' 'could not enroll %s - see the log' ;;
+    ok_targets_done)  printf '%s' 'generic targets updated (%s enrolled, %s removed)' ;;
+
     # --- flow_cron.sh ---
     cron_need_root)   printf '%s' 'installing a crontab line needs root.' ;;
     diag_no_crontab)  printf '%s' '%s not found (not a cron/DSM host?)' ;;
@@ -641,6 +658,23 @@ _msg_zh() {
     rep_reach_test)   printf '%s' '请从局域网设备（非 NAS——macvlan 使 NAS 自身无法访问该 IP）验证：curl http://%s:%s/version 应返回 JSON。若从其他设备仍超时，请见故障排查。' ;;
     rep_next)         printf '%s' '下一步：在主菜单设置自动镜像更新（选项 2）。' ;;
     step_deploy_e2e)  printf '%s' '端到端部署' ;;
+
+    # --- flow_targets.sh ---
+    step_targets)     printf '%s' '通用自动更新目标' ;;
+    ask_manage_targets) printf '%s' '要检查其他容器的自动更新（通用目标）吗？' ;;
+    targets_no_acr)   printf '%s' '未配置 ACR 镜像仓库（REGISTRY_MODE=docker）——通用目标需要镜像已在你的 ACR 上' ;;
+    targets_no_docker) printf '%s' 'docker 不可用——跳过容器扫描' ;;
+    targets_none_found) printf '%s' '没有其他运行中的容器使用你的 ACR 仓库——请先通过 docker-china-sync/images.txt 镜像该映像，并用 ACR 引用重新部署容器' ;;
+    targets_excluded) printf '%s' '  %s（%s）——已排除：%s' ;;
+    targets_reason_compose) printf '%s' 'compose 管理（由其自身项目重建）' ;;
+    targets_reason_ambiguous) printf '%s' 'compose 标签不完整（归属不明）' ;;
+    q_target_optin)   printf '%s' '自动更新 %s（%s）？' ;;
+    warn_target_db)   printf '%s' '%s（%s）疑似数据库：重建没有静默机制，可能损坏进行中的写入' ;;
+    q_target_db_confirm) printf '%s' '仍要登记并接受该风险吗' ;;
+    ok_target_enrolled) printf '%s' '已登记自动更新：%s' ;;
+    ok_target_removed)  printf '%s' '已移出自动更新：%s' ;;
+    warn_target_enroll_failed) printf '%s' '无法登记 %s——请查看日志' ;;
+    ok_targets_done)  printf '%s' '通用目标已更新（登记 %s 个，移除 %s 个）' ;;
 
     # --- flow_cron.sh ---
     cron_need_root)   printf '%s' '安装 crontab 条目需要 root 权限。' ;;
