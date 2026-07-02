@@ -14,6 +14,8 @@ trap 'rm -rf "$TMP"' EXIT INT TERM
 . "$ROOT/scripts/lib/common.sh"
 # shellcheck source=scripts/lib/container.sh
 . "$ROOT/scripts/lib/container.sh"
+# shellcheck source=scripts/lib/targets.sh
+. "$ROOT/scripts/lib/targets.sh"
 
 LOG_FILE="$TMP/update.log"
 CALLS="$TMP/docker.calls"
@@ -25,6 +27,13 @@ printf '%s\n' "$*" >> "$CALLS"
 case "$1" in
   inspect)
     case "$*" in
+      "inspect missingctr") exit 1 ;;
+      *"compose.service"*composectr) echo 'web|smg-stack'; exit 0 ;;
+      *"compose.service"*ambctr) echo 'web|'; exit 0 ;;
+      *"compose.service"*) echo '|'; exit 0 ;;
+      *"Config.Image"*hubctr) echo 'docker.io/library/nginx:latest'; exit 0 ;;
+      *"Config.Image"*) echo 'acr.example/myns/web:latest'; exit 0 ;;
+      *".State.Running"*stopctr) echo false; exit 0 ;;
       *ctr-guard*) [ -n "${MOCK_GUARD:-}" ] && printf '%s\n' "$MOCK_GUARD"; exit 0 ;;
       *"HostConfig.NetworkMode"*) echo "${MOCK_NETWORK_MODE:-appnet}"; exit 0 ;;
       *"AutoRemove"*) echo "${MOCK_AUTOREMOVE:-false}"; exit 0 ;;
@@ -206,6 +215,81 @@ expect_failure "alternate runtime refused" container_parity_guard webapp
 MOCK_GUARD='Init=true'; export MOCK_GUARD
 expect_failure "docker --init refused" container_parity_guard webapp
 MOCK_GUARD=''; export MOCK_GUARD
+
+# --- T9: enrollment list CRUD + validation --------------------------------
+TARGETS_FILE="$TMP/update-targets"
+MIHOMO_CONTAINER=mihomo METACUBEXD_CONTAINER=metacubexd CF_CONTAINER_NAME=cloudflared
+DOCKER_REGISTRY=acr.example ACR_NAMESPACE=myns
+
+expect_success "enroll creates a record" target_enroll webctr
+grep -q '^webctr|recreate|$' "$TARGETS_FILE" && ok || fail "enroll wrote the default record"
+PERM="$(ls -l "$TARGETS_FILE" | cut -c1-10)"
+[ "$PERM" = "-rw-------" ] && ok || fail "targets file is not chmod 600 ($PERM)"
+expect_success "re-enroll updates in place" target_enroll webctr recreate 'log:ready'
+[ "$(grep -c '^webctr|' "$TARGETS_FILE")" = 1 ] && ok || fail "re-enroll duplicated the record"
+grep -q '^webctr|recreate|log:ready$' "$TARGETS_FILE" && ok || fail "re-enroll updated the probe"
+expect_failure "gateway trio cannot be enrolled" target_enroll mihomo
+expect_failure "invalid container name refused" target_enroll 'bad;name'
+expect_failure "invalid strategy refused" target_enroll okctr bluegreen
+expect_failure "probe with shell metachars refused" target_enroll okctr recreate 'exec:x; rm -rf /'
+expect_success "remove deletes the record" target_remove webctr
+grep -q '^webctr|' "$TARGETS_FILE" && fail "remove left the record behind" || ok
+expect_failure "removing an unknown target fails loudly" target_remove ghostctr
+
+expect_success "well-formed list validates" sh -c "printf '%s\n' 'webctr|recreate|' 'apictr|recreate|exec:curl -f http://localhost/' > '$TARGETS_FILE'; TARGETS_FILE='$TARGETS_FILE' true" 
+expect_success "targets_validate accepts the list" targets_validate
+printf '%s\n' 'bad name|recreate|' > "$TARGETS_FILE"
+expect_failure "name with space rejected" targets_validate
+printf '%s\n' 'webctr|teleport|' > "$TARGETS_FILE"
+expect_failure "unknown strategy rejected" targets_validate
+printf '%s\n' 'webctr|recreate|x|y' > "$TARGETS_FILE"
+expect_failure "extra field rejected" targets_validate
+
+# --- T9b: injection regressions (QA findings) --------------------------------
+: >"$TARGETS_FILE"
+expect_failure "probe with pipe delimiter refused" target_enroll okctr recreate 'exec:ps aux | grep ready'
+expect_failure "probe with newline refused" target_enroll okctr recreate "exec:x
+fake|recreate|"
+expect_success "enroll webXtr" target_enroll webXtr
+expect_failure "removing web.tr must not wildcard-match webXtr" target_remove web.tr
+grep -q '^webXtr|' "$TARGETS_FILE" && ok || fail "dot-collision deleted webXtr"
+expect_success "enroll literal web.tr" target_enroll web.tr
+expect_success "remove literal web.tr" target_remove web.tr
+grep -q '^webXtr|' "$TARGETS_FILE" && ok || fail "removing web.tr cross-deleted webXtr"
+
+# --- T10: database-image warning helper -------------------------------------
+expect_success "postgres image flagged database-like" targets_image_databaselike 'acr.example/myns/postgres:16'
+expect_failure "web image not database-like" targets_image_databaselike 'acr.example/myns/web:latest'
+
+# --- T11: discovery filters (policy denylist + ACR gate) ---------------------
+printf '%s
+' \
+  'webctr|recreate|' \
+  'composectr|recreate|' \
+  'ambctr|recreate|' \
+  'hubctr|recreate|' \
+  'stopctr|recreate|' \
+  'missingctr|recreate|' \
+  'mihomo|recreate|' \
+  'denctr|recreate|' > "$TARGETS_FILE"
+UPDATE_DENY_CONTAINERS='den*'
+DISCOVER_OUT="$(targets_discover 2>"$TMP/discover.log")"
+DISCOVER_LOG="$(cat "$TMP/discover.log")"
+[ "$DISCOVER_OUT" = 'webctr|acr.example/myns/web:latest|recreate|' ] && ok || fail "discovery emitted: $DISCOVER_OUT"
+assert_contains "compose-managed excluded with reason" "$DISCOVER_LOG" 'composectr'
+assert_contains "ambiguous excluded with reason" "$DISCOVER_LOG" 'ambctr'
+assert_contains "non-ACR image excluded actionably" "$DISCOVER_LOG" 'docker-china-sync'
+assert_contains "gateway trio excluded from discovery" "$DISCOVER_LOG" 'mihomo'
+assert_contains "deny pattern excluded" "$DISCOVER_LOG" 'denctr'
+assert_not_contains "eligible target not warned about" "$DISCOVER_LOG" 'webctr'
+UPDATE_DENY_CONTAINERS=
+
+# --- T12: discovery is empty-safe when ACR mode is off ------------------------
+_OLD_REG="$DOCKER_REGISTRY"
+DOCKER_REGISTRY=
+NOACR_OUT="$(targets_discover 2>/dev/null)"
+[ -z "$NOACR_OUT" ] && ok || fail "REGISTRY_MODE=docker must yield zero candidates"
+DOCKER_REGISTRY="$_OLD_REG"
 
 if [ "$FAIL" -ne 0 ]; then
   printf 'FAILED: %s passed, %s failed\n' "$PASS" "$FAIL" >&2
