@@ -5,9 +5,13 @@ when:
 
 steps:
   - name: validate-compose
-    image: docker/compose:latest
+    image: alpine:3.22
     commands:
-      - docker-compose --env-file .env.example config --quiet
+      # Needs compose v2 (what DSM Container Manager and local dev run): the
+      # deprecated docker/compose image is frozen at v1, which cannot parse the
+      # fail-closed ${VAR:?msg} image refs the compose file uses deliberately.
+      - apk add --no-cache -q docker-cli-compose
+      - docker compose --env-file .env.example config --quiet
 
   - name: validate-yaml
     image: python:3.12-slim
