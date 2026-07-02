@@ -238,6 +238,13 @@ acquire_lock() {
     return 0
   fi
   _oldpid="$(cat "$LOCK_DIR/pid" 2>/dev/null)"
+  if [ -z "$_oldpid" ]; then
+    # mkdir -> pid-write is not atomic: a healthy holder writes its pid within
+    # milliseconds of taking the lock. Wait out that window before treating a
+    # pidless lock as a crashed holder, or we would rm -rf a LIVE mutex.
+    sleep 2
+    _oldpid="$(cat "$LOCK_DIR/pid" 2>/dev/null)"
+  fi
   if [ -n "$_oldpid" ] && kill -0 "$_oldpid" 2>/dev/null; then
     log_warn "another run (pid $_oldpid) is active - skipping."
     exit "$EXIT_LOCKED"

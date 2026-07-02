@@ -46,8 +46,9 @@ write_last_run() {
   _wlr_dir="$GATEWAY_DATA_DIR/state"
   mkdir -p "$_wlr_dir" 2>/dev/null || return 0
   chmod 700 "$_wlr_dir" 2>/dev/null || true
-  printf '{"ts":"%s","exit_code":%s,"dry_run":%s,"updated":%s,"unchanged":%s,"failed":%s,"rolled_back":%s}\n' \
+  printf '{"ts":"%s","exit_code":%s,"dry_run":%s,"updated":%s,"unchanged":%s,"failed":%s,"rolled_back":%s,"updated_names":"%s","failed_names":"%s","rolled_back_names":"%s"}\n' \
     "$(_ts)" "$_wlr_rc" "${DRY_RUN:-0}" "${updated_n:-0}" "${unchanged_n:-0}" "${failed_n:-0}" "${rolled_n:-0}" \
+    "${updated_names# }" "${failed_names# }" "${rolled_names# }" \
     >"$_wlr_dir/last-run.json.next" 2>/dev/null || return 0
   chmod 600 "$_wlr_dir/last-run.json.next" 2>/dev/null || true
   mv "$_wlr_dir/last-run.json.next" "$_wlr_dir/last-run.json" 2>/dev/null || true
@@ -100,8 +101,10 @@ generic_health_gate() {
       continue
     fi
     if [ "$(( ${_ghg_rc2:-0} - _ghg_rc_start ))" -ge "${HEALTH_MAX_RESTARTS:-3}" ]; then
-      log_warn "health[$_ghg_try/$HEALTH_RETRIES]: $_ghg_name crash-looping (restarted $(( ${_ghg_rc2:-0} - _ghg_rc_start ))x since deploy)"
-      continue
+      # RestartCount only ever grows: once the ceiling is crossed this verdict
+      # can never clear, so give up now instead of burning the remaining tries.
+      log_error "health: $_ghg_name crash-looping (restarted $(( ${_ghg_rc2:-0} - _ghg_rc_start ))x since deploy) - giving up"
+      return 1
     fi
     _ghg_health="$("$DOCKER_BIN" inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$_ghg_name" 2>/dev/null)"
     case "$_ghg_health" in
@@ -141,17 +144,19 @@ generic_health_gate() {
 }
 
 # generic_update_target NAME IMAGE PROBE -> 0 updated+healthy | 2 rolled back
-# to the saved old image (now healthy) | 1 failed with rollback incomplete.
+# to the saved old image (now healthy) | 3 refused/aborted with the container
+# UNTOUCHED (engine refusal, parity guard, rm failure) | 1 failed with
+# rollback incomplete (manual attention).
 # DEC-3: in-place recreate; on gate failure auto-restore from the saved spec
 # and old image ID captured before anything was touched.
 generic_update_target() {
   _gut_name="$1"; _gut_image="$2"; _gut_probe="$3"
-  container_capture_spec "$_gut_name" || return 1
-  container_parity_guard "$_gut_name" || { container_cleanup_workdir; return 1; }
+  container_capture_spec "$_gut_name" || return 3
+  container_parity_guard "$_gut_name" || { container_cleanup_workdir; return 3; }
   if ! "$DOCKER_BIN" rm -f "$_gut_name" >>"$LOG_FILE" 2>&1; then
     log_error "could not remove old container '$_gut_name'; nothing was changed"
     container_cleanup_workdir
-    return 1
+    return 3
   fi
   if container_run_saved canonical "$_gut_name" "$_gut_image" \
      && generic_health_gate "$_gut_name" "$_gut_probe"; then
@@ -196,10 +201,19 @@ on_exit() {
   _oe_rc=$?
   write_last_run "$_oe_rc"
   release_lock
-  [ -n "${DOCKER_BIN:-}" ] && [ -n "${CF_CONTAINER_NAME:-}" ] && cloudflared_cleanup_candidate >/dev/null 2>&1
+  # A dry run must stay read-only: never reap candidate containers from it.
+  if [ "${DRY_RUN:-0}" -ne 1 ]; then
+    [ -n "${DOCKER_BIN:-}" ] && [ -n "${CF_CONTAINER_NAME:-}" ] && cloudflared_cleanup_candidate >/dev/null 2>&1
+  fi
   cloudflared_cleanup_workdir
 }
-trap on_exit EXIT INT TERM
+# Signals must TERMINATE, not resume: a trap that merely runs cleanup and
+# returns would release the lock and delete workdirs while the interrupted
+# update keeps executing. `exit` inside a signal trap fires the EXIT trap
+# exactly once, so cleanup still happens - at real termination.
+trap on_exit EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 acquire_lock
 log_info "=== auto-update start (dry_run=$DRY_RUN force=$FORCE) ==="
@@ -236,23 +250,25 @@ acr_login            || { notify "Mihomo Gateway: update aborted" "ACR login fai
 compose_changed=0; cf_changed=0; changed_any=0; fail=0
 mihomo_old=""; meta_old=""; summary=""
 updated_n=0; unchanged_n=0; failed_n=0; rolled_n=0
-compose_marked=0
+updated_names=""; failed_names=""; rolled_names=""
+compose_marked=0; compose_marked_names=""
 
 for img in $UPDATE_IMAGES; do
   [ -n "$img" ] || continue
   log_info "checking $img"
   if ! pull_image "$img"; then
-    fail=1; failed_n=$((failed_n + 1)); summary="$summary
-- PULL FAILED: $img"; continue
+    fail=1; failed_n=$((failed_n + 1)); failed_names="$failed_names $img"; summary="$summary
+- PULL FAILED: $img$(pull_failure_hint)"; continue
   fi
   if ! arch_ok "$img"; then
-    fail=1; failed_n=$((failed_n + 1)); summary="$summary
+    fail=1; failed_n=$((failed_n + 1)); failed_names="$failed_names $img"; summary="$summary
 - ARCH MISMATCH (skipped): $img"; continue
   fi
   case "$img" in
     "$MIHOMO_IMAGE")
       if deploy_needed "$img" "$MIHOMO_CONTAINER"; then
         compose_changed=1; changed_any=1; compose_marked=$((compose_marked + 1))
+        compose_marked_names="$compose_marked_names mihomo"
         mihomo_old="$(running_image_id "$MIHOMO_CONTAINER")"
         summary="$summary
 - update: mihomo"
@@ -262,6 +278,7 @@ for img in $UPDATE_IMAGES; do
     "$METACUBEXD_IMAGE")
       if deploy_needed "$img" "$METACUBEXD_CONTAINER"; then
         compose_changed=1; changed_any=1; compose_marked=$((compose_marked + 1))
+        compose_marked_names="$compose_marked_names metacubexd"
         meta_old="$(running_image_id "$METACUBEXD_CONTAINER")"
         summary="$summary
 - update: metacubexd"
@@ -294,11 +311,11 @@ if [ -n "$_gen_list" ]; then
     [ -n "$_g_name" ] || continue
     log_info "checking generic target $_g_name ($_g_image)"
     if ! pull_image "$_g_image"; then
-      fail=1; failed_n=$((failed_n + 1)); summary="$summary
+      fail=1; failed_n=$((failed_n + 1)); failed_names="$failed_names $_g_name"; summary="$summary
 - PULL FAILED: $_g_name ($_g_image)$(pull_failure_hint)"; continue
     fi
     if ! arch_ok "$_g_image"; then
-      fail=1; failed_n=$((failed_n + 1)); summary="$summary
+      fail=1; failed_n=$((failed_n + 1)); failed_names="$failed_names $_g_name"; summary="$summary
 - ARCH MISMATCH (skipped): $_g_name ($_g_image)"; continue
     fi
     if deploy_needed "$_g_image" "$_g_name"; then
@@ -315,15 +332,6 @@ $_gen_list
 GEN_EOF
 fi
 
-# An image can be valid for this architecture yet carry an nft-backed iptables
-# frontend that the DSM kernel cannot service. Prove an explicit auto-redirect
-# opt-in before any Compose recreation; keep unrelated cloudflared work eligible.
-if [ "$compose_changed" -eq 1 ] && ! mihomo_auto_redirect_probe "$MIHOMO_IMAGE"; then
-  fail=1; compose_changed=0; failed_n=$((failed_n + compose_marked))
-  summary="$summary
-- compose: SKIPPED (TUN auto-redirect incompatible; set TUN_AUTO_REDIRECT=false)"
-fi
-
 # --- Nothing to do / dry-run short-circuits ---
 if [ "$changed_any" -eq 0 ] && [ "$fail" -eq 0 ]; then
   log_info "no image changes."
@@ -332,10 +340,24 @@ if [ "$changed_any" -eq 0 ] && [ "$fail" -eq 0 ]; then
 fi
 
 if [ "$DRY_RUN" -eq 1 ]; then
+  # The TUN auto-redirect probe below runs a privileged container; a dry run
+  # must not, so it only notes that the probe would gate the real apply.
+  [ "$compose_changed" -eq 1 ] && [ "${TUN_AUTO_REDIRECT:-false}" = true ] && summary="$summary
+- note: TUN auto-redirect compatibility will be probed before the compose apply"
   log_info "DRY-RUN - would apply:$summary"
   notify "Mihomo Gateway (dry-run)" "Would apply:$summary"
   [ "$fail" -eq 1 ] && exit "$EXIT_PARTIAL"
   exit "$EXIT_OK"
+fi
+
+# An image can be valid for this architecture yet carry an nft-backed iptables
+# frontend that the DSM kernel cannot service. Prove an explicit auto-redirect
+# opt-in before any Compose recreation; keep unrelated cloudflared work eligible.
+if [ "$compose_changed" -eq 1 ] && ! mihomo_auto_redirect_probe "$MIHOMO_IMAGE"; then
+  fail=1; compose_changed=0; failed_n=$((failed_n + compose_marked))
+  failed_names="$failed_names$compose_marked_names"
+  summary="$summary
+- compose: SKIPPED (TUN auto-redirect incompatible; set TUN_AUTO_REDIRECT=false)"
 fi
 
 # --- Apply, strictly serial, lowest blast radius first (DEC-5):
@@ -351,13 +373,16 @@ if [ -n "$GEN_QUEUE" ]; then
     generic_update_target "$_g_name" "$_g_image" "$_g_probe"
     case "$?" in
       0)
-        updated_n=$((updated_n + 1)); summary="$summary
+        updated_n=$((updated_n + 1)); updated_names="$updated_names $_g_name"; summary="$summary
 - $_g_name: applied + healthy" ;;
       2)
-        fail=1; rolled_n=$((rolled_n + 1)); summary="$summary
+        fail=1; rolled_n=$((rolled_n + 1)); rolled_names="$rolled_names $_g_name"; summary="$summary
 - $_g_name: FAILED health -> ROLLED BACK to last-good (now healthy)" ;;
+      3)
+        fail=1; failed_n=$((failed_n + 1)); failed_names="$failed_names $_g_name"; summary="$summary
+- $_g_name: REFUSED (not replayable - container untouched; see log, or de-enroll it)" ;;
       *)
-        fail=1; failed_n=$((failed_n + 1)); summary="$summary
+        fail=1; failed_n=$((failed_n + 1)); failed_names="$failed_names $_g_name"; summary="$summary
 - $_g_name: FAILED AND rollback incomplete -> MANUAL ATTENTION NEEDED" ;;
     esac
   done <<GEN_EOF
@@ -369,11 +394,21 @@ fi
 if [ "$cf_changed" -eq 1 ]; then
   log_info "applying cloudflared blue-green"
   if cloudflared_blue_green; then
-    updated_n=$((updated_n + 1)); summary="$summary
+    updated_n=$((updated_n + 1)); updated_names="$updated_names cloudflared"; summary="$summary
 - cloudflared: canonical container updated + connected (token preserved)"
   else
-    fail=1; failed_n=$((failed_n + 1)); summary="$summary
-- cloudflared: update FAILED (old left running / rolled back)"
+    fail=1
+    case "${CF_BG_OUTCOME:-}" in
+      rolled_back)
+        rolled_n=$((rolled_n + 1)); rolled_names="$rolled_names cloudflared"; summary="$summary
+- cloudflared: update FAILED -> ROLLED BACK to the previous connector (now connected)" ;;
+      manual)
+        failed_n=$((failed_n + 1)); failed_names="$failed_names cloudflared"; summary="$summary
+- cloudflared: FAILED AND canonical not restored -> MANUAL ATTENTION NEEDED (the -candidate container may be the only live connector - do not remove it)" ;;
+      *)
+        failed_n=$((failed_n + 1)); failed_names="$failed_names cloudflared"; summary="$summary
+- cloudflared: update FAILED (candidate discarded; the old connector is untouched)" ;;
+    esac
   fi
 fi
 
@@ -382,15 +417,15 @@ if [ "$compose_changed" -eq 1 ]; then
   log_info "applying validated local images (docker compose up -d --pull never when supported)"
   if compose_up_local; then
     if health_gate; then
-      updated_n=$((updated_n + compose_marked)); summary="$summary
+      updated_n=$((updated_n + compose_marked)); updated_names="$updated_names$compose_marked_names"; summary="$summary
 - compose: applied + healthy"
     else
       log_error "health gate failed - rolling back to last-good image(s)"
       if rollback_compose "$mihomo_old" "$meta_old" && health_gate; then
-        rolled_n=$((rolled_n + compose_marked)); summary="$summary
+        rolled_n=$((rolled_n + compose_marked)); rolled_names="$rolled_names$compose_marked_names"; summary="$summary
 - compose: FAILED health -> ROLLED BACK to last-good (now healthy)"
       else
-        failed_n=$((failed_n + compose_marked)); summary="$summary
+        failed_n=$((failed_n + compose_marked)); failed_names="$failed_names$compose_marked_names"; summary="$summary
 - compose: FAILED health AND rollback incomplete -> MANUAL ATTENTION NEEDED"
       fi
       fail=1
@@ -398,10 +433,10 @@ if [ "$compose_changed" -eq 1 ]; then
   else
     log_error "docker compose up -d failed"
     if rollback_compose "$mihomo_old" "$meta_old" && health_gate; then
-      rolled_n=$((rolled_n + compose_marked)); summary="$summary
+      rolled_n=$((rolled_n + compose_marked)); rolled_names="$rolled_names$compose_marked_names"; summary="$summary
 - compose: APPLY FAILED -> ROLLED BACK to last-good (now healthy)"
     else
-      failed_n=$((failed_n + compose_marked)); summary="$summary
+      failed_n=$((failed_n + compose_marked)); failed_names="$failed_names$compose_marked_names"; summary="$summary
 - compose: APPLY FAILED AND rollback incomplete -> MANUAL ATTENTION NEEDED"
     fi
     fail=1

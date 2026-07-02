@@ -56,6 +56,10 @@ notify() {
 
   if [ "$_hook" -eq 1 ]; then
     log_info "notification sent via webhook (dsm push attempted: $_dsm): $_title"
+  elif [ -n "${NOTIFY_WEBHOOK_URL:-}" ]; then
+    # A CONFIGURED webhook that did not deliver is a failure the operator must
+    # see - never mask it behind the unverifiable DSM push attempt.
+    log_warn "webhook delivery FAILED (curl missing or POST rejected - see the log; dsm push attempted: $_dsm): $_title"
   elif [ "$_dsm" -eq 1 ]; then
     log_info "notification handed to DSM push (unverifiable on DSM 7 - rely on Task Scheduler email or set NOTIFY_WEBHOOK_URL): $_title"
   else

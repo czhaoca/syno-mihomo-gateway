@@ -80,6 +80,11 @@ cloudflared_cleanup_candidate() {
 
 cloudflared_wait_connected() {
   _cwc_name="$1"; _cwc_timeout="$2"; _cwc_waited=0
+  # Scope the log check to the current boot: a container that was docker
+  # start'ed (not recreated) still carries 'Registered tunnel connection'
+  # lines from its previous life, which would pass verification without a
+  # live connection. Falls back to the full log when StartedAt is unreadable.
+  _cwc_since="$("$DOCKER_BIN" inspect -f '{{.State.StartedAt}}' "$_cwc_name" 2>/dev/null)"
   while [ "$_cwc_waited" -lt "$_cwc_timeout" ]; do
     _cloudflared_running "$_cwc_name" || {
       log_error "cloudflared $_cwc_name exited early"
@@ -87,7 +92,7 @@ cloudflared_wait_connected() {
     }
     _cwc_health="$("$DOCKER_BIN" inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$_cwc_name" 2>/dev/null)"
     [ "$_cwc_health" = healthy ] && return 0
-    if "$DOCKER_BIN" logs "$_cwc_name" 2>&1 \
+    if { if [ -n "$_cwc_since" ]; then "$DOCKER_BIN" logs --since "$_cwc_since" "$_cwc_name" 2>&1; else "$DOCKER_BIN" logs "$_cwc_name" 2>&1; fi; } \
       | grep -Eqi 'Registered tunnel connection|Connection [0-9a-f-]+ registered|registered tunnel connection'; then
       return 0
     fi
@@ -153,6 +158,11 @@ cloudflared_blue_green() {
   _cbg_blue="$CF_CONTAINER_NAME"
   _cbg_cand="${CF_CONTAINER_NAME}${CF_CANDIDATE_SUFFIX}"
   CF_KEEP_CANDIDATE=0
+  # CF_BG_OUTCOME tells the orchestrator WHAT a failure meant so the report
+  # is honest: untouched (old connector still serving), rolled_back (old
+  # image restored + reconnected), manual (canonical absent / candidate is
+  # the only live connector), updated.
+  CF_BG_OUTCOME=untouched
   [ -n "${CF_IMAGE:-}" ] || { log_error "CF_IMAGE unset - cannot update cloudflared"; return 1; }
   cloudflared_cleanup_candidate || return 1
 
@@ -169,16 +179,19 @@ cloudflared_blue_green() {
       log_error "failed to start fresh cloudflared"
       "$DOCKER_BIN" rm -f "$_cbg_blue" >/dev/null 2>&1 || true
       cloudflared_cleanup_workdir
+      CF_BG_OUTCOME=manual
       return 1
     fi
     if ! cloudflared_wait_connected "$_cbg_blue" "$CF_HEALTH_TIMEOUT"; then
       log_error "fresh cloudflared never connected"
       "$DOCKER_BIN" rm -f "$_cbg_blue" >/dev/null 2>&1 || true
       cloudflared_cleanup_workdir
+      CF_BG_OUTCOME=manual
       return 1
     fi
     cloudflared_cleanup_workdir
     log_info "cloudflared: provisioned fresh and connected"
+    CF_BG_OUTCOME=updated
     return 0
   fi
 
@@ -208,8 +221,10 @@ cloudflared_blue_green() {
       "$DOCKER_BIN" start "$_cbg_blue" >>"$LOG_FILE" 2>&1 || true
       if cloudflared_wait_connected "$_cbg_blue" "$CF_HEALTH_TIMEOUT"; then
         "$DOCKER_BIN" rm -f "$_cbg_cand" >/dev/null 2>&1 || true
+        CF_BG_OUTCOME=rolled_back
       else
         CF_KEEP_CANDIDATE=1
+        CF_BG_OUTCOME=manual
       fi
     fi
     cloudflared_cleanup_workdir
@@ -220,8 +235,10 @@ cloudflared_blue_green() {
     "$DOCKER_BIN" start "$_cbg_blue" >>"$LOG_FILE" 2>&1 || true
     if cloudflared_wait_connected "$_cbg_blue" "$CF_HEALTH_TIMEOUT"; then
       "$DOCKER_BIN" rm -f "$_cbg_cand" >/dev/null 2>&1 || true
+      CF_BG_OUTCOME=rolled_back
     else
       CF_KEEP_CANDIDATE=1
+      CF_BG_OUTCOME=manual
     fi
     cloudflared_cleanup_workdir
     return 1
@@ -232,11 +249,16 @@ cloudflared_blue_green() {
     "$DOCKER_BIN" rm -f "$_cbg_cand" >/dev/null 2>&1 || true
     cloudflared_cleanup_workdir
     log_info "cloudflared: canonical container updated and connected"
+    CF_BG_OUTCOME=updated
     return 0
   fi
 
   log_error "new canonical cloudflared failed; rolling back while the candidate remains connected"
-  _cloudflared_restore_old "$_cbg_blue" "$_cbg_cand" || true
+  if _cloudflared_restore_old "$_cbg_blue" "$_cbg_cand"; then
+    CF_BG_OUTCOME=rolled_back
+  else
+    CF_BG_OUTCOME=manual
+  fi
   cloudflared_cleanup_workdir
   # The old connector may be healthy again, but the requested update still
   # failed and must be reported as a partial failure by the orchestrator.

@@ -23,6 +23,9 @@ detect_compose() {
     return 1
   fi
   log_info "docker=$DOCKER_BIN  compose=[$COMPOSE_CMD]"
+  # Explicit success: log() pipes through tee, so an unwritable log file must
+  # not turn this healthy predicate into a bogus "Docker not ready" abort.
+  return 0
 }
 
 docker_daemon_ready() {
@@ -165,6 +168,7 @@ check_network() {
     fi
   fi
   log_info "network '$_net' OK"
+  return 0
 }
 
 check_tun() {
@@ -173,6 +177,7 @@ check_tun() {
     return 1
   fi
   log_info "/dev/net/tun OK"
+  return 0
 }
 
 acr_login() {

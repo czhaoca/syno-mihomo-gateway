@@ -378,6 +378,16 @@ DOCKER_REGISTRY="$_OLD_REG"
   grep -q '^run .*sha256:oldimg' "$CALLS" || dfail "rollback did not recreate the old image"
   MOCK_RUN_FAIL_FLAG=; export MOCK_RUN_FAIL_FLAG
 
+  # refusal: a parity-guard hit returns 3 and leaves the container UNTOUCHED
+  # (the orchestrator reports it as REFUSED, never as rollback-incomplete)
+  MOCK_GUARD='Mounts=1'; export MOCK_GUARD
+  : >"$CALLS"
+  generic_update_target webapp acr.example/myns/web:new '' >/dev/null 2>&1
+  _gu_rc=$?
+  [ "$_gu_rc" = 3 ] || dfail "guard refusal should return 3 (got $_gu_rc)"
+  grep -q '^rm -f webapp$' "$CALLS" && dfail "guard refusal removed the container"
+  MOCK_GUARD=''; export MOCK_GUARD
+
   # pull-failure classification: only unambiguous missing-manifest errors get
   # the mirroring hint; auth/ACL failures must not be misdiagnosed.
   PULL_LAST_ERROR='manifest unknown: manifest unknown'
@@ -400,7 +410,7 @@ DOCKER_REGISTRY="$_OLD_REG"
 )
 _drc=$?
 if [ "$_drc" -eq 0 ]; then
-  PASS=$((PASS + 20))
+  PASS=$((PASS + 22))
 else
   FAIL=$((FAIL + _drc))
 fi
