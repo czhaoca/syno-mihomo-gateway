@@ -8,11 +8,12 @@
 # the container Id, and Docker-generated identity that follows the Id (the
 # auto short-id network alias and an auto-generated hostname).
 #
-# Caveat: the labels and hc-test/hc-meta artifacts are DERIVED OVERRIDES
-# relative to each side's own image (container value minus that image's
-# baked-in value). A rare false DRIFT on exactly these artifacts is possible
-# when the new image bakes in the same override verbatim - confirm with a
-# manual `docker inspect` diff before treating it as a real regression.
+# Caveat: the labels, env, cmd, entrypoint and hc-test/hc-meta artifacts are
+# DERIVED OVERRIDES relative to each side's own image (container value minus
+# that image's baked-in value). A rare false DRIFT on exactly these artifacts
+# is possible when the new image bakes in the same override verbatim -
+# confirm with a manual `docker inspect` diff before treating it as a real
+# regression.
 #
 # Usage:
 #   state_diff.sh snapshot NAME DIR   # before the update

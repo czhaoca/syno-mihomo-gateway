@@ -112,6 +112,27 @@ targets_validate() {
   return 0
 }
 
+# Mutations are serialized through a short mkdir lock so two concurrent
+# enroll/remove calls cannot rewrite the list from the same snapshot and
+# silently drop each other's records. Readers need no lock (atomic mv).
+_targets_lock() {
+  _tl_dir="$TARGETS_FILE.lock"
+  _tl_tries=0
+  while ! mkdir "$_tl_dir" 2>/dev/null; do
+    _tl_tries=$((_tl_tries + 1))
+    if [ "$_tl_tries" -ge 5 ]; then
+      log_error "update-targets list is locked by another process ($_tl_dir); remove it if no enroll/remove is running"
+      return 1
+    fi
+    sleep 1
+  done
+  return 0
+}
+
+_targets_unlock() {
+  rmdir "$TARGETS_FILE.lock" 2>/dev/null || true
+}
+
 # target_enroll NAME [STRATEGY] [PROBE] - add or update one record atomically.
 target_enroll() {
   _te_name="$1"; _te_strategy="${2:-recreate}"; _te_probe="${3:-}"
@@ -132,11 +153,13 @@ target_enroll() {
     return 1
   }
   _targets_state_dir || return 1
-  [ -f "$TARGETS_FILE" ] || : >"$TARGETS_FILE" || return 1
+  _targets_lock || return 1
+  [ -f "$TARGETS_FILE" ] || : >"$TARGETS_FILE" || { _targets_unlock; return 1; }
   grep -v "^$(_targets_name_pattern "$_te_name")|" "$TARGETS_FILE" >"$TARGETS_FILE.next" 2>/dev/null || : >"$TARGETS_FILE.next"
-  printf '%s|%s|%s\n' "$_te_name" "$_te_strategy" "$_te_probe" >>"$TARGETS_FILE.next" || return 1
-  chmod 600 "$TARGETS_FILE.next" 2>/dev/null || return 1
-  mv "$TARGETS_FILE.next" "$TARGETS_FILE" || return 1
+  printf '%s|%s|%s\n' "$_te_name" "$_te_strategy" "$_te_probe" >>"$TARGETS_FILE.next" || { _targets_unlock; return 1; }
+  chmod 600 "$TARGETS_FILE.next" 2>/dev/null || { _targets_unlock; return 1; }
+  mv "$TARGETS_FILE.next" "$TARGETS_FILE" || { _targets_unlock; return 1; }
+  _targets_unlock
   log_info "enrolled '$_te_name' for auto-update (strategy=$_te_strategy)"
 }
 
@@ -148,9 +171,11 @@ target_remove() {
     log_error "'$_tr_name' is not enrolled"
     return 1
   fi
+  _targets_lock || return 1
   grep -v "^$_tr_pat|" "$TARGETS_FILE" >"$TARGETS_FILE.next" || : >"$TARGETS_FILE.next"
-  chmod 600 "$TARGETS_FILE.next" 2>/dev/null || return 1
-  mv "$TARGETS_FILE.next" "$TARGETS_FILE" || return 1
+  chmod 600 "$TARGETS_FILE.next" 2>/dev/null || { _targets_unlock; return 1; }
+  mv "$TARGETS_FILE.next" "$TARGETS_FILE" || { _targets_unlock; return 1; }
+  _targets_unlock
   log_info "removed '$_tr_name' from auto-update"
 }
 
@@ -185,10 +210,15 @@ targets_image_databaselike() {
 }
 
 _targets_denied_by_pattern() {
+  # set -f: split the pattern list into words WITHOUT pathname expansion - a
+  # file in $CWD matching a pattern would otherwise replace the pattern word
+  # and silently disable the operator's deny rule.
+  set -f
   for _tdp_pat in ${UPDATE_DENY_CONTAINERS:-}; do
     # shellcheck disable=SC2254 # deliberate glob match against the pattern list
-    case "$1" in $_tdp_pat) return 0 ;; esac
+    case "$1" in $_tdp_pat) set +f; return 0 ;; esac
   done
+  set +f
   return 1
 }
 

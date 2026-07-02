@@ -27,6 +27,11 @@ case "$1" in
     case "$*" in
       "inspect cloudflared") exit "${MOCK_BLUE_INSPECT_RC:-0}" ;;
       "inspect cloudflared-candidate") exit "${MOCK_CAND_INSPECT_RC:-1}" ;;
+      *ctr-counts*) echo "${MOCK_COUNTS:-2 4 2 0 0}"; exit 0 ;;
+      *IPv6Address*) printf '%s' "${MOCK_IP6:-}"; exit 0 ;;
+      *"Config.Env"*sha256:old-cloudflared) exit 0 ;;
+      *"Config.Cmd"*sha256:old-cloudflared) exit 0 ;;
+      *"Config.Entrypoint"*sha256:old-cloudflared) exit 0 ;;
       *".State.Running"*)
         case "$*" in *cloudflared-candidate*) echo "${MOCK_CAND_RUNNING:-true}" ;; *) echo "${MOCK_BLUE_RUNNING:-true}" ;; esac; exit 0 ;;
       *"State.Health"*) echo "${MOCK_HEALTH:-healthy}"; exit 0 ;;

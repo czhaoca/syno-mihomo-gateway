@@ -28,6 +28,19 @@ case "$1" in
   inspect)
     case "$*" in
       "inspect missingctr") exit 1 ;;
+      *"Ulimits"*failctr) exit 1 ;;
+      *ctr-counts*)
+        if [ -n "${MOCK_COUNTS:-}" ]; then printf '%s\n' "$MOCK_COUNTS"
+        else
+          if [ -n "${MOCK_LABELS:-}" ]; then _mc_lbl=$(printf '%s\n' "$MOCK_LABELS" | wc -l | tr -dc 0-9); else _mc_lbl=0; fi
+          if [ -n "${MOCK_HC_TEST:-}" ]; then _mc_hc=$(printf '%s\n' "$MOCK_HC_TEST" | wc -l | tr -dc 0-9); else _mc_hc=0; fi
+          printf '1 1 1 %s %s\n' "$_mc_lbl" "$_mc_hc"
+        fi
+        exit 0 ;;
+      *IPv6Address*) printf '%s' "${MOCK_IP6:-}"; exit 0 ;;
+      *"Config.Env"*sha256:oldimg) [ -n "${MOCK_IMG_ENV:-}" ] && printf '%s\n' "$MOCK_IMG_ENV"; exit 0 ;;
+      *"Config.Cmd"*sha256:oldimg) [ -n "${MOCK_IMG_CMD:-}" ] && printf '%s\n' "$MOCK_IMG_CMD"; exit 0 ;;
+      *"Config.Entrypoint"*sha256:oldimg) [ -n "${MOCK_IMG_ENTRYPOINT:-}" ] && printf '%s\n' "$MOCK_IMG_ENTRYPOINT"; exit 0 ;;
       *"compose.service"*composectr) echo 'web|smg-stack'; exit 0 ;;
       *"compose.service"*ambctr) echo 'web|'; exit 0 ;;
       *"compose.service"*) echo '|'; exit 0 ;;
@@ -74,7 +87,7 @@ case "$1" in
         else printf '%s\n' 'appnet|10.10.0.5|web,aabbccddeeff'; fi
         exit 0 ;;
       *"HostConfig.Dns"*|*"ExtraHosts"*|*"CapAdd"*|*"CapDrop"*|*"SecurityOpt"*|*"Devices"*|*"Tmpfs"*) exit 0 ;;
-      *"RestartPolicy.Name"*) echo unless-stopped; exit 0 ;;
+      *"RestartPolicy.Name"*) echo "${MOCK_RESTART_POLICY-unless-stopped}"; exit 0 ;;
       *"MaximumRetryCount"*) echo 0; exit 0 ;;
       *"Config.User"*|*"Config.WorkingDir"*) exit 0 ;;
       *"ReadonlyRootfs"*|*"Privileged"*) echo false; exit 0 ;;
@@ -418,6 +431,104 @@ MOCK_NETWORKS='appnet|10.10.0.5|web,ffeeddccbbaa'
 export MOCK_ID MOCK_HOSTNAME MOCK_NETWORKS
 expect_success "new container id and auto alias are normalized" sh "$SD" compare webapp "$SNAP"
 unset MOCK_ID MOCK_NETWORKS
+
+# --- T15: fail-closed hardening regressions -----------------------------------
+# parity guard: uncaptured publish/oom/device-cgroup settings refuse
+MOCK_GUARD='PublishAllPorts=true'; export MOCK_GUARD
+GUARD_OUT="$(container_parity_guard webapp 2>&1)" && fail "-P container must refuse" || ok
+assert_contains "guard names PublishAllPorts" "$GUARD_OUT" 'PublishAllPorts=true'
+MOCK_GUARD='PublishAllPorts=false'; export MOCK_GUARD
+expect_success "default PublishAllPorts passes" container_parity_guard webapp
+MOCK_GUARD='OomScoreAdj=500'; export MOCK_GUARD
+expect_failure "OomScoreAdj refused" container_parity_guard webapp
+MOCK_GUARD='OomScoreAdj=0'; export MOCK_GUARD
+expect_success "default OomScoreAdj passes" container_parity_guard webapp
+MOCK_GUARD='DeviceCgroupRules=1'; export MOCK_GUARD
+expect_failure "DeviceCgroupRules refused" container_parity_guard webapp
+MOCK_GUARD=''; export MOCK_GUARD
+
+# newline smuggling: element counts must match the captured line counts
+MOCK_COUNTS='2 1 1 3 2'; export MOCK_COUNTS
+NL_OUT="$(container_capture_spec webapp 2>&1)" && fail "env newline mismatch must refuse" || ok
+assert_contains "newline refusal names the artifact" "$NL_OUT" 'env'
+unset MOCK_COUNTS
+container_cleanup_workdir
+
+# static IPv6 is fail-closed
+MOCK_IP6='fd00:1::10'; export MOCK_IP6
+IP6_OUT="$(container_capture_spec webapp 2>&1)" && fail "static IPv6 must refuse" || ok
+assert_contains "IPv6 refusal names the cause" "$IP6_OUT" 'IPv6'
+MOCK_IP6=''; export MOCK_IP6
+container_cleanup_workdir
+
+# image-inherited env/cmd/entrypoint are NOT pinned onto the new image
+MOCK_IMG_ENV='APP_MODE=prod' MOCK_IMG_CMD='serve' MOCK_IMG_ENTRYPOINT='/entry'
+export MOCK_IMG_ENV MOCK_IMG_CMD MOCK_IMG_ENTRYPOINT
+expect_success "capture with inherited env/cmd/entrypoint" container_capture_spec webapp
+[ -s "$CTR_WORKDIR/env" ] && fail "inherited env line was pinned" || ok
+: >"$CALLS"
+expect_success "replay with inherited cmd/entrypoint" container_run_saved canonical webapp-new acr.example/ns/webapp:latest
+INHERIT_LINE="$(grep '^run ' "$CALLS" | tail -n1)"
+assert_not_contains "inherited entrypoint left to the image" "$INHERIT_LINE" '--entrypoint'
+assert_not_contains "inherited cmd left to the image" "$INHERIT_LINE" ' serve'
+container_cleanup_workdir
+
+# create-time overrides ARE still replayed when the image defaults differ
+MOCK_IMG_ENV='OTHER=1' MOCK_IMG_CMD='old-serve' MOCK_IMG_ENTRYPOINT='/old-entry'
+export MOCK_IMG_ENV MOCK_IMG_CMD MOCK_IMG_ENTRYPOINT
+expect_success "capture with real overrides" container_capture_spec webapp
+grep -qx 'APP_MODE=prod' "$CTR_WORKDIR/env" && ok || fail "override env line lost"
+: >"$CALLS"
+expect_success "replay with real overrides" container_run_saved canonical webapp-new acr.example/ns/webapp:latest
+OVR_LINE="$(grep '^run ' "$CALLS" | tail -n1)"
+assert_contains "override entrypoint replayed" "$OVR_LINE" '--entrypoint /entry'
+assert_contains "override cmd replayed" "$OVR_LINE" ' serve'
+container_cleanup_workdir
+MOCK_IMG_ENV= MOCK_IMG_CMD= MOCK_IMG_ENTRYPOINT=
+export MOCK_IMG_ENV MOCK_IMG_CMD MOCK_IMG_ENTRYPOINT
+
+# a dynamically-assigned IP is never pinned (default-bridge replay must work:
+# docker rejects --ip there, which would break update AND rollback)
+MOCK_NETWORKS='bridge||'; export MOCK_NETWORKS
+MOCK_NETWORK_MODE=bridge; export MOCK_NETWORK_MODE
+expect_success "capture on the default bridge" container_capture_spec webapp
+: >"$CALLS"
+expect_success "replay on the default bridge" container_run_saved canonical webapp-new acr.example/ns/webapp:latest
+BR_LINE="$(grep '^run ' "$CALLS" | tail -n1)"
+assert_not_contains "dynamic IP not pinned" "$BR_LINE" '--ip '
+container_cleanup_workdir
+unset MOCK_NETWORKS; MOCK_NETWORK_MODE=appnet; export MOCK_NETWORK_MODE
+
+# a pinned MAC stays off the candidate (it would collide with the live one)
+expect_success "capture for candidate MAC check" container_capture_spec webapp
+: >"$CALLS"
+expect_success "candidate replay for MAC check" container_run_saved candidate webapp-cand acr.example/ns/webapp:latest
+assert_not_contains "candidate omits the pinned MAC" "$(grep '^run ' "$CALLS" | tail -n1)" '--mac-address'
+container_cleanup_workdir
+
+# an empty RestartPolicy.Name replays as no policy, not unless-stopped
+MOCK_RESTART_POLICY=; export MOCK_RESTART_POLICY
+expect_success "capture with empty restart policy" container_capture_spec webapp
+: >"$CALLS"
+expect_success "replay with empty restart policy" container_run_saved canonical webapp-new acr.example/ns/webapp:latest
+assert_contains "empty policy replays as --restart no" "$(grep '^run ' "$CALLS" | tail -n1)" '--restart no'
+container_cleanup_workdir
+unset MOCK_RESTART_POLICY
+
+# mid-capture failure must not leak the secret-bearing workdir
+TMPDIR="$TMP"; export TMPDIR
+expect_failure "mid-capture inspect failure fails the capture" container_capture_spec failctr
+ls "$TMP"/smg-container.* >/dev/null 2>&1 && fail "capture failure leaked a workdir" || ok
+unset TMPDIR
+
+# concurrent enroll/remove: a held lock fails loudly, then releases cleanly
+mkdir "$TARGETS_FILE.lock"
+LOCK_OUT="$(target_enroll lockctr 2>&1)" && fail "held lock must fail enroll" || ok
+assert_contains "lock failure names the lock dir" "$LOCK_OUT" 'lock'
+rmdir "$TARGETS_FILE.lock"
+expect_success "enroll succeeds after lock release" target_enroll lockctr
+[ -d "$TARGETS_FILE.lock" ] && fail "enroll left the lock held" || ok
+expect_success "cleanup lockctr" target_remove lockctr
 
 if [ "$FAIL" -ne 0 ]; then
   printf 'FAILED: %s passed, %s failed\n' "$PASS" "$FAIL" >&2

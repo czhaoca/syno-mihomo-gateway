@@ -47,6 +47,7 @@ CTR_GUARD_TMPL='{{/*ctr-guard*/}}Links={{len .HostConfig.Links}}
 VolumesFrom={{len .HostConfig.VolumesFrom}}
 Mounts={{len .HostConfig.Mounts}}
 DeviceRequests={{len .HostConfig.DeviceRequests}}
+DeviceCgroupRules={{len .HostConfig.DeviceCgroupRules}}
 DnsOptions={{len .HostConfig.DnsOptions}}
 DnsSearch={{len .HostConfig.DnsSearch}}
 CpusetCpus={{.HostConfig.CpusetCpus}}
@@ -56,6 +57,8 @@ UsernsMode={{.HostConfig.UsernsMode}}
 CpuShares={{.HostConfig.CpuShares}}
 BlkioWeight={{.HostConfig.BlkioWeight}}
 PidsLimit={{.HostConfig.PidsLimit}}
+OomScoreAdj={{.HostConfig.OomScoreAdj}}
+PublishAllPorts={{.HostConfig.PublishAllPorts}}
 Init={{.HostConfig.Init}}
 Runtime={{.HostConfig.Runtime}}'
 
@@ -68,11 +71,13 @@ container_parity_guard() {
   }
   _cpg_bad="$(printf '%s\n' "$_cpg_out" | awk -F= '
     $1=="Links" || $1=="VolumesFrom" || $1=="Mounts" || $1=="DeviceRequests" \
-      || $1=="DnsOptions" || $1=="DnsSearch" || $1=="CpuShares" \
-      || $1=="BlkioWeight" { if ($2 != "0" && $2 != "") print $1"="$2 }
+      || $1=="DeviceCgroupRules" || $1=="DnsOptions" || $1=="DnsSearch" \
+      || $1=="CpuShares" || $1=="BlkioWeight" || $1=="OomScoreAdj" \
+      { if ($2 != "0" && $2 != "") print $1"="$2 }
     $1=="CpusetCpus" || $1=="CpusetMems" || $1=="CgroupParent" \
       || $1=="UsernsMode" { if ($2 != "") print $1"="$2 }
     $1=="PidsLimit" { if ($2 != "" && $2 != "0" && $2 != "<nil>") print $1"="$2 }
+    $1=="PublishAllPorts" { if ($2 != "" && $2 != "false") print $1"="$2 }
     $1=="Init" { if ($2 != "" && $2 != "false" && $2 != "<nil>") print $1"="$2 }
     $1=="Runtime" { if ($2 != "" && $2 != "runc") print $1"="$2 }
   ')"
@@ -83,7 +88,15 @@ container_parity_guard() {
 
 # Capture the subset of Docker run configuration this engine can faithfully
 # replay. Values with spaces remain one line/argument and are never eval'd.
+# Any failure cleans up the workdir (it holds the container's env, which may
+# carry credentials) - the impl can bail with a bare `return 1` at any point.
 container_capture_spec() {
+  _container_capture_spec_impl "$@" && return 0
+  container_cleanup_workdir
+  return 1
+}
+
+_container_capture_spec_impl() {
   _ccs_name="$1"
   container_make_workdir || return 1
 
@@ -116,7 +129,18 @@ container_capture_spec() {
   awk -F: 'NF >= 2 { print $2 }' "$CTR_WORKDIR/binds" >"$CTR_WORKDIR/bind-destinations" || return 1
   _ctr_inspect '{{range .Mounts}}{{if eq .Type "volume"}}{{printf "%s|%s|%t\n" .Name .Destination .RW}}{{end}}{{end}}' "$_ccs_name" >"$CTR_WORKDIR/volumes" || return 1
   _ctr_inspect '{{range $p,$c := .HostConfig.PortBindings}}{{range $c}}{{printf "%s|%s|%s\n" .HostIp .HostPort $p}}{{end}}{{end}}' "$_ccs_name" >"$CTR_WORKDIR/ports" || return 1
-  _ctr_inspect '{{range $k,$v := .NetworkSettings.Networks}}{{printf "%s|%s|%s\n" $k $v.IPAddress (join $v.Aliases ",")}}{{end}}' "$_ccs_name" >"$CTR_WORKDIR/networks.raw" || return 1
+  # Record the USER-REQUESTED static address (IPAMConfig), never the runtime
+  # one: replaying a daemon-assigned dynamic IP would freeze it - and docker
+  # outright rejects --ip on the default bridge, which would break both the
+  # update and the rollback. Dynamic allocations replay as dynamic.
+  _ctr_inspect '{{range $k,$v := .NetworkSettings.Networks}}{{printf "%s|" $k}}{{if $v.IPAMConfig}}{{$v.IPAMConfig.IPv4Address}}{{end}}{{printf "|%s\n" (join $v.Aliases ",")}}{{end}}' "$_ccs_name" >"$CTR_WORKDIR/networks.raw" || return 1
+  # Static IPv6 is not replayed (no --ip6 path); a pinned address would be
+  # silently dropped on recreate, so refuse instead (DEC-4).
+  _ccs_ip6="$(_ctr_inspect '{{range $k,$v := .NetworkSettings.Networks}}{{if $v.IPAMConfig}}{{$v.IPAMConfig.IPv6Address}}{{end}}{{end}}' "$_ccs_name")"
+  if [ -n "$_ccs_ip6" ]; then
+    log_error "container '$_ccs_name' pins a static IPv6 address, which this engine cannot replay - refusing in-place update"
+    return 1
+  fi
   _ctr_inspect '{{range .HostConfig.Dns}}{{println .}}{{end}}' "$_ccs_name" >"$CTR_WORKDIR/dns" || return 1
   _ctr_inspect '{{range .HostConfig.ExtraHosts}}{{println .}}{{end}}' "$_ccs_name" >"$CTR_WORKDIR/extra-hosts" || return 1
   _ctr_inspect '{{range .HostConfig.CapAdd}}{{println .}}{{end}}' "$_ccs_name" >"$CTR_WORKDIR/cap-add" || return 1
@@ -174,6 +198,47 @@ container_capture_spec() {
   _ctr_inspect '{{if .Config.Healthcheck}}{{.Config.Healthcheck.Interval}}|{{.Config.Healthcheck.Timeout}}|{{.Config.Healthcheck.StartPeriod}}|{{.Config.Healthcheck.Retries}}{{end}}' "$_ccs_name" >"$CTR_WORKDIR/hc-meta" || return 1
   _ctr_inspect '{{if .Config.Healthcheck}}{{range .Config.Healthcheck.Test}}{{println .}}{{end}}{{end}}' "$CTR_OLD_IMAGE_ID" >"$CTR_WORKDIR/hc-test.img" || return 1
   _ctr_inspect '{{if .Config.Healthcheck}}{{.Config.Healthcheck.Interval}}|{{.Config.Healthcheck.Timeout}}|{{.Config.Healthcheck.StartPeriod}}|{{.Config.Healthcheck.Retries}}{{end}}' "$CTR_OLD_IMAGE_ID" >"$CTR_WORKDIR/hc-meta.img" || return 1
+
+  # Fail closed on values the line-oriented capture cannot represent: an
+  # element with an embedded newline spans extra lines and would be replayed
+  # corrupted (split argv, truncated value), so refuse instead (DEC-4). The
+  # element counts come straight from the daemon and must match the files.
+  _ccs_counts="$(_ctr_inspect '{{/*ctr-counts*/}}{{len .Config.Env}} {{len .Config.Cmd}} {{len .Config.Entrypoint}} {{len .Config.Labels}} {{if .Config.Healthcheck}}{{len .Config.Healthcheck.Test}}{{else}}0{{end}}' "$_ccs_name")" || return 1
+  set -f
+  # shellcheck disable=SC2086 # deliberate word-split of the count quintet (set -f guards globs)
+  set -- $_ccs_counts
+  set +f
+  if [ "$#" -ne 5 ]; then
+    log_error "could not read the configuration element counts of '$_ccs_name'"
+    return 1
+  fi
+  for _ccs_pair in "env=$1" "cmd=$2" "entrypoint=$3" "labels.ctr=$4" "hc-test=$5"; do
+    _ccs_field="${_ccs_pair%%=*}"; _ccs_want="${_ccs_pair#*=}"
+    _ccs_have="$(wc -l <"$CTR_WORKDIR/$_ccs_field" 2>/dev/null | tr -dc 0-9)"
+    if [ "${_ccs_have:-0}" -ne "$_ccs_want" ] 2>/dev/null; then
+      log_error "container '$_ccs_name': a $_ccs_field value contains an embedded newline, which cannot be replayed faithfully - refusing in-place update"
+      return 1
+    fi
+  done
+
+  # Env, Cmd and Entrypoint are inspected MERGED with the old image's own
+  # defaults; replaying them wholesale would pin the OLD image's values onto
+  # the new image (the same masking problem the labels/healthcheck handling
+  # already solves). Keep only the create-time overrides: env lines the old
+  # image does not carry verbatim, and Cmd/Entrypoint only when they differ
+  # from the old image's - the new image then supplies its own defaults.
+  _ctr_inspect '{{range .Config.Env}}{{println .}}{{end}}' "$CTR_OLD_IMAGE_ID" >"$CTR_WORKDIR/env.img" || return 1
+  chmod 600 "$CTR_WORKDIR/env.img" 2>/dev/null || return 1
+  if [ -s "$CTR_WORKDIR/env.img" ]; then
+    grep -Fxv -f "$CTR_WORKDIR/env.img" "$CTR_WORKDIR/env" >"$CTR_WORKDIR/env.next" || : >>"$CTR_WORKDIR/env.next"
+    chmod 600 "$CTR_WORKDIR/env.next" 2>/dev/null || return 1
+    mv "$CTR_WORKDIR/env.next" "$CTR_WORKDIR/env" || return 1
+  fi
+  _ctr_inspect '{{range .Config.Cmd}}{{println .}}{{end}}' "$CTR_OLD_IMAGE_ID" >"$CTR_WORKDIR/cmd.img" || return 1
+  _ctr_inspect '{{range .Config.Entrypoint}}{{println .}}{{end}}' "$CTR_OLD_IMAGE_ID" >"$CTR_WORKDIR/entrypoint.img" || return 1
+  cmp -s "$CTR_WORKDIR/cmd" "$CTR_WORKDIR/cmd.img" && : >"$CTR_WORKDIR/cmd"
+  cmp -s "$CTR_WORKDIR/entrypoint" "$CTR_WORKDIR/entrypoint.img" && : >"$CTR_WORKDIR/entrypoint"
+
   CTR_SPEC_HC_REPLAY=0
   if [ -s "$CTR_WORKDIR/hc-test" ]; then
     if ! cmp -s "$CTR_WORKDIR/hc-test" "$CTR_WORKDIR/hc-test.img" \
@@ -221,7 +286,9 @@ container_run_saved() {
   if [ "$_crs_mode" = candidate ]; then
     set -- --name "$_crs_name" --env-file "$CTR_WORKDIR/env" --restart no
   else
-    _crs_restart="${CTR_SPEC_RESTART:-unless-stopped}"
+    # An empty captured RestartPolicy.Name means "no policy" (API-created
+    # containers report ""); upgrading it would change crash/boot behavior.
+    _crs_restart="${CTR_SPEC_RESTART:-no}"
     if [ "$_crs_restart" = on-failure ] && [ "${CTR_SPEC_RESTART_MAX:-0}" -gt 0 ] 2>/dev/null; then
       _crs_restart="on-failure:${CTR_SPEC_RESTART_MAX}"
     fi
@@ -232,7 +299,12 @@ container_run_saved() {
   [ "${CTR_SPEC_READONLY:-false}" = true ] && set -- "$@" --read-only
   [ "${CTR_SPEC_PRIVILEGED:-false}" = true ] && set -- "$@" --privileged
   [ -n "${CTR_SPEC_HOSTNAME:-}" ] && set -- "$@" --hostname "$CTR_SPEC_HOSTNAME"
-  [ -n "${CTR_SPEC_MAC:-}" ] && set -- "$@" --mac-address "$CTR_SPEC_MAC"
+  # A pinned MAC is as collision-prone as a static IP: two containers sharing
+  # one L2 address flap ARP. Candidates run beside the live container, so the
+  # MAC is replayed only on the canonical replacement.
+  if [ "$_crs_mode" = canonical ] && [ -n "${CTR_SPEC_MAC:-}" ]; then
+    set -- "$@" --mac-address "$CTR_SPEC_MAC"
+  fi
   [ -n "${CTR_SPEC_STOP_SIGNAL:-}" ] && set -- "$@" --stop-signal "$CTR_SPEC_STOP_SIGNAL"
   [ -n "${CTR_SPEC_STOP_TIMEOUT:-}" ] && set -- "$@" --stop-timeout "$CTR_SPEC_STOP_TIMEOUT"
   case "${CTR_SPEC_IPC:-}" in host|private|shareable|none) set -- "$@" --ipc "$CTR_SPEC_IPC" ;; esac
