@@ -1,6 +1,7 @@
 # Format: Name=URL
-# Copy this file to config/subscription.txt and paste your real Airport/Provider URL.
-# config/subscription.txt is gitignored so your token never gets committed.
+# The live file is ../syno-mihomo-gateway-data/config/subscription.txt (seeded by
+# bootstrap.sh / the installer - OUTSIDE the release tree, so your token is never
+# committed and survives release-directory replacement). Paste your real URL there.
 # The mihomo entrypoint uses the FIRST valid (non-#) line found.
 # Example:
 MyAirport=https://provider.example/api/v1/subscribe?token=REPLACE_ME

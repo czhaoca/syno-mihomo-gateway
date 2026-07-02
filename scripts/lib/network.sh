@@ -20,10 +20,11 @@ TPROXY_NETWORK="${TPROXY_NETWORK:-tproxy_network}"
 # external IP. macvlan switches on the child's own MAC and delivers them; ipvlan L2
 # demultiplexes by DESTINATION IP and shares the parent MAC, so it will NOT hand those
 # forwarded frames to the container - the proxy silently stops routing clients.
-# ipvlan therefore only restores controller/dashboard reachability on an Open vSwitch
-# parent (ovs_eth0), where a macvlan child's fresh MAC is not flooded to peer ports;
-# it is a dashboard-only workaround, never a fix for the forwarding role. For a working
-# gateway on OVS, use a non-OVS parent NIC or disable Open vSwitch. See warn_if_ovs_parent.
+# ipvlan is therefore only a dashboard-reachability escape hatch for the SOME Open
+# vSwitch configurations where a macvlan child's fresh MAC is not flooded to peer
+# ports - never a fix for the forwarding role. A macvlan child IS LAN-reachable on
+# a typical OVS parent (ovs_eth0, verified empirically), so keep macvlan and treat
+# warn_if_ovs_parent as a heads-up, not a failure.
 TPROXY_DRIVER="${TPROXY_DRIVER:-macvlan}"
 
 # Resolve a docker binary without depending on detect_compose having run.
