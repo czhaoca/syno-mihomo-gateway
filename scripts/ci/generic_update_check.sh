@@ -34,6 +34,8 @@ case "$1" in
       *"Config.Image"*hubctr) echo 'docker.io/library/nginx:latest'; exit 0 ;;
       *"Config.Image"*) echo 'acr.example/myns/web:latest'; exit 0 ;;
       *".State.Running"*stopctr) echo false; exit 0 ;;
+      *"State.Health"*) echo "${MOCK_HEALTH_STATUS:-none}"; exit 0 ;;
+      *"{{.RestartCount}}"*) echo "${MOCK_RESTARTS:-0}"; exit 0 ;;
       *ctr-guard*) [ -n "${MOCK_GUARD:-}" ] && printf '%s\n' "$MOCK_GUARD"; exit 0 ;;
       *"HostConfig.NetworkMode"*) echo "${MOCK_NETWORK_MODE:-appnet}"; exit 0 ;;
       *"AutoRemove"*) echo "${MOCK_AUTOREMOVE:-false}"; exit 0 ;;
@@ -79,8 +81,17 @@ case "$1" in
       *"{{.Image}}"*) echo sha256:oldimg; exit 0 ;;
     esac
     exit 0 ;;
-  run) exit "${MOCK_RUN_RC:-0}" ;;
-  rm|stop|start|network|logs) exit 0 ;;
+  run)
+    if [ -n "${MOCK_RUN_FAIL_FLAG:-}" ] && [ -f "$MOCK_RUN_FAIL_FLAG" ]; then
+      rm -f "$MOCK_RUN_FAIL_FLAG"; exit 1
+    fi
+    exit "${MOCK_RUN_RC:-0}" ;;
+  exec) exit "${MOCK_EXEC_RC:-0}" ;;
+  logs) [ -n "${MOCK_LOGS:-}" ] && printf '%s\n' "$MOCK_LOGS"; exit 0 ;;
+  image)
+    case "$*" in *"{{.Id}}"*) echo "${MOCK_NEW_IMAGE_ID:-sha256:newimg}" ;; esac
+    exit 0 ;;
+  rm|stop|start|network) exit 0 ;;
 esac
 exit 0
 EOF
@@ -290,6 +301,96 @@ DOCKER_REGISTRY=
 NOACR_OUT="$(targets_discover 2>/dev/null)"
 [ -z "$NOACR_OUT" ] && ok || fail "REGISTRY_MODE=docker must yield zero candidates"
 DOCKER_REGISTRY="$_OLD_REG"
+
+# --- T13: generic driver (health ladder, rollback, last-good) -----------------
+# The driver functions live in auto_update.sh; source it via its test seam.
+(
+  AUTO_UPDATE_SOURCE_ONLY=1
+  AUTO_UPDATE_SELF_DIR="$ROOT/scripts"
+  export AUTO_UPDATE_SOURCE_ONLY AUTO_UPDATE_SELF_DIR
+  GATEWAY_DATA_DIR="$TMP/data"
+  export GATEWAY_DATA_DIR
+  # shellcheck source=scripts/auto_update.sh
+  . "$ROOT/scripts/auto_update.sh"
+  DOCKER_BIN="$MOCK_DOCKER"
+  LOG_FILE="$TMP/driver.log"
+  HEALTH_RETRIES=2 HEALTH_INTERVAL=0 HEALTH_MAX_RESTARTS=3
+  sleep() { :; }
+  DFAIL=0
+  dfail() { printf 'FAIL: %s\n' "$*" >&2; DFAIL=$((DFAIL + 1)); }
+
+  # ladder: floor-only passes with a WARN
+  MOCK_HEALTH_STATUS=none MOCK_RESTARTS=0; export MOCK_HEALTH_STATUS MOCK_RESTARTS
+  FLOOR_OUT="$(generic_health_gate webapp '' 2>&1)" || dfail "floor-only gate should pass"
+  case "$FLOOR_OUT" in *floor*|*WARN*) : ;; *) dfail "floor-only gate did not WARN" ;; esac
+
+  # ladder: native healthcheck must reach healthy
+  MOCK_HEALTH_STATUS=unhealthy; export MOCK_HEALTH_STATUS
+  generic_health_gate webapp '' >/dev/null 2>&1 && dfail "unhealthy native status must fail the gate"
+  MOCK_HEALTH_STATUS=healthy; export MOCK_HEALTH_STATUS
+  generic_health_gate webapp '' >/dev/null 2>&1 || dfail "healthy native status should pass"
+
+  # ladder: exec + log probes
+  MOCK_HEALTH_STATUS=none MOCK_EXEC_RC=1; export MOCK_HEALTH_STATUS MOCK_EXEC_RC
+  generic_health_gate webapp 'exec:true-check' >/dev/null 2>&1 && dfail "failing exec probe must fail the gate"
+  MOCK_EXEC_RC=0; export MOCK_EXEC_RC
+  generic_health_gate webapp 'exec:true-check' >/dev/null 2>&1 || dfail "passing exec probe should pass"
+  MOCK_LOGS='service ready'; export MOCK_LOGS
+  generic_health_gate webapp 'log:ready' >/dev/null 2>&1 || dfail "log marker probe should pass"
+  MOCK_LOGS='starting'; export MOCK_LOGS
+  generic_health_gate webapp 'log:ready' >/dev/null 2>&1 && dfail "missing log marker must fail the gate"
+  MOCK_LOGS=; export MOCK_LOGS
+
+  # update: happy path persists last-good only after the gate passes
+  MOCK_HEALTH_STATUS=none; export MOCK_HEALTH_STATUS
+  : >"$CALLS"
+  generic_update_target webapp acr.example/myns/web:new '' >/dev/null 2>&1 \
+    || dfail "happy-path generic update should succeed"
+  grep -q '^rm -f webapp$' "$CALLS" || dfail "old container was not removed in place"
+  grep -q '^run .*acr.example/myns/web:new' "$CALLS" || dfail "new image was not run"
+  LG="$GATEWAY_DATA_DIR/state/last-good/webapp"
+  [ -f "$LG" ] || dfail "last-good record missing"
+  grep -q '^image_id=sha256:newimg$' "$LG" 2>/dev/null || dfail "last-good image_id wrong: $(cat "$LG" 2>/dev/null)"
+  grep -q '^spec_digest=..*$' "$LG" 2>/dev/null || dfail "last-good spec digest missing"
+  LGPERM="$(ls -l "$LG" 2>/dev/null | cut -c1-10)"
+  [ "$LGPERM" = "-rw-------" ] || dfail "last-good record not chmod 600 ($LGPERM)"
+
+  # update: failed apply auto-restores the saved old image (rolled-back rc=2)
+  MOCK_RUN_FAIL_FLAG="$TMP/run.fail.once"; export MOCK_RUN_FAIL_FLAG
+  : >"$MOCK_RUN_FAIL_FLAG"
+  : >"$CALLS"
+  generic_update_target webapp acr.example/myns/web:new '' >/dev/null 2>&1
+  _gu_rc=$?
+  [ "$_gu_rc" = 2 ] || dfail "rolled-back update should return 2 (got $_gu_rc)"
+  grep -q '^run .*sha256:oldimg' "$CALLS" || dfail "rollback did not recreate the old image"
+  MOCK_RUN_FAIL_FLAG=; export MOCK_RUN_FAIL_FLAG
+
+  # pull-failure classification: only unambiguous missing-manifest errors get
+  # the mirroring hint; auth/ACL failures must not be misdiagnosed.
+  PULL_LAST_ERROR='manifest unknown: manifest unknown'
+  case "$(pull_failure_hint)" in
+    *docker-china-sync*) : ;;
+    *) dfail "manifest-unknown pull failure lacks the images.txt hint" ;;
+  esac
+  PULL_LAST_ERROR="pull access denied for acr.example/myns/web, repository does not exist or may require 'docker login'"
+  case "$(pull_failure_hint)" in
+    '') : ;;
+    *) dfail "access-denied pull failure must not get the mirroring hint" ;;
+  esac
+  PULL_LAST_ERROR='net/http: TLS handshake timeout'
+  case "$(pull_failure_hint)" in
+    '') : ;;
+    *) dfail "transient network pull failure must not get the mirroring hint" ;;
+  esac
+
+  exit "$DFAIL"
+)
+_drc=$?
+if [ "$_drc" -eq 0 ]; then
+  PASS=$((PASS + 20))
+else
+  FAIL=$((FAIL + _drc))
+fi
 
 if [ "$FAIL" -ne 0 ]; then
   printf 'FAILED: %s passed, %s failed\n' "$PASS" "$FAIL" >&2

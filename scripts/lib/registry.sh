@@ -199,18 +199,36 @@ image_arch()       { "$DOCKER_BIN" image inspect --format '{{.Architecture}}' "$
 
 pull_image() {
   _img="$1"; _n=0
+  PULL_LAST_ERROR=""
   while [ "$_n" -lt "$PULL_RETRIES" ]; do
-    if "$DOCKER_BIN" pull "$_img" >>"$LOG_FILE" 2>&1; then
+    _pull_out="$("$DOCKER_BIN" pull "$_img" 2>&1)"
+    _pull_rc=$?
+    [ -n "$_pull_out" ] && printf '%s\n' "$_pull_out" >>"$LOG_FILE" 2>/dev/null
+    if [ "$_pull_rc" -eq 0 ]; then
       if [ -n "$(local_image_id "$_img")" ]; then
         return 0
       fi
       log_warn "pull returned success but no local image is inspectable: $_img"
     fi
+    PULL_LAST_ERROR="$_pull_out"
     _n=$((_n+1))
     [ "$_n" -lt "$PULL_RETRIES" ] && { log_warn "pull failed ($_img) attempt $_n/$PULL_RETRIES - retrying in ${PULL_RETRY_DELAY}s"; sleep "$PULL_RETRY_DELAY"; }
   done
   log_error "pull failed after $PULL_RETRIES attempts: $_img"
   return 1
+}
+
+# pull_failure_hint - classify the last pull error. Only the unambiguous
+# missing-manifest signals get the mirroring hint: docker's access-denied text
+# ("repository does not exist or may require 'docker login'") also mentions a
+# missing repo, and mislabeling an ACR auth/ACL problem as a mirroring gap
+# would send the operator to the wrong fix.
+pull_failure_hint() {
+  case "${PULL_LAST_ERROR:-}" in
+    *"pull access denied"*|*"denied"*|*unauthorized*) : ;;
+    *"manifest unknown"*|*"manifest for"*)
+      printf '%s' " (not mirrored in ACR? add the upstream image to docker-china-sync/images.txt)" ;;
+  esac
 }
 
 # arch_ok IMAGE -> 0 if image arch matches EXPECTED_ARCH (never swap an unrunnable image)

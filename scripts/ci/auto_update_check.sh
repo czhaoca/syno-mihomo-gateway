@@ -456,6 +456,131 @@ APPLY_TRACE="$(tr '\n' ' ' < "$TRACE")"
 assert_contains "all configured images are pulled before apply" "$APPLY_TRACE" "pull:m pull:u compose-apply"
 assert_contains "failed apply triggers rollback and re-health" "$APPLY_TRACE" "compose-apply rollback health"
 
+# --- generic-driver orchestration (DEC-5 ordering, isolation, dry-run) ----------
+if (
+  load_env() {
+    LOG_FILE="$TMP/orchestrator.log"; UPDATE_ENABLED=true; UPDATE_IMAGES="m u c"
+    MIHOMO_IMAGE=m; METACUBEXD_IMAGE=u; CF_IMAGE=c; CF_CONTAINER_NAME=cloudflared
+    MIHOMO_CONTAINER=mihomo; METACUBEXD_CONTAINER=mihomo-ui
+    NOTIFY_ON_NOCHANGE=0
+  }
+  rotate_log() { :; }
+  acquire_lock() { :; }
+  release_lock() { :; }
+  detect_compose() { DOCKER_BIN=true; return 0; }
+  docker_daemon_ready() { return 0; }
+  validate_update_config() { return 0; }
+  check_arch_expectation() { return 0; }
+  check_tun() { return 0; }
+  check_network() { return 0; }
+  compose_config_check() { return 0; }
+  acr_login() { return 0; }
+  pull_image() { printf 'pull:%s\n' "$1" >> "$TRACE"; return 0; }
+  arch_ok() { return 0; }
+  deploy_needed() { return 0; }
+  running_image_id() { printf '%s\n' sha256:old; }
+  mihomo_auto_redirect_probe() { return 0; }
+  targets_discover() { printf '%s\n' 'gen1|gimg|recreate|'; }
+  generic_update_target() { printf 'generic:%s\n' "$1" >> "$TRACE"; return 0; }
+  cloudflared_blue_green() { printf 'cf-apply\n' >> "$TRACE"; return 0; }
+  compose_up_local() { printf 'compose-apply\n' >> "$TRACE"; return 0; }
+  health_gate() { return 0; }
+  notify() { printf '%s|%s\n' "$1" "$2" > "$TMP/notify.body"; }
+  cloudflared_cleanup_candidate() { :; }
+  : > "$TRACE"
+  auto_update_main
+); then
+  ok
+else
+  fail "full multi-driver apply should succeed"
+fi
+GEN_TRACE="$(tr '\n' ' ' < "$TRACE")"
+assert_contains "generic pulled after trio pulls" "$GEN_TRACE" "pull:m pull:u pull:c pull:gimg"
+assert_contains "DEC-5 apply order generic -> cloudflared -> compose" "$GEN_TRACE" "generic:gen1 cf-apply compose-apply"
+assert_contains "summary counts all applied targets" "$(cat "$TMP/notify.body")" "updated:4"
+
+if (
+  load_env() {
+    LOG_FILE="$TMP/orchestrator.log"; UPDATE_ENABLED=true; UPDATE_IMAGES="m u"
+    MIHOMO_IMAGE=m; METACUBEXD_IMAGE=u; CF_IMAGE=; CF_CONTAINER_NAME=cloudflared
+    MIHOMO_CONTAINER=mihomo; METACUBEXD_CONTAINER=mihomo-ui
+    NOTIFY_ON_NOCHANGE=0
+  }
+  rotate_log() { :; }
+  acquire_lock() { :; }
+  release_lock() { :; }
+  detect_compose() { DOCKER_BIN=true; return 0; }
+  docker_daemon_ready() { return 0; }
+  validate_update_config() { return 0; }
+  check_arch_expectation() { return 0; }
+  check_tun() { return 0; }
+  check_network() { return 0; }
+  compose_config_check() { return 0; }
+  acr_login() { return 0; }
+  pull_image() { return 0; }
+  arch_ok() { return 0; }
+  deploy_needed() { return 0; }
+  running_image_id() { printf '%s\n' sha256:old; }
+  mihomo_auto_redirect_probe() { return 0; }
+  targets_discover() { printf '%s\n' 'gen1|gimg|recreate|'; }
+  generic_update_target() { printf 'generic-fail:%s\n' "$1" >> "$TRACE"; return 1; }
+  compose_up_local() { printf 'compose-apply\n' >> "$TRACE"; return 0; }
+  health_gate() { return 0; }
+  notify() { printf '%s|%s\n' "$1" "$2" > "$TMP/notify.body"; }
+  cloudflared_cleanup_candidate() { :; }
+  : > "$TRACE"
+  auto_update_main
+); then
+  fail "generic target failure must report partial failure"
+else
+  _rc=$?
+  if [ "$_rc" -eq "$EXIT_PARTIAL" ]; then ok; else fail "generic failure exit code (got $_rc)"; fi
+fi
+ISO_TRACE="$(tr '\n' ' ' < "$TRACE")"
+assert_contains "failed generic target does not block the compose pair" "$ISO_TRACE" "generic-fail:gen1 compose-apply"
+assert_contains "summary counts the generic failure" "$(cat "$TMP/notify.body")" "failed:1"
+
+if (
+  load_env() {
+    LOG_FILE="$TMP/orchestrator.log"; UPDATE_ENABLED=true; UPDATE_IMAGES="m u"
+    MIHOMO_IMAGE=m; METACUBEXD_IMAGE=u; CF_IMAGE=; CF_CONTAINER_NAME=cloudflared
+    MIHOMO_CONTAINER=mihomo; METACUBEXD_CONTAINER=mihomo-ui
+    NOTIFY_ON_NOCHANGE=0
+  }
+  rotate_log() { :; }
+  acquire_lock() { :; }
+  release_lock() { :; }
+  detect_compose() { DOCKER_BIN=true; return 0; }
+  docker_daemon_ready() { return 0; }
+  validate_update_config() { return 0; }
+  check_arch_expectation() { return 0; }
+  check_tun() { return 0; }
+  check_network() { return 0; }
+  compose_config_check() { return 0; }
+  acr_login() { return 0; }
+  pull_image() { return 0; }
+  arch_ok() { return 0; }
+  deploy_needed() { [ "$2" = gen1 ]; }
+  running_image_id() { printf '%s\n' sha256:old; }
+  mihomo_auto_redirect_probe() { return 0; }
+  targets_discover() { printf '%s\n' 'gen1|gimg|recreate|'; }
+  generic_update_target() { printf 'generic:%s\n' "$1" >> "$TRACE"; return 0; }
+  compose_up_local() { printf 'compose-apply\n' >> "$TRACE"; return 0; }
+  health_gate() { return 0; }
+  notify() { printf '%s|%s\n' "$1" "$2" > "$TMP/notify.body"; }
+  cloudflared_cleanup_candidate() { :; }
+  : > "$TRACE"
+  auto_update_main --dry-run
+); then
+  ok
+else
+  fail "dry-run with pending generic update should exit 0"
+fi
+DRY_TRACE="$(tr '\n' ' ' < "$TRACE")"
+assert_not_contains "dry-run never invokes the generic driver" "$DRY_TRACE" "generic:"
+assert_not_contains "dry-run never applies compose" "$DRY_TRACE" "compose-apply"
+assert_contains "dry-run reports the pending generic target" "$(cat "$TMP/notify.body")" "gen1"
+
 # --- notification path (DSM 7 correctness) --------------------------------------
 # synodsmnotify on DSM 7 needs package-registered i18n strings: it can EXIST and
 # return 0 without delivering anything. It must therefore never gate the webhook,

@@ -2,9 +2,13 @@
 # auto_update.sh - DSM-side image puller + safe redeployer for the mihomo gateway.
 #
 # Run by Synology DSM Task Scheduler (as root). Pulls the images listed in
-# UPDATE_IMAGES from Alibaba ACR, detects which actually changed, and applies:
-#   - mihomo / metacubexd : `docker compose up -d` + health gate + auto-rollback
+# UPDATE_IMAGES plus every enrolled generic target (lib/targets.sh) from
+# Alibaba ACR, detects which actually changed, and applies serially, lowest
+# blast radius first (DEC-5: generic -> cloudflared -> compose gateway LAST):
+#   - enrolled generic containers: in-place recreate via lib/container.sh with
+#     a tiered health gate + saved-spec auto-restore + last-good persistence
 #   - cloudflared (external): blue-green by name, preserving the tunnel token
+#   - mihomo / metacubexd : `docker compose up -d` + health gate + auto-rollback
 # Reports via Synology push notification + a rotating log file.
 #
 # Usage: auto_update.sh [--dry-run] [--force]
@@ -29,6 +33,124 @@ SELF_DIR="${AUTO_UPDATE_SELF_DIR:-$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 . "$SELF_DIR/lib/compose.sh"
 # shellcheck source=scripts/lib/cloudflared.sh
 . "$SELF_DIR/lib/cloudflared.sh"
+# shellcheck source=scripts/lib/targets.sh
+. "$SELF_DIR/lib/targets.sh"
+
+# persist_last_good NAME IMAGE_ID - record the proven-good image + spec digest
+# under GATEWAY_DATA_DIR/state/last-good/NAME. Written only after the health
+# gate passes, so the record always points at a working combination; survives
+# `image prune` for cross-run rollback.
+persist_last_good() {
+  _plg_name="$1"; _plg_id="$2"
+  [ -n "$_plg_id" ] || return 1
+  _plg_dir="$GATEWAY_DATA_DIR/state/last-good"
+  mkdir -p "$_plg_dir" 2>/dev/null || return 1
+  chmod 700 "$_plg_dir" 2>/dev/null || true
+  _plg_digest=""
+  if [ -n "${CTR_WORKDIR:-}" ] && [ -d "$CTR_WORKDIR" ]; then
+    _plg_digest="$(find "$CTR_WORKDIR" -type f 2>/dev/null | LC_ALL=C sort | xargs cat 2>/dev/null | cksum | awk '{ print $1 }')"
+  fi
+  {
+    printf 'image_id=%s\n' "$_plg_id"
+    printf 'spec_digest=%s\n' "$_plg_digest"
+    printf 'updated=%s\n' "$(_ts)"
+  } >"$_plg_dir/$_plg_name.next" || return 1
+  chmod 600 "$_plg_dir/$_plg_name.next" 2>/dev/null || return 1
+  mv "$_plg_dir/$_plg_name.next" "$_plg_dir/$_plg_name" || return 1
+}
+
+# generic_health_gate NAME PROBE -> 0 healthy. The DEC-2 ladder: running ->
+# stable/non-crash-looping RestartCount -> native healthcheck (when the image
+# defines one) -> optional per-target probe. All probes run in-netns via
+# docker exec/logs (the NAS cannot reach its own macvlan children).
+generic_health_gate() {
+  _ghg_name="$1"; _ghg_probe="$2"; _ghg_try=0; _ghg_floor_warned=0
+  _ghg_rc_start="$("$DOCKER_BIN" inspect -f '{{.RestartCount}}' "$_ghg_name" 2>/dev/null)"
+  _ghg_rc_start="${_ghg_rc_start:-0}"
+  while [ "$_ghg_try" -lt "$HEALTH_RETRIES" ]; do
+    _ghg_try=$((_ghg_try+1))
+    _ghg_running="$("$DOCKER_BIN" inspect -f '{{.State.Running}}' "$_ghg_name" 2>/dev/null)"
+    if [ "$_ghg_running" != true ]; then
+      log_warn "health[$_ghg_try/$HEALTH_RETRIES]: $_ghg_name not running yet"
+      sleep "$HEALTH_INTERVAL"; continue
+    fi
+    _ghg_rc1="$("$DOCKER_BIN" inspect -f '{{.RestartCount}}' "$_ghg_name" 2>/dev/null)"
+    sleep "$HEALTH_INTERVAL"
+    _ghg_rc2="$("$DOCKER_BIN" inspect -f '{{.RestartCount}}' "$_ghg_name" 2>/dev/null)"
+    _ghg_running="$("$DOCKER_BIN" inspect -f '{{.State.Running}}' "$_ghg_name" 2>/dev/null)"
+    if [ "$_ghg_running" != true ] || [ "${_ghg_rc1:-0}" != "${_ghg_rc2:-0}" ]; then
+      log_warn "health[$_ghg_try/$HEALTH_RETRIES]: $_ghg_name unstable (running=$_ghg_running restarts $_ghg_rc1->$_ghg_rc2)"
+      continue
+    fi
+    if [ "$(( ${_ghg_rc2:-0} - _ghg_rc_start ))" -ge "${HEALTH_MAX_RESTARTS:-3}" ]; then
+      log_warn "health[$_ghg_try/$HEALTH_RETRIES]: $_ghg_name crash-looping (restarted $(( ${_ghg_rc2:-0} - _ghg_rc_start ))x since deploy)"
+      continue
+    fi
+    _ghg_health="$("$DOCKER_BIN" inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$_ghg_name" 2>/dev/null)"
+    case "$_ghg_health" in
+      healthy|none) : ;;
+      *)
+        log_warn "health[$_ghg_try/$HEALTH_RETRIES]: $_ghg_name native health=$_ghg_health"
+        continue ;;
+    esac
+    case "$_ghg_probe" in
+      exec:*)
+        # Enrollment screened metacharacters; still split into argv ourselves
+        # (glob expansion off) and exec without any shell interpolation.
+        set -f
+        # shellcheck disable=SC2086
+        set -- ${_ghg_probe#exec:}
+        set +f
+        if ! "$DOCKER_BIN" exec "$_ghg_name" "$@" >/dev/null 2>&1; then
+          log_warn "health[$_ghg_try/$HEALTH_RETRIES]: $_ghg_name exec probe failed"
+          continue
+        fi ;;
+      log:*)
+        if ! "$DOCKER_BIN" logs "$_ghg_name" 2>&1 | grep -Eq -- "${_ghg_probe#log:}"; then
+          log_warn "health[$_ghg_try/$HEALTH_RETRIES]: $_ghg_name log marker not found"
+          continue
+        fi ;;
+      '')
+        if [ "$_ghg_health" = none ] && [ "$_ghg_floor_warned" -eq 0 ]; then
+          _ghg_floor_warned=1
+          log_warn "health: $_ghg_name has no healthcheck and no probe - floor-only gate (running + stable restarts)"
+        fi ;;
+    esac
+    log_info "health: $_ghg_name passed (native=$_ghg_health probe=${_ghg_probe:-none})"
+    return 0
+  done
+  log_error "health gate FAILED for $_ghg_name after $HEALTH_RETRIES tries"
+  return 1
+}
+
+# generic_update_target NAME IMAGE PROBE -> 0 updated+healthy | 2 rolled back
+# to the saved old image (now healthy) | 1 failed with rollback incomplete.
+# DEC-3: in-place recreate; on gate failure auto-restore from the saved spec
+# and old image ID captured before anything was touched.
+generic_update_target() {
+  _gut_name="$1"; _gut_image="$2"; _gut_probe="$3"
+  container_capture_spec "$_gut_name" || return 1
+  container_parity_guard "$_gut_name" || { container_cleanup_workdir; return 1; }
+  if ! "$DOCKER_BIN" rm -f "$_gut_name" >>"$LOG_FILE" 2>&1; then
+    log_error "could not remove old container '$_gut_name'; nothing was changed"
+    container_cleanup_workdir
+    return 1
+  fi
+  if container_run_saved canonical "$_gut_name" "$_gut_image" \
+     && generic_health_gate "$_gut_name" "$_gut_probe"; then
+    persist_last_good "$_gut_name" "$(local_image_id "$_gut_image")" \
+      || log_warn "could not persist the last-good record for '$_gut_name'"
+    container_cleanup_workdir
+    return 0
+  fi
+  log_error "generic update failed for '$_gut_name' - restoring the saved container"
+  if container_restore_old "$_gut_name" && generic_health_gate "$_gut_name" "$_gut_probe"; then
+    container_cleanup_workdir
+    return 2
+  fi
+  container_cleanup_workdir
+  return 1
+}
 
 auto_update_main() {
 
@@ -94,49 +216,91 @@ acr_login            || { notify "Mihomo Gateway: update aborted" "ACR login fai
 # --- Detect changes (pull, arch-check, compare running-vs-local) ---
 compose_changed=0; cf_changed=0; changed_any=0; fail=0
 mihomo_old=""; meta_old=""; summary=""
+updated_n=0; unchanged_n=0; failed_n=0; rolled_n=0
+compose_marked=0
 
 for img in $UPDATE_IMAGES; do
   [ -n "$img" ] || continue
   log_info "checking $img"
   if ! pull_image "$img"; then
-    fail=1; summary="$summary
+    fail=1; failed_n=$((failed_n + 1)); summary="$summary
 - PULL FAILED: $img"; continue
   fi
   if ! arch_ok "$img"; then
-    fail=1; summary="$summary
+    fail=1; failed_n=$((failed_n + 1)); summary="$summary
 - ARCH MISMATCH (skipped): $img"; continue
   fi
   case "$img" in
     "$MIHOMO_IMAGE")
       if deploy_needed "$img" "$MIHOMO_CONTAINER"; then
-        compose_changed=1; changed_any=1
+        compose_changed=1; changed_any=1; compose_marked=$((compose_marked + 1))
         mihomo_old="$(running_image_id "$MIHOMO_CONTAINER")"
         summary="$summary
 - update: mihomo"
+      else
+        unchanged_n=$((unchanged_n + 1))
       fi ;;
     "$METACUBEXD_IMAGE")
       if deploy_needed "$img" "$METACUBEXD_CONTAINER"; then
-        compose_changed=1; changed_any=1
+        compose_changed=1; changed_any=1; compose_marked=$((compose_marked + 1))
         meta_old="$(running_image_id "$METACUBEXD_CONTAINER")"
         summary="$summary
 - update: metacubexd"
+      else
+        unchanged_n=$((unchanged_n + 1))
       fi ;;
     "$CF_IMAGE")
       if deploy_needed "$img" "$CF_CONTAINER_NAME"; then
         cf_changed=1; changed_any=1
         summary="$summary
 - update: cloudflared"
+      else
+        unchanged_n=$((unchanged_n + 1))
       fi ;;
     *)
       log_warn "pulled but mapped to NO deploy target (cache only): $img -- set MIHOMO_IMAGE/METACUBEXD_IMAGE/CF_IMAGE to this ref if it should drive a deploy" ;;
   esac
 done
 
+# --- Detect changes (enrolled generic targets) ---
+# targets_discover already applied the eligibility policy (enrolled + running
+# + ACR ref, minus the trio/compose/ambiguous/denylist); stdout is data-only.
+GEN_QUEUE=""
+_gen_list="$(targets_discover 2>>"$LOG_FILE")" || {
+  fail=1; failed_n=$((failed_n + 1)); summary="$summary
+- generic targets: INVALID enrollment list (see log)"; _gen_list=""
+}
+if [ -n "$_gen_list" ]; then
+  while IFS='|' read -r _g_name _g_image _g_strategy _g_probe; do
+    [ -n "$_g_name" ] || continue
+    log_info "checking generic target $_g_name ($_g_image)"
+    if ! pull_image "$_g_image"; then
+      fail=1; failed_n=$((failed_n + 1)); summary="$summary
+- PULL FAILED: $_g_name ($_g_image)$(pull_failure_hint)"; continue
+    fi
+    if ! arch_ok "$_g_image"; then
+      fail=1; failed_n=$((failed_n + 1)); summary="$summary
+- ARCH MISMATCH (skipped): $_g_name ($_g_image)"; continue
+    fi
+    if deploy_needed "$_g_image" "$_g_name"; then
+      changed_any=1
+      GEN_QUEUE="$GEN_QUEUE$_g_name|$_g_image|$_g_probe
+"
+      summary="$summary
+- update: $_g_name"
+    else
+      unchanged_n=$((unchanged_n + 1))
+    fi
+  done <<GEN_EOF
+$_gen_list
+GEN_EOF
+fi
+
 # An image can be valid for this architecture yet carry an nft-backed iptables
 # frontend that the DSM kernel cannot service. Prove an explicit auto-redirect
 # opt-in before any Compose recreation; keep unrelated cloudflared work eligible.
 if [ "$compose_changed" -eq 1 ] && ! mihomo_auto_redirect_probe "$MIHOMO_IMAGE"; then
-  fail=1; compose_changed=0
+  fail=1; compose_changed=0; failed_n=$((failed_n + compose_marked))
   summary="$summary
 - compose: SKIPPED (TUN auto-redirect incompatible; set TUN_AUTO_REDIRECT=false)"
 fi
@@ -155,20 +319,59 @@ if [ "$DRY_RUN" -eq 1 ]; then
   exit "$EXIT_OK"
 fi
 
+# --- Apply, strictly serial, lowest blast radius first (DEC-5):
+# generic targets -> cloudflared -> the compose gateway pair LAST, so every
+# earlier step still rides a known-good gateway and the highest-risk change
+# happens when everything else has already settled.
+
+# --- Apply: enrolled generic targets (in-place recreate + tiered gate) ---
+if [ -n "$GEN_QUEUE" ]; then
+  while IFS='|' read -r _g_name _g_image _g_probe; do
+    [ -n "$_g_name" ] || continue
+    log_info "applying generic target $_g_name"
+    generic_update_target "$_g_name" "$_g_image" "$_g_probe"
+    case "$?" in
+      0)
+        updated_n=$((updated_n + 1)); summary="$summary
+- $_g_name: applied + healthy" ;;
+      2)
+        fail=1; rolled_n=$((rolled_n + 1)); summary="$summary
+- $_g_name: FAILED health -> ROLLED BACK to last-good (now healthy)" ;;
+      *)
+        fail=1; failed_n=$((failed_n + 1)); summary="$summary
+- $_g_name: FAILED AND rollback incomplete -> MANUAL ATTENTION NEEDED" ;;
+    esac
+  done <<GEN_EOF
+$GEN_QUEUE
+GEN_EOF
+fi
+
+# --- Apply: cloudflared blue-green ---
+if [ "$cf_changed" -eq 1 ]; then
+  log_info "applying cloudflared blue-green"
+  if cloudflared_blue_green; then
+    updated_n=$((updated_n + 1)); summary="$summary
+- cloudflared: canonical container updated + connected (token preserved)"
+  else
+    fail=1; failed_n=$((failed_n + 1)); summary="$summary
+- cloudflared: update FAILED (old left running / rolled back)"
+  fi
+fi
+
 # --- Apply: compose services (single up -d; recreates only what changed) ---
 if [ "$compose_changed" -eq 1 ]; then
   log_info "applying validated local images (docker compose up -d --pull never when supported)"
   if compose_up_local; then
     if health_gate; then
-      summary="$summary
+      updated_n=$((updated_n + compose_marked)); summary="$summary
 - compose: applied + healthy"
     else
       log_error "health gate failed - rolling back to last-good image(s)"
       if rollback_compose "$mihomo_old" "$meta_old" && health_gate; then
-        summary="$summary
+        rolled_n=$((rolled_n + compose_marked)); summary="$summary
 - compose: FAILED health -> ROLLED BACK to last-good (now healthy)"
       else
-        summary="$summary
+        failed_n=$((failed_n + compose_marked)); summary="$summary
 - compose: FAILED health AND rollback incomplete -> MANUAL ATTENTION NEEDED"
       fi
       fail=1
@@ -176,25 +379,12 @@ if [ "$compose_changed" -eq 1 ]; then
   else
     log_error "docker compose up -d failed"
     if rollback_compose "$mihomo_old" "$meta_old" && health_gate; then
-      summary="$summary
+      rolled_n=$((rolled_n + compose_marked)); summary="$summary
 - compose: APPLY FAILED -> ROLLED BACK to last-good (now healthy)"
     else
-      summary="$summary
+      failed_n=$((failed_n + compose_marked)); summary="$summary
 - compose: APPLY FAILED AND rollback incomplete -> MANUAL ATTENTION NEEDED"
     fi
-    fail=1
-  fi
-fi
-
-# --- Apply: cloudflared blue-green ---
-if [ "$cf_changed" -eq 1 ]; then
-  log_info "applying cloudflared blue-green"
-  if cloudflared_blue_green; then
-    summary="$summary
-- cloudflared: canonical container updated + connected (token preserved)"
-  else
-    summary="$summary
-- cloudflared: update FAILED (old left running / rolled back)"
     fail=1
   fi
 fi
@@ -204,7 +394,9 @@ if [ "$fail" -eq 0 ]; then
   "$DOCKER_BIN" image prune -f >>"$LOG_FILE" 2>&1 || true
 fi
 
-# --- Report ---
+# --- Report (sectioned: counts first, then the per-target bullet detail) ---
+summary="updated:$updated_n unchanged:$unchanged_n failed:$failed_n rolled_back:$rolled_n
+$summary"
 if [ "$fail" -eq 1 ]; then
   log_error "auto-update completed WITH ERRORS"
   notify "Mihomo Gateway: update completed WITH ERRORS" "$summary"
