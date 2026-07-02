@@ -6,12 +6,8 @@ set -u
 ROOT="$(CDPATH='' cd -- "$(dirname -- "$0")/../.." && pwd)"
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/smg-lifecycle-test.XXXXXX")" || exit 1
 trap 'rm -rf "$TMP"' EXIT INT TERM
-PASS=0
-FAIL=0
-ok() { PASS=$((PASS + 1)); }
-fail() { printf 'FAIL: %s\n' "$*" >&2; FAIL=$((FAIL + 1)); }
-expect_success() { _n="$1"; shift; if "$@"; then ok; else fail "$_n"; fi; }
-expect_failure() { _n="$1"; shift; if "$@"; then fail "$_n"; else ok; fi; }
+# shellcheck source=scripts/ci/lib/assert.sh
+. "$ROOT/scripts/ci/lib/assert.sh"
 
 # shellcheck source=scripts/lib/common.sh
 . "$ROOT/scripts/lib/common.sh"

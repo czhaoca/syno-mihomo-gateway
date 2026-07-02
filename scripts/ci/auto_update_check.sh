@@ -9,21 +9,8 @@ ROOT="$(CDPATH='' cd -- "$(dirname -- "$0")/../.." && pwd)"
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/smg-update-test.XXXXXX")" || exit 1
 trap 'rm -rf "$TMP"' EXIT INT TERM
 
-PASS=0
-FAIL=0
-
-ok() { PASS=$((PASS + 1)); }
-fail() { printf 'FAIL: %s\n' "$*" >&2; FAIL=$((FAIL + 1)); }
-expect_success() { _name="$1"; shift; if "$@"; then ok; else fail "$_name"; fi; }
-expect_failure() { _name="$1"; shift; if "$@"; then fail "$_name"; else ok; fi; }
-assert_contains() {
-  _name="$1"; _text="$2"; _needle="$3"
-  case "$_text" in *"$_needle"*) ok ;; *) fail "$_name (missing: $_needle)" ;; esac
-}
-assert_not_contains() {
-  _name="$1"; _text="$2"; _needle="$3"
-  case "$_text" in *"$_needle"*) fail "$_name (unexpected: $_needle)" ;; *) ok ;; esac
-}
+# shellcheck source=scripts/ci/lib/assert.sh
+. "$ROOT/scripts/ci/lib/assert.sh"
 
 # DSM Task Scheduler: the command must use an absolute script path and must not
 # redirect into UPDATE_LOG. auto_update.sh already tees into that file; an outer
