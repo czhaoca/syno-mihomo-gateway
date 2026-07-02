@@ -1,9 +1,10 @@
 Troubleshooting
 ===============
 
-Each entry below is: SYMPTOM -> likely CAUSE -> FIX. Logs are written under the
-logs/ folder: an install log, and (once scheduled) an auto-update log. Check
-them first when something fails.
+Each entry below is: SYMPTOM -> likely CAUSE -> FIX. Logs are written under
+../syno-mihomo-gateway-data/logs/ (a sibling of this folder): everything goes
+to gateway.log; install.log and auto-update.log are symlinks to it. Check it
+first when something fails.
 
 --------------------------------------------------------------------------
 Installer refuses to run / asks you to move the folder
@@ -34,9 +35,14 @@ docker or docker compose "command not found"
 --------------------------------------------------------------------------
 /dev/net/tun is missing
 --------------------------------------------------------------------------
-  Cause: the TUN device has not been created. The gateway needs it.
+  Cause: the TUN device has not been created. The gateway needs it. It also
+         does not survive a NAS reboot (nor does the macvlan network).
   Fix:   re-run the deploy as root (sudo). The deploy flow creates
          /dev/net/tun. If it still fails, confirm you are root.
+         To self-heal after every reboot, add the DSM "Boot-up" task
+         (User = root) that scripts/install_scheduler.sh prints - it runs
+         scripts/setup_network.sh to recreate the macvlan network and
+         /dev/net/tun. See AUTO-UPDATE.txt.
 
 --------------------------------------------------------------------------
 The mihomo IP is already taken / deploy failed on a conflicting IP
@@ -44,10 +50,12 @@ The mihomo IP is already taken / deploy failed on a conflicting IP
   Symptom: the installer warns that the IP you picked for mihomo is already
            answering on the LAN, or a deploy failed because that IP was taken.
   Cause:   another device (often DHCP-assigned) already uses MIHOMO_IP.
-  Fix:     use Redeploy (menu option 2). It reuses everything saved in .env -
-           router, DNS, ports, subscription, image settings - so you do NOT
-           re-enter them. Choose "change mihomo's LAN IP, then redeploy" and
-           pick a free IP. This is the recommended fix for an IP conflict.
+  Fix:     use menu option 2, "Deploy with the saved .env (edit settings or
+           deploy as-is)". It reuses everything saved in .env - router, DNS,
+           ports, subscription, image settings - so you do NOT re-enter them.
+           From its five-option list choose "Change mihomo's LAN IP, then
+           deploy" and pick a free IP. This is the recommended fix for an IP
+           conflict.
 
 --------------------------------------------------------------------------
 Cannot quit the installer / stuck at a prompt
@@ -62,10 +70,25 @@ macvlan parent / interface mismatch
   Symptom: the network fails to create, or clients cannot reach the gateway
            IP.
   Cause:   the macvlan network was bound to the wrong NAS interface.
-  Fix:     re-run the deploy and re-pick the LAN interface, or use Redeploy
-           (menu option 2 -> re-pick the interface, then redeploy). The
-           installer lists each interface with its IPv4 and marks the
-           recommended one.
+  Fix:     re-run the deploy and re-pick the LAN interface, or use menu
+           option 2 (Deploy with the saved .env) -> "Re-pick the network
+           interface, then deploy". The installer lists each interface with
+           its IPv4 and marks the recommended one.
+
+--------------------------------------------------------------------------
+The installer warns the interface is an Open vSwitch port
+--------------------------------------------------------------------------
+  Symptom: when you pick the LAN interface (and again before the network is
+           created) the installer warns that the parent (e.g. ovs_eth0) is an
+           Open vSwitch port, and asks whether to use the ipvlan driver.
+  Meaning: a heads-up, not an error. macvlan works fine on most OVS setups;
+           only some OVS configs stop other LAN devices from reaching the
+           macvlan child (gateway/dashboard time out from clients).
+  Fix:     answer No (the default) and keep macvlan first. Only if LAN
+           devices truly cannot reach the gateway after deploying, redeploy
+           and answer Yes: ipvlan can traverse OVS but is DASHBOARD-ONLY -
+           it does NOT route LAN-client traffic through the proxy, so the
+           transparent gateway role is lost.
 
 --------------------------------------------------------------------------
 Cannot open the dashboard from the NAS
@@ -147,9 +170,11 @@ Containers look healthy but LAN clients have no internet
 Auto-update reported a non-zero exit code
 --------------------------------------------------------------------------
   0  Success / no-op.
-  2  Partial failure - check the auto-update log under logs/.
+  2  Partial failure - check ../syno-mihomo-gateway-data/logs/auto-update.log.
   3  Config / preflight error - review .env and prerequisites.
-  4  Another run is in progress - wait and check again.
+  4  Another run is in progress - wait and check again. A stale lock left by
+     a crashed run is detected and reclaimed automatically on the next run,
+     so no manual cleanup is ever needed.
   5  Registry login failed - re-check your registry credentials.
 
 --------------------------------------------------------------------------
@@ -159,14 +184,15 @@ DSM 7 scheduled update does not run
   * Run scripts/install_scheduler.sh again and copy its exact command.
   * DSM triggers in the NAS Regional Options timezone; UPDATE_TZ only changes
     updater log timestamps.
-  * Click Run once, then check the saved task result and logs/auto-update.log.
-  * Do not add an outer ">> logs/auto-update.log" redirect; it duplicates
-    output and interferes with the updater's own rotation.
+  * Click Run once, then check the saved task result and
+    ../syno-mihomo-gateway-data/logs/auto-update.log.
+  * Do not add your own ">> auto-update.log" redirect to the task command; it
+    duplicates output and interferes with the updater's own rotation.
 
 --------------------------------------------------------------------------
 Where to look
 --------------------------------------------------------------------------
-  * Install log:     under the logs/ folder.
-  * Auto-update log: under the logs/ folder.
-  * Settings:        ../syno-mihomo-gateway-data (see CONFIGURE.txt).
+  * All logs:  ../syno-mihomo-gateway-data/logs/gateway.log
+               (install.log and auto-update.log there are symlinks to it).
+  * Settings:  ../syno-mihomo-gateway-data (see CONFIGURE.txt).
   * To change and redeploy: install.sh -> 4) Modify an existing deployment.

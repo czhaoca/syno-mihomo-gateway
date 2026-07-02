@@ -1,7 +1,7 @@
 # 配置参考
 
 [← README](../../README.md) · [English](../configuration.md)
-手册：[架构](architecture.md) · [安装](installation.md) · [离线发布包](release-packaging.md) · **配置** · [自动更新](auto-update.md) · [运维](operations.md) · [故障排查](troubleshooting.md) · [开发](development.md)
+手册：[架构](architecture.md) · [安装](installation.md) · [离线发布包](release-packaging.md) · **配置** · [自动更新](auto-update.md) · [运维](operations.md) · [CLI](cli.md) · [故障排查](troubleshooting.md) · [开发](development.md)
 
 ---
 
@@ -52,7 +52,7 @@ Compose 兼容的引号，因此包含空格、`&`、`#`、`$`、引号或反斜
 |---|:--:|---|---|
 | `WEB_UI_PORT` | ✅ | MetaCubeXD 仪表盘的宿主机端口（发布在 NAS 的 IP 上）。 | `8080` |
 | `CONTROLLER_PORT` | ✅ | Mihomo RESTful 控制器端口（绑定 `0.0.0.0`；通过 `MIHOMO_IP:PORT` 访问）。 | `9090` |
-| `CONTROLLER_SECRET` | | 控制器认证密钥。留空 = 不认证；留空时安装器会提议自动生成随机密钥（显式拒绝则保持开放）。`&`、`\|`、`\` 由渲染器自动处理。 | `` |
+| `CONTROLLER_SECRET` | | 控制器认证密钥。留空 = 不认证；留空时安装器会提议自动生成随机密钥（显式拒绝则保持开放）。重跑安装器时，按 **Enter** 保留已保存的密钥，输入 `-` 则清空。渲染器会转义 `&`、`\|`、`\`，但安装器**拒绝**包含 `\|` 的密钥——请避免使用。 | `` |
 
 ### DNS（注入到配置模板中）
 
@@ -70,7 +70,7 @@ Compose 兼容的引号，因此包含空格、`&`、`#`、`$`、引号或反斜
 三个镜像引用由 `install.sh` 根据 `REGISTRY_MODE` + 仓库主机 + 命名空间 + 各组件的标签**推导**得出，
 因此你只需输入一次仓库/命名空间，而不必为每个镜像重复输入。自动更新器会将每个 `UPDATE_IMAGES`
 条目，通过与这三个推导引用的**精确匹配**，映射到对应的部署目标（参见
-[自动更新](auto-update.md)）。
+[自动更新](auto-update.md#镜像引用)）。
 
 > **缺失即失败，默认 ACR。** `docker-compose.yml` 使用 `${MIHOMO_IMAGE:?}` / `${METACUBEXD_IMAGE:?}`，
 > 若引用未设置，`docker compose up` 会**直接报错失败**，而不会拉取意外的镜像。`REGISTRY_MODE` 默认
@@ -79,7 +79,7 @@ Compose 兼容的引号，因此包含空格、`&`、`#`、`$`、引号或反斜
 
 | 键 | Req | 说明 | 示例 |
 |---|:--:|---|---|
-| `REGISTRY_MODE` | ✅ | `acr`（默认；你的私有镜像源）或 `docker`（上游公共仓库；需要不受限外网）。 | `acr` |
+| `REGISTRY_MODE` | ✅ | `acr`（默认；你的私有镜像源）或 `docker`（上游公共仓库；需要不受限外网）。在 `docker` 模式下**任何通用自动更新目标都不符合条件**（见下文）。 | `acr` |
 | `MIHOMO_TAG` | | 用于推导 mihomo 引用的标签。 | `latest` |
 | `METACUBEXD_TAG` | | 用于推导 metacubexd 引用的标签。 | `latest` |
 | `CF_TAG` | | 用于推导可选的 cloudflared 引用的标签。 | `latest` |
@@ -93,7 +93,7 @@ Compose 兼容的引号，因此包含空格、`&`、`#`、`$`、引号或反斜
 |---|:--:|:--:|---|---|
 | `DOCKER_REGISTRY` | ✅ | | 镜像仓库主机（用于 `docker login` 并推导引用）；安装器会预填 `registry.cn-shenzhen.aliyuncs.com` 作为默认值。`docker` 模式下安装器会清空它以跳过登录。 | `registry.cn-shenzhen.aliyuncs.com` |
 | `DOCKER_USERNAME` | ✅ | | 镜像仓库用户名（安装器与更新器共用）。 | `your_registry_user` |
-| `ACR_PASSWORD` | ✅ | 🔒 | 镜像仓库密码/访问令牌（用于非交互式 `--password-stdin`）。 | `…` |
+| `ACR_PASSWORD` | ✅ | 🔒 | 镜像仓库密码/访问令牌（用于非交互式 `--password-stdin`）。最小权限：使用专用的**只读拉取** ACR 子账号/RAM 账号，与 `docker-china-sync` 的推送账号分开。 | `…` |
 | `ACR_NAMESPACE` | ✅ | | 你的镜像所在的仓库命名空间（与主机 + 标签组合以推导引用）。 | `myns` |
 
 ### 自动更新编排器
@@ -105,6 +105,29 @@ Compose 兼容的引号，因此包含空格、`&`、`#`、`$`、引号或反斜
 | `UPDATE_SCHEDULE` | 用于配置 DSM 任务计划/后备 crontab 的五字段数字 cron 表达式；输出前会校验范围。**请加引号。** | `"0 2 * * *"` |
 | `UPDATE_TZ` | 更新器日志时间戳所用时区。DSM 触发时间遵循 NAS 的“区域选项”时区。 | `Asia/Shanghai` |
 | `EXPECTED_ARCH` | 防止仅 amd64 的镜像源被装到 ARM 架构的 NAS 上。可选 `amd64`/`arm64`。 | `amd64` |
+
+### 通用自动更新目标
+
+登记信息**不**存放在 `.env` 中：管理列表位于
+`<数据目录>/state/update-targets`（每条记录形如 `name|strategy|probe`），通过
+`gateway.sh update --enable/--disable` 或安装器的更新流程编辑，并由
+`update --list-targets` 展示。`recreate` 是 v1 **唯一**的策略（蓝绿部署仍为
+cloudflared 专属）。仅登记还不够：目标只有在其运行镜像位于
+`DOCKER_REGISTRY`/`ACR_NAMESPACE` 之下时才符合条件——`REGISTRY_MODE=docker` 时
+**没有任何**通用目标符合条件。引擎细节见：
+[自动更新 → 通用目标](auto-update.md#通用目标任意已登记的容器)。
+更新器写入的相关状态：`state/last-run.json`（最近一次运行的结果——时间戳、退出码、
+dry-run 标志、updated/unchanged/failed/rolled-back 计数与名称——由 `gateway.sh status`
+与 `update --last` 展示）和 `state/last-good/<name>`（每个目标经验证的镜像 ID + 规格
+摘要，跨运行保留以供回滚）。
+
+| 变量 | 含义 | 默认值 |
+|---|---|---|
+| `UPDATE_DENY_CONTAINERS` | 可选的空格分隔通配（glob）列表；名称匹配的容器即使已登记也永不自动更新。 | *（空）* |
+
+每目标探针（记录的第三个字段，登记时即校验）：`exec:<cmd>` 通过 `docker exec` 在容器内
+执行；`log:<regex>` 对 `docker logs` 做正则匹配。未配置探针时，门控为：运行中 + 重启
+计数稳定 + 镜像自带 healthcheck（若有定义）。
 
 ### cloudflared（外部容器，按名称蓝绿切换）
 
@@ -118,7 +141,7 @@ Compose 兼容的引号，因此包含空格、`&`、`#`、`$`、引号或反斜
 
 | 键 | 说明 | 默认值 / 示例 |
 |---|---|---|
-| `NOTIFY_WEBHOOK_URL` | 当 `synodsmnotify` 不可用时使用的可选后备 webhook（Bark/Gotify/Slack 风格的 JSON POST）。 | `` |
+| `NOTIFY_WEBHOOK_URL` | 可选 webhook（Bark/Gotify/Slack 风格的 JSON POST）。只要配置了就会触发——独立于 DSM 推送（`synodsmnotify`）；后者仅是尽力而为，绝不会抑制 webhook。 | `` |
 | `NOTIFY_ON_NOCHANGE` | `1` = 在无变更的运行中也发送通知。 | `0` |
 | `UPDATE_LOG` | 编排器日志路径（相对路径在持久数据目录下解析）。 | `./logs/auto-update.log` |
 | `LOG_KEEP` | 保留的轮转日志代数。 | `7` |
@@ -127,16 +150,20 @@ Compose 兼容的引号，因此包含空格、`&`、`#`、`$`、引号或反斜
 
 ### 高级可调项（可选的 `.env` 覆盖项）
 
-这些在 `scripts/lib/common.sh` / `registry.sh` 中已有合理默认值；仅在需要时覆盖。
+这些在 `scripts/lib/common.sh` 中已有合理默认值（`TPROXY_NETWORK` 在
+`scripts/lib/network.sh` 中）；仅在需要时覆盖。
 
 | 键 | 默认值 | 含义 |
 |---|---|---|
+| `GATEWAY_DATA_DIR` | `../syno-mihomo-gateway-data` | 持久数据目录（`.env`、`config/`、`logs/`、`state/`），是发行目录的同级目录。compose 与所有脚本都会遵循。**须在环境变量中导出**——它用于定位 `.env`，因此不能写在 `.env` 里。 |
 | `LOG_MAX_BYTES` | `1048576` | 当 `UPDATE_LOG` 超过此大小时进行轮转。 |
 | `PULL_RETRIES` / `PULL_RETRY_DELAY` | `3` / `10` | `docker pull` 的重试次数/重试间隔（秒）。 |
 | `DOCKER_READY_TIMEOUT` / `DOCKER_READY_INTERVAL` | `120` / `5` | DSM 计划/开机任务等待 Container Manager 的总时长与重试间隔（秒）。 |
 | `HEALTH_RETRIES` / `HEALTH_INTERVAL` | `6` / `10` | mihomo 健康检查门控的尝试次数/间隔（秒）。 |
+| `HEALTH_MAX_RESTARTS` | `3` | 通用目标的崩溃循环阈值：刚更新的容器重启达到该次数后，健康门（提前）判定失败。 |
 | `LOCK_DIR` | `/tmp/syno-mihomo-update.lock` | 互斥锁目录。 |
 | `TPROXY_NETWORK` | `tproxy_network` | 预检阶段检查的 macvlan 网络名称。 |
+| `TUN_DEVICE` | `mihomo-tun` | 宿主机侧健康门查找的 TUN 接口名。必须与模板中硬编码的 `device: mihomo-tun` 一致——仅当你在模板中改了设备名时才需覆盖。 |
 
 ## `config/config.template.yaml`
 
@@ -144,23 +171,37 @@ Compose 兼容的引号，因此包含空格、`&`、`#`、`$`、引号或反斜
 
 | 占位符 | 来源键 |
 |---|---|
-| `{{AIRPORT_URL}}` | `config/subscription.txt` 的第一行（去除标签后） |
+| `{{AIRPORT_URL}}` | `../syno-mihomo-gateway-data/config/subscription.txt` 的第一行（去除标签后） |
 | `{{CONTROLLER_PORT}}` / `{{CONTROLLER_SECRET}}` | `.env` |
 | `{{DNS_DEFAULT_NAMESERVER}}` / `{{DNS_NAMESERVER}}` / `{{DNS_FALLBACK}}` | `.env` |
 | `{{TUN_AUTO_REDIRECT}}` | `.env`（缺省时为 `false`） |
 
 代理**规则**、`proxy-groups` / `proxy-providers` 块、端口等请直接在模板中编辑（它们
-未做参数化）。编辑后，通过重建 mihomo 重新渲染
-（`docker compose up -d mihomo`）。如需自定义路由，请编辑 `rules:` 列表——默认值
+未做参数化）。编辑后，用**强制重建**重新渲染：
+
+```sh
+docker compose --env-file ../syno-mihomo-gateway-data/.env up -d --force-recreate mihomo
+```
+
+（或 `sudo sh scripts/gateway.sh redeploy --yes`）。当镜像与 compose 模型未变化时，
+普通的 `up -d mihomo` 是**空操作**——入口脚本只在重建容器时才重新渲染，因此仅改模板
+的编辑会被静默忽略。如需自定义路由，请编辑 `rules:` 列表——默认值
 为 `GEOSITE,CN,DIRECT` / `GEOIP,CN,DIRECT` / `MATCH,PROXY`（国内流量直连，其余
 全部走 `PROXY` 组）。`PROXY` 是一个可选择的代理组，默认指向 `auto`（订阅中延迟最低的
 节点），同时提供 `DIRECT` / `REJECT`；规则只能指向**代理组**（如 `PROXY`），不能直接
 指向 `proxy-provider`。
 
+模板还带有 `geo-auto-update` / `geox-url` 块，把地理数据库下载（`GEOSITE`/`GEOIP`
+规则所需）指向 jsdelivr CDN 镜像——mihomo 的默认下载源在中国大陆被屏蔽，而卡住的
+地理数据下载会让 mihomo 永远无法完成启动。若该镜像对你也不可用，请替换模板中的三个
+URL（并按上述方式重新渲染）。
+
 ## 订阅格式
 
-`config/subscription.txt` —— 第一条非注释、非空白行生效。可选的 `Name=` 标签
-会被去除；其余部分（即 URL，包括任何 `?token=…&flag=…`）将被原样使用。
+`../syno-mihomo-gateway-data/config/subscription.txt` —— 第一条非注释、非空白行生效。
+可选的 `Name=` 标签会被去除；其余部分（即 URL，包括任何 `?token=…&flag=…`）将被原样
+使用。编辑后，用与上文相同的 `--force-recreate` 命令重新渲染（或
+`sudo sh scripts/gateway.sh modify --subscription URL --yes`，一步完成编辑与重新渲染）。
 
 ```text
 # both of these work:

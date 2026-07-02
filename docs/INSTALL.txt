@@ -67,42 +67,52 @@ You will see the menu, with a live status line above it (not deployed /
 partial / running, with the gateway IP and dashboard URL once running):
 
       1) Deploy the gateway (first run, end-to-end)
-      2) Redeploy (reuse saved settings; fix a conflicting IP)
+      2) Deploy with the saved .env (edit settings or deploy as-is)
       3) Set up automatic updates (cron)
       4) Modify an existing deployment
-      5) Status / diagnose (read-only summary + optional doctor run)
+      5) Status / diagnose
       6) Quit
 
 Choose 1 for a first install. Once settings are saved, option 1 hints that
-option 2 can reuse them.
+option 2 can reuse them. Item 5 is read-only: it prints a summary and offers
+to run the full diagnostics.
 
 --------------------------------------------------------------------------
 4. The deploy flow (option 1)
 --------------------------------------------------------------------------
 Deploy walks through these steps in order. When every value is already
-detected or saved, an EXPRESS screen first shows them all for one single
-confirmation - accept to skip the per-item prompts below, or answer No to
-edit each value step by step:
+detected or saved, an EXPRESS screen (shown right after the interface scan)
+lists them all for one single confirmation - accept to skip the per-item
+prompts of steps 4-6, or answer No to edit each value step by step:
 
   1.  Prepare persistent config files in ../syno-mihomo-gateway-data.
-  2.  Scan the network interface FIRST - you pick the LAN interface from the
+  2.  Existing-resource choices - asked UP FRONT, right after the config
+      prep: independently preserve, automatically dismantle verified project
+      containers/macvlan, or handle them manually. Nothing is removed here -
+      the teardown itself happens at step 9.
+  3.  Scan the network interfaces - you pick the LAN interface from the
       scanned list (or type one). The installer then AUTO-FILLS the router /
       gateway IP and the LAN subnet (CIDR) from that interface, so you just
-      confirm them rather than typing them.
-  3.  Gateway IP & DNS - set mihomo's LAN IP and the DNS servers. If you
+      confirm them rather than typing them. On an Open vSwitch port an
+      extra ipvlan question appears (see "Interface selection" below).
+  4.  Gateway IP & DNS - set mihomo's LAN IP and the DNS servers. If you
       leave the dashboard secret empty, the installer offers to GENERATE a
       random one (stored in .env as CONTROLLER_SECRET); declining leaves the
-      dashboard unauthenticated by explicit choice. When you set
-      mihomo's IP, the installer checks whether that IP is already answering
-      on the LAN (e.g. a DHCP-assigned device) and warns you before
-      deploying. You can pick another IP or override the warning.
-  4.  Image source - choose where images are pulled from (see below).
-  5.  Subscription URL - the proxy subscription that feeds your rules.
-  6.  Checks - validates prerequisites.
-  7.  Existing-resource choices - independently preserve, automatically
-      dismantle verified project containers/macvlan, or handle them manually.
+      dashboard unauthenticated by explicit choice. On a re-run, pressing
+      Enter at the secret prompt KEEPS the saved secret; typing '-' clears
+      it. When you set mihomo's IP, the installer checks whether that IP is
+      already answering on the LAN (e.g. a DHCP-assigned device) and warns
+      you before deploying. You can pick another IP or override the warning.
+  5.  Image source - choose where images are pulled from (see below). The
+      same wizard also asks whether to manage an optional cloudflared
+      tunnel container (advanced; answering yes prompts for the image tag
+      and the tunnel token - Enter reuses the token of an already-running
+      tunnel).
+  6.  Subscription URL - the proxy subscription that feeds your rules.
+  7.  Checks - validates prerequisites.
   8.  Log in, pull/check images, validate the rendered config and Compose.
-  9.  Apply the chosen cleanup only after every non-destructive check passes.
+  9.  Apply the cleanup chosen in step 2 - only after every non-destructive
+      check passes.
   10. Create or reuse the matching network.
   11. Start containers and run the health check.
   12. Summary - prints the dashboard URL and the values you need.
@@ -119,31 +129,38 @@ Image source (asked during deploy)
     internet. The installer warns and asks you to confirm. Behind a blocking
     firewall this mode will fail.
 
-Interface selection (scanned first)
+Interface selection
   The installer scans the NAS network interfaces, shows each with its IPv4,
   marks the auto-detected LAN interface as recommended, and lets you pick a
   number or type an interface name manually. The interface you pick drives the
   auto-filled router IP and subnet, and is saved as PARENT_INTERFACE in .env.
+  If the chosen interface is an Open vSwitch port (name like ovs_eth0), the
+  installer warns that on some OVS configs LAN devices cannot reach a macvlan
+  child, and asks whether to switch to the ipvlan driver instead. Answer No
+  (the default) to keep macvlan: ipvlan only makes the dashboard reachable
+  and does NOT route LAN-client traffic through the proxy.
 
 IP-conflict check (when you set mihomo's IP)
   The installer probes the LAN to see if the IP you chose for mihomo is
   already in use. If something answers, it warns you so a silent conflict does
   not break the deploy. Choose a free IP, or override to keep the one you
-  entered. If a deploy still fails because the IP was taken, use Redeploy
-  (menu item 2, below) to re-apply with a different IP without re-entering
-  everything.
+  entered. If a deploy still fails because the IP was taken, use menu item 2
+  (Deploy with the saved .env, below) to re-apply with a different IP without
+  re-entering everything.
 
 --------------------------------------------------------------------------
-4b. Redeploy (menu option 2)
+4b. Deploy with the saved .env (menu option 2)
 --------------------------------------------------------------------------
-Redeploy reuses everything already saved in .env - router, DNS, ports,
+This flow reuses everything already saved in .env - router, DNS, ports,
 subscription, and image settings - so you do NOT re-enter them. Use it when a
 deploy failed because the chosen IP was taken, or when you just want to
-re-apply. It offers:
+re-apply. It first shows the saved settings, then asks what you want to do:
 
-  * Redeploy as-is.
-  * Change mihomo's LAN IP, then redeploy.
-  * Re-pick the network interface, then redeploy.
+  1) Deploy now (use the saved .env as-is)
+  2) Edit settings (network / DNS / ports), then deploy
+  3) Change mihomo's LAN IP, then deploy
+  4) Re-pick the network interface, then deploy
+  5) Back to main menu
 
 This is the recommended fix for an IP conflict.
 
@@ -172,4 +189,5 @@ After install
   * Review CONFIGURE.txt for the full .env reference.
   * Set up automatic updates with AUTO-UPDATE.txt.
   * If anything fails, see TROUBLESHOOTING.txt.
-  * An install log is written under the logs/ folder.
+  * An install log is written to ../syno-mihomo-gateway-data/logs/install.log
+    (in the persistent data folder next to this one).

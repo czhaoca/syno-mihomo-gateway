@@ -4,8 +4,9 @@
 
 在群晖 NAS 上"拉取即用"地部署 **Mihomo (Clash Meta)** 透明网关。家中任意设备（Apple TV、iPhone、
 游戏机）只需把网关/DNS 指向该容器的局域网 IP 即可科学上网，无需安装客户端。**MetaCubeXD** 提供
-网页管理面板。为**中国大陆**设计：镜像更新走 Docker Hub/ghcr → 阿里云 ACR → 你的 NAS 的流水线，
-并由群晖计划任务保持自动、安全、可自愈地更新。
+网页管理面板。为**中国大陆**设计：镜像更新默认走 Docker Hub/ghcr → 阿里云 ACR → 你的 NAS 的
+流水线（`REGISTRY_MODE=docker` 可选择在无封锁的 NAS 上直接拉取上游镜像），并由群晖计划任务保持
+自动、安全、可自愈地更新。
 
 ## 功能特点
 - 🚀 **自动化脚本** — 自动检测群晖网络接口（`eth0` / `ovs_eth0`）。
@@ -13,8 +14,10 @@
 - 🧹 **可控重新部署** — 可分别复用、安全拆除或手动处理现有网关容器和 macvlan。
 - 🔧 **配置集中在 `.env`** — IP、端口、DNS、镜像仓库；仓库内不硬编码任何密钥或 DNS。
 - 🔁 **订阅分离** — 机场订阅链接保存在单独的 gitignore 文件中。
-- 🤖 **安全自动更新** — 从阿里云 ACR 拉取，按摘要检测变化，带健康检查与自动回滚；外部 cloudflared
-  采用蓝绿部署（保留隧道令牌）。
+- 🤖 **安全自动更新** — 按摘要检测变化，带健康检查与自动回滚；默认从阿里云 ACR 拉取
+  （`REGISTRY_MODE=docker` 直接拉取上游镜像）；外部 cloudflared 采用蓝绿部署（保留隧道令牌）。
+- 📦 **可更新任意容器** — 登记独立容器（`gateway.sh update --enable NAME`）；它们随同一计划任务
+  更新，带运行规格捕获/回放，健康门不通过时自动回滚。
 
 ## 文档
 
@@ -24,7 +27,7 @@
 | [安装](zh/installation.md) | 完整的群晖部署流程（SSH、网络、首次启动、面板） |
 | [离线发布包](zh/release-packaging.md) | GitHub 被封锁时的离线安装：构建压缩包，在 NAS 上解压，无需 git |
 | [配置](zh/configuration.md) | **完整 `.env` 参考**、模板、订阅、规则 |
-| [自动更新](zh/auto-update.md) | ACR 配置、运行流程、健康检查/回滚、cloudflared 蓝绿、退出码 |
+| [自动更新](zh/auto-update.md) | ACR 配置、运行流程、健康检查/回滚、通用已登记目标、cloudflared 蓝绿、退出码 |
 | [运维](zh/operations.md) | 运维手册：计划任务、试运行、开关、日志、通知、回滚 |
 | [命令行参考](zh/cli.md) | `gateway.sh` 子命令、选项、安全护栏、退出码（由 `scripts/cli/spec.yaml` 生成） |
 | [故障排查](zh/troubleshooting.md) | FAQ + 退出码 + 具体故障处理 |
@@ -55,11 +58,11 @@ cd /volume1/docker
 git clone https://github.com/czhaoca/syno-mihomo-gateway.git
 cd syno-mihomo-gateway
 
-# 2. 创建发布目录之外的持久运行数据
+# 2. 在发布目录旁创建持久运行数据
 sh bootstrap.sh
-vi ../syno-mihomo-gateway-data/.env
+vi ../syno-mihomo-gateway-data/.env       # 设置 ROUTER_IP、MIHOMO_IP、DNS、ACR 凭据与镜像引用（或 REGISTRY_MODE=docker）
 
-# 3. 订阅
+# 3. 订阅（位于可替换的发布目录之外）
 vi ../syno-mihomo-gateway-data/config/subscription.txt
 
 # 4. 网络 + TUN（root）
@@ -75,8 +78,8 @@ sudo docker compose --env-file ../syno-mihomo-gateway-data/.env up -d
 > **macvlan 注意：** 群晖宿主机无法访问自己 macvlan 容器的 IP——请用其它设备打开面板与测试。
 > 详见[架构](zh/architecture.md#网络模型-macvlan)。
 >
-> 首次安装或处理已有/部分部署时，请运行 `sudo sh ./install.sh`。清理选择只会在所有非破坏性
-> 校验成功后执行。
+> 如需引导式安装，或处理已有/部分部署，请运行 `sudo sh ./install.sh`。清理选择只会在所有
+> 非破坏性校验成功后执行。
 
 ## 客户端设置
 
@@ -86,17 +89,32 @@ sudo docker compose --env-file ../syno-mihomo-gateway-data/.env up -d
 ## 自动更新
 
 由于中国大陆封锁 Docker Hub/ghcr，[`docker-china-sync`](https://github.com/czhaoca/docker-china-sync) 每晚把镜像同步到
-阿里云 ACR，`scripts/auto_update.sh`（由群晖任务计划以 root 运行）只拉取、校验并部署有变化的镜像。
-Compose v2 用 `--pull never` 应用已校验的本地镜像；应用或健康检查失败都会回滚。外部 cloudflared 走蓝绿部署。
-用 `sh scripts/install_scheduler.sh` 打印计划任务设置，用 `sh scripts/auto_update.sh --dry-run`
-试运行。详见[自动更新](zh/auto-update.md) · [运维](zh/operations.md)。
+阿里云 ACR（默认镜像来源；`REGISTRY_MODE=docker` 直接拉取上游镜像），`scripts/auto_update.sh`
+（由群晖任务计划以 root 运行）只拉取、校验并部署有变化的镜像。Compose v2 用 `--pull never`
+应用已校验的本地镜像；应用或健康检查失败都会回滚。同一任务还会更新任何**已登记的独立容器**
+（仅限 ACR 模式）：用 `sudo sh scripts/gateway.sh update --enable NAME` / `--disable NAME` /
+`--list-targets` 管理列表，用 `update --last` 查看最近一次运行结果。各目标按影响范围从小到大
+依次应用：先通用容器，再 cloudflared（蓝绿部署，保留隧道令牌），最后才是网关对。
+用 `sh scripts/install_scheduler.sh` 打印计划任务设置，用 `sudo sh scripts/auto_update.sh --dry-run`
+试运行。
+
+> **重启持久化：** macvlan 网络和 `/dev/net/tun` 在 NAS 重启后不会自动保留——请再添加一个
+> 以**开机**为触发、以 `root` 用户运行 `scripts/setup_network.sh` 的 DSM 任务实现自愈；
+> `sh scripts/install_scheduler.sh` 会打印这两个任务的设置。
+
+详见[自动更新](zh/auto-update.md) · [运维](zh/operations.md)。
 
 ## 维护
 
 ```bash
-# 更新订阅
+# 更新订阅（重新渲染需要 --force-recreate）
 vi ../syno-mihomo-gateway-data/config/subscription.txt
-sudo docker compose --env-file ../syno-mihomo-gateway-data/.env up -d mihomo
+sudo docker compose --env-file ../syno-mihomo-gateway-data/.env up -d --force-recreate mihomo
+# 或一步完成：sudo sh scripts/gateway.sh modify --subscription URL --yes
+
+# 健康检查
+sudo sh scripts/gateway.sh status    # 状态快照（--json 供脚本使用）
+sudo sh scripts/gateway.sh doctor    # 完整诊断（--egress 探测真实出口）
 
 # 更新仓库
 git pull && sudo sh ./install.sh

@@ -36,6 +36,14 @@ Network settings
       The macvlan parent NIC the installer saved from the interface scan.
       Blank = auto-detect.
 
+  TPROXY_DRIVER
+      L2 driver for the gateway network: macvlan (default) or ipvlan. Keep
+      macvlan -- it is the only driver that routes LAN clients, and a
+      macvlan child is reachable from the LAN even on an Open vSwitch
+      parent. ipvlan is a dashboard-only escape hatch the installer offers
+      on some OVS setups; it does NOT forward LAN-client traffic through
+      the proxy.
+
 --------------------------------------------------------------------------
 Mihomo TUN (transparent gateway)
 --------------------------------------------------------------------------
@@ -76,11 +84,12 @@ Dashboard / controller
       the dashboard.
 
   CONTROLLER_SECRET
-      Empty = no dashboard auth. The installer offers to auto-generate a
-      random secret when left empty (stored here); the post-deploy summary
-      says where it lives.
-      Optional dashboard auth secret. If set, enter it as the backend Secret.
-      It must NOT contain a '|' character.
+      Optional dashboard auth secret; empty = no dashboard auth. The
+      installer offers to auto-generate a random secret when left empty
+      (stored here); the post-deploy summary says where it lives. On a
+      re-run with a saved secret, pressing Enter at the prompt keeps it and
+      typing '-' clears it. If set, enter it as the backend Secret in the
+      dashboard. It must NOT contain a '|' character.
 
 --------------------------------------------------------------------------
 DNS settings
@@ -133,6 +142,19 @@ Automatic updates
   UPDATE_ENABLED
       Turns scheduled auto-updates on or off.
 
+  UPDATE_IMAGES
+      Space-separated image references the update job checks and pulls.
+      Leave it inheriting the three image variables (the default
+      "${MIHOMO_IMAGE} ${METACUBEXD_IMAGE} ${CF_IMAGE}"): the updater
+      refuses to run if this list stops including MIHOMO_IMAGE and
+      METACUBEXD_IMAGE exactly (and CF_IMAGE, when that is set).
+
+  UPDATE_DENY_CONTAINERS
+      Optional space-separated glob denylist for generic auto-update
+      targets: an enrolled container whose name matches any pattern is
+      never auto-updated. Example: "critical-* my-database". See
+      AUTO-UPDATE.txt.
+
   UPDATE_SCHEDULE
       A validated five-field numeric cron expression. Default is 02:00 daily.
       Configure the DSM task to match it.
@@ -149,12 +171,31 @@ Automatic updates
       The expected CPU architecture: amd64 or arm64. Set this to match your
       NAS to catch architecture mismatches early.
 
+  NOTIFY_WEBHOOK_URL
+      Optional webhook URL (Bark / Gotify / Slack-compatible JSON POST) for
+      update reports. When set it fires on failures AND successful updates,
+      independent of DSM's own notifications -- it is the reliable channel.
+      Leave empty to rely on the DSM task's "send run details by email".
+
+  NOTIFY_ON_NOCHANGE
+      Set to 1 to also get a notification when an update run changed
+      nothing. Default 0 (quiet on no-op runs).
+
+  UPDATE_LOG / LOG_KEEP
+      The updater's rotating log file and how many rotations to keep
+      (default 7). A relative UPDATE_LOG lands under the data directory:
+      the default ./logs/auto-update.log means
+      ../syno-mihomo-gateway-data/logs/auto-update.log.
+
 --------------------------------------------------------------------------
 Optional / advanced: tunnel
 --------------------------------------------------------------------------
   CF_* settings
       A tunnel component is optional and advanced. Leave the CF_* settings at
-      their defaults unless you specifically need a tunnel.
+      their defaults unless you specifically need a tunnel. During deploy the
+      image step asks "Also manage a cloudflared tunnel container? (advanced,
+      optional)" -- default No. Answering yes collects CF_TAG and a tunnel
+      token (Enter reuses the token of an already-running container).
 
 --------------------------------------------------------------------------
 Subscription URL

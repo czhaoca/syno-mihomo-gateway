@@ -13,9 +13,19 @@ You set this up from the installer:
 --------------------------------------------------------------------------
 Choosing the time and timezone
 --------------------------------------------------------------------------
-The cron setup asks for a daily time as HH:MM. The default schedule is 02:00
-daily. It then lets you pick the timezone from a menu (Asia/Shanghai is the
-default, plus other common zones, or type your own).
+The cron setup asks for the daily run time as HH:MM (24h). Pressing Enter
+accepts the default shown in the prompt (your current schedule; 02:00 on a
+fresh install). Times with a leading zero, such as 08:30, are stored
+correctly. Next comes the timezone menu: Asia/Shanghai is listed first,
+followed by other common zones and an "Other (type it)" entry. This menu has
+NO Enter-default - you must type the number of your choice. The timezone
+only labels the updater's log timestamps (see below).
+
+The installer then asks "Enable automatic updates?" (default Yes; answering
+No writes UPDATE_ENABLED=false, so the scheduled job will no-op until
+re-enabled) and, optionally, "review which OTHER containers auto-update
+(generic targets)?" (default No; answering Yes opens the generic-target
+management flow - see "Generic targets" below).
 
 --------------------------------------------------------------------------
 Recommended: DSM Task Scheduler (survives system upgrades)
@@ -36,13 +46,15 @@ the EXACT settings to enter (the command line, schedule, and user). Copy those
 into the Task Scheduler task.
 
 The printed command uses an absolute working directory and an explicit /bin/sh,
-as recommended for DSM 7 tasks. Do NOT add ">> logs/auto-update.log": the
-updater already writes and rotates that file. A second redirection duplicates
-log lines and keeps writing to the old file after rotation.
+as recommended for DSM 7 tasks. Do NOT add a ">> ...log" redirection of your
+own: the updater already writes and rotates its log at
+../syno-mihomo-gateway-data/logs/auto-update.log. A second redirection
+duplicates log lines and keeps writing to the old file after rotation.
 
 Enable "Send run details only when the script terminates abnormally", or use
 Task Scheduler Settings -> Save output results. After creating the task, select
-it and click Run once; verify a zero result and logs/auto-update.log.
+it and click Run once; verify a zero result and check
+../syno-mihomo-gateway-data/logs/auto-update.log.
 
 Why the GUI task is preferred: a crontab line may be overwritten by DSM during
 a system upgrade. The Task Scheduler task persists across upgrades.
@@ -50,15 +62,24 @@ a system upgrade. The Task Scheduler task persists across upgrades.
 --------------------------------------------------------------------------
 How to schedule (an explicit choice)
 --------------------------------------------------------------------------
-After you pick the time and log timezone, the installer offers HOW to schedule:
+After the questions above, the installer asks "How do you want to schedule
+it?". The menu repeats until you choose Done, so you can combine actions
+(for example run the dry-run first, then set up the DSM task):
 
-  1) Set it up via the DSM web UI (Task Scheduler) - RECOMMENDED, and
-     upgrade-persistent. The installer prints the exact Control Panel ->
+  1) Set it up via the DSM web UI (Task Scheduler) - recommended
+     Upgrade-persistent. The installer prints the exact Control Panel ->
      Task Scheduler settings to enter.
-  2) Install a crontab entry now via CLI - quick, but may be overwritten by a
-     DSM system upgrade.
-  3) Just run a DRY-RUN to validate - pulls/checks the image cache but never
-     swaps a container. Use this before trusting the schedule.
+  2) Install a crontab entry now (CLI; DSM may overwrite it on upgrade)
+  3) Validate now with a dry-run (pulls cache; does not swap containers)
+     Use this before trusting the schedule.
+  4) Done
+
+Choosing Done is checked against what actually happened: if updates are
+enabled but no crontab entry was installed and the DSM instructions were
+never shown, the installer warns that nothing will actually run and offers
+to set UPDATE_ENABLED=false first. If the instructions were shown, it
+reminds you that the task must still be created in the web UI or updates
+will not run.
 
 --------------------------------------------------------------------------
 IMPORTANT: timezone vs actual trigger time
@@ -78,6 +99,11 @@ Related .env settings
   EXPECTED_ARCH     - amd64 or arm64; set to match your NAS.
   TUN_AUTO_REDIRECT - optional TCP redirect optimization; default false on
                       DSM. true runs an iptables compatibility probe first.
+  NOTIFY_WEBHOOK_URL - optional webhook (Bark/Gotify/Slack-compatible JSON
+                      POST), the reliable push channel for run reports; DSM's
+                      own push is best-effort only.
+  NOTIFY_ON_NOCHANGE - set to 1 to also be notified when nothing changed
+                      (default 0).
 
 See CONFIGURE.txt for the full settings reference.
 
@@ -103,6 +129,11 @@ It then rebuilds and verifies the canonical container with the latest image and
 the saved ports/networks. If finalization fails, it restores the previous image
 and run specification while the temporary connector keeps the tunnel live. A
 candidate that may be the only connector is never removed automatically.
+If the update cannot complete, the run summary distinguishes three outcomes:
+ROLLED BACK to the previous connector (now connected); FAILED with the
+candidate discarded (the old connector untouched); or FAILED needing manual
+attention (the -candidate container may be the only live connector - do not
+remove it).
 
 A dry-run DOES update the local image cache, but never swaps a container.
 
@@ -115,14 +146,23 @@ Updater exit codes
   4  Another run is already in progress.
   5  Registry login failed (check your registry credentials).
 
-If the schedule reports a non-zero code, see TROUBLESHOOTING.txt and check the
-auto-update log under the logs/ folder.
+If the schedule reports a non-zero code, see TROUBLESHOOTING.txt and check
+../syno-mihomo-gateway-data/logs/auto-update.log.
 
 --------------------------------------------------------------------------
 Logs
 --------------------------------------------------------------------------
-The updater writes an auto-update log under the logs/ folder. Review it after
-a scheduled run to confirm what changed and whether a rollback occurred.
+The updater writes its log to ../syno-mihomo-gateway-data/logs/auto-update.log
+(the persistent data folder next to the release folder - nothing is logged
+inside the release folder). Review it after a scheduled run to confirm what
+changed and whether a rollback occurred.
+
+Each run ends with a summary: counts (updated/unchanged/failed/rolled_back)
+followed by one line per target. The same outcome, including the names of
+updated, failed, and rolled-back targets, is saved to
+../syno-mihomo-gateway-data/state/last-run.json; view it with:
+
+  sh scripts/gateway.sh update --last
 
 --------------------------------------------------------------------------
 Generic targets (any enrolled container)
@@ -140,16 +180,26 @@ ambiguous, matching UPDATE_DENY_CONTAINERS, or carrying settings the engine
 cannot replay are refused with a reason. Database-like images warn loudly:
 recreation has no quiesce. Updates run serially (generic targets, then
 cloudflared, then the gateway pair LAST), each behind a health gate with
-automatic restore of the saved container on failure.
+automatic restore of the saved container on failure. In the run summary, a
+target the engine refused to touch is reported as REFUSED (container
+untouched - check the log, or de-enroll it), distinct from FAILED/ROLLED
+BACK. See CLI.txt for the full gateway.sh reference.
 
 --------------------------------------------------------------------------
-Acceptance runbook (run after ANY updater change)
+Optional: canary-verify an update (advanced)
 --------------------------------------------------------------------------
+Not required for normal use. If you want proof that an update preserved a
+container's configuration, snapshot it before and compare after:
+
 1. Dry-run smoke:   sudo sh scripts/auto_update.sh --dry-run
 2. Canary:          sudo sh scripts/state_diff.sh snapshot <name> /tmp/before
                     sudo sh scripts/gateway.sh update --yes
                     sudo sh scripts/state_diff.sh compare <name> /tmp/before
-   Any "DRIFT:" line is a failed acceptance (narrow exception: labels/
-   healthcheck artifacts are image-relative overrides and can drift falsely
-   when the new image bakes in the same value - verify with docker inspect).
-3. Gateway checks:  see OPERATIONS/TROUBLESHOOTING guides.
+   Any "DRIFT:" line means a setting was not preserved (narrow exception:
+   labels/healthcheck artifacts are image-relative overrides and can drift
+   falsely when the new image bakes in the same value - verify with
+   docker inspect).
+3. Gateway checks:  run sudo sh scripts/gateway.sh status and
+                    sudo sh scripts/gateway.sh doctor (full reference in
+                    CLI.txt); if anything looks wrong, see
+                    TROUBLESHOOTING.txt.

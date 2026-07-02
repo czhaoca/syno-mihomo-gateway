@@ -51,14 +51,15 @@ The installer menu
 After the language step, install.sh opens an interactive menu:
 
   1) Deploy the gateway (first run, end-to-end)
-  2) Redeploy (reuse saved settings; fix a conflicting IP)
+  2) Deploy with the saved .env (edit settings or deploy as-is)
   3) Set up automatic updates (cron)
   4) Modify an existing deployment
-  5) Status / diagnose (read-only summary + optional doctor run)
+  5) Status / diagnose
   6) Quit
 
 A live status line above the menu shows: not deployed / partial / running
-(with the gateway IP and dashboard URL once running).
+(with the gateway IP and dashboard URL once running). Item 5 is read-only:
+a status summary plus an optional doctor run.
 
 You can press Ctrl-D at any prompt or menu to quit the installer cleanly.
 
@@ -88,8 +89,10 @@ Where to read next
   * CONFIGURE.txt        - the .env settings reference
   * AUTO-UPDATE.txt      - scheduling automatic updates
   * TROUBLESHOOTING.txt  - symptoms and fixes
+  * CLI.txt              - the gateway.sh command-line reference
 
-Logs are written under the logs/ folder (an install log and, once scheduled,
-an auto-update log).
+Logs are written under ../syno-mihomo-gateway-data/logs/ (a sibling of this
+folder, created automatically): an install log and, once scheduled, an
+auto-update log.
 
 Read-only health check:  sudo sh scripts/doctor.sh --egress
