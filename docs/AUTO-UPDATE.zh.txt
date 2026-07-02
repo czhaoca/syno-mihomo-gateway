@@ -110,3 +110,30 @@ dry-run 会更新本地镜像缓存，但绝不会切换容器。
 --------------------------------------------------------------------------
 更新脚本会在 logs/ 文件夹下写入一份自动更新日志。计划任务运行后请查看它，
 确认有哪些变化以及是否发生了回滚。
+
+--------------------------------------------------------------------------
+通用目标（任意已登记的容器）
+--------------------------------------------------------------------------
+除网关容器外，更新器还可刷新任何镜像已在你 ACR 上的运行中容器。登记/管理：
+
+  sudo sh scripts/gateway.sh update --enable <容器名> --yes
+  sh scripts/gateway.sh update --list-targets
+  sh scripts/gateway.sh update --last
+  sudo sh scripts/gateway.sh update --disable <容器名> --yes
+
+也可通过安装器的更新流程操作。compose 管理、标签不完整、匹配
+UPDATE_DENY_CONTAINERS、或带有引擎无法回放设置的容器会被拒绝并说明原因。
+疑似数据库的镜像会发出明确警告：重建没有静默机制。更新严格串行（先通用
+目标，再 cloudflared，网关对最后），每步都有健康门，失败时自动恢复保存的
+容器。
+
+--------------------------------------------------------------------------
+验收手册（更新器有任何变更后必须执行）
+--------------------------------------------------------------------------
+1. 试运行冒烟：   sudo sh scripts/auto_update.sh --dry-run
+2. 金丝雀：       sudo sh scripts/state_diff.sh snapshot <容器名> /tmp/before
+                  sudo sh scripts/gateway.sh update --yes
+                  sudo sh scripts/state_diff.sh compare <容器名> /tmp/before
+   出现任何 "DRIFT:" 行即验收失败（狭窄例外：labels/健康检查工件是相对
+   镜像的覆盖差集，新镜像内置相同值时可能误报——请用 docker inspect 复核）。
+3. 网关检查：     参见运维/故障排查指南。

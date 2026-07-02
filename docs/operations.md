@@ -41,6 +41,13 @@ vi ../syno-mihomo-gateway-data/config/subscription.txt
 docker compose --env-file ../syno-mihomo-gateway-data/.env up -d mihomo
 ```
 
+## Acceptance after updater changes
+
+Any change to the auto-update machinery must pass the
+[acceptance runbook](auto-update.md#acceptance-runbook-required-before-relying-on-updater-changes)
+on the NAS (dry-run smoke → `state_diff.sh` canary → gateway-pair checks). This is the
+**required** manual gate: real-container behavior is deliberately not exercised in CI.
+
 ## Scheduling on DSM
 
 On DSM 7, use **Control Panel → Task Scheduler** rather than editing `/etc/crontab`.

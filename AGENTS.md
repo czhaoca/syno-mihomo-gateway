@@ -28,9 +28,18 @@
 
 - **Push side**: sibling repo `docker-china-sync` mirrors images to Alibaba ACR (GitHub Actions).
 - **Pull side**: `scripts/auto_update.sh` (DSM Task Scheduler, root) pulls from ACR, detects
-  digest changes, and redeploys safely: `docker compose up -d` for mihomo/metacubexd with a
-  health-gate + auto-rollback; **blue-green** for an **external** `cloudflared` (managed by name,
-  tunnel token preserved). Reports via `synodsmnotify` + `logs/auto-update.log`.
+  digest changes, and applies serially, lowest blast radius first: enrolled **generic targets**
+  (in-place recreate via `lib/container.sh` spec capture/replay, tiered health gate, saved-spec
+  auto-restore, last-good persistence) → **blue-green** for the **external** `cloudflared`
+  (managed by name, tunnel token preserved) → `docker compose up -d` for mihomo/metacubexd
+  (health-gate + auto-rollback) LAST. Reports via webhook/`synodsmnotify` + `logs/auto-update.log`
+  with an `updated/unchanged/failed/rolled_back` counts header; `state/last-run.json` feeds
+  `gateway.sh status`.
+- **Generic enrollment**: managed list at `<data-dir>/state/update-targets`
+  (`gateway.sh update --enable/--disable/--list-targets` or the installer flow); eligible =
+  enrolled ∩ running ∩ ACR-ref, minus the trio/compose-managed/ambiguous/`UPDATE_DENY_CONTAINERS`;
+  fail-closed parity guard refuses un-replayable settings. Acceptance: `scripts/state_diff.sh`
+  snapshot/compare around an update is the required manual gate (see docs/auto-update.md).
 - **Config**: `UPDATE_*`, `ACR_*`, `CF_*`, `EXPECTED_ARCH` in `.env` (see docs/configuration.md).
 
 ## CI/CD

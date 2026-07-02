@@ -93,7 +93,7 @@ against the three resolved refs (see [Auto-Update](auto-update.md#image-refs)).
 |---|:--:|:--:|---|---|
 | `DOCKER_REGISTRY` | ✅ | | Registry host (used for `docker login` and to derive the refs); the installer pre-fills `registry.cn-shenzhen.aliyuncs.com` as the default. In `docker` mode the installer clears it so login is skipped. | `registry.cn-shenzhen.aliyuncs.com` |
 | `DOCKER_USERNAME` | ✅ | | Registry username (shared by the installer + updater). | `your_registry_user` |
-| `ACR_PASSWORD` | ✅ | 🔒 | Registry password / access token (non-interactive `--password-stdin`). | `…` |
+| `ACR_PASSWORD` | ✅ | 🔒 | Registry password / access token (non-interactive `--password-stdin`). Least privilege: a dedicated **pull-only** ACR sub/RAM account, distinct from the `docker-china-sync` push account. | `…` |
 | `ACR_NAMESPACE` | ✅ | | Registry namespace your images live under (combined with the host + tag to derive the refs). | `myns` |
 
 ### Auto-update orchestrator
@@ -105,6 +105,24 @@ against the three resolved refs (see [Auto-Update](auto-update.md#image-refs)).
 | `UPDATE_SCHEDULE` | Five-field numeric cron expression used to configure DSM Task Scheduler / the fallback crontab. It is range-validated before output. **Quote it.** | `"0 2 * * *"` |
 | `UPDATE_TZ` | Timezone used for updater log timestamps. The DSM trigger itself follows the NAS Regional Options timezone. | `Asia/Shanghai` |
 | `EXPECTED_ARCH` | Guard against the amd64-only mirror landing on an ARM NAS. `amd64`/`arm64`. | `amd64` |
+
+### Generic auto-update targets
+
+Enrollment does **not** live in `.env`: the managed list is
+`<data-dir>/state/update-targets` (records `name|strategy|probe`), edited via
+`gateway.sh update --enable/--disable` or the installer's update flow, and shown by
+`update --list-targets`. Related state written by the updater: `state/last-run.json`
+(the last run's counts/exit code, surfaced by `gateway.sh status`) and
+`state/last-good/<name>` (the proven-good image ID + spec digest per target, kept for
+cross-run rollback).
+
+| Var | Meaning | Default |
+|---|---|---|
+| `UPDATE_DENY_CONTAINERS` | Optional space-separated glob list; matching container names are never auto-updated even when enrolled. | *(empty)* |
+
+Per-target probes (third field of a record, screened at enroll time): `exec:<cmd>` runs
+inside the container via `docker exec`; `log:<regex>` greps `docker logs`. Without a probe
+the gate is running + stable restarts + the image's own healthcheck when defined.
 
 ### cloudflared (external container, blue-green by name)
 

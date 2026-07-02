@@ -392,6 +392,33 @@ else
   FAIL=$((FAIL + _drc))
 fi
 
+# --- T14: state_diff.sh derives from the capture contract ---------------------
+SD="$ROOT/scripts/state_diff.sh"
+SNAP="$TMP/snap"
+export DOCKER_BIN   # state_diff.sh runs as a subprocess against the fake docker
+MOCK_HEALTH_STATUS=none MOCK_HOSTNAME=webhost; export MOCK_HEALTH_STATUS MOCK_HOSTNAME
+expect_success "state snapshot succeeds" sh "$SD" snapshot webapp "$SNAP"
+[ -f "$SNAP/scalars" ] || fail "snapshot did not write the scalar set"
+assert_not_contains "image id exempt from the contract" "$(cat "$SNAP/scalars")" 'sha256:oldimg'
+expect_success "identical container compares clean" sh "$SD" compare webapp "$SNAP"
+_OLD_SYSCTLS="$MOCK_SYSCTLS"
+MOCK_SYSCTLS='net.ipv4.ip_forward=0'; export MOCK_SYSCTLS
+SD_OUT="$(sh "$SD" compare webapp "$SNAP" 2>&1)" && fail "mutated sysctl must fail the diff" || ok
+assert_contains "diff names the drifted field" "$SD_OUT" 'sysctls'
+MOCK_SYSCTLS="$_OLD_SYSCTLS"; export MOCK_SYSCTLS
+_OLD_STOP="$MOCK_STOP_SIGNAL"
+MOCK_STOP_SIGNAL=SIGTERM; export MOCK_STOP_SIGNAL
+SD_OUT="$(sh "$SD" compare webapp "$SNAP" 2>&1)" && fail "mutated stop signal must fail the diff" || ok
+assert_contains "scalar diff names the field" "$SD_OUT" 'stop_signal'
+MOCK_STOP_SIGNAL="$_OLD_STOP"; export MOCK_STOP_SIGNAL
+# A recreated container gets a new Id: its auto short-id alias and an
+# auto-generated hostname must be normalized away, never reported as drift.
+MOCK_ID='ffeeddccbbaa99887766554433221100' MOCK_HOSTNAME=webhost
+MOCK_NETWORKS='appnet|10.10.0.5|web,ffeeddccbbaa'
+export MOCK_ID MOCK_HOSTNAME MOCK_NETWORKS
+expect_success "new container id and auto alias are normalized" sh "$SD" compare webapp "$SNAP"
+unset MOCK_ID MOCK_NETWORKS
+
 if [ "$FAIL" -ne 0 ]; then
   printf 'FAILED: %s passed, %s failed\n' "$PASS" "$FAIL" >&2
   exit 1

@@ -21,7 +21,9 @@ The "push" side lives in the sibling repo **`docker-china-sync`**. In short:
    collides). So `metacubex/mihomo:latest` → `registry.cn-….aliyuncs.com/myns/mihomo:latest`.
 
 On the NAS, set in `.env`: `DOCKER_REGISTRY`, `DOCKER_USERNAME`, `ACR_PASSWORD`, and point
-`MIHOMO_IMAGE` / `METACUBEXD_IMAGE` / `CF_IMAGE` at those ACR refs.
+`MIHOMO_IMAGE` / `METACUBEXD_IMAGE` / `CF_IMAGE` at those ACR refs. Least privilege: create
+a dedicated **pull-only** ACR sub/RAM account for the NAS, distinct from the push account
+`docker-china-sync` uses — the updater only ever pulls.
 
 ## Image refs
 
@@ -79,7 +81,8 @@ Each invocation, in order (everything is logged to `UPDATE_LOG`):
    health, and sends a failure notification.
 9. **Apply (cloudflared)** — [blue-green](#cloudflared-blue-green), only after its own pull/verify.
 10. **Prune** dangling layers (only on full success, so rollback targets remain available).
-11. **Notify** — webhook (when `NOTIFY_WEBHOOK_URL` is set) + best-effort Synology push + log,
+11. **Notify** — the summary opens with counts (`updated:N unchanged:N failed:N
+    rolled_back:N`) followed by per-target bullets; sent via webhook (when `NOTIFY_WEBHOOK_URL` is set) + best-effort Synology push + log,
     on failure *and* success. The reliable default alert path is DSM Task Scheduler's
     *send-run-details email*, driven by the exit codes below — `synodsmnotify` is unreliable on
     DSM 7 (needs package-registered strings) and never gates the webhook.
@@ -139,6 +142,68 @@ token is read from the running container and you don't need it in `.env`.
 Published metrics ports are omitted only from the temporary candidate and restored on the
 canonical replacement. Connectivity checking falls back to cloudflared's registration log when
 the image has no native healthcheck.
+
+## Generic targets (any enrolled container)
+
+Beyond the gateway trio, the updater refreshes **any running container you enroll** whose
+image already lives on your ACR (`DOCKER_REGISTRY/ACR_NAMESPACE/...`). There is deliberately
+**no upstream→ACR name translation**: if a container runs a Docker Hub ref, mirror the image
+first (add it to `docker-china-sync/images.txt`), redeploy the container from the ACR ref,
+then enroll it.
+
+**Enroll / manage** (both edit the same managed list at
+`<data-dir>/state/update-targets`, never `.env`):
+
+```sh
+sudo sh scripts/gateway.sh update --enable <container> --yes
+sh scripts/gateway.sh update --list-targets     # read-only, shows live eligibility
+sh scripts/gateway.sh update --last             # read-only, last run's outcome
+sudo sh scripts/gateway.sh update --disable <container> --yes
+```
+
+or interactively via the installer's update flow (it scans running ACR-ref containers and
+toggles each). Never eligible regardless of enrollment: the gateway trio (their own paths
+update them), compose-managed or partially-labeled containers (never hand-recreated),
+anything matching `UPDATE_DENY_CONTAINERS` globs, `--rm`/`container:*`-mode containers, and
+any container whose settings the replay engine cannot faithfully reproduce (the fail-closed
+parity guard refuses and names the setting). Database-like images warn loudly at enroll
+time: recreation has no quiesce.
+
+**How a generic target updates** (strictly serial, before cloudflared, with the gateway
+pair always LAST): the full run spec is captured from `docker inspect` (env, mounts —
+anonymous volumes retained by name — ports, networks/static IPs/aliases, capabilities,
+devices, limits, labels, log config...), the container is recreated in place from the new
+image, and a tiered health gate must pass: running → stable restart count → the image's
+own healthcheck (when defined) → your optional per-target probe (`exec:<cmd>` or
+`log:<regex>`, run inside the container's netns). On failure the saved spec + old image
+are restored automatically. On success the proven-good image ID is persisted under
+`<data-dir>/state/last-good/` (surviving later prunes), and `state/last-run.json` records
+the run for `gateway.sh status`.
+
+## Acceptance runbook (required before relying on updater changes)
+
+Real-container behavior is **not** covered by CI (a deliberate decision: granting the CI
+runner a docker socket is a homelab security call — the owner can upgrade later by marking
+the repo trusted in the Woodpecker admin UI and adding a dind step; until then this runbook
+is the required manual gate). On the NAS:
+
+1. **Dry-run smoke** — `sudo sh scripts/auto_update.sh --dry-run`: the report must list
+   exactly the expected would-update set across all three buckets and change nothing.
+2. **Canary** — enroll one non-critical container, then:
+
+   ```sh
+   sudo sh scripts/state_diff.sh snapshot <name> /tmp/canary-before
+   sudo sh scripts/gateway.sh update --yes
+   sudo sh scripts/state_diff.sh compare <name> /tmp/canary-before
+   ```
+
+   `state_diff.sh` snapshots with the updater's own capture engine, so "state retained"
+   is a mechanical equality check (image/identity fields exempt). Any `DRIFT:` line is a
+   failed acceptance — with one narrow exception: `labels`/`hc-test`/`hc-meta` are compared
+   as overrides relative to each side's own image, so if the NEW image bakes in the same
+   override verbatim they can drift falsely; confirm with `docker inspect` before treating
+   those two as real regressions.
+3. **Gateway pair** — verify via [Operations › Manual health checks](operations.md#manual-health-checks).
 
 ## Exit codes
 

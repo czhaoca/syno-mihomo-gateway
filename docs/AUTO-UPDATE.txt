@@ -123,3 +123,33 @@ Logs
 --------------------------------------------------------------------------
 The updater writes an auto-update log under the logs/ folder. Review it after
 a scheduled run to confirm what changed and whether a rollback occurred.
+
+--------------------------------------------------------------------------
+Generic targets (any enrolled container)
+--------------------------------------------------------------------------
+Besides the gateway containers, the updater can refresh ANY running container
+whose image is already on your ACR. Enroll/manage with:
+
+  sudo sh scripts/gateway.sh update --enable <container> --yes
+  sh scripts/gateway.sh update --list-targets
+  sh scripts/gateway.sh update --last
+  sudo sh scripts/gateway.sh update --disable <container> --yes
+
+or via the installer's update flow. Containers that are compose-managed,
+ambiguous, matching UPDATE_DENY_CONTAINERS, or carrying settings the engine
+cannot replay are refused with a reason. Database-like images warn loudly:
+recreation has no quiesce. Updates run serially (generic targets, then
+cloudflared, then the gateway pair LAST), each behind a health gate with
+automatic restore of the saved container on failure.
+
+--------------------------------------------------------------------------
+Acceptance runbook (run after ANY updater change)
+--------------------------------------------------------------------------
+1. Dry-run smoke:   sudo sh scripts/auto_update.sh --dry-run
+2. Canary:          sudo sh scripts/state_diff.sh snapshot <name> /tmp/before
+                    sudo sh scripts/gateway.sh update --yes
+                    sudo sh scripts/state_diff.sh compare <name> /tmp/before
+   Any "DRIFT:" line is a failed acceptance (narrow exception: labels/
+   healthcheck artifacts are image-relative overrides and can drift falsely
+   when the new image bakes in the same value - verify with docker inspect).
+3. Gateway checks:  see OPERATIONS/TROUBLESHOOTING guides.
