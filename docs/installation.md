@@ -1,7 +1,7 @@
 # Installation
 
 [← README](../README.md) · [中文](zh/installation.md)
-Manual: [Architecture](architecture.md) · **Installation** · [Release Zip](release-packaging.md) · [Configuration](configuration.md) · [Auto-Update](auto-update.md) · [Operations](operations.md) · [Troubleshooting](troubleshooting.md) · [Development](development.md)
+Manual: [Architecture](architecture.md) · **Installation** · [Release Zip](release-packaging.md) · [Configuration](configuration.md) · [Auto-Update](auto-update.md) · [Operations](operations.md) · [CLI](cli.md) · [Troubleshooting](troubleshooting.md) · [Development](development.md)
 
 ---
 
@@ -27,7 +27,7 @@ its *Build/Update* action: the UI flow re-pulls and recreates containers with no
 health gate, and no rollback, bypassing this project's gated update path (`auto_update.sh`).
 Container Manager's GUI also cannot create macvlan networks or manage privileged capabilities,
 and a CLI-created compose stack does not register as a Project. Use `sh ./install.sh`,
-`scripts/gateway.sh`, or the scheduled updater instead.
+`scripts/gateway.sh` (see the [CLI reference](cli.md)), or the scheduled updater instead.
 
 ## 1. Get the code
 
@@ -49,8 +49,68 @@ If the NAS cannot reach github.com, don't clone. Build a release zip on a machin
 transfer it to the NAS, and unpack it into `/volume1/docker/syno-mihomo-gateway` — then come back
 here for steps 2-8. Full procedure: [Release Zip](release-packaging.md).
 
-> The path `/volume1/docker/syno-mihomo-gateway` is assumed throughout (the DSM scheduler
-> command and the docs use it). If you install elsewhere, adjust those paths.
+> The bundle **must** live under the Docker shared folder — any `/volumeN/docker`
+> (`/volume1` is just the common case). This is a hard requirement, not a convention: the
+> Docker daemon bind-mounts `./config` and `./scripts` from wherever `docker-compose.yml`
+> sits. `install.sh` checks this first and refuses to proceed elsewhere, printing the exact
+> `sudo mv` commands. The docs assume `/volume1/docker/syno-mihomo-gateway`; adjust the volume
+> number to match yours.
+
+## Choose an install path
+
+- **Guided (recommended):** `sudo sh ./install.sh` — the interactive installer described next.
+  It fills `.env` for you, validates everything before touching a running stack, and rolls
+  back on failure.
+- **Manual:** steps 2–8 below — edit `.env` yourself, run `setup_network.sh`, then drive
+  `docker compose` directly.
+
+### Guided install (recommended)
+
+```bash
+sudo sh ./install.sh
+```
+
+The first screen picks the UI language (English/中文, persisted as `INSTALLER_LANG`); every
+later message renders in that language. The main menu has six items — **Deploy / Redeploy /
+Cron / Modify / Status / Quit** — under a live status banner (not deployed / partial / running
+with the gateway IP and dashboard URL). The **Status / diagnose** item is a read-only summary
+of the containers, network, and TUN mode plus an optional `scripts/doctor.sh` run — so "is my
+gateway up?" never requires starting a flow.
+
+**Deploy** runs end-to-end:
+
+- Its **first** step inventories the gateway containers and macvlan and asks independently
+  whether to reuse them, dismantle verified project resources automatically, or show commands
+  for manual handling — running this decision up front keeps the subsequent interface
+  detection clean. Unrelated resources always require manual resolution; the external
+  cloudflared container is never part of this cleanup.
+- The interface scan lists only NICs that carry an IPv4 address and auto-fills `ROUTER_IP` /
+  `SUBNET_CIDR` from the chosen one; the static-IP prompt suggests the next free address above
+  the NAS's own IP (probed with arping/ping), and the chosen IP is conflict-probed again right
+  before the network is created.
+- When everything was detected (or saved from a previous run), a single **express
+  confirmation screen** shows all values at once; declining it falls back to the per-item
+  wizards. A saved `MIHOMO_IP` that falls outside a re-picked subnet is re-asked rather than
+  silently kept.
+- An empty `CONTROLLER_SECRET` triggers an offer to **auto-generate** one (declining is the
+  explicit "leave the dashboard unauthenticated" opt-out). On a re-run, pressing Enter keeps
+  the saved secret and `-` clears it.
+- Teardown of an existing stack happens only **after** image, architecture, rendered-config,
+  Compose, and network validation pass — a failed re-deploy never dismantles your running
+  gateway. The deploy itself is health-gated with automatic rollback, and the success report
+  points at menu option **3** (Cron) for scheduling automatic updates.
+
+**Redeploy** is also the recovery path after an IP conflict or a failed first deploy: it
+reuses everything saved in `.env`, offers *deploy as-is / edit settings / change `MIHOMO_IP` /
+re-pick interface*, re-validates, then force-recreates with the same health-gated rollback.
+
+If something fails, diagnostics point at the install log:
+`../syno-mihomo-gateway-data/logs/install.log` (a symlink into the unified `gateway.log`).
+Ctrl-D quits any prompt cleanly; Ctrl-C mid-flow is safe — the temporary config staging
+directory (which holds your subscription token) is removed, and any partial state is detected
+and offered for cleanup by the next run's inventory step.
+
+The rest of this page is the manual path.
 
 ## 2. Configure `.env`
 
@@ -59,10 +119,18 @@ sh bootstrap.sh
 vi ../syno-mihomo-gateway-data/.env
 ```
 
-At minimum set `ROUTER_IP`, `SUBNET_CIDR`, `MIHOMO_IP`, your DNS servers, and (for China) the
-ACR registry/credentials and image refs. Every key is documented in
-[Configuration](configuration.md). Runtime data is stored outside the release directory so a ZIP
-upgrade cannot delete it. `bootstrap.sh` also migrates a legacy in-tree `.env` automatically.
+At minimum set `ROUTER_IP`, `SUBNET_CIDR`, `MIHOMO_IP`, your DNS servers, and the image refs —
+the refs are required for **every** install, not just China: `docker-compose.yml` uses the
+fail-closed `${MIHOMO_IMAGE:?}` form, and `.env.example` ships non-pullable ACR placeholders
+(`registry.cn-shenzhen.aliyuncs.com/your-namespace/...`). `REGISTRY_MODE` selects the image
+source: `acr` (default) pulls from your private ACR mirror — set `DOCKER_REGISTRY`,
+`ACR_NAMESPACE`, the `*_TAG`s, and credentials (see
+[Auto-Update › ACR setup](auto-update.md#acr-setup)); `docker` pulls upstream (Docker Hub /
+ghcr.io — only works on a NAS with unfiltered internet access). On the manual path, replace
+the placeholder refs yourself; the guided installer derives them from `REGISTRY_MODE` for you.
+Every key is documented in [Configuration](configuration.md). Runtime data is stored outside
+the release directory so a ZIP upgrade cannot delete it. `bootstrap.sh` also migrates a legacy
+in-tree `.env` automatically.
 
 ## 3. Add your subscription
 
@@ -85,33 +153,27 @@ sudo chmod +x scripts/setup_network.sh
 sudo ./scripts/setup_network.sh
 ```
 
-This script:
+This headless script (it is also the DSM boot-up self-heal task):
 - creates `/dev/net/tun` if missing and fixes its permissions;
 - auto-detects the parent interface (the one that routes to `ROUTER_IP`; falls back to the
-  default route). An **Open vSwitch** parent (`ovs_eth0`) is fine — a macvlan child IS reachable
-  from LAN peers on OVS (verified empirically), so keep `TPROXY_DRIVER=macvlan` and do not switch to
-  `ipvlan` (`ipvlan` cannot route LAN clients) — see [Troubleshooting](troubleshooting.md);
+  default route);
 - creates or reuses a matching `tproxy_network` (macvlan by default, ipvlan when
   `TPROXY_DRIVER=ipvlan`) with your `SUBNET_CIDR` / `ROUTER_IP`; it refuses to remove a mismatched
-  existing network;
-- optionally logs in to your registry and pulls images (non-interactive when `ACR_PASSWORD`
-  is set, otherwise it prompts).
+  existing network.
 
-The installer menu shows a live status banner (not deployed / partial / running with the
-gateway IP and dashboard URL) and includes a **Status / diagnose** item: a read-only summary of
-the containers, network, and TUN mode plus an optional `scripts/doctor.sh` run — so "is my
-gateway up?" never requires starting a flow.
+It performs **no registry login and no image pulls** — that happens in the guided installer's
+deploy flow, or implicitly when `docker compose up` pulls missing images in step 5.
 
-For an existing or partial deployment, use `sudo sh ./install.sh` instead. Its **first** step
-inventories the gateway containers and macvlan and asks independently whether to reuse them,
-dismantle verified project resources automatically, or show commands for manual handling — running
-this decision up front keeps the subsequent interface detection clean. The interface picker then
-lists only NICs that carry an IP address, and the static-IP prompt suggests the next free address
-above the NAS's own IP (probed with arping/ping) instead of a fixed placeholder. Manual mode removes
-nothing and can rescan after you finish. Automatic teardown still waits until image, architecture,
-rendered-config, Compose, and network validation pass — a failed re-deploy never tears down your
-running gateway. Unrelated resources always require manual resolution; the external cloudflared
-container is never part of this cleanup.
+An **Open vSwitch** parent (`ovs_eth0`) prints a non-fatal heads-up on every network-creation
+path: a macvlan child IS LAN-reachable on a typical OVS parent (verified empirically), but some
+OVS configurations do not flood the child's fresh MAC to peer ports. Keep
+`TPROXY_DRIVER=macvlan` — the guided installer additionally offers to switch to `ipvlan`
+(default No), but that is a dashboard-only escape hatch: `ipvlan` cannot route LAN clients.
+See [Troubleshooting](troubleshooting.md).
+
+For first-time interactive setup or an existing/partial deployment, use the
+[guided installer](#guided-install-recommended) instead — its up-front inventory step handles
+the reuse/cleanup decisions safely.
 
 ## 5. Start the stack
 
@@ -119,14 +181,16 @@ container is never part of this cleanup.
 sudo docker compose --env-file ../syno-mihomo-gateway-data/.env up -d
 ```
 
-On start, the mihomo entrypoint renders `config/config.yaml` from the template + your
-subscription + `.env`, then launches mihomo. If the subscription URL or DNS values are missing
-it **fails loudly** (the container won't run a poisoned config). Check logs:
+On start, the mihomo entrypoint renders `config.yaml` into the persistent data directory
+(`../syno-mihomo-gateway-data/config/`, mounted at `/root/.config/mihomo` in the container —
+not the release tree's `config/`) from the template + your subscription + `.env`, then launches
+mihomo. If the subscription URL or DNS values are missing it **fails loudly** (the container
+won't run a poisoned config). Check logs:
 
 ```bash
 docker logs mihomo
 docker compose --env-file ../syno-mihomo-gateway-data/.env ps
-sh scripts/doctor.sh
+sudo sh scripts/doctor.sh          # needs root; add --egress for a real GET through the proxy
 ```
 
 ## 6. Open the dashboard
@@ -159,7 +223,7 @@ sh scripts/install_scheduler.sh
 Dry-run first to confirm everything is wired:
 
 ```bash
-sh scripts/auto_update.sh --dry-run
+sudo sh scripts/auto_update.sh --dry-run
 ```
 
 ## Updating the repo itself

@@ -1,7 +1,7 @@
 # Offline Install (Release Zip)
 
 [← README](../README.md) · [中文](zh/release-packaging.md)
-Manual: [Architecture](architecture.md) · [Installation](installation.md) · **Release Zip** · [Configuration](configuration.md) · [Auto-Update](auto-update.md) · [Operations](operations.md) · [Troubleshooting](troubleshooting.md) · [Development](development.md)
+Manual: [Architecture](architecture.md) · [Installation](installation.md) · **Release Zip** · [Configuration](configuration.md) · [Auto-Update](auto-update.md) · [Operations](operations.md) · [CLI](cli.md) · [Troubleshooting](troubleshooting.md) · [Development](development.md)
 
 ---
 
@@ -10,7 +10,8 @@ github.com is unreachable**, so that first step fails. This guide is the alterna
 **release zip** on a machine that *does* have access, carry it to the NAS, unpack it into
 `/volume1/docker/syno-mihomo-gateway`, and configure it locally — **no git, no GitHub on the NAS**.
 
-The zip is **source-only** (compose file, scripts, config templates, docs). It deliberately does
+The zip is **source-only** (compose file, scripts, config templates, and the plain-text guides —
+see [what's inside the bundle](#profiles-whats-inside-the-bundle)). It deliberately does
 **not** carry container images. Those reach the NAS the same way the auto-updater already uses them:
 mirrored to your **Alibaba ACR** by [`docker-china-sync`](https://github.com/czhaoca/docker-china-sync),
 then pulled from that ACR (step 4). So an offline install is a two-track setup — **code via this zip,
@@ -23,42 +24,71 @@ images via your ACR mirror** — and the NAS never needs to reach github.com or 
 - You simply prefer not to install/run `git` on the NAS.
 - If the NAS *does* have GitHub access, the standard `git clone` install is simpler — use that.
 
-## 1. Build the release zip (on a machine with access)
+## 1. Get the release zip (on a machine with access)
 
-On any workstation that can reach github.com (your laptop, a VPS, a CI box):
+**Fast path — download it.** Every GitHub release already publishes exactly the four artifacts
+listed below (zip, tar.gz, and both `.sha256` sidecars). On any machine that can reach github.com,
+download the latest release's assets and skip straight to step 2 — no clone, no build.
+
+**Or build it yourself** from a clone:
 
 ```bash
 git clone https://github.com/czhaoca/syno-mihomo-gateway.git
 cd syno-mihomo-gateway
-sh scripts/ci/dsm_installer_check.sh
-sh scripts/ci/lifecycle_check.sh
-sh scripts/ci/auto_update_check.sh
-sh scripts/ci/cloudflared_check.sh
-python3 scripts/ci/package_check.py
-python3 scripts/ci/privacy_check.py
-python3 scripts/ci/privacy_check_test.py
-docker compose --env-file .env.example config --quiet
 sh scripts/package.sh                    # end-user DSM bundle (default profile)
 ```
 
-Do not publish a release unless these commands and the Woodpecker pipeline pass. The updater tests
-use fake Docker/Compose CLIs to exercise pull retries, image-ID comparison, architecture rejection,
-Compose apply failure, health rollback, scheduler quoting, and staged cloudflared cutover/rollback without
-touching a real daemon.
+For a personal offline bundle that single command is enough. Maintainers cutting a *published*
+release run the full check battery first — see
+[Development › Cutting a release](development.md#cutting-a-release) and
+[Development › Local checks before pushing](development.md#local-checks-before-pushing).
 
-This writes to `dist/`:
+Either way you end up with:
 
 ```text
-dist/syno-mihomo-gateway-1.0.0.zip            # File Station GUI friendly (no SSH needed to extract)
-dist/syno-mihomo-gateway-1.0.0.tar.gz         # preserves script exec bits through extraction
-dist/syno-mihomo-gateway-1.0.0.zip.sha256     # integrity sidecars
-dist/syno-mihomo-gateway-1.0.0.tar.gz.sha256
+dist/syno-mihomo-gateway-<version>.zip            # File Station GUI friendly (no SSH needed to extract)
+dist/syno-mihomo-gateway-<version>.tar.gz         # preserves script exec bits through extraction
+dist/syno-mihomo-gateway-<version>.zip.sha256     # integrity sidecars
+dist/syno-mihomo-gateway-<version>.tar.gz.sha256
 ```
 
-The version comes from the repo's `VERSION` file. The archive is built with `git archive`, so it
-contains **only tracked files** — your `.env`, `config/subscription.txt`, and `config/config.yaml`
-can never be in it. `.env.example` and `config/subscription.txt.example` *are* included as templates.
-(Maintainers: see [Development › Cutting a release](development.md#cutting-a-release).)
+The version comes from the repo's `VERSION` file (override with `--version X.Y.Z`). The archive is
+built with `git archive`, so it contains **only tracked files** — your `.env`,
+`config/subscription.txt`, and `config/config.yaml` can never be in it. `.env.example` and
+`config/subscription.txt.example` *are* included as templates.
+
+### Profiles: what's inside the bundle
+
+`scripts/package.sh` builds one of two profiles:
+
+- **`--profile enduser` (default)** — the curated, self-contained distribution: runtime files, the
+  interactive installer, and the **plain-text guides only**. All Markdown docs (`README.md`,
+  `docs/*.md`, `docs/zh/`), the dev/CI tooling (`scripts/ci`, `scripts/cli`, `.woodpecker.yml`),
+  and `scripts/package.sh` itself are stripped. On the NAS the manuals are `docs/README.txt`,
+  `INSTALL.txt`, `CONFIGURE.txt`, `TROUBLESHOOTING.txt`, `AUTO-UPDATE.txt`, and `CLI.txt` (plus
+  `.zh.txt` Chinese variants). This page — and [Installation](installation.md), and every other
+  `.md` cross-link in this guide — is **not** in the bundle; read the `.md` manual on the
+  connected machine or online.
+- **`--profile dev`** — the full tracked tree (docs, CI, metadata). Internal use; it is what CI's
+  package check builds.
+
+### Builder guards (why the build may refuse)
+
+`package.sh` fails closed (exit 3) rather than ship something wrong:
+
+- **Dirty working tree** — refused unless you pass `--allow-dirty`, which archives the committed
+  `HEAD` (**not** your local edits) and appends `-dirty` to the version.
+- **Tracked secrets** — refused if `.env`, `config/subscription.txt`, `config/config.yaml`, or
+  anything under `logs/` is tracked by git (`git archive` would ship it); untrack with
+  `git rm --cached <path>` first.
+- **Not a git checkout** — it must run from the source clone, not an unpacked release bundle.
+- **Identity leak-gate** (enduser profile only) — before writing any artifact, the staged tree is
+  scanned for developer/identifying strings (plus an email-address regex). Any hit aborts with
+  `IDENTITY LEAK`, names the offending string and file, and writes **no artifact**. The fix is to
+  scrub the string from the offending *tracked* file, commit, and rebuild — re-running without a
+  fix changes nothing.
+
+Other flags: `--no-zip` / `--no-tar` skip one artifact (passing both is an error).
 
 ## 2. Transfer the zip to the NAS
 
@@ -79,8 +109,8 @@ doc and the DSM scheduler command assume.
 - **SSH:**
   ```bash
   cd /volume1/docker
-  sha256sum -c syno-mihomo-gateway-1.0.0.zip.sha256     # optional integrity check
-  unzip syno-mihomo-gateway-1.0.0.zip                   # or: tar -xzf syno-mihomo-gateway-1.0.0.tar.gz
+  sha256sum -c syno-mihomo-gateway-<version>.zip.sha256     # optional integrity check
+  unzip syno-mihomo-gateway-<version>.zip                   # or: tar -xzf syno-mihomo-gateway-<version>.tar.gz
   cd syno-mihomo-gateway
   ```
 
@@ -98,9 +128,11 @@ stack, confirm:
   ACR namespace (see its
   [Using with syno-mihomo-gateway](https://github.com/czhaoca/docker-china-sync#using-with-syno-mihomo-gateway)
   section), and
-- in the next step you point `MIHOMO_IMAGE` / `METACUBEXD_IMAGE` (and `DOCKER_REGISTRY` /
-  `ACR_NAMESPACE` / credentials) in `.env` at that ACR — full reference in
-  [Configuration](configuration.md) and [Auto-Update › ACR setup](auto-update.md#acr-setup).
+- in the next step you keep `REGISTRY_MODE=acr` (the default) and give the installer your
+  `DOCKER_REGISTRY`, `ACR_NAMESPACE`, and credentials — it **derives** `MIHOMO_IMAGE` /
+  `METACUBEXD_IMAGE` from those plus the `*_TAG` values, so you do not normally edit the image
+  refs by hand — full reference in [Configuration](configuration.md) and
+  [Auto-Update › ACR setup](auto-update.md#acr-setup).
 
 The NAS only needs to reach your ACR — never github.com.
 
@@ -116,21 +148,33 @@ It seeds `../syno-mihomo-gateway-data/.env` and its `config/subscription.txt` fr
 examples (only if absent), migrates legacy in-tree files, restores script exec bits, and prints
 the next steps. It writes no secrets and runs nothing privileged.
 
-From here the steps are **identical to the standard install** — follow them in
-[Installation](installation.md):
+Then run the **interactive installer** — the recommended flow the bundle is built for:
 
-1. [Configure `.env`](installation.md#2-configure-env) — set `ROUTER_IP`, `MIHOMO_IP`, DNS, and your
-   ACR registry/credentials + image refs from step 4.
+```bash
+sudo sh ./install.sh
+```
+
+It walks you through `.env` (including `REGISTRY_MODE`/ACR and the derived image refs), the
+subscription, the network + TUN device, and start-up. The bundled `docs/INSTALL.txt` and
+`docs/CONFIGURE.txt` cover the same ground offline.
+
+Prefer to configure by hand? The manual steps are **identical to the standard install** — follow
+them in [Installation](installation.md) (on the connected machine; the `.md` manual is not in the
+bundle):
+
+1. [Configure `.env`](installation.md#2-configure-env) — set `ROUTER_IP`, `MIHOMO_IP`, DNS, and
+   your ACR registry/credentials from step 4 (keep `REGISTRY_MODE=acr`).
 2. [Add your subscription](installation.md#3-add-your-subscription).
 3. [Create the network + TUN device](installation.md#4-create-the-network--tun-device) —
    `sudo ./scripts/setup_network.sh`.
-4. [Start the stack](installation.md#5-start-the-stack) — use the guided installer, or pass the
-   persistent env file explicitly to Compose.
+4. [Start the stack](installation.md#5-start-the-stack) —
+   `sudo docker compose --env-file ../syno-mihomo-gateway-data/.env up -d`.
 
 ## 6. Verify
 
 - [ ] Tree is at `/volume1/docker/syno-mihomo-gateway`.
-- [ ] `../syno-mihomo-gateway-data/.env` exists (`chmod 600`); image refs point at your ACR.
+- [ ] `../syno-mihomo-gateway-data/.env` exists (`chmod 600`); `REGISTRY_MODE=acr` and the derived
+      image refs point at your ACR.
 - [ ] `../syno-mihomo-gateway-data/config/subscription.txt` contains your real URL.
 - [ ] `docker images` shows the mihomo and metacubexd images pulled from your ACR.
 - [ ] `sudo ./scripts/setup_network.sh` succeeded (macvlan + TUN created).
@@ -141,7 +185,8 @@ From here the steps are **identical to the standard install** — follow them in
 
 There is no `git pull` here. To update the **code**:
 
-1. Rebuild the zip on the connected machine (`git pull && sh scripts/package.sh`) and transfer it.
+1. On the connected machine, download the newest release's assets (or rebuild:
+   `git pull && sh scripts/package.sh`) and transfer the zip.
 2. On the **first** upgrade from the legacy in-tree layout, unpack over the existing tree and run
    `sh bootstrap.sh`; do not delete the old tree until `.env` and the subscription have migrated.
    After `/volume1/docker/syno-mihomo-gateway-data` exists, future release directories can be

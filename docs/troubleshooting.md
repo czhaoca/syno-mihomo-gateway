@@ -1,19 +1,59 @@
 # Troubleshooting & FAQ
 
 [← README](../README.md) · [中文](zh/troubleshooting.md)
-Manual: [Architecture](architecture.md) · [Installation](installation.md) · [Release Zip](release-packaging.md) · [Configuration](configuration.md) · [Auto-Update](auto-update.md) · [Operations](operations.md) · **Troubleshooting** · [Development](development.md)
+Manual: [Architecture](architecture.md) · [Installation](installation.md) · [Release Zip](release-packaging.md) · [Configuration](configuration.md) · [Auto-Update](auto-update.md) · [Operations](operations.md) · [CLI](cli.md) · **Troubleshooting** · [Development](development.md)
 
 ---
+
+## Dashboard symptom index
+
+Three distinct failure modes look alike. Pick by the exact symptom — always testing from a
+**non-NAS** LAN device, because the NAS cannot reach its own macvlan child:
+
+| `curl http://MIHOMO_IP:CONTROLLER_PORT/version` … | Failure mode | Go to |
+|---|---|---|
+| **times out** | wrong TUN stack / TUN off hijacks the controller | [Dashboard times out](#dashboard-times-out-wrong-tun-stack-hijacks-the-controller--most-common) |
+| returns JSON, but MetaCubeXD still says *"cannot connect to backend"* | CORS block | [Dashboard can't connect to the backend](#dashboard-cant-connect-to-the-backend) |
+| returns `401 Unauthorized` | `CONTROLLER_SECRET` mismatch between dashboard and `.env` | [checklist](#dashboard-cant-connect-to-the-backend) |
 
 ## Exit codes (auto_update.sh)
 
 | Code | Meaning | What to do |
 |---|---|---|
 | `0` | success / no-op | nothing |
-| `2` | partial failure | read the notification + `logs/auto-update.log` |
+| `2` | partial failure | read the notification + `../syno-mihomo-gateway-data/logs/gateway.log` (`auto-update.log` is a symlink to it) |
 | `3` | config / preflight error | fix the reported precondition; nothing was changed |
-| `4` | another run holds the lock | wait, or remove a stale `LOCK_DIR` if no run is active |
+| `4` | another run holds the lock | wait — see the stale-lock note below |
 | `5` | ACR login failed | check `ACR_PASSWORD` / token expiry / registry host |
+
+A lock whose recorded pid is dead is reclaimed **automatically** (`stale lock (pid …) - reclaiming.`;
+a pid-less lock gets a 2-second grace period first), so exit `4` means a run with a *live* pid holds
+it. Removing `LOCK_DIR` (default `/tmp/syno-mihomo-update.lock`) by hand is only needed in the rare
+pid-recycled edge case.
+
+The unified CLI (`sh scripts/gateway.sh`, see [CLI](cli.md)) shares codes `0/2/3/4/5` and adds
+`6` (mutating verb needs root) and `7` (mutating verb refused without `--yes`) — both mean nothing
+was changed. `gateway.sh status` and `gateway.sh doctor` (both support `--json`) are the supported
+diagnostic verbs over the raw scripts referenced below.
+
+## `required variable MIHOMO_IMAGE is missing a value`
+
+**Symptom:** any `docker compose` command aborts immediately with
+`required variable MIHOMO_IMAGE is missing a value: set MIHOMO_IMAGE in .env - run ./install.sh`
+(or the `METACUBEXD_IMAGE` twin).
+
+**Cause:** `docker-compose.yml` deliberately uses fail-closed `${VAR:?…}` references, and the live
+`.env` lives at `../syno-mihomo-gateway-data/.env` — a bare `docker compose up -d` cannot see it.
+You ran compose without `--env-file`, from the wrong directory, or before `install.sh` ever wrote
+the data-dir `.env`.
+
+**Fix:** always pass the env file:
+
+```sh
+docker compose --env-file ../syno-mihomo-gateway-data/.env up -d
+```
+
+If `../syno-mihomo-gateway-data/.env` does not exist yet, run `sh ./install.sh` first.
 
 ## macvlan self-reach
 
@@ -31,7 +71,7 @@ is expected, not a bug.
 
 ## Architecture mismatch (ARM NAS)
 
-**Symptom:** updater logs `arch mismatch for … image=amd64 expected=arm64 - refusing to deploy`,
+**Symptom:** updater logs `arch mismatch for … image=amd64 host=arm64 - refusing to deploy.`,
 or a container crash-loops with `exec format error`.
 
 **Cause:** `docker-china-sync` mirrors `linux/amd64` by default; your NAS is ARM.
@@ -42,15 +82,32 @@ refusing to deploy is *protecting* you from a crash-loop — it's working as int
 
 ## Network missing after reboot
 
-**Symptom:** after a NAS reboot, `docker compose up -d` or the updater fails with
-`network tproxy_network … could not be found`, or the updater preflight aborts (code `3`).
+**Symptom:** after a NAS reboot, `docker compose --env-file ../syno-mihomo-gateway-data/.env up -d`
+or the updater fails with `network tproxy_network … could not be found`, or the updater preflight
+aborts (code `3`).
 
 **Cause:** a CLI-created macvlan does not always survive a reboot / Container Manager restart;
 the parent interface can also change (`eth0` ↔ `ovs_eth0`).
 
 **Fix:** add the **Boot-up** Task Scheduler entry that runs `scripts/setup_network.sh` (see
 [Operations › Scheduling](operations.md#scheduling-on-dsm)). To recover now:
-`sudo ./scripts/setup_network.sh && docker compose up -d`.
+`sudo ./scripts/setup_network.sh && docker compose --env-file ../syno-mihomo-gateway-data/.env up -d`.
+
+## Network exists but with different settings
+
+**Symptom:** `setup_network.sh` (or the installer) logs
+`docker network 'tproxy_network' exists with different settings; refusing implicit removal` /
+`run install.sh and choose automatic or manual network cleanup`; or the updater preflight aborts
+(code `3`) with `macvlan parent mismatch: network='…' live='…'` or
+`macvlan configuration drift: expected parent=… subnet=… gateway=…`.
+
+**Cause:** the existing docker network's parent/subnet/gateway no longer match `.env` or the live
+routing — typically the parent interface changed (`eth0` ↔ `ovs_eth0`) or `SUBNET_CIDR`/`ROUTER_IP`
+was edited. The scripts refuse to delete a mismatched network implicitly.
+
+**Fix:** re-run `sh ./install.sh` and choose automatic (or manual) network cleanup when prompted.
+Or, if you are sure nothing else uses the network, remove it yourself (stop attached containers
+first): `docker network rm tproxy_network && sudo ./scripts/setup_network.sh`, then redeploy.
 
 ## Dashboard can't connect to the backend
 
@@ -79,9 +136,11 @@ external-controller-cors:
 ```
 
 so a fresh deploy already allows your dashboard. On a gateway deployed **before** this was added,
-update `config/config.template.yaml` (or the rendered `…-data/config/config.yaml`) and re-render
-with `docker compose up -d --force-recreate mihomo` — the entrypoint re-renders `config.yaml` from
-the template on start.
+update `config/config.template.yaml` and re-render with
+`docker compose --env-file ../syno-mihomo-gateway-data/.env up -d --force-recreate mihomo`
+(or `sudo sh scripts/gateway.sh redeploy --yes`). Do **not** edit the rendered
+`…-data/config/config.yaml` instead — the entrypoint regenerates it from the template on every
+container start, so that edit is clobbered by the very restart meant to apply it.
 
 ## Dashboard times out (wrong TUN stack hijacks the controller) — MOST COMMON
 
@@ -101,9 +160,12 @@ looked healthy while the dashboard could not connect.
 `mixed`/`gvisor` + `auto-route`, the `system` stack does **not** hijack the controller's reply path, so
 the dashboard backend at `MIHOMO_IP:CONTROLLER_PORT` stays reachable from the LAN while transparent
 gateway forwarding keeps working. This is the verified, working configuration — do **not** turn TUN off
-to work around #1493. Redeploy a current build, or fix an older deployment in place by confirming the
+to work around #1493. Redeploy a current build, or fix an older deployment in place: confirm the
 rendered `…-data/config/config.yaml` has `tun.enable: true` with `tun.stack: system` (and
-`allow-lan: true`, `enhanced-mode: fake-ip`), then `docker compose up -d --force-recreate mihomo`.
+`allow-lan: true`, `enhanced-mode: fake-ip`) — if it doesn't, set `TUN_ENABLE=true` in
+`../syno-mihomo-gateway-data/.env` or fix the template (never the rendered file; it is regenerated
+on every start) — then
+`docker compose --env-file ../syno-mihomo-gateway-data/.env up -d --force-recreate mihomo`.
 Confirm with:
 
 ```sh
@@ -137,9 +199,12 @@ sudo sh scripts/doctor.sh --egress
 ```
 
 It checks the host TUN device, macvlan, Compose model, image architecture, controller, and the
-in-container `mihomo-tun` dataplane. Exit `0` is structurally healthy, `2` is degraded external
-proxy egress, and `3` is a local configuration/runtime failure. If it passes, test gateway and
-DNS from a different LAN device because the NAS cannot reach its own macvlan child.
+in-container `mihomo-tun` dataplane. Exit `0` is structurally healthy, `2` is degraded — an
+optional service or egress warning (the dashboard container not running, or the `--egress` probe
+failing / having no downloader available) — and `3` is a local configuration/runtime failure.
+`sudo sh scripts/gateway.sh doctor --json` runs the same check set and emits one JSON object
+(see [CLI](cli.md)). If it passes, test gateway and DNS from a different LAN device because the
+NAS cannot reach its own macvlan child.
 
 ## mihomo won't start / crash-loops
 
@@ -148,8 +213,10 @@ docker logs mihomo --tail 80
 ```
 Common causes:
 - **Empty/garbled subscription or DNS** — the renderer fails loudly:
-  `ERROR: subscription.txt has no usable URL` or `ERROR: DNS_… must be set`. Fix
-  `config/subscription.txt` / the `DNS_*` keys in `.env`, then `docker compose up -d mihomo`.
+  `ERROR: subscription.txt has no usable URL` or `ERROR: DNS_… must be set`. Fix the **live**
+  files `../syno-mihomo-gateway-data/config/subscription.txt` / the `DNS_*` keys in
+  `../syno-mihomo-gateway-data/.env` (the in-repo `config/` only ships the `.example`), then
+  `docker compose --env-file ../syno-mihomo-gateway-data/.env up -d --force-recreate mihomo`.
 - **`/dev/net/tun` missing** — run `sudo ./scripts/setup_network.sh`.
 - **`iptables (nf_tables): Could not fetch rule set generation id`** — the image's nft-backed
   iptables is incompatible with the DSM kernel. Set `TUN_AUTO_REDIRECT=false` in `.env` and
@@ -180,12 +247,18 @@ Network flakiness to ACR. The updater retries pulls (`PULL_RETRIES`/`PULL_RETRY_
 pulls **before** swapping, so a failed pull aborts without touching the running container.
 Increase the retry env vars if needed, or schedule further from the mirror window.
 
+**`manifest unknown` is not flakiness:** when the pull error says the manifest is unknown, the
+notification appends `(not mirrored in ACR? add the upstream image to docker-china-sync/images.txt)`
+— the tag simply does not exist in your ACR namespace (the hint applies to the trio and to enrolled
+generic targets alike). Retries won't help; mirror the image first.
+
 ## DSM 7 scheduled task does not run
 
 1. In **Control Panel → Task Scheduler**, verify the task is enabled and runs as **root**.
 2. Re-run `sh scripts/install_scheduler.sh` and copy its exact absolute-path command.
 3. Confirm the Schedule time against **Regional Options**; `UPDATE_TZ` only affects log timestamps.
-4. Select the task and click **Run**, then inspect its saved result and `logs/auto-update.log`.
+4. Select the task and click **Run**, then inspect its saved result and
+   `../syno-mihomo-gateway-data/logs/gateway.log`.
 5. Exit code `3` with a Docker readiness message means Container Manager did not become ready
    within `DOCKER_READY_TIMEOUT`; verify the package is running or increase the timeout.
 
@@ -199,11 +272,47 @@ Look for `ROLLED BACK` in the notification/log. If rollback is incomplete, do no
 verify the old IDs with `docker image inspect <id>`, then follow
 [Operations › Manual rollback](operations.md#manual-rollback).
 
+## Update summary says `compose: SKIPPED (TUN auto-redirect incompatible…)`
+
+With `TUN_AUTO_REDIRECT=true` and a pending compose change, the updater probes the new mihomo
+image's iptables frontend against the DSM kernel (in a throwaway privileged container) **before**
+recreating anything. If the probe fails, the compose pair is skipped and counted as failed — the
+running containers are untouched, and generic targets / cloudflared still proceed. A `--dry-run`
+never runs the probe; it only notes that the probe would gate the real apply.
+
+**Fix:** set `TUN_AUTO_REDIRECT=false` in `../syno-mihomo-gateway-data/.env` and redeploy — the
+`system` TUN stack still provides the gateway dataplane. Same root cause as the
+`iptables (nf_tables)` crash-loop above; the probe exists to prevent that crash-loop.
+
+## An enrolled (generic) update target failed
+
+Enrolled containers (managed via `gateway.sh update --enable/--disable NAME`) are updated by an
+in-place recreate with a health gate. The notification line tells you which outcome you got:
+
+- `NAME: FAILED health -> ROLLED BACK to last-good (now healthy)` — the automatic rollback worked;
+  investigate the new image at leisure.
+- `NAME: REFUSED (not replayable - container untouched; see log, or de-enroll it)` — capture found
+  a setting the replay engine cannot faithfully reproduce (embedded newlines in values, a static
+  IPv6 address, `-P`/`PublishAllPorts`, `OomScoreAdj`, device cgroup rules, …). Nothing was
+  changed. Recreate the container without the unsupported setting, or de-enroll it:
+  `sudo sh scripts/gateway.sh update --disable NAME --yes`.
+- `NAME: FAILED AND rollback incomplete -> MANUAL ATTENTION NEEDED` — recreate the container by
+  hand; the last-good spec is saved under `../syno-mihomo-gateway-data/state/last-good/NAME`.
+- `generic targets: INVALID enrollment list (see log)` — the managed list
+  (`../syno-mihomo-gateway-data/state/update-targets`) failed validation and **no** generic target
+  was processed. Inspect it with `sh scripts/gateway.sh update --list-targets` and re-enroll.
+
+`sh scripts/gateway.sh update --last` shows the outcome of the last run (`state/last-run.json`,
+including `updated_names`/`failed_names`/`rolled_back_names`).
+
 ## cloudflared tunnel down after an update
 
-The staged path verifies a temporary connector before replacing the canonical container and keeps
-that candidate if canonical update and rollback cannot complete. If only
-`cloudflared-candidate` is running, do not remove it—it may be the only live connector:
+The staged path verifies a temporary connector before replacing the canonical container. A failed
+update reports one of three distinct outcomes: `update FAILED (candidate discarded; the old
+connector is untouched)` (nothing to do), `update FAILED -> ROLLED BACK to the previous connector
+(now connected)` (automatic recovery), or `FAILED AND canonical not restored -> MANUAL ATTENTION
+NEEDED` — in that last case the candidate is kept because it may be the only live connector. If
+only `cloudflared-candidate` is running, do not remove it:
 
 ```bash
 docker ps -a | grep cloudflared
@@ -257,5 +366,5 @@ it to `.woodpecker.yml`'s `when.branch`.
 
 If devices use `MIHOMO_IP` as gateway/DNS and mihomo is down, they're cut off. Quickest
 recovery: point the affected device's gateway/DNS back to the router, then fix mihomo
-(`docker compose up -d mihomo`, check logs). Consider the kill-switch + maintenance windows for
-risky changes.
+(`docker compose --env-file ../syno-mihomo-gateway-data/.env up -d mihomo`, check logs). Consider
+the kill-switch + maintenance windows for risky changes.

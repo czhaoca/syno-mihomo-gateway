@@ -1,7 +1,7 @@
 # Configuration Reference
 
 [← README](../README.md) · [中文](zh/configuration.md)
-Manual: [Architecture](architecture.md) · [Installation](installation.md) · [Release Zip](release-packaging.md) · **Configuration** · [Auto-Update](auto-update.md) · [Operations](operations.md) · [Troubleshooting](troubleshooting.md) · [Development](development.md)
+Manual: [Architecture](architecture.md) · [Installation](installation.md) · [Release Zip](release-packaging.md) · **Configuration** · [Auto-Update](auto-update.md) · [Operations](operations.md) · [CLI](cli.md) · [Troubleshooting](troubleshooting.md) · [Development](development.md)
 
 ---
 
@@ -52,7 +52,7 @@ backslashes round-trip safely. When editing by hand, keep one `KEY=VALUE` assign
 |---|:--:|---|---|
 | `WEB_UI_PORT` | ✅ | Host port for the MetaCubeXD dashboard (published on the NAS IP). | `8080` |
 | `CONTROLLER_PORT` | ✅ | Mihomo RESTful controller port (bound `0.0.0.0`; reached at `MIHOMO_IP:PORT`). | `9090` |
-| `CONTROLLER_SECRET` | | Controller auth secret. Empty = no auth; the installer offers to auto-generate a random one when left empty (explicit opt-out keeps it open). `&`, `\|`, `\` are handled by the renderer. | `` |
+| `CONTROLLER_SECRET` | | Controller auth secret. Empty = no auth; the installer offers to auto-generate a random one when left empty (explicit opt-out keeps it open). On installer re-runs, pressing **Enter** keeps the saved secret and typing `-` clears it. The renderer escapes `&`, `\|`, `\`, but the installer **rejects** a secret containing `\|` — avoid it. | `` |
 
 ### DNS (injected into the config template)
 
@@ -79,7 +79,7 @@ against the three resolved refs (see [Auto-Update](auto-update.md#image-refs)).
 
 | Key | Req | Description | Example |
 |---|:--:|---|---|
-| `REGISTRY_MODE` | ✅ | `acr` (default; your private mirror) or `docker` (upstream public; needs unfiltered internet). | `acr` |
+| `REGISTRY_MODE` | ✅ | `acr` (default; your private mirror) or `docker` (upstream public; needs unfiltered internet). In `docker` mode **no generic auto-update targets are eligible** (see below). | `acr` |
 | `MIHOMO_TAG` | | Tag used to derive the mihomo ref. | `latest` |
 | `METACUBEXD_TAG` | | Tag used to derive the metacubexd ref. | `latest` |
 | `CF_TAG` | | Tag used to derive the optional cloudflared ref. | `latest` |
@@ -111,10 +111,15 @@ against the three resolved refs (see [Auto-Update](auto-update.md#image-refs)).
 Enrollment does **not** live in `.env`: the managed list is
 `<data-dir>/state/update-targets` (records `name|strategy|probe`), edited via
 `gateway.sh update --enable/--disable` or the installer's update flow, and shown by
-`update --list-targets`. Related state written by the updater: `state/last-run.json`
-(the last run's counts/exit code, surfaced by `gateway.sh status`) and
-`state/last-good/<name>` (the proven-good image ID + spec digest per target, kept for
-cross-run rollback).
+`update --list-targets`. `recreate` is the **only** v1 strategy (blue-green stays
+cloudflared-exclusive). Enrollment alone is not enough: a target is eligible only when
+its running image is under `DOCKER_REGISTRY`/`ACR_NAMESPACE` — with `REGISTRY_MODE=docker`
+**no** generic targets are eligible. Engine details:
+[Auto-Update → Generic targets](auto-update.md#generic-targets-any-enrolled-container).
+Related state written by the updater: `state/last-run.json` (the last run's outcome —
+timestamp, exit code, dry-run flag, updated/unchanged/failed/rolled-back counts + names —
+surfaced by `gateway.sh status` and `update --last`) and `state/last-good/<name>` (the
+proven-good image ID + spec digest per target, kept for cross-run rollback).
 
 | Var | Meaning | Default |
 |---|---|---|
@@ -136,7 +141,7 @@ the gate is running + stable restarts + the image's own healthcheck when defined
 
 | Key | Description | Default / Example |
 |---|---|---|
-| `NOTIFY_WEBHOOK_URL` | Optional fallback webhook (Bark/Gotify/Slack-style JSON POST) when `synodsmnotify` is absent. | `` |
+| `NOTIFY_WEBHOOK_URL` | Optional webhook (Bark/Gotify/Slack-style JSON POST). Fires whenever configured — independent of DSM push (`synodsmnotify`), which is best-effort only and never suppresses the webhook. | `` |
 | `NOTIFY_ON_NOCHANGE` | `1` = also notify on no-op runs. | `0` |
 | `UPDATE_LOG` | Orchestrator log path (relative resolves under the persistent data directory). | `./logs/auto-update.log` |
 | `LOG_KEEP` | Rotated log generations to keep. | `7` |
@@ -145,16 +150,20 @@ the gate is running + stable restarts + the image's own healthcheck when defined
 
 ### Advanced tunables (optional `.env` overrides)
 
-These have sensible defaults in `scripts/lib/common.sh` / `registry.sh`; override only if needed.
+These have sensible defaults in `scripts/lib/common.sh` (`TPROXY_NETWORK` in
+`scripts/lib/network.sh`); override only if needed.
 
 | Key | Default | Meaning |
 |---|---|---|
+| `GATEWAY_DATA_DIR` | `../syno-mihomo-gateway-data` | Persistent data directory (`.env`, `config/`, `logs/`, `state/`), a sibling of the release checkout. Honored by compose and every script. **Export it in the environment** — it locates `.env`, so it cannot live in `.env` itself. |
 | `LOG_MAX_BYTES` | `1048576` | Rotate `UPDATE_LOG` when it exceeds this size. |
 | `PULL_RETRIES` / `PULL_RETRY_DELAY` | `3` / `10` | `docker pull` retry count / delay (s). |
 | `DOCKER_READY_TIMEOUT` / `DOCKER_READY_INTERVAL` | `120` / `5` | How long a DSM scheduled/boot task waits for Container Manager and how often it retries (s). |
 | `HEALTH_RETRIES` / `HEALTH_INTERVAL` | `6` / `10` | mihomo health-gate attempts / interval (s). |
+| `HEALTH_MAX_RESTARTS` | `3` | Generic-target crash-loop threshold: the health gate fails (early) once a freshly updated container has restarted this many times. |
 | `LOCK_DIR` | `/tmp/syno-mihomo-update.lock` | Mutex lock directory. |
 | `TPROXY_NETWORK` | `tproxy_network` | Macvlan network name the preflight checks. |
+| `TUN_DEVICE` | `mihomo-tun` | TUN interface name the host-side health gate looks for. Must match the template's hardcoded `device: mihomo-tun` — override only if you rename the device there. |
 
 ## `config/config.template.yaml`
 
@@ -162,23 +171,39 @@ Holds the Mihomo config with placeholders the renderer fills:
 
 | Placeholder | Source key |
 |---|---|
-| `{{AIRPORT_URL}}` | first line of `config/subscription.txt` (label stripped) |
+| `{{AIRPORT_URL}}` | first line of `../syno-mihomo-gateway-data/config/subscription.txt` (label stripped) |
 | `{{CONTROLLER_PORT}}` / `{{CONTROLLER_SECRET}}` | `.env` |
 | `{{DNS_DEFAULT_NAMESERVER}}` / `{{DNS_NAMESERVER}}` / `{{DNS_FALLBACK}}` | `.env` |
 | `{{TUN_AUTO_REDIRECT}}` | `.env` (defaults to `false` when absent) |
 
 Edit proxy **rules**, the `proxy-groups` / `proxy-providers` blocks, ports, etc. directly in the
-template (they are not parameterized). After editing, re-render by recreating mihomo
-(`docker compose up -d mihomo`). To customize routing, edit the `rules:` list — the defaults
+template (they are not parameterized). After editing, re-render with a **forced recreate**:
+
+```sh
+docker compose --env-file ../syno-mihomo-gateway-data/.env up -d --force-recreate mihomo
+```
+
+(or `sudo sh scripts/gateway.sh redeploy --yes`). A plain `up -d mihomo` is a **no-op** when
+the image and compose model are unchanged — the entrypoint only re-renders on recreate, so a
+template-only edit is silently ignored. To customize routing, edit the `rules:` list — the defaults
 are `GEOSITE,CN,DIRECT` / `GEOIP,CN,DIRECT` / `MATCH,PROXY` (CN traffic direct, everything
 else through the `PROXY` group). `PROXY` is a selectable group that defaults to `auto` (the
 fastest node from your subscription) and also offers `DIRECT` / `REJECT`; rules must target a
 **proxy-group** (e.g. `PROXY`), never a `proxy-provider` directly.
 
+The template also carries a `geo-auto-update` / `geox-url` block that points the geo-database
+downloads (needed by the `GEOSITE`/`GEOIP` rules) at a jsdelivr CDN mirror — mihomo's default
+source is blocked in mainland China, and a hung geo download prevents mihomo from ever
+finishing startup. If that mirror is blocked for you, replace the three URLs in the template
+(and re-render as above).
+
 ## Subscription format
 
-`config/subscription.txt` — first non-comment, non-blank line wins. An optional `Name=` label
-is stripped; the rest (the URL, including any `?token=…&flag=…`) is used verbatim.
+`../syno-mihomo-gateway-data/config/subscription.txt` — first non-comment, non-blank line
+wins. An optional `Name=` label is stripped; the rest (the URL, including any
+`?token=…&flag=…`) is used verbatim. After editing it, re-render with the same
+`--force-recreate` command as above (or `sudo sh scripts/gateway.sh modify --subscription URL --yes`,
+which edits and re-renders in one step).
 
 ```text
 # both of these work:
