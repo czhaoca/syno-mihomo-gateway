@@ -18,7 +18,7 @@ Verbs:
   cron       Persist the auto-update schedule; optionally write a crontab entry.
   status     Read-only deployment state (stack, containers, network, dashboard URL).
   doctor     Read-only diagnostics (wraps scripts/doctor.sh; exit 0 healthy / 2 degraded / 3 broken).
-  update     Run the unattended updater (execs scripts/auto_update.sh; args pass through).
+  update     Run the unattended updater (execs scripts/auto_update.sh; args pass through) or manage its generic targets.
 
 Guardrails:
   - Mutating verbs (deploy, redeploy, modify, update, cron --apply-crontab) require an explicit --yes; without it they exit 7 and change nothing.
@@ -146,12 +146,16 @@ SMG_HELP_EOF
       cat <<'SMG_HELP_EOF'
 Usage: gateway.sh update [options]
 
-Run the unattended updater (execs scripts/auto_update.sh; args pass through).
+Run the unattended updater (execs scripts/auto_update.sh; args pass through) or manage its generic targets.
 
 Options:
-  --yes      confirm the mutation (not forwarded)
-  --dry-run  pull + detect + report without swapping anything (forwarded)
-  --force    ignore the UPDATE_ENABLED=false kill-switch (forwarded)
+  --yes           confirm the mutation (not forwarded)
+  --dry-run       pull + detect + report without swapping anything (forwarded)
+  --force         ignore the UPDATE_ENABLED=false kill-switch (forwarded)
+  --list-targets  read-only, no --yes/root; list enrolled generic targets and their eligibility
+  --last          read-only, no --yes/root; show the outcome of the last updater run
+  --enable NAME   enroll a running container for generic auto-update (writes the managed list only)
+  --disable NAME  remove a container from generic auto-update (writes the managed list only)
 
 Global help: gateway.sh --help
 SMG_HELP_EOF

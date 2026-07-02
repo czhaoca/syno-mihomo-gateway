@@ -221,8 +221,8 @@ verbs:
   - name: update
     mutating: true
     summary:
-      en: Run the unattended updater (execs scripts/auto_update.sh; args pass through).
-      zh: 运行无人值守更新器（转交 scripts/auto_update.sh；参数原样透传）。
+      en: Run the unattended updater (execs scripts/auto_update.sh; args pass through) or manage its generic targets.
+      zh: 运行无人值守更新器（转交 scripts/auto_update.sh；参数原样透传），或管理其通用更新目标。
     options:
       - flag: "--yes"
         en: confirm the mutation (not forwarded)
@@ -233,17 +233,31 @@ verbs:
       - flag: "--force"
         en: ignore the UPDATE_ENABLED=false kill-switch (forwarded)
         zh: 忽略 UPDATE_ENABLED=false 开关（透传）
+      - flag: "--list-targets"
+        en: read-only, no --yes/root; list enrolled generic targets and their eligibility
+        zh: 只读，无需 --yes/root；列出已登记的通用更新目标及其可用性
+      - flag: "--last"
+        en: read-only, no --yes/root; show the outcome of the last updater run
+        zh: 只读，无需 --yes/root；显示最近一次更新运行的结果
+      - flag: "--enable NAME"
+        en: enroll a running container for generic auto-update (writes the managed list only)
+        zh: 将一个运行中的容器登记为通用自动更新目标（仅写入管理列表）
+      - flag: "--disable NAME"
+        en: remove a container from generic auto-update (writes the managed list only)
+        zh: 将一个容器从通用自动更新中移除（仅写入管理列表）
 
 json_output:
   en: >-
     status --json emits one flat object:
     {"verb","ok","exit_code","stack_state","mihomo_ip","dashboard_url",
-    "checks":[{"name","value"},...]}. doctor --json emits
-    {"verb","ok","exit_code","checks":[...]}. Exactly one object on stdout;
-    logs never interleave.
+    "checks":[{"name","value"},...],"last_update":{...}|null}
+    (last_update mirrors state/last-run.json; null before the first run).
+    doctor --json emits {"verb","ok","exit_code","checks":[...]}.
+    Exactly one object on stdout; logs never interleave.
   zh: >-
     status --json 输出一个扁平对象：
     {"verb","ok","exit_code","stack_state","mihomo_ip","dashboard_url",
-    "checks":[{"name","value"},...]}。doctor --json 输出
-    {"verb","ok","exit_code","checks":[...]}。标准输出只有这一个对象，
-    日志绝不混入。
+    "checks":[{"name","value"},...],"last_update":{...}|null}
+    （last_update 与 state/last-run.json 一致；首次运行前为 null）。
+    doctor --json 输出 {"verb","ok","exit_code","checks":[...]}。
+    标准输出只有这一个对象，日志绝不混入。

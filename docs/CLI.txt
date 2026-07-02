@@ -102,15 +102,23 @@ Verbs:
           also probe real proxy egress through the controller API
 
   update
-    Run the unattended updater (execs scripts/auto_update.sh; args pass through).
+    Run the unattended updater (execs scripts/auto_update.sh; args pass through) or manage its generic targets.
       --yes
           confirm the mutation (not forwarded)
       --dry-run
           pull + detect + report without swapping anything (forwarded)
       --force
           ignore the UPDATE_ENABLED=false kill-switch (forwarded)
+      --list-targets
+          read-only, no --yes/root; list enrolled generic targets and their eligibility
+      --last
+          read-only, no --yes/root; show the outcome of the last updater run
+      --enable NAME
+          enroll a running container for generic auto-update (writes the managed list only)
+      --disable NAME
+          remove a container from generic auto-update (writes the managed list only)
 
-status --json emits one flat object: {"verb","ok","exit_code","stack_state","mihomo_ip","dashboard_url", "checks":[{"name","value"},...]}. doctor --json emits {"verb","ok","exit_code","checks":[...]}. Exactly one object on stdout; logs never interleave.
+status --json emits one flat object: {"verb","ok","exit_code","stack_state","mihomo_ip","dashboard_url", "checks":[{"name","value"},...],"last_update":{...}|null} (last_update mirrors state/last-run.json; null before the first run). doctor --json emits {"verb","ok","exit_code","checks":[...]}. Exactly one object on stdout; logs never interleave.
 
 Logs: <data-dir>/logs/gateway.log (every line carries verb= and run= fields).
 

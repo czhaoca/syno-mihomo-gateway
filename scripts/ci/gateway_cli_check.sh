@@ -226,6 +226,42 @@ _rc=0; FAKE_UID=0 PATH="$STUB:$PATH" sh "$GW" update --yes --definitely-bogus </
 [ "$_rc" = 3 ] || fail "update pass-through did not surface auto_update's EXIT_CONFIG (got $_rc)"
 grep -q 'unknown argument' "$TMP/err" || fail "update did not reach auto_update.sh arg parsing"
 
+# --- update: target management (read-only vs mutating) ---------------------------
+expect_rc 0 gwu update --list-targets
+grep -q 'no generic targets enrolled' "$TMP/out" || fail "empty --list-targets message missing"
+expect_rc 0 gwu update --last
+grep -q 'no updater run recorded' "$TMP/out" || fail "empty --last message missing"
+expect_rc 7 gw update --enable web1
+expect_rc 6 gwu update --enable web1 --yes
+expect_rc 0 gw update --enable web1 --yes
+grep -q '^web1|recreate|$' "$DATA/state/update-targets" || fail "--enable did not write the managed list"
+expect_rc 0 gwu update --list-targets
+grep -q 'web1' "$TMP/out" || fail "--list-targets does not show the enrolled target"
+expect_rc 3 gw update --enable mihomo --yes
+expect_rc 0 gw update --disable web1 --yes
+if grep -q '^web1|' "$DATA/state/update-targets"; then fail "--disable left the record behind"; else ok; fi
+
+# --dry-run exempts the --yes/root gates, so it must be rejected on the
+# target-management modes instead of silently riding that exemption.
+expect_rc 3 gwu update --enable web1 --dry-run
+if grep -q '^web1|' "$DATA/state/update-targets" 2>/dev/null; then
+  fail "--dry-run --enable mutated the managed list"
+else ok; fi
+expect_rc 3 gwu update --list-targets --dry-run
+expect_rc 3 gw update --yes --enable
+grep -q 'requires a container name' "$TMP/out" "$TMP/err" || fail "--enable with no value lacks the actionable error"
+
+# --- update --last + status surface the last-run record --------------------------
+mkdir -p "$DATA/state"
+printf '%s\n' '{"ts":"t","exit_code":0,"dry_run":0,"updated":1,"unchanged":2,"failed":0,"rolled_back":0}' > "$DATA/state/last-run.json"
+expect_rc 0 gwu update --last
+grep -q '"updated":1' "$TMP/out" || fail "--last does not show the recorded run"
+_rc=0; FAKE_UID=1000 PATH="$STUB:$PATH" sh "$GW" status --json </dev/null >"$TMP/out" 2>/dev/null || _rc=$?
+grep -q '"last_update":{"ts":"t"' "$TMP/out" || fail "status --json lacks the last_update object"
+rm -f "$DATA/state/last-run.json"
+_rc=0; FAKE_UID=1000 PATH="$STUB:$PATH" sh "$GW" status --json </dev/null >"$TMP/out" 2>/dev/null || _rc=$?
+grep -q '"last_update":null' "$TMP/out" || fail "status --json lacks the null last_update before any run"
+
 # --- sourced-mode: fail-before-mutation deployment order -------------------------
 (
   set -eu

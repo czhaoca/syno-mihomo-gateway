@@ -16,7 +16,8 @@
 #   status     read-only deployment state (--json for one machine-readable object)
 #   doctor     read-only diagnostics (wraps scripts/doctor.sh; --json, --egress)
 #   update     run the unattended updater (execs scripts/auto_update.sh;
-#              --dry-run and --force pass through)
+#              --dry-run and --force pass through), or manage generic targets:
+#              --list-targets | --last (read-only) | --enable N | --disable N
 #
 # Guardrails (see docs/cli.md once generated - issue tracking):
 #   - Mutating verbs (deploy, redeploy, modify, update, cron --apply-crontab)
@@ -57,6 +58,8 @@ SELF_DIR="${GATEWAY_SELF_DIR:-$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)}"
 . "$SELF_DIR/lib/scheduler.sh"
 # shellcheck source=scripts/lib/resolve.sh
 . "$SELF_DIR/lib/resolve.sh"
+# shellcheck source=scripts/lib/targets.sh
+. "$SELF_DIR/lib/targets.sh"
 # help.sh is GENERATED from scripts/cli/spec.yaml (usage + gw_help) - the CLI
 # contract gate (scripts/ci/cli_contract_check.py) keeps it byte-fresh.
 # shellcheck source=scripts/lib/help.sh
@@ -309,6 +312,61 @@ gateway_modify() {
   gateway_deploy
 }
 
+# update --list-targets: the enrollment list plus each record's live
+# eligibility (read-only; discovery warnings explain every exclusion).
+gateway_update_list() {
+  targets_validate || return "$EXIT_CONFIG"
+  if [ ! -f "$TARGETS_FILE" ] || ! grep -q '[^[:space:]]' "$TARGETS_FILE" 2>/dev/null; then
+    printf 'no generic targets enrolled (%s)\n' "$TARGETS_FILE"
+    return "$EXIT_OK"
+  fi
+  [ -f "$ENV_FILE" ] && dotenv_load "$ENV_FILE" >/dev/null 2>&1
+  _gul_eligible=""
+  _gul_docker=0
+  if detect_compose >/dev/null 2>&1; then
+    _gul_docker=1
+    # Exclusion reasons go to stderr for the operator; stdout is the data.
+    _gul_eligible="$(targets_discover)"
+  fi
+  printf 'enrolled generic targets (%s):\n' "$TARGETS_FILE"
+  while IFS='|' read -r _gul_name _gul_strategy _gul_probe || [ -n "$_gul_name" ]; do
+    [ -n "$_gul_name" ] || continue
+    case "$_gul_name" in \#*) continue ;; esac
+    if [ "$_gul_docker" = 0 ]; then
+      _gul_state='unknown (docker unavailable)'
+    else
+      _gul_state=excluded
+      case "$_gul_eligible" in "$_gul_name|"*|*"
+$_gul_name|"*) _gul_state=eligible ;; esac
+    fi
+    printf '  %s  strategy=%s  probe=%s  [%s]\n' \
+      "$_gul_name" "${_gul_strategy:-recreate}" "${_gul_probe:-none}" "$_gul_state"
+  done <"$TARGETS_FILE"
+  return "$EXIT_OK"
+}
+
+# update --last: the outcome of the most recent updater run (read-only).
+gateway_update_last() {
+  _gulr_file="$GATEWAY_DATA_DIR/state/last-run.json"
+  if [ ! -s "$_gulr_file" ]; then
+    printf 'no updater run recorded yet (%s)\n' "$_gulr_file"
+    return "$EXIT_OK"
+  fi
+  printf 'last updater run (%s):\n  %s\n' "$_gulr_file" "$(cat "$_gulr_file")"
+  return "$EXIT_OK"
+}
+
+# The last-run record verbatim for status --json ("null" before the first run;
+# the file is a single JSON object written atomically by auto_update.sh).
+_gw_last_update_json() {
+  _glu_file="$GATEWAY_DATA_DIR/state/last-run.json"
+  if [ -s "$_glu_file" ]; then
+    tr -d '\n' <"$_glu_file"
+  else
+    printf 'null'
+  fi
+}
+
 gateway_status() {
   _gws_rc=0
   _gws_ok=true
@@ -349,14 +407,19 @@ gateway_status() {
   _gws_url="http://$_gws_nas:${WEB_UI_PORT:-8080}"
 
   if [ "$GW_JSON" = 1 ]; then
-    printf '{"verb":"status","ok":%s,"exit_code":%s,"stack_state":"%s","mihomo_ip":"%s","dashboard_url":"%s","checks":[%s]}\n' \
+    printf '{"verb":"status","ok":%s,"exit_code":%s,"stack_state":"%s","mihomo_ip":"%s","dashboard_url":"%s","checks":[%s],"last_update":%s}\n' \
       "$_gws_ok" "$_gws_rc" "$(_gw_jesc "$_gws_state")" "$(_gw_jesc "${MIHOMO_IP:-}")" \
-      "$(_gw_jesc "$_gws_url")" "$GW_CHECKS"
+      "$(_gw_jesc "$_gws_url")" "$GW_CHECKS" "$(_gw_last_update_json)"
   else
     printf 'state:     %s\n' "$_gws_state"
     printf 'mihomo:    %s (%s)\n' "$LIFECYCLE_MIHOMO_STATUS" "${MIHOMO_IP:-no ip configured}"
     printf 'dashboard: %s\n' "$_gws_url"
     printf 'tun:       %s\n' "${TUN_ENABLE:-false}"
+    if [ -s "$GATEWAY_DATA_DIR/state/last-run.json" ]; then
+      printf 'update:    %s\n' "$(cat "$GATEWAY_DATA_DIR/state/last-run.json")"
+    else
+      printf 'update:    never ran\n'
+    fi
   fi
   return "$_gws_rc"
 }
@@ -499,16 +562,33 @@ gateway_main() {
   GW_TIME='' GW_SCHED='' GW_TZ='' GW_ENABLE='' GW_APPLY_CRON=0
   GW_PASS=''
 
+  GW_UPD_MODE='' GW_UPD_NAME=''
   if [ "$GW_VERB" = update ]; then
-    # Everything except --yes passes through to auto_update.sh verbatim.
-    for _a in "$@"; do
+    # Target-management flags are handled here; everything else except --yes
+    # passes through to auto_update.sh verbatim.
+    while [ $# -gt 0 ]; do
+      _a="$1"
       case "$_a" in
         --help|-h) gw_help update; exit "$EXIT_OK" ;;
         --yes|-y) GW_YES=1 ;;
         --dry-run) GW_DRY_RUN=1; GW_PASS="$GW_PASS $_a" ;;
+        --list-targets) GW_UPD_MODE=list ;;
+        --last) GW_UPD_MODE=last ;;
+        --enable=*) GW_UPD_MODE=enable; GW_UPD_NAME="${_a#*=}" ;;
+        --enable) shift; GW_UPD_MODE=enable; GW_UPD_NAME="${1:-}" ;;
+        --disable=*) GW_UPD_MODE=disable; GW_UPD_NAME="${_a#*=}" ;;
+        --disable) shift; GW_UPD_MODE=disable; GW_UPD_NAME="${1:-}" ;;
         *) GW_PASS="$GW_PASS $_a" ;;
       esac
+      [ $# -eq 0 ] || shift
     done
+    # --dry-run has no meaning on the target-management modes, and because it
+    # exempts the --yes/root gates it must never combine with a mode that
+    # writes the managed list (or the gates would be bypassed).
+    if [ -n "$GW_UPD_MODE" ] && [ "$GW_DRY_RUN" = 1 ]; then
+      log_error "--dry-run cannot be combined with --list-targets/--last/--enable/--disable"
+      exit "$EXIT_CONFIG"
+    fi
   else
     while [ $# -gt 0 ]; do
       _a="$1"
@@ -567,7 +647,8 @@ gateway_main() {
   # Guardrails: --yes for anything mutating (dry-run exempt), then per-verb root.
   _gw_mutating=0
   case "$GW_VERB" in
-    deploy|redeploy|modify|update) _gw_mutating=1 ;;
+    deploy|redeploy|modify) _gw_mutating=1 ;;
+    update) case "$GW_UPD_MODE" in list|last) : ;; *) _gw_mutating=1 ;; esac ;;
     cron) [ "$GW_APPLY_CRON" = 1 ] && _gw_mutating=1 ;;
   esac
   if [ "$_gw_mutating" = 1 ] && [ "$GW_DRY_RUN" = 0 ] && [ "$GW_YES" = 0 ]; then
@@ -582,6 +663,22 @@ gateway_main() {
 
   case "$GW_VERB" in
     update)
+      case "$GW_UPD_MODE" in
+        list) gateway_update_list; exit $? ;;
+        last) gateway_update_last; exit $? ;;
+        enable)
+          [ -n "$GW_UPD_NAME" ] || { log_error "--enable requires a container name"; exit "$EXIT_CONFIG"; }
+          target_enroll "$GW_UPD_NAME" || exit "$EXIT_CONFIG"
+          _gw_upd_img="$(detect_compose >/dev/null 2>&1 && "$DOCKER_BIN" inspect -f '{{.Config.Image}}' "$GW_UPD_NAME" 2>/dev/null)"
+          if [ -n "$_gw_upd_img" ] && targets_image_databaselike "$_gw_upd_img"; then
+            log_warn "'$GW_UPD_NAME' looks like a DATABASE ($_gw_upd_img): auto-recreate has no quiesce and can corrupt in-flight writes - enroll only if you accept that risk"
+          fi
+          exit "$EXIT_OK" ;;
+        disable)
+          [ -n "$GW_UPD_NAME" ] || { log_error "--disable requires a container name"; exit "$EXIT_CONFIG"; }
+          target_remove "$GW_UPD_NAME" || exit "$EXIT_CONFIG"
+          exit "$EXIT_OK" ;;
+      esac
       # shellcheck disable=SC2086  # intentional word-split of pass-through flags
       exec sh "$SELF_DIR/auto_update.sh" $GW_PASS ;;
     status) gateway_status; exit $? ;;

@@ -114,16 +114,20 @@ sh ./scripts/gateway.sh <verb> [options]
 
 ### `update`
 
-运行无人值守更新器（转交 scripts/auto_update.sh；参数原样透传）。
+运行无人值守更新器（转交 scripts/auto_update.sh；参数原样透传），或管理其通用更新目标。
 
 | 选项 | 说明 |
 |---|---|
 | `--yes` | 确认执行变更（不透传） |
 | `--dry-run` | 拉取、检测并报告，但不替换任何组件（透传） |
 | `--force` | 忽略 UPDATE_ENABLED=false 开关（透传） |
+| `--list-targets` | 只读，无需 --yes/root；列出已登记的通用更新目标及其可用性 |
+| `--last` | 只读，无需 --yes/root；显示最近一次更新运行的结果 |
+| `--enable NAME` | 将一个运行中的容器登记为通用自动更新目标（仅写入管理列表） |
+| `--disable NAME` | 将一个容器从通用自动更新中移除（仅写入管理列表） |
 
 ## 机器可读输出（--json）
 
-status --json 输出一个扁平对象： {"verb","ok","exit_code","stack_state","mihomo_ip","dashboard_url", "checks":[{"name","value"},...]}。doctor --json 输出 {"verb","ok","exit_code","checks":[...]}。标准输出只有这一个对象， 日志绝不混入。
+status --json 输出一个扁平对象： {"verb","ok","exit_code","stack_state","mihomo_ip","dashboard_url", "checks":[{"name","value"},...],"last_update":{...}|null} （last_update 与 state/last-run.json 一致；首次运行前为 null）。 doctor --json 输出 {"verb","ok","exit_code","checks":[...]}。 标准输出只有这一个对象，日志绝不混入。
 
 日志：<data-dir>/logs/gateway.log（每行携带 verb= 与 run= 字段）。

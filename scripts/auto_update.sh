@@ -36,6 +36,23 @@ SELF_DIR="${AUTO_UPDATE_SELF_DIR:-$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 # shellcheck source=scripts/lib/targets.sh
 . "$SELF_DIR/lib/targets.sh"
 
+# write_last_run EXIT_CODE - one JSON object describing this run, written
+# atomically on every terminal path (the EXIT trap). A lock-denied second run
+# must not clobber the live run's record. Counters default to 0 on paths that
+# abort before detection.
+write_last_run() {
+  _wlr_rc="$1"
+  [ "$_wlr_rc" = "${EXIT_LOCKED:-4}" ] && return 0
+  _wlr_dir="$GATEWAY_DATA_DIR/state"
+  mkdir -p "$_wlr_dir" 2>/dev/null || return 0
+  chmod 700 "$_wlr_dir" 2>/dev/null || true
+  printf '{"ts":"%s","exit_code":%s,"dry_run":%s,"updated":%s,"unchanged":%s,"failed":%s,"rolled_back":%s}\n' \
+    "$(_ts)" "$_wlr_rc" "${DRY_RUN:-0}" "${updated_n:-0}" "${unchanged_n:-0}" "${failed_n:-0}" "${rolled_n:-0}" \
+    >"$_wlr_dir/last-run.json.next" 2>/dev/null || return 0
+  chmod 600 "$_wlr_dir/last-run.json.next" 2>/dev/null || true
+  mv "$_wlr_dir/last-run.json.next" "$_wlr_dir/last-run.json" 2>/dev/null || true
+}
+
 # persist_last_good NAME IMAGE_ID - record the proven-good image + spec digest
 # under GATEWAY_DATA_DIR/state/last-good/NAME. Written only after the health
 # gate passes, so the record always points at a working combination; survives
@@ -176,6 +193,8 @@ rotate_log
 
 # shellcheck disable=SC2329  # invoked indirectly via trap
 on_exit() {
+  _oe_rc=$?
+  write_last_run "$_oe_rc"
   release_lock
   [ -n "${DOCKER_BIN:-}" ] && [ -n "${CF_CONTAINER_NAME:-}" ] && cloudflared_cleanup_candidate >/dev/null 2>&1
   cloudflared_cleanup_workdir

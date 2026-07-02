@@ -320,7 +320,7 @@ export TRACE
 
 if (
   load_env() {
-    LOG_FILE="$TMP/orchestrator.log"; UPDATE_ENABLED=false; UPDATE_IMAGES=''
+    GATEWAY_DATA_DIR="$TMP/gwdata"; LOG_FILE="$TMP/orchestrator.log"; UPDATE_ENABLED=false; UPDATE_IMAGES=''
     MIHOMO_IMAGE=''; METACUBEXD_IMAGE=''; CF_IMAGE=''; CF_CONTAINER_NAME=cloudflared
   }
   rotate_log() { :; }
@@ -343,7 +343,7 @@ assert_not_contains "kill-switch skips Docker wait" "$DISABLED_TRACE" "docker-wa
 
 if (
   load_env() {
-    LOG_FILE="$TMP/orchestrator.log"; UPDATE_ENABLED=true; UPDATE_IMAGES="m u"
+    GATEWAY_DATA_DIR="$TMP/gwdata"; LOG_FILE="$TMP/orchestrator.log"; UPDATE_ENABLED=true; UPDATE_IMAGES="m u"
     MIHOMO_IMAGE=m; METACUBEXD_IMAGE=u; CF_IMAGE=c; CF_CONTAINER_NAME=cloudflared
     NOTIFY_ON_NOCHANGE=0
   }
@@ -373,13 +373,14 @@ PREFLIGHT_TRACE="$(tr '\n' ' ' < "$TRACE")"
 assert_contains "preflight reaches Compose validation" "$PREFLIGHT_TRACE" "compose-config"
 assert_not_contains "preflight failure prevents registry login" "$PREFLIGHT_TRACE" "login"
 assert_not_contains "preflight failure prevents pulls" "$PREFLIGHT_TRACE" "pull"
+assert_contains "config abort records last-run" "$(cat "$TMP/gwdata/state/last-run.json" 2>/dev/null)" '"exit_code":3'
 
 # An incompatible explicit auto-redirect opt-in is discovered after the image
 # is pulled but before Compose changes the running gateway. It is not a rollback
 # case because no service mutation has occurred.
 if (
   load_env() {
-    LOG_FILE="$TMP/orchestrator.log"; UPDATE_ENABLED=true; UPDATE_IMAGES="m u"
+    GATEWAY_DATA_DIR="$TMP/gwdata"; LOG_FILE="$TMP/orchestrator.log"; UPDATE_ENABLED=true; UPDATE_IMAGES="m u"
     MIHOMO_IMAGE=m; METACUBEXD_IMAGE=u; CF_IMAGE=; CF_CONTAINER_NAME=cloudflared
     MIHOMO_CONTAINER=mihomo; METACUBEXD_CONTAINER=mihomo-ui
     NOTIFY_ON_NOCHANGE=0; TUN_AUTO_REDIRECT=true
@@ -419,7 +420,7 @@ assert_not_contains "pre-apply auto-redirect failure does not roll back" "$REDIR
 
 if (
   load_env() {
-    LOG_FILE="$TMP/orchestrator.log"; UPDATE_ENABLED=true; UPDATE_IMAGES="m u"
+    GATEWAY_DATA_DIR="$TMP/gwdata"; LOG_FILE="$TMP/orchestrator.log"; UPDATE_ENABLED=true; UPDATE_IMAGES="m u"
     MIHOMO_IMAGE=m; METACUBEXD_IMAGE=u; CF_IMAGE=c; CF_CONTAINER_NAME=cloudflared
     MIHOMO_CONTAINER=mihomo; METACUBEXD_CONTAINER=mihomo-ui
     NOTIFY_ON_NOCHANGE=0
@@ -459,7 +460,7 @@ assert_contains "failed apply triggers rollback and re-health" "$APPLY_TRACE" "c
 # --- generic-driver orchestration (DEC-5 ordering, isolation, dry-run) ----------
 if (
   load_env() {
-    LOG_FILE="$TMP/orchestrator.log"; UPDATE_ENABLED=true; UPDATE_IMAGES="m u c"
+    GATEWAY_DATA_DIR="$TMP/gwdata"; LOG_FILE="$TMP/orchestrator.log"; UPDATE_ENABLED=true; UPDATE_IMAGES="m u c"
     MIHOMO_IMAGE=m; METACUBEXD_IMAGE=u; CF_IMAGE=c; CF_CONTAINER_NAME=cloudflared
     MIHOMO_CONTAINER=mihomo; METACUBEXD_CONTAINER=mihomo-ui
     NOTIFY_ON_NOCHANGE=0
@@ -498,10 +499,12 @@ GEN_TRACE="$(tr '\n' ' ' < "$TRACE")"
 assert_contains "generic pulled after trio pulls" "$GEN_TRACE" "pull:m pull:u pull:c pull:gimg"
 assert_contains "DEC-5 apply order generic -> cloudflared -> compose" "$GEN_TRACE" "generic:gen1 cf-apply compose-apply"
 assert_contains "summary counts all applied targets" "$(cat "$TMP/notify.body")" "updated:4"
+assert_contains "successful run records last-run" "$(cat "$TMP/gwdata/state/last-run.json" 2>/dev/null)" '"exit_code":0'
+assert_contains "last-run carries the counts" "$(cat "$TMP/gwdata/state/last-run.json" 2>/dev/null)" '"updated":4'
 
 if (
   load_env() {
-    LOG_FILE="$TMP/orchestrator.log"; UPDATE_ENABLED=true; UPDATE_IMAGES="m u"
+    GATEWAY_DATA_DIR="$TMP/gwdata"; LOG_FILE="$TMP/orchestrator.log"; UPDATE_ENABLED=true; UPDATE_IMAGES="m u"
     MIHOMO_IMAGE=m; METACUBEXD_IMAGE=u; CF_IMAGE=; CF_CONTAINER_NAME=cloudflared
     MIHOMO_CONTAINER=mihomo; METACUBEXD_CONTAINER=mihomo-ui
     NOTIFY_ON_NOCHANGE=0
@@ -539,10 +542,11 @@ fi
 ISO_TRACE="$(tr '\n' ' ' < "$TRACE")"
 assert_contains "failed generic target does not block the compose pair" "$ISO_TRACE" "generic-fail:gen1 compose-apply"
 assert_contains "summary counts the generic failure" "$(cat "$TMP/notify.body")" "failed:1"
+assert_contains "partial run records last-run" "$(cat "$TMP/gwdata/state/last-run.json" 2>/dev/null)" '"exit_code":2'
 
 if (
   load_env() {
-    LOG_FILE="$TMP/orchestrator.log"; UPDATE_ENABLED=true; UPDATE_IMAGES="m u"
+    GATEWAY_DATA_DIR="$TMP/gwdata"; LOG_FILE="$TMP/orchestrator.log"; UPDATE_ENABLED=true; UPDATE_IMAGES="m u"
     MIHOMO_IMAGE=m; METACUBEXD_IMAGE=u; CF_IMAGE=; CF_CONTAINER_NAME=cloudflared
     MIHOMO_CONTAINER=mihomo; METACUBEXD_CONTAINER=mihomo-ui
     NOTIFY_ON_NOCHANGE=0
