@@ -79,6 +79,9 @@ _on_exit() { stty echo </dev/tty 2>/dev/null; }
 # shellcheck disable=SC2329  # invoked indirectly via trap
 _on_int() {
   stty echo </dev/tty 2>/dev/null
+  # Reap the config staging dir: it holds a copy of the subscription URL
+  # (token included) and must not survive an interrupted run.
+  [ -n "${SMG_CFG_STAGE:-}" ] && rm -rf "$SMG_CFG_STAGE" 2>/dev/null
   printf '\n%s\n' "$(msg warn_interrupted 2>/dev/null || echo 'interrupted - partial state is detected on the next run')" >&2
   exit 130
 }

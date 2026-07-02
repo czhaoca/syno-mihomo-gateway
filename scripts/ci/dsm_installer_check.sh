@@ -475,6 +475,17 @@ esac
 [ "$(dotenv_get UPDATE_ENABLED)" = false ] \
   || fail "declining an active schedule did not offer/flip UPDATE_ENABLED=false"
 
+# 2a) octal regression: a daily time with 08/09 must round-trip exactly.
+#     printf %d octal-parses "08"/"09" to 0 on POSIX shells, so 08:45 used to
+#     persist as "45 0 * * *" (00:45) while confirming "08:45" to the operator.
+ENV_FILE="$TD/cron-octal.env"; : > "$ENV_FILE"
+ui_ask_validated() { eval "$1=08:45"; }
+UI_MENU_SEQ="4 4"
+YESNO_SEQ="0 1 0"
+flow_cron >/dev/null 2>&1 || fail "flow_cron (octal regression) returned non-zero"
+[ "$(dotenv_get UPDATE_SCHEDULE)" = '45 8 * * *' ] \
+  || fail "08:45 corrupted to '$(dotenv_get UPDATE_SCHEDULE)' (octal printf regression)"
+
 # 2b) targets flow: only standalone ACR containers are offerable; the trio is
 #     never offered; compose-managed shows as excluded; decline removes.
 TARGETS_FILE="$TD/update-targets"; rm -f "$TARGETS_FILE"
@@ -550,7 +561,8 @@ for _k in warn_prev_removed warn_prev_removed_fix warn_apply_failed warn_cron_no
           ask_disable_updates ok_cron_partial warn_cron_manual_pending warn_interrupted \
           warn_rollback_attempt warn_rollback_ok err_rollback_failed info_cfg_validate \
           diag_cfg_tmp diag_cfg_tmp_fix diag_cfg_stage diag_cfg_stage_fix \
-          diag_cfg_render diag_cfg_render_fix diag_cfg_reject diag_cfg_reject_fix; do
+          diag_cfg_render diag_cfg_render_fix diag_cfg_reject diag_cfg_reject_fix \
+          q_controller_secret_keep; do
   _n="$(grep -c "^[[:space:]]*${_k})" "$ROOT/scripts/installer/i18n.sh" || true)"
   [ "$_n" -ge 2 ] || fail "i18n key '$_k' is not present in both language catalogs (found $_n)"
 done
@@ -631,6 +643,57 @@ done
     *warn_secret_none*) : ;;
     *) fail "opt-out did not warn about the unauthenticated dashboard" ;;
   esac
+
+  # wizard_env secret idempotency: Enter keeps the saved secret; '-' clears it
+  # (a re-run pressing Enter everywhere used to wipe and regenerate the secret,
+  # silently disconnecting every configured dashboard).
+  # shellcheck source=scripts/lib/network.sh
+  . "$ROOT/scripts/lib/network.sh"   # real ipv4_in_cidr for the precheck test
+  ENV_FILE="$TD/secret2.env"; : > "$ENV_FILE"
+  env_set CONTROLLER_SECRET preexisting
+  ui_ask_validated() {
+    case "$1" in
+      ROUTER_IP) eval "$1=192.168.1.1" ;;
+      SUBNET_CIDR) eval "$1=192.168.1.0/24" ;;
+      MIHOMO_IP) eval "$1=192.168.1.100" ;;
+      WEB_UI_PORT) eval "$1=8080" ;;
+      CONTROLLER_PORT) eval "$1=9090" ;;
+      DNS_*) eval "$1=1.1.1.1" ;;
+      *) eval "$1=x" ;;
+    esac
+  }
+  ui_ask() { eval "$1=Asia/Shanghai"; }
+  ui_ask_secret() { eval "$1=''"; }          # Enter -> empty answer
+  pf_port_free() { return 0; }
+  wizard_env >/dev/null 2>&1 || fail "wizard_env (keep-secret) failed"
+  [ "$(dotenv_get CONTROLLER_SECRET)" = preexisting ] \
+    || fail "Enter did not keep the saved controller secret"
+  ui_ask_secret() { eval "$1='-'"; }         # explicit clear sentinel
+  _out="$(wizard_env 2>&1)" || fail "wizard_env (clear-secret) failed"
+  [ -z "$(dotenv_get CONTROLLER_SECRET 2>/dev/null || echo '')" ] \
+    || fail "'-' did not clear the controller secret"
+  case "$_out" in
+    *warn_secret_none*) : ;;
+    *) fail "explicit clear did not warn about the unauthenticated dashboard" ;;
+  esac
+
+  # precheck: a saved MIHOMO_IP outside the (re-picked) SUBNET_CIDR must be
+  # re-asked here, not dead-end the flow in the later network validation.
+  ENV_FILE="$TD/precheck.env"; : > "$ENV_FILE"
+  env_set ROUTER_IP 10.0.0.1
+  env_set SUBNET_CIDR 10.0.0.0/24
+  env_set MIHOMO_IP 192.168.1.100
+  env_set WEB_UI_PORT 8080; env_set CONTROLLER_PORT 9090
+  env_set DNS_DEFAULT_NAMESERVER 1.1.1.1
+  env_set DNS_NAMESERVER 1.1.1.1
+  env_set DNS_FALLBACK 1.1.1.1
+  env_set MIHOMO_IMAGE img1; env_set METACUBEXD_IMAGE img2
+  PC_ASKED=0
+  ui_ask_validated() { PC_ASKED=1; eval "$1=10.0.0.100"; }
+  precheck_env >/dev/null 2>&1 || fail "precheck_env (stale subnet) failed"
+  [ "$PC_ASKED" = 1 ] || fail "stale-subnet MIHOMO_IP was not re-asked"
+  [ "$(dotenv_get MIHOMO_IP)" = 10.0.0.100 ] \
+    || fail "precheck did not persist the corrected MIHOMO_IP"
 
   # post-deploy verification table: rows reflect the stubbed probe results
   # shellcheck source=scripts/installer/flow_deploy.sh

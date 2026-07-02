@@ -156,21 +156,40 @@ wizard_env() {
   ui_ask_validated CONTROLLER_PORT "$(msg q_controller_port)" "$(env_get CONTROLLER_PORT || echo 9090)" is_port
   env_set CONTROLLER_PORT "$CONTROLLER_PORT"
 
+  # Pressing Enter on a re-run must keep the saved secret (idempotent
+  # re-runs), never silently clear it - every configured dashboard would
+  # lose its backend. An explicit '-' clears; empty-with-no-saved-secret
+  # still goes through _secret_guard's generate offer.
+  _we_secret_cur="$(env_get CONTROLLER_SECRET 2>/dev/null || echo '')"
   while :; do
-    ui_ask_secret CONTROLLER_SECRET "$(msg q_controller_secret)"
+    if [ -n "$_we_secret_cur" ]; then
+      ui_ask_secret CONTROLLER_SECRET "$(msg q_controller_secret_keep)"
+    else
+      ui_ask_secret CONTROLLER_SECRET "$(msg q_controller_secret)"
+    fi
     case "$CONTROLLER_SECRET" in
       *"|"*) ui_warn "$(msg warn_secret_pipe)" ;;
       *) break ;;
     esac
   done
+  _we_secret_cleared=0
+  if [ -n "$_we_secret_cur" ] && [ -z "$CONTROLLER_SECRET" ]; then
+    CONTROLLER_SECRET="$_we_secret_cur"
+  elif [ "$CONTROLLER_SECRET" = "-" ]; then
+    CONTROLLER_SECRET=""; _we_secret_cleared=1
+  fi
   env_set CONTROLLER_SECRET "$CONTROLLER_SECRET"
-  _secret_guard   # empty -> offer to generate (explicit opt-out preserved)
+  if [ "$_we_secret_cleared" = 1 ]; then
+    ui_warn "$(msg warn_secret_none)"   # explicit clear = explicit opt-out
+  else
+    _secret_guard   # empty -> offer to generate (explicit opt-out preserved)
+  fi
 
-  ui_ask DNS_DEFAULT_NAMESERVER "$(msg q_dns_bootstrap)" "$(env_get DNS_DEFAULT_NAMESERVER || echo 1.1.1.1)"
+  ui_ask_validated DNS_DEFAULT_NAMESERVER "$(msg q_dns_bootstrap)" "$(env_get DNS_DEFAULT_NAMESERVER || echo 1.1.1.1)" is_dns_list
   env_set DNS_DEFAULT_NAMESERVER "$DNS_DEFAULT_NAMESERVER"
-  ui_ask DNS_NAMESERVER "$(msg q_dns_domestic)" "$(env_get DNS_NAMESERVER || echo 1.1.1.1)"
+  ui_ask_validated DNS_NAMESERVER "$(msg q_dns_domestic)" "$(env_get DNS_NAMESERVER || echo 1.1.1.1)" is_dns_list
   env_set DNS_NAMESERVER "$DNS_NAMESERVER"
-  ui_ask DNS_FALLBACK "$(msg q_dns_fallback)" "$(env_get DNS_FALLBACK || echo 1.1.1.1)"
+  ui_ask_validated DNS_FALLBACK "$(msg q_dns_fallback)" "$(env_get DNS_FALLBACK || echo 1.1.1.1)" is_dns_list
   env_set DNS_FALLBACK "$DNS_FALLBACK"
 
   ui_ask TZ "$(msg q_tz)" "$(env_get TZ || echo Asia/Shanghai)"
@@ -351,12 +370,21 @@ precheck_env() {
   _pc_need ROUTER_IP   is_ipv4 q_router 192.168.1.1
   _pc_need SUBNET_CIDR is_cidr q_subnet 192.168.1.0/24
   # MIHOMO_IP: validate AND conflict-check on re-entry (DHCP collision guard).
+  # Also require membership in the (just-validated) SUBNET_CIDR: after an
+  # interface re-pick onto a new subnet, a saved IP from the OLD subnet would
+  # otherwise sail through here and dead-end the flow in the later network
+  # validation with a hint that never names MIHOMO_IP as the problem.
   _pc_cur="$(env_get MIHOMO_IP 2>/dev/null || echo '')"
-  if ! is_ipv4 "$_pc_cur"; then
+  _pc_cidr="$(env_get SUBNET_CIDR 2>/dev/null || echo '')"
+  if ! is_ipv4 "$_pc_cur" || { [ -n "$_pc_cidr" ] && ! ipv4_in_cidr "$_pc_cur" "$_pc_cidr"; }; then
     _pc_fixed=1
     ui_warn "$(msgf precheck_bad MIHOMO_IP "$_pc_cur")"
     while :; do
       ui_ask_validated MIHOMO_IP "$(msg q_mihomo_ip)" "${_pc_cur:-192.168.1.100}" is_ipv4
+      if [ -n "$_pc_cidr" ] && ! ipv4_in_cidr "$MIHOMO_IP" "$_pc_cidr"; then
+        ui_warn "$(msgf precheck_bad MIHOMO_IP "$MIHOMO_IP")"
+        continue
+      fi
       check_ip_conflict "$MIHOMO_IP" && break
     done
     env_set MIHOMO_IP "$MIHOMO_IP"

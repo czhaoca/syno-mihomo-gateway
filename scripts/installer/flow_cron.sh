@@ -60,7 +60,12 @@ flow_cron() {
   # --- daily time (HH:MM, local) -> cron "M H * * *" ---
   ui_ask_validated _time "$(msg q_daily_time)" "$(_default_hhmm)" is_hhmm
   _hh="${_time%%:*}"; _mm="${_time#*:}"
-  UPDATE_SCHEDULE="$(printf '%d %d * * *' "$_mm" "$_hh")"
+  # Strip a leading zero by hand: printf %d (and $((...))) octal-parse "08"
+  # and "09" to 0 on POSIX/BusyBox shells, silently corrupting the schedule
+  # (08:30 would persist as "30 0 * * *" = 00:30).
+  case "$_hh" in 0?) _hh="${_hh#0}" ;; esac
+  case "$_mm" in 0?) _mm="${_mm#0}" ;; esac
+  UPDATE_SCHEDULE="$_mm $_hh * * *"
   env_set UPDATE_SCHEDULE "$UPDATE_SCHEDULE"       # env_set quotes safely
 
   # --- timezone (menu + free entry) ---

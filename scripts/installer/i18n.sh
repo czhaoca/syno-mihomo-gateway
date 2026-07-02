@@ -165,6 +165,7 @@ _msg_en() {
     warn_port_in_use) printf '%s' 'port %s looks already in use - pick another if the dashboard fails to start' ;;
     q_controller_port) printf '%s' 'Mihomo controller port' ;;
     q_controller_secret) printf '%s' 'Controller secret (Enter for no auth)' ;;
+    q_controller_secret_keep) printf '%s' "Controller secret (Enter keeps the existing one; '-' clears it)" ;;
     warn_secret_pipe) printf '%s' "the secret must not contain a '|' character" ;;
     q_dns_bootstrap)  printf '%s' 'Bootstrap DNS (comma-separated)' ;;
     q_dns_domestic)   printf '%s' 'Domestic DNS (comma-separated)' ;;
@@ -286,7 +287,7 @@ _msg_en() {
     rep_point_client) printf '%s' "Point a client's gateway + DNS at %s to route it through the proxy." ;;
     rep_warn_isolation) printf '%s' 'The NAS itself cannot reach %s (macvlan isolation) - always test from another device.' ;;
     rep_reach_test)   printf '%s' 'Verify from a LAN device (NOT the NAS - macvlan hides the IP from the NAS itself): curl http://%s:%s/version returns JSON. If it still times out from another device, see Troubleshooting.' ;;
-    rep_next)         printf '%s' 'Next: set up automatic image updates from the main menu (option 2).' ;;
+    rep_next)         printf '%s' 'Next: set up automatic image updates from the main menu (option 3).' ;;
     step_deploy_e2e)  printf '%s' 'End-to-end deploy' ;;
 
     # --- flow_targets.sh ---
@@ -535,6 +536,7 @@ _msg_zh() {
     warn_port_in_use) printf '%s' '端口 %s 似乎已被占用 - 若仪表盘启动失败请另选一个' ;;
     q_controller_port) printf '%s' 'Mihomo 控制器端口' ;;
     q_controller_secret) printf '%s' '控制器密钥（回车表示不鉴权）' ;;
+    q_controller_secret_keep) printf '%s' "控制器密钥（回车保留现有密钥；输入 '-' 清除）" ;;
     warn_secret_pipe) printf '%s' "密钥不能包含 '|' 字符" ;;
     q_dns_bootstrap)  printf '%s' '引导 DNS（逗号分隔）' ;;
     q_dns_domestic)   printf '%s' '国内 DNS（逗号分隔）' ;;
@@ -656,7 +658,7 @@ _msg_zh() {
     rep_point_client) printf '%s' '将客户端的网关 + DNS 指向 %s，即可让其流量经由代理。' ;;
     rep_warn_isolation) printf '%s' 'NAS 自身无法访问 %s（macvlan 隔离）- 请始终从另一台设备测试。' ;;
     rep_reach_test)   printf '%s' '请从局域网设备（非 NAS——macvlan 使 NAS 自身无法访问该 IP）验证：curl http://%s:%s/version 应返回 JSON。若从其他设备仍超时，请见故障排查。' ;;
-    rep_next)         printf '%s' '下一步：在主菜单设置自动镜像更新（选项 2）。' ;;
+    rep_next)         printf '%s' '下一步：在主菜单设置自动镜像更新（选项 3）。' ;;
     step_deploy_e2e)  printf '%s' '端到端部署' ;;
 
     # --- flow_targets.sh ---

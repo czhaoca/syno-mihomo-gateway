@@ -108,14 +108,17 @@ prepare_stack() {
     return 1
   }
   chmod 700 "$_cfg_test" 2>/dev/null || true
+  # Tracked globally so the Ctrl-C trap can reap it: the staged copy holds
+  # the subscription URL (token included) and must not outlive the run.
+  SMG_CFG_STAGE="$_cfg_test"
   if ! cp "$REPO_ROOT/config/config.template.yaml" "$SUBSCRIPTION_FILE" "$_cfg_test/"; then
-    rm -rf "$_cfg_test"
+    rm -rf "$_cfg_test"; SMG_CFG_STAGE=""
     diagnose "$(msg diag_cfg_stage)" "$(msg diag_cfg_stage_fix)"
     return 1
   fi
   if ! MIHOMO_CONFIG_DIR="$_cfg_test" sh "$REPO_ROOT/scripts/render_config.sh" \
       >>"${LOG_FILE:-/dev/null}" 2>&1; then
-    rm -rf "$_cfg_test"
+    rm -rf "$_cfg_test"; SMG_CFG_STAGE=""
     diagnose "$(msg diag_cfg_render)" "$(msg diag_cfg_render_fix)"
     return 1
   fi
@@ -123,18 +126,18 @@ prepare_stack() {
       -v "$_cfg_test/config.yaml:/root/.config/mihomo/config.yaml:ro" \
       "$MIHOMO_IMAGE" -t -d /root/.config/mihomo \
       >>"${LOG_FILE:-/dev/null}" 2>&1; then
-    rm -rf "$_cfg_test"
+    rm -rf "$_cfg_test"; SMG_CFG_STAGE=""
     _show_log_tail
     diagnose "$(msg diag_cfg_reject)" "$(msg diag_cfg_reject_fix)"
     return 1
   fi
   if ! mihomo_auto_redirect_probe "$MIHOMO_IMAGE"; then
-    rm -rf "$_cfg_test"
+    rm -rf "$_cfg_test"; SMG_CFG_STAGE=""
     _show_log_tail
     diagnose "$(msg diag_auto_redirect)" "$(msg diag_auto_redirect_fix)"
     return 1
   fi
-  rm -rf "$_cfg_test"
+  rm -rf "$_cfg_test"; SMG_CFG_STAGE=""
   return 0
 }
 
