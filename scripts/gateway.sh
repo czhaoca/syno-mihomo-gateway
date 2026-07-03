@@ -433,7 +433,7 @@ gateway_status() {
   else
     _gw_check_add subscription missing
   fi
-  _gw_check_add tun_enable "${TUN_ENABLE:-false}"
+  _gw_check_add tun_enable "${TUN_ENABLE:-true}"
 
   _gws_pi="${PARENT_INTERFACE:-$(detect_parent_interface "${ROUTER_IP:-}" 2>/dev/null)}"
   _gws_nas="$(_iface_ipv4 "$_gws_pi" 2>/dev/null)"
@@ -448,7 +448,7 @@ gateway_status() {
     printf 'state:     %s\n' "$_gws_state"
     printf 'mihomo:    %s (%s)\n' "$LIFECYCLE_MIHOMO_STATUS" "${MIHOMO_IP:-no ip configured}"
     printf 'dashboard: %s\n' "$_gws_url"
-    printf 'tun:       %s\n' "${TUN_ENABLE:-false}"
+    printf 'tun:       %s\n' "${TUN_ENABLE:-true}"
     if [ -s "$GATEWAY_DATA_DIR/state/last-run.json" ]; then
       printf 'update:    %s\n' "$(cat "$GATEWAY_DATA_DIR/state/last-run.json")"
     else
@@ -502,7 +502,7 @@ gateway_doctor() {
       _gw_check_add mihomo not-running; _gwd_broken=1
     fi
     if [ "$_gwd_mihomo_up" = 1 ]; then
-      if [ "${TUN_ENABLE:-false}" != true ]; then
+      if [ "${TUN_ENABLE:-true}" != true ]; then
         _gw_check_add tun_gateway disabled
       elif mihomo_gateway_probe >/dev/null 2>&1; then
         _gw_check_add tun_gateway ok

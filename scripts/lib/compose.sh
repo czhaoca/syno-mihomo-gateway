@@ -85,7 +85,7 @@ mihomo_controller_probe() {
 # TUN_ENABLE=false mihomo runs as a plain proxy (redir/tproxy/mixed ports only),
 # there is no TUN dataplane to verify, and the probe is a no-op.
 mihomo_gateway_probe() {
-  [ "${TUN_ENABLE:-false}" = true ] || return 0
+  [ "${TUN_ENABLE:-true}" = true ] || return 0
   _tun="${TUN_DEVICE:-mihomo-tun}"
   if ! "$DOCKER_BIN" exec "$MIHOMO_CONTAINER" sh -c \
       'test -d "/sys/class/net/$1"' sh "$_tun" 2>/dev/null; then

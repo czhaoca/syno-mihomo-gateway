@@ -177,6 +177,17 @@ else ok; fi
 expect_rc 0 gwu status
 grep -q 'fresh' "$TMP/out" || fail "status did not report the fresh stack state"
 
+# TUN is ON by default everywhere (render_config.sh and load_env both default
+# it to true); a stray false fallback in a path that skips load_env (status's
+# lean dotenv_load) misreports the tun line and could skip the TUN dataplane
+# probe on default configs. Keep every fallback aligned to true. The bracket
+# in the pattern keeps this check from matching its own source.
+if grep -rn 'TUN_ENABLE:-fals[e]' "$ROOT/scripts" >/dev/null 2>&1; then
+  fail "a script defaults TUN_ENABLE to false; align fallbacks with the render/load_env default (true)"
+else
+  ok
+fi
+
 # --- status --json: exactly one JSON object on stdout, nothing else --------------
 expect_rc 0 gwu status --json
 _lines="$(wc -l < "$TMP/out" | tr -d ' ')"
