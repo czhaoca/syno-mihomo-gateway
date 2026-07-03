@@ -95,7 +95,8 @@ sudo sh ./install.sh
 健康门加回滚方式强制重建。
 
 如果出了问题，诊断信息会指向安装日志：
-`../syno-mihomo-gateway-data/logs/install.log`（指向统一 `gateway.log` 的符号链接）。
+`../syno-mihomo-gateway-data/logs/install.log`（若 `gateway.sh` 先运行过，它是指向统一
+`gateway.log` 的链接；否则是独立文件）。
 Ctrl-D 可以干净地退出任何提示；流程中途按 Ctrl-C 也是安全的 —— 临时的配置暂存目录
 （其中保存着你的订阅令牌）会被删除，任何残留的部分状态都会被下次运行的盘点步骤检测到
 并提议清理。
@@ -174,6 +175,10 @@ docker logs mihomo
 docker compose --env-file ../syno-mihomo-gateway-data/.env ps
 sudo sh scripts/doctor.sh          # needs root; add --egress for a real GET through the proxy
 ```
+
+此时 `doctor.sh` 会报告**降级（DEGRADED）**并给出两条计划任务告警——没有计划任务运行
+`auto_update.sh`，也没有开机任务运行 `setup_network.sh`。这在全新安装上是预期现象：
+完成第 8 步的计划设置后两条告警都会消失。
 
 ## 6. 打开仪表盘
 

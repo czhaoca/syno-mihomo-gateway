@@ -14,7 +14,8 @@ and a DSM-scheduled job keeps everything current and safely self-healing.
 - 🛡️ **Safe & isolated** — Docker macvlan; its own LAN IP, doesn't disturb host networking.
 - 🧹 **Controlled redeploys** — independently reuse, safely dismantle, or manually handle
   existing gateway containers and macvlan.
-- 🔧 **Everything in `.env`** — IPs, ports, DNS, registry; no secrets or DNS hardcoded in the repo.
+- 🔧 **Everything in `.env`** — IPs, ports, DNS, registry; no secrets committed, and the repo
+  templates carry only neutral placeholder values.
 - 🔁 **Decoupled subscription** — your provider URL lives in one gitignored file.
 - 🤖 **Safe auto-updates** — digest-detected, health-gated with auto-rollback; pulls from Alibaba
   ACR by default (`REGISTRY_MODE=docker` pulls upstream directly); blue-green for an external
@@ -121,9 +122,9 @@ vi ../syno-mihomo-gateway-data/config/subscription.txt
 sudo docker compose --env-file ../syno-mihomo-gateway-data/.env up -d --force-recreate mihomo
 # or in one step: sudo sh scripts/gateway.sh modify --subscription URL --yes
 
-# health check
-sudo sh scripts/gateway.sh status    # snapshot (--json for scripts)
-sudo sh scripts/gateway.sh doctor    # full diagnostics (--egress probes real egress)
+# health check (read-only; no root or --yes needed)
+sh scripts/gateway.sh status    # snapshot (--json for scripts)
+sh scripts/gateway.sh doctor    # full diagnostics (--egress probes real egress)
 
 # update the repo
 git pull && sudo sh ./install.sh

@@ -47,7 +47,8 @@ ARTIFACTS = {
 }
 
 GENERATED_BANNER = "GENERATED from scripts/cli/spec.yaml - DO NOT EDIT."
-REGEN_HINT = "Regenerate: python3 scripts/ci/cli_contract_check.py --write"
+REGEN_CMD = "python3 scripts/ci/cli_contract_check.py --write"
+REGEN_HINT = f"Regenerate: {REGEN_CMD}"
 
 
 def fail(msg: str):
@@ -171,6 +172,9 @@ HEADINGS = {
         "description": "Description",
         "json": "Machine-readable output (--json)",
         "generated": f"This page is {GENERATED_BANNER} {REGEN_HINT}",
+        # The .txt variant ships in the enduser bundle, which excludes
+        # scripts/cli and scripts/ci - no dev regeneration pointer there.
+        "generated_txt": "This guide is generated from the project's CLI spec - do not edit it by hand.",
     },
     "zh": {
         "title": "命令行参考（gateway.sh）",
@@ -184,7 +188,8 @@ HEADINGS = {
         "flag": "选项",
         "description": "说明",
         "json": "机器可读输出（--json）",
-        "generated": f"本页由 scripts/cli/spec.yaml 生成——请勿手工编辑。{REGEN_HINT}",
+        "generated": f"本页由 scripts/cli/spec.yaml 生成——请勿手工编辑。重新生成：{REGEN_CMD}",
+        "generated_txt": "本指南由项目的 CLI 规格自动生成——请勿手工编辑。",
     },
 }
 
@@ -272,7 +277,7 @@ def gen_txt(spec: dict, lang: str) -> str:
     out.append("")
     out.append(t(m["logs"], lang))
     out.append("")
-    out.append(h["generated"])
+    out.append(h["generated_txt"])
     return "\n".join(out) + "\n"
 
 

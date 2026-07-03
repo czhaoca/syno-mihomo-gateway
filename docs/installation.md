@@ -105,7 +105,8 @@ reuses everything saved in `.env`, offers *deploy as-is / edit settings / change
 re-pick interface*, re-validates, then force-recreates with the same health-gated rollback.
 
 If something fails, diagnostics point at the install log:
-`../syno-mihomo-gateway-data/logs/install.log` (a symlink into the unified `gateway.log`).
+`../syno-mihomo-gateway-data/logs/install.log` (a link into the unified `gateway.log` when
+`gateway.sh` ran first; otherwise its own file).
 Ctrl-D quits any prompt cleanly; Ctrl-C mid-flow is safe — the temporary config staging
 directory (which holds your subscription token) is removed, and any partial state is detected
 and offered for cleanup by the next run's inventory step.
@@ -192,6 +193,10 @@ docker logs mihomo
 docker compose --env-file ../syno-mihomo-gateway-data/.env ps
 sudo sh scripts/doctor.sh          # needs root; add --egress for a real GET through the proxy
 ```
+
+At this point `doctor.sh` reports **DEGRADED** with two scheduler warnings — no scheduled task
+runs `auto_update.sh`, and no Boot-up task runs `setup_network.sh`. That is expected on a fresh
+install: both go away once you set up scheduling in step 8.
 
 ## 6. Open the dashboard
 

@@ -21,7 +21,7 @@
 | 退出码 | 含义 | 处理方法 |
 |---|---|---|
 | `0` | 成功 / 无操作 | 无需处理 |
-| `2` | 部分失败 | 查看通知与 `../syno-mihomo-gateway-data/logs/gateway.log`（`auto-update.log` 是指向它的符号链接） |
+| `2` | 部分失败 | 查看通知与 `../syno-mihomo-gateway-data/logs/auto-update.log`（若 `gateway.sh` 先运行过，它是指向 `gateway.log` 的链接） |
 | `3` | 配置 / 预检错误 | 修复报告中的前置条件；未做任何更改 |
 | `4` | 另一次运行持有锁 | 等待——见下方的残留锁说明 |
 | `5` | ACR 登录失败 | 检查 `ACR_PASSWORD` / 令牌是否过期 / 镜像仓库主机 |
@@ -244,7 +244,7 @@ docker exec mihomo grep -m1 'url:' /root/.config/mihomo/config.yaml
 2. 重新运行 `sh scripts/install_scheduler.sh`，复制其中带绝对路径的完整命令。
 3. 按“区域选项”的 NAS 时区核对触发时间；`UPDATE_TZ` 只影响日志时间戳。
 4. 选中任务并点击**运行**，再检查保存的结果与
-   `../syno-mihomo-gateway-data/logs/gateway.log`。
+   `../syno-mihomo-gateway-data/logs/auto-update.log`。
 5. 若退出码为 `3` 且提示 Docker 未就绪，说明 Container Manager 未能在
    `DOCKER_READY_TIMEOUT` 内启动；请检查套件状态或增加该超时。
 

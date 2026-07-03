@@ -1,6 +1,6 @@
 # 命令行参考（gateway.sh）
 
-<!-- 本页由 scripts/cli/spec.yaml 生成——请勿手工编辑。Regenerate: python3 scripts/ci/cli_contract_check.py --write -->
+<!-- 本页由 scripts/cli/spec.yaml 生成——请勿手工编辑。重新生成：python3 scripts/ci/cli_contract_check.py --write -->
 
 Synology DSM 上 Mihomo 透明代理网关的非交互命令入口。其他程序（DSM 任务计划、脚本、CI）可直接调用这些子命令；交互式安装器（sh ./install.sh） 是基于同一套函数的向导前端。
 
@@ -137,4 +137,4 @@ sh ./scripts/gateway.sh <verb> [options]
 
 status --json 输出一个扁平对象： {"verb","ok","exit_code","stack_state","mihomo_ip","dashboard_url", "checks":[{"name","value"},...],"last_update":{...}|null} （last_update 与 state/last-run.json 一致；首次运行前为 null）。 其检查名为 env、docker、mihomo_container、ui_container、network、 subscription、tun_enable。last-run.json 携带 {"ts","exit_code","dry_run","updated","unchanged","failed", "rolled_back","updated_names","failed_names","rolled_back_names"}。 doctor --json 输出 {"verb","ok","exit_code","checks":[...]}，检查名为 env、docker、arch、tun_device、network、compose、mihomo、tun_gateway、 controller、image_arch、dashboard、update_task、boot_task、subscription （update_task/boot_task 校验 DSM 任务计划的部署情况；"unknown" 表示 此机器没有可检索的调度器）。 标准输出只有这一个对象，日志绝不混入。
 
-日志：<data-dir>/logs/gateway.log（gateway.sh 运行的行携带 verb= 与 run= 字段；直接运行 auto_update.sh 经 auto-update.log 符号链接写入 同一文件，但不带这两个字段）。
+日志：gateway.sh 写入 <data-dir>/logs/gateway.log（每行携带 verb= 与 run= 字段）。直接运行 auto_update.sh 写入 auto-update.log——若 gateway.sh 先运行过，它是指向 gateway.log 的链接，否则是独立文件，且不带这两个字段。

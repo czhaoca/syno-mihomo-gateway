@@ -312,8 +312,9 @@ runs `auto_update.sh` (with `UPDATE_ENABLED=true`) or when the **Boot-up** self-
 
 After creating the task, use **Run** once and verify the log at
 `../syno-mihomo-gateway-data/logs/auto-update.log` — a relative `UPDATE_LOG` resolves under the
-persistent data directory, never the release tree, and once `gateway.sh` has run that file is a
-symlink into the unified `gateway.log`. A dry run pulls and inspects images but never swaps a
+persistent data directory, never the release tree; when `gateway.sh` ran before the updater's
+first run, that file is a link into the unified `gateway.log`, otherwise it is its own file. A
+dry run pulls and inspects images but never swaps a
 container:
 
 ```sh

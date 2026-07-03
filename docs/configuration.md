@@ -61,9 +61,9 @@ renderer fails loudly if any is empty — no DNS is hardcoded in the repo).
 
 | Key | Req | Description | Example |
 |---|:--:|---|---|
-| `DNS_DEFAULT_NAMESERVER` | ✅ | Bootstrap resolvers (plain IPs, used to resolve the others). | `114.114.114.114,223.5.5.5` |
-| `DNS_NAMESERVER` | ✅ | Primary/domestic resolvers. | `114.114.114.114,223.5.5.5` |
-| `DNS_FALLBACK` | ✅ | Overseas / anti-pollution resolvers. | `8.8.8.8,8.8.4.4` |
+| `DNS_DEFAULT_NAMESERVER` | ✅ | Bootstrap resolvers (plain IPs, used to resolve the others). | `1.1.1.1,1.0.0.1` |
+| `DNS_NAMESERVER` | ✅ | Primary/domestic resolvers. | `1.1.1.1,1.0.0.1` |
+| `DNS_FALLBACK` | ✅ | Overseas / anti-pollution resolvers. | `1.1.1.1,1.0.0.1` |
 
 ### Container images
 

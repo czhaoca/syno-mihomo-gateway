@@ -22,13 +22,14 @@ meta:
       是基于同一套函数的向导前端。
   logs:
     en: >-
-      Logs: <data-dir>/logs/gateway.log (lines from gateway.sh runs carry
-      verb= and run= fields; direct auto_update.sh runs share the file via
-      the auto-update.log symlink, without those fields).
+      Logs: gateway.sh writes <data-dir>/logs/gateway.log (lines carry verb=
+      and run= fields). Direct auto_update.sh runs write auto-update.log -
+      a link to gateway.log when gateway.sh ran first, otherwise a separate
+      file - without those fields.
     zh: >-
-      日志：<data-dir>/logs/gateway.log（gateway.sh 运行的行携带 verb= 与
-      run= 字段；直接运行 auto_update.sh 经 auto-update.log 符号链接写入
-      同一文件，但不带这两个字段）。
+      日志：gateway.sh 写入 <data-dir>/logs/gateway.log（每行携带 verb= 与
+      run= 字段）。直接运行 auto_update.sh 写入 auto-update.log——若
+      gateway.sh 先运行过，它是指向 gateway.log 的链接，否则是独立文件，且不带这两个字段。
 
 guardrails:
   - en: >-

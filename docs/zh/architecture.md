@@ -39,7 +39,7 @@
 ../syno-mihomo-gateway-data/
 ├── .env        # 生效的设置 + 机密（仓库根目录的 .env 只是一次性的迁移来源）
 ├── config/     # 渲染出的 config.yaml + subscription.txt
-├── logs/       # gateway.log（统一日志；auto-update.log / install.log 是指向它的符号链接）
+├── logs/       # install.log、auto-update.log、gateway.log（各工具各写一份；若 gateway.sh 先运行则链接为同一文件）
 └── state/      # update-targets（登记列表）、last-run.json、last-good/<name>
 ```
 
@@ -180,7 +180,7 @@ config/config.template.yaml ──(scripts/render_config.sh)──► ../syno-mi
 
 1. **先校验，再按摘要检测** —— `.env` 中的更新设置会先行校验，且除非镜像摘要确实发生
    变化，否则什么都不做；
-2. **预检** —— 如果 compose 风味、镜像架构、macvlan 网络、`/dev/net/tun` 或镜像仓库登录
+2. **预检** —— 如果 compose 风味、宿主机架构、macvlan 网络、`/dev/net/tun` 或镜像仓库登录
    （ACR 模式）不正确，则中止（不触碰任何东西）；当 `TUN_AUTO_REDIRECT=true` 时，还会用
    一次性网络命名空间做内核兼容性探测，作为 compose 重建的额外门槛（`--dry-run` 只会注明
    它将要运行）；

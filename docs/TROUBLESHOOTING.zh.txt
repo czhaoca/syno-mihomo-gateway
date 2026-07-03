@@ -2,9 +2,10 @@
 ========
 
 下面每一条的格式为：现象 -> 可能原因 -> 解决办法。日志写入
-../syno-mihomo-gateway-data/logs/（本文件夹的同级目录）：全部内容都写入
-gateway.log；install.log 与 auto-update.log 是指向它的符号链接。出问题时请
-先查看它。
+../syno-mihomo-gateway-data/logs/（本文件夹的同级目录）：安装程序写入
+install.log，计划更新任务写入 auto-update.log，gateway.sh 写入
+gateway.log（若 gateway.sh 先运行过，它会把另外两个名字链接到 gateway.log，
+三者共享同一文件）。出问题时请先查看与你所用工具同名的日志。
 
 --------------------------------------------------------------------------
 安装程序拒绝运行 / 要求你移动文件夹
@@ -187,7 +188,8 @@ DSM 7 计划更新没有运行
 --------------------------------------------------------------------------
 应该去哪里查看
 --------------------------------------------------------------------------
-  * 全部日志：     ../syno-mihomo-gateway-data/logs/gateway.log
-                   （其中 install.log 与 auto-update.log 是指向它的符号链接）。
+  * 日志：         ../syno-mihomo-gateway-data/logs/ —— install.log（安装程序）、
+                   auto-update.log（计划更新）、gateway.log（gateway.sh；若
+                   gateway.sh 先运行过，这些名字会链接到同一个共享文件）。
   * 设置：         ../syno-mihomo-gateway-data（见 CONFIGURE.zh.txt）。
   * 修改并重新部署：install.sh -> 4) 修改已有部署。

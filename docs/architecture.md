@@ -40,7 +40,7 @@ Runtime state lives in a **sibling** of the release checkout — `../syno-mihomo
 ../syno-mihomo-gateway-data/
 ├── .env        # the live settings + secrets (a repo-root .env is only a one-time migration source)
 ├── config/     # rendered config.yaml + subscription.txt
-├── logs/       # gateway.log (unified; auto-update.log / install.log are symlinks to it)
+├── logs/       # install.log, auto-update.log, gateway.log (one per tool; linked into one file when gateway.sh runs first)
 └── state/      # update-targets (enrollment), last-run.json, last-good/<name>
 ```
 
@@ -193,7 +193,7 @@ LAN offline. So "update automatically" is implemented as *safe-auto*:
 
 1. **validate, then detect by digest** — the `.env` update settings are validated up front,
    and nothing happens unless an image digest actually changed;
-2. **preflight** — abort (touching nothing) if compose flavor, image arch, the macvlan network,
+2. **preflight** — abort (touching nothing) if compose flavor, host arch, the macvlan network,
    `/dev/net/tun`, or the registry login (ACR mode) are not right; with `TUN_AUTO_REDIRECT=true`
    a disposable-network-namespace kernel-compat probe additionally gates the compose recreate
    (a `--dry-run` only notes that it would run);

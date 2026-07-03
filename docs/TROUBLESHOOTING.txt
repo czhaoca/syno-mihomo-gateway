@@ -2,9 +2,11 @@ Troubleshooting
 ===============
 
 Each entry below is: SYMPTOM -> likely CAUSE -> FIX. Logs are written under
-../syno-mihomo-gateway-data/logs/ (a sibling of this folder): everything goes
-to gateway.log; install.log and auto-update.log are symlinks to it. Check it
-first when something fails.
+../syno-mihomo-gateway-data/logs/ (a sibling of this folder): the installer
+writes install.log, the scheduled updater writes auto-update.log, and
+gateway.sh writes gateway.log (when gateway.sh runs first, it links the other
+two names to gateway.log so all three share one file). When something fails,
+check the log named after the tool you ran.
 
 --------------------------------------------------------------------------
 Installer refuses to run / asks you to move the folder
@@ -211,7 +213,9 @@ DSM 7 scheduled update does not run
 --------------------------------------------------------------------------
 Where to look
 --------------------------------------------------------------------------
-  * All logs:  ../syno-mihomo-gateway-data/logs/gateway.log
-               (install.log and auto-update.log there are symlinks to it).
+  * Logs:      ../syno-mihomo-gateway-data/logs/ - install.log (installer),
+               auto-update.log (scheduled updater), gateway.log (gateway.sh;
+               when gateway.sh ran first, the names are links to one shared
+               file).
   * Settings:  ../syno-mihomo-gateway-data (see CONFIGURE.txt).
   * To change and redeploy: install.sh -> 4) Modify an existing deployment.

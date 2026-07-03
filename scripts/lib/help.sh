@@ -37,7 +37,7 @@ Exit codes:
   6  this verb needs root - nothing changed
   7  mutating verb refused without an explicit --yes - nothing changed
 
-Logs: <data-dir>/logs/gateway.log (lines from gateway.sh runs carry verb= and run= fields; direct auto_update.sh runs share the file via the auto-update.log symlink, without those fields).
+Logs: gateway.sh writes <data-dir>/logs/gateway.log (lines carry verb= and run= fields). Direct auto_update.sh runs write auto-update.log - a link to gateway.log when gateway.sh ran first, otherwise a separate file - without those fields.
 Full reference: docs/CLI.txt (developers: docs/cli.md)
 SMG_HELP_EOF
 }

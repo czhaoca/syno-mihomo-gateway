@@ -124,6 +124,6 @@ Verbs:
 
 status --json emits one flat object: {"verb","ok","exit_code","stack_state","mihomo_ip","dashboard_url", "checks":[{"name","value"},...],"last_update":{...}|null} (last_update mirrors state/last-run.json; null before the first run). Its check names are env, docker, mihomo_container, ui_container, network, subscription, tun_enable. last-run.json carries {"ts","exit_code","dry_run","updated","unchanged","failed", "rolled_back","updated_names","failed_names","rolled_back_names"}. doctor --json emits {"verb","ok","exit_code","checks":[...]} with check names env, docker, arch, tun_device, network, compose, mihomo, tun_gateway, controller, image_arch, dashboard, update_task, boot_task, subscription (update_task/boot_task verify the DSM Task Scheduler deployment; "unknown" means this box has no searchable scheduler). Exactly one object on stdout; logs never interleave.
 
-Logs: <data-dir>/logs/gateway.log (lines from gateway.sh runs carry verb= and run= fields; direct auto_update.sh runs share the file via the auto-update.log symlink, without those fields).
+Logs: gateway.sh writes <data-dir>/logs/gateway.log (lines carry verb= and run= fields). Direct auto_update.sh runs write auto-update.log - a link to gateway.log when gateway.sh ran first, otherwise a separate file - without those fields.
 
-This page is GENERATED from scripts/cli/spec.yaml - DO NOT EDIT. Regenerate: python3 scripts/ci/cli_contract_check.py --write
+This guide is generated from the project's CLI spec - do not edit it by hand.

@@ -12,7 +12,8 @@
 - 🚀 **自动化脚本** — 自动检测群晖网络接口（`eth0` / `ovs_eth0`）。
 - 🛡️ **安全隔离** — 使用 Docker macvlan；拥有独立局域网 IP，不干扰宿主机网络。
 - 🧹 **可控重新部署** — 可分别复用、安全拆除或手动处理现有网关容器和 macvlan。
-- 🔧 **配置集中在 `.env`** — IP、端口、DNS、镜像仓库；仓库内不硬编码任何密钥或 DNS。
+- 🔧 **配置集中在 `.env`** — IP、端口、DNS、镜像仓库；仓库不提交任何密钥，模板只携带
+  中性的占位示例值。
 - 🔁 **订阅分离** — 机场订阅链接保存在单独的 gitignore 文件中。
 - 🤖 **安全自动更新** — 按摘要检测变化，带健康检查与自动回滚；默认从阿里云 ACR 拉取
   （`REGISTRY_MODE=docker` 直接拉取上游镜像）；外部 cloudflared 采用蓝绿部署（保留隧道令牌）。
@@ -112,9 +113,9 @@ vi ../syno-mihomo-gateway-data/config/subscription.txt
 sudo docker compose --env-file ../syno-mihomo-gateway-data/.env up -d --force-recreate mihomo
 # 或一步完成：sudo sh scripts/gateway.sh modify --subscription URL --yes
 
-# 健康检查
-sudo sh scripts/gateway.sh status    # 状态快照（--json 供脚本使用）
-sudo sh scripts/gateway.sh doctor    # 完整诊断（--egress 探测真实出口）
+# 健康检查（只读；无需 root 或 --yes）
+sh scripts/gateway.sh status    # 状态快照（--json 供脚本使用）
+sh scripts/gateway.sh doctor    # 完整诊断（--egress 探测真实出口）
 
 # 更新仓库
 git pull && sudo sh ./install.sh

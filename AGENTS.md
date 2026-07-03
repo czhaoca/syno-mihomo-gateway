@@ -45,9 +45,13 @@
 ## CI/CD
 
 - **Platform**: Woodpecker CI (on-premise)
-- **Pipeline**: `.woodpecker.yml` — compose/YAML validation, config render check
-  (`scripts/ci/render_check.py`, also enforces the no-hardcoded-DNS rule), and `shellcheck`.
-  Triggers on `main` and `master`.
+- **Pipeline**: `.woodpecker.yml` — 9 blocking steps: `validate-compose`, `validate-yaml`,
+  `render-config` (`scripts/ci/render_check.py`, also enforces the no-hardcoded-DNS rule),
+  `cli-contract` (generated CLI docs must regenerate byte-identical), `compose-policy`,
+  `package-check` (bundle + leak gate), `privacy-check`, `dsm-shell-tests` (six BusyBox-sh
+  suites: `dsm_installer_check`, `lifecycle_check`, `auto_update_check`, `cloudflared_check`,
+  `generic_update_check`, `gateway_cli_check`), and `shellcheck`. Full step table:
+  docs/development.md. Triggers on `main` and `master`.
 
 ## Documentation
 

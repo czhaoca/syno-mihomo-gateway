@@ -21,7 +21,7 @@ Three distinct failure modes look alike. Pick by the exact symptom — always te
 | Code | Meaning | What to do |
 |---|---|---|
 | `0` | success / no-op | nothing |
-| `2` | partial failure | read the notification + `../syno-mihomo-gateway-data/logs/gateway.log` (`auto-update.log` is a symlink to it) |
+| `2` | partial failure | read the notification + `../syno-mihomo-gateway-data/logs/auto-update.log` (a link into `gateway.log` when `gateway.sh` ran first) |
 | `3` | config / preflight error | fix the reported precondition; nothing was changed |
 | `4` | another run holds the lock | wait — see the stale-lock note below |
 | `5` | ACR login failed | check `ACR_PASSWORD` / token expiry / registry host |
@@ -275,7 +275,7 @@ generic targets alike). Retries won't help; mirror the image first.
 2. Re-run `sh scripts/install_scheduler.sh` and copy its exact absolute-path command.
 3. Confirm the Schedule time against **Regional Options**; `UPDATE_TZ` only affects log timestamps.
 4. Select the task and click **Run**, then inspect its saved result and
-   `../syno-mihomo-gateway-data/logs/gateway.log`.
+   `../syno-mihomo-gateway-data/logs/auto-update.log`.
 5. Exit code `3` with a Docker readiness message means Container Manager did not become ready
    within `DOCKER_READY_TIMEOUT`; verify the package is running or increase the timeout.
 

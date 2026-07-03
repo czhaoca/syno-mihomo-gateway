@@ -176,9 +176,10 @@ silently disabling.
 
 ## Logs
 
-- Unified log: `../syno-mihomo-gateway-data/logs/gateway.log` — every `gateway.sh` verb, the
-  updater, and the installer log here (with `verb=`/`run=` audit fields); `auto-update.log` and
-  `install.log` in the same dir are symlinks to it. Self-rotated at `LOG_MAX_BYTES` keeping
+- Tool logs: `../syno-mihomo-gateway-data/logs/` — the installer writes `install.log`, the
+  updater `auto-update.log`, and every `gateway.sh` verb `gateway.log` (with `verb=`/`run=`
+  audit fields). When `gateway.sh` is the first tool to run, it links the other two names to
+  `gateway.log` so all three share one file. Self-rotated at `LOG_MAX_BYTES` keeping
   `LOG_KEEP` generations — no dependency on `logrotate`. (A relative `UPDATE_LOG` is resolved
   under the data dir, not the repo.)
 - Container logs: `docker logs mihomo` / `docker logs mihomo-ui` / `docker logs cloudflared`.
@@ -211,7 +212,7 @@ the scheduled task — DSM then emails you exactly when something needs attentio
 documented default because it needs nothing besides DSM's own notification settings.
 
 **Opt-in rich channel — webhook.** Set `NOTIFY_WEBHOOK_URL` in `.env` (Bark/Gotify/
-Slack-compatible JSON POST). It fires on **failure and rollback**, not just success; set
+Slack-compatible JSON POST). It fires on failure **and** on success with changes; set
 `NOTIFY_ON_NOCHANGE=1` to also get quiet "nothing changed" pings. The URL (which often embeds a
 token) is passed to curl via a stdin config, never argv.
 
@@ -229,8 +230,13 @@ network namespace via `docker exec`, so it is immune to the macvlan self-reach c
 sudo sh scripts/doctor.sh                  # exit 0 healthy · 2 degraded · 3 broken
 sudo sh scripts/doctor.sh --egress         # also probe real egress through the proxy
 sudo sh scripts/gateway.sh doctor --json   # same checks (compose, tun_gateway, controller,
-                                           # image_arch, dashboard, …) as one JSON object
+                                           # image_arch, dashboard, update_task, boot_task,
+                                           # subscription, …) as one JSON object
 ```
+
+The `update_task` / `boot_task` checks verify the DSM Task Scheduler deployment (a scheduled
+task running `auto_update.sh`, and a Boot-up task running `setup_network.sh` — what keeps TUN
+alive across reboots); `unknown` means the box has no searchable scheduler.
 
 To verify from the LAN side, run the raw probes below from **another LAN device**, not the NAS
 (because of [macvlan self-reach](troubleshooting.md#macvlan-self-reach)):
