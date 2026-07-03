@@ -37,7 +37,19 @@ container_make_workdir() {
   return 0
 }
 
-_ctr_inspect() { "$DOCKER_BIN" inspect -f "$1" "$2" 2>/dev/null; }
+# The docker CLI appends one newline AFTER the template output, so a template
+# that already ends each element with \n leaves a trailing blank line in every
+# line-oriented capture file - which the element-count guard would misread as
+# an embedded newline on EVERY real daemon (the fake-docker suites emit exact
+# lines and never showed it). Normalize here: strip trailing newlines and emit
+# nothing at all for empty output, so file line counts equal element counts.
+# A value genuinely ending in \n now under-counts instead of over-counting;
+# the guard still refuses it (DEC-4 fail-closed), just with the same message.
+_ctr_inspect() {
+  _ci_out="$("$DOCKER_BIN" inspect -f "$1" "$2" 2>/dev/null)" || return 1
+  [ -n "$_ci_out" ] && printf '%s\n' "$_ci_out"
+  return 0
+}
 
 # Uncaptured-but-consequential HostConfig surface. Everything here is a setting
 # container_run_saved does not replay; a non-default value means an in-place

@@ -24,6 +24,9 @@ cat >"$MOCK_DOCKER" <<'EOF'
 printf '%s\n' "$*" >> "$CALLS"
 case "$1" in
   inspect)
+    # Emulate the real CLI: docker inspect -f appends ONE newline after the
+    # template output (see generic_update_check.sh for the full rationale).
+    (
     case "$*" in
       "inspect cloudflared") exit "${MOCK_BLUE_INSPECT_RC:-0}" ;;
       "inspect cloudflared-candidate") exit "${MOCK_CAND_INSPECT_RC:-1}" ;;
@@ -53,7 +56,11 @@ case "$1" in
       *"Config.User"*|*"Config.WorkingDir"*) exit 0 ;;
       *"ReadonlyRootfs"*|*"HostConfig.Privileged"*) echo false; exit 0 ;;
       *"{{.Image}}"*) echo sha256:old-cloudflared; exit 0 ;;
-    esac ;;
+    esac
+    )
+    _rc=$?
+    [ "$_rc" -eq 0 ] && echo
+    exit "$_rc" ;;
   logs) [ "${MOCK_LOG_CONNECTED:-0}" = 1 ] && echo 'Registered tunnel connection'; exit 0 ;;
   run)
     _env_file=""; _want_env=0

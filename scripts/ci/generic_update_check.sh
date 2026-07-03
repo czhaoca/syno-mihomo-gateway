@@ -26,6 +26,11 @@ cat >"$MOCK_DOCKER" <<'EOF'
 printf '%s\n' "$*" >> "$CALLS"
 case "$1" in
   inspect)
+    # Emulate the real CLI: docker inspect -f prints the template output and
+    # then appends ONE more newline. Every arm below runs in the subshell; the
+    # trailing echo reproduces that extra newline so the capture engine is
+    # tested against realistic (not idealized) daemon output.
+    (
     case "$*" in
       "inspect missingctr") exit 1 ;;
       *"Ulimits"*failctr) exit 1 ;;
@@ -93,7 +98,11 @@ case "$1" in
       *"ReadonlyRootfs"*|*"Privileged"*) echo false; exit 0 ;;
       *"{{.Image}}"*) echo sha256:oldimg; exit 0 ;;
     esac
-    exit 0 ;;
+    exit 0
+    )
+    _rc=$?
+    [ "$_rc" -eq 0 ] && echo
+    exit "$_rc" ;;
   run)
     if [ -n "${MOCK_RUN_FAIL_FLAG:-}" ] && [ -f "$MOCK_RUN_FAIL_FLAG" ]; then
       rm -f "$MOCK_RUN_FAIL_FLAG"; exit 1
