@@ -15,6 +15,10 @@
 # confirm with a manual `docker inspect` diff before treating it as a real
 # regression.
 #
+# Normalized by design (never drift): bind mounts and volume attachments are
+# compared as ONE canonical set (a replayed anonymous volume legitimately
+# moves from Mounts to Binds), and network_mode "default" equals "bridge".
+#
 # Usage:
 #   state_diff.sh snapshot NAME DIR   # before the update
 #   state_diff.sh compare  NAME DIR   # after the update; exit 1 on drift
@@ -33,7 +37,7 @@ SELF_DIR="${STATE_DIFF_SELF_DIR:-$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)}
 LOG_FILE="${LOG_FILE:-/dev/null}"
 DOCKER_BIN="${DOCKER_BIN:-docker}"
 
-SD_FILES="env cmd entrypoint binds volumes ports dns extra-hosts cap-add cap-drop security-opt devices tmpfs sysctls log-opts group-add ulimits labels"
+SD_FILES="env cmd entrypoint mounts ports dns extra-hosts cap-add cap-drop security-opt devices tmpfs sysctls log-opts group-add ulimits labels"
 
 # _sd_collect NAME OUTDIR - one normalized snapshot of the capture contract.
 _sd_collect() {
@@ -43,6 +47,17 @@ _sd_collect() {
   for _sdc_f in $SD_FILES; do
     cp "$CTR_WORKDIR/$_sdc_f" "$_sdc_dir/$_sdc_f" 2>/dev/null || : >"$_sdc_dir/$_sdc_f"
   done
+  # Binds-vs-volumes is Docker bookkeeping, not configuration: an
+  # image-declared VOLUME attaches anonymously (in Mounts), and a faithful
+  # replay must re-attach that same volume via -v name:dest - which Docker
+  # records under Binds. Comparing the two files separately would flag that
+  # legitimate move as drift, so compare ONE canonical attachment set instead.
+  {
+    awk -F: 'NF >= 2 { ro = "rw"; if ($3 ~ /(^|,)ro(,|$)/) ro = "ro"; print $1 "|" $2 "|" ro }' \
+      "$CTR_WORKDIR/binds" 2>/dev/null
+    awk -F'|' 'NF >= 2 { print $1 "|" $2 "|" ($3 == "true" ? "rw" : "ro") }' \
+      "$CTR_WORKDIR/volumes" 2>/dev/null
+  } | sort >"$_sdc_dir/mounts"
   # Docker adds the container's own short id as a network alias; a recreated
   # container gets a new one by design, so it is identity, not configuration.
   awk -F'|' -v id="$(printf '%.12s' "${CTR_SPEC_ID:-}")" '{
@@ -57,7 +72,12 @@ _sd_collect() {
     printf 'workdir=%s\n' "${CTR_SPEC_WORKDIR:-}"
     printf 'readonly=%s\n' "${CTR_SPEC_READONLY:-}"
     printf 'privileged=%s\n' "${CTR_SPEC_PRIVILEGED:-}"
-    printf 'network_mode=%s\n' "${CTR_SPEC_NETWORK_MODE:-}"
+    # "default" IS the bridge network; a replay that re-attaches the bridge
+    # explicitly changes only the label, not the dataplane. Normalize so the
+    # equivalent modes never read as drift.
+    _sdc_netmode="${CTR_SPEC_NETWORK_MODE:-}"
+    [ "$_sdc_netmode" = default ] && _sdc_netmode=bridge
+    printf 'network_mode=%s\n' "$_sdc_netmode"
     printf 'log_driver=%s\n' "${CTR_SPEC_LOG_DRIVER:-}"
     printf 'stop_signal=%s\n' "${CTR_SPEC_STOP_SIGNAL:-}"
     printf 'stop_timeout=%s\n' "${CTR_SPEC_STOP_TIMEOUT:-}"

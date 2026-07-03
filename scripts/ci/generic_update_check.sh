@@ -84,7 +84,7 @@ case "$1" in
       *"Config.Env"*) printf '%s\n' 'APP_MODE=prod'; exit 0 ;;
       *"Config.Cmd"*) printf '%s\n' serve; exit 0 ;;
       *"Config.Entrypoint"*) printf '%s\n' /entry; exit 0 ;;
-      *"HostConfig.Binds"*) printf '%s\n' '/host/cfg:/cfg:ro'; exit 0 ;;
+      *"HostConfig.Binds"*) printf '%s\n' "${MOCK_BINDS:-/host/cfg:/cfg:ro}"; exit 0 ;;
       *".Mounts"*) [ -n "${MOCK_VOLUMES:-}" ] && printf '%s\n' "$MOCK_VOLUMES"; exit 0 ;;
       *"PortBindings"*) printf '%s\n' '|8080|80/tcp'; exit 0 ;;
       *"NetworkSettings.Networks"*)
@@ -450,6 +450,22 @@ MOCK_NETWORKS='appnet|10.10.0.5|web,ffeeddccbbaa'
 export MOCK_ID MOCK_HOSTNAME MOCK_NETWORKS
 expect_success "new container id and auto alias are normalized" sh "$SD" compare webapp "$SNAP"
 unset MOCK_ID MOCK_NETWORKS
+# Representation equivalences (found live on DSM): a replayed anonymous volume
+# moves from Mounts to Binds, and network_mode default==bridge - neither is
+# configuration drift. A genuinely detached volume must still drift.
+SNAP2="$TMP/snap2"
+MOCK_VOLUMES='vol123abc|/data|true' MOCK_NETWORK_MODE=default
+export MOCK_VOLUMES MOCK_NETWORK_MODE
+expect_success "volume-era snapshot succeeds" sh "$SD" snapshot webapp "$SNAP2"
+MOCK_VOLUMES='' MOCK_NETWORK_MODE=bridge
+MOCK_BINDS='/host/cfg:/cfg:ro
+vol123abc:/data'
+export MOCK_VOLUMES MOCK_NETWORK_MODE MOCK_BINDS
+expect_success "volume->bind move and default->bridge compare clean" sh "$SD" compare webapp "$SNAP2"
+MOCK_BINDS='/host/cfg:/cfg:ro'; export MOCK_BINDS
+SD_OUT="$(sh "$SD" compare webapp "$SNAP2" 2>&1)" && fail "detached volume must fail the diff" || ok
+assert_contains "mount diff names the canonical set" "$SD_OUT" 'mounts'
+unset MOCK_VOLUMES MOCK_BINDS; MOCK_NETWORK_MODE=appnet; export MOCK_NETWORK_MODE
 
 # --- T15: fail-closed hardening regressions -----------------------------------
 # parity guard: uncaptured publish/oom/device-cgroup settings refuse

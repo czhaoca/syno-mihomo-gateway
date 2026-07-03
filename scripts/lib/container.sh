@@ -55,24 +55,34 @@ _ctr_inspect() {
 # container_run_saved does not replay; a non-default value means an in-place
 # recreate would silently degrade the container, so the guard refuses instead.
 # The leading comment doubles as a fixture marker for the fake-docker suites.
-CTR_GUARD_TMPL='{{/*ctr-guard*/}}Links={{len .HostConfig.Links}}
-VolumesFrom={{len .HostConfig.VolumesFrom}}
-Mounts={{len .HostConfig.Mounts}}
-DeviceRequests={{len .HostConfig.DeviceRequests}}
-DeviceCgroupRules={{len .HostConfig.DeviceCgroupRules}}
-DnsOptions={{len .HostConfig.DnsOptions}}
-DnsSearch={{len .HostConfig.DnsSearch}}
-CpusetCpus={{.HostConfig.CpusetCpus}}
-CpusetMems={{.HostConfig.CpusetMems}}
-CgroupParent={{.HostConfig.CgroupParent}}
-UsernsMode={{.HostConfig.UsernsMode}}
-CpuShares={{.HostConfig.CpuShares}}
-BlkioWeight={{.HostConfig.BlkioWeight}}
-PidsLimit={{.HostConfig.PidsLimit}}
-OomScoreAdj={{.HostConfig.OomScoreAdj}}
-PublishAllPorts={{.HostConfig.PublishAllPorts}}
-Init={{.HostConfig.Init}}
-Runtime={{.HostConfig.Runtime}}'
+# Template-mode trap (found live on DSM, docker 24): the CLI executes -f
+# against the TYPED struct first and silently re-runs the whole template
+# against the RAW JSON MAP when any line errors there. Field syntax is fragile
+# in both modes - .HostConfig.DnsOptions breaks struct mode (the Go field is
+# DNSOptions), while .HostConfig.Mounts breaks map mode (omitempty keys are
+# absent, and a missing map entry is a hard error). A template mixing both
+# kinds can never pass. So: force map mode deterministically ({{index}} on the
+# struct errors, triggering the fallback on line 1) and make every access
+# map-safe with {{with index ...}} - absent keys and JSON nulls both take the
+# {{else}}/empty branch, which the awk comparator below reads as default.
+CTR_GUARD_TMPL='{{/*ctr-guard*/}}Links={{with index .HostConfig "Links"}}{{len .}}{{else}}0{{end}}
+VolumesFrom={{with index .HostConfig "VolumesFrom"}}{{len .}}{{else}}0{{end}}
+Mounts={{with index .HostConfig "Mounts"}}{{len .}}{{else}}0{{end}}
+DeviceRequests={{with index .HostConfig "DeviceRequests"}}{{len .}}{{else}}0{{end}}
+DeviceCgroupRules={{with index .HostConfig "DeviceCgroupRules"}}{{len .}}{{else}}0{{end}}
+DnsOptions={{with index .HostConfig "DnsOptions"}}{{len .}}{{else}}0{{end}}
+DnsSearch={{with index .HostConfig "DnsSearch"}}{{len .}}{{else}}0{{end}}
+CpusetCpus={{with index .HostConfig "CpusetCpus"}}{{.}}{{end}}
+CpusetMems={{with index .HostConfig "CpusetMems"}}{{.}}{{end}}
+CgroupParent={{with index .HostConfig "CgroupParent"}}{{.}}{{end}}
+UsernsMode={{with index .HostConfig "UsernsMode"}}{{.}}{{end}}
+CpuShares={{with index .HostConfig "CpuShares"}}{{.}}{{end}}
+BlkioWeight={{with index .HostConfig "BlkioWeight"}}{{.}}{{end}}
+PidsLimit={{with index .HostConfig "PidsLimit"}}{{.}}{{end}}
+OomScoreAdj={{with index .HostConfig "OomScoreAdj"}}{{.}}{{end}}
+PublishAllPorts={{with index .HostConfig "PublishAllPorts"}}{{.}}{{end}}
+Init={{with index .HostConfig "Init"}}{{.}}{{end}}
+Runtime={{with index .HostConfig "Runtime"}}{{.}}{{end}}'
 
 # container_parity_guard NAME - 0 iff every uncaptured field is at its default.
 container_parity_guard() {
@@ -215,7 +225,7 @@ _container_capture_spec_impl() {
   # element with an embedded newline spans extra lines and would be replayed
   # corrupted (split argv, truncated value), so refuse instead (DEC-4). The
   # element counts come straight from the daemon and must match the files.
-  _ccs_counts="$(_ctr_inspect '{{/*ctr-counts*/}}{{len .Config.Env}} {{len .Config.Cmd}} {{len .Config.Entrypoint}} {{len .Config.Labels}} {{if .Config.Healthcheck}}{{len .Config.Healthcheck.Test}}{{else}}0{{end}}' "$_ccs_name")" || return 1
+  _ccs_counts="$(_ctr_inspect '{{/*ctr-counts*/}}{{if .Config.Env}}{{len .Config.Env}}{{else}}0{{end}} {{if .Config.Cmd}}{{len .Config.Cmd}}{{else}}0{{end}} {{if .Config.Entrypoint}}{{len .Config.Entrypoint}}{{else}}0{{end}} {{if .Config.Labels}}{{len .Config.Labels}}{{else}}0{{end}} {{if .Config.Healthcheck}}{{len .Config.Healthcheck.Test}}{{else}}0{{end}}' "$_ccs_name")" || return 1
   set -f
   # shellcheck disable=SC2086 # deliberate word-split of the count quintet (set -f guards globs)
   set -- $_ccs_counts
