@@ -527,6 +527,24 @@ gateway_doctor() {
     else
       _gw_check_add dashboard not-running; _gwd_degraded=1
     fi
+    # Scheduler-deployment parity with doctor.sh: missing tasks degrade;
+    # rc 2 (nothing searchable - not a DSM box) reports unknown, no severity.
+    if [ "${UPDATE_ENABLED:-true}" = true ]; then
+      scheduler_task_deployed "scripts/auto_update.sh"
+      case "$?" in
+        0) _gw_check_add update_task ok ;;
+        1) _gw_check_add update_task missing; _gwd_degraded=1 ;;
+        *) _gw_check_add update_task unknown ;;
+      esac
+    else
+      _gw_check_add update_task disabled
+    fi
+    scheduler_task_deployed "scripts/setup_network.sh"
+    case "$?" in
+      0) _gw_check_add boot_task ok ;;
+      1) _gw_check_add boot_task missing; _gwd_degraded=1 ;;
+      *) _gw_check_add boot_task unknown ;;
+    esac
   else
     _gw_check_add mihomo unknown
   fi

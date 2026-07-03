@@ -14,6 +14,8 @@ SELF_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
 . "$SELF_DIR/lib/network.sh"
 # shellcheck source=scripts/lib/compose.sh
 . "$SELF_DIR/lib/compose.sh"
+# shellcheck source=scripts/lib/scheduler.sh
+. "$SELF_DIR/lib/scheduler.sh"
 
 CHECK_EGRESS=0
 NO_LOG_INIT=1
@@ -95,6 +97,23 @@ if [ "$broken" -eq 0 ]; then
 
   _ui="$("$DOCKER_BIN" inspect -f '{{.State.Running}}' "$METACUBEXD_CONTAINER" 2>/dev/null)"
   if [ "$_ui" = true ]; then ok "dashboard container is running"; else warn "dashboard container is not running"; fi
+
+  # Scheduler deployment: the code only updates/self-heals if the DSM tasks
+  # actually exist. A missing boot task leaves TUN dead after a reboot (see
+  # docs/troubleshooting.md); rc 2 means nothing searchable here (not DSM) -
+  # stay silent rather than warn about a surface this box does not have.
+  if [ "${UPDATE_ENABLED:-true}" = true ]; then
+    scheduler_task_deployed "scripts/auto_update.sh"
+    case "$?" in
+      0) ok "auto-update task is scheduled" ;;
+      1) warn "no scheduled task runs scripts/auto_update.sh - see: sh scripts/install_scheduler.sh" ;;
+    esac
+  fi
+  scheduler_task_deployed "scripts/setup_network.sh"
+  case "$?" in
+    0) ok "boot self-heal task is scheduled (setup_network.sh)" ;;
+    1) warn "no Boot-up task runs scripts/setup_network.sh - TUN/macvlan will not self-heal after a reboot" ;;
+  esac
 fi
 
 if [ "$CHECK_EGRESS" -eq 1 ] && [ "$broken" -eq 0 ]; then

@@ -135,6 +135,6 @@ sh ./scripts/gateway.sh <verb> [options]
 
 ## 机器可读输出（--json）
 
-status --json 输出一个扁平对象： {"verb","ok","exit_code","stack_state","mihomo_ip","dashboard_url", "checks":[{"name","value"},...],"last_update":{...}|null} （last_update 与 state/last-run.json 一致；首次运行前为 null）。 其检查名为 env、docker、mihomo_container、ui_container、network、 subscription、tun_enable。last-run.json 携带 {"ts","exit_code","dry_run","updated","unchanged","failed", "rolled_back","updated_names","failed_names","rolled_back_names"}。 doctor --json 输出 {"verb","ok","exit_code","checks":[...]}，检查名为 env、docker、arch、tun_device、network、compose、mihomo、tun_gateway、 controller、image_arch、dashboard、subscription。 标准输出只有这一个对象，日志绝不混入。
+status --json 输出一个扁平对象： {"verb","ok","exit_code","stack_state","mihomo_ip","dashboard_url", "checks":[{"name","value"},...],"last_update":{...}|null} （last_update 与 state/last-run.json 一致；首次运行前为 null）。 其检查名为 env、docker、mihomo_container、ui_container、network、 subscription、tun_enable。last-run.json 携带 {"ts","exit_code","dry_run","updated","unchanged","failed", "rolled_back","updated_names","failed_names","rolled_back_names"}。 doctor --json 输出 {"verb","ok","exit_code","checks":[...]}，检查名为 env、docker、arch、tun_device、network、compose、mihomo、tun_gateway、 controller、image_arch、dashboard、update_task、boot_task、subscription （update_task/boot_task 校验 DSM 任务计划的部署情况；"unknown" 表示 此机器没有可检索的调度器）。 标准输出只有这一个对象，日志绝不混入。
 
 日志：<data-dir>/logs/gateway.log（gateway.sh 运行的行携带 verb= 与 run= 字段；直接运行 auto_update.sh 经 auto-update.log 符号链接写入 同一文件，但不带这两个字段）。

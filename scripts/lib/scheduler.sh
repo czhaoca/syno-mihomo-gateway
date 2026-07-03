@@ -71,6 +71,51 @@ scheduler_network_command() {
   printf 'cd %s && exec /bin/sh %s' "$_sn_root" "$_sn_script"
 }
 
+# scheduler_task_deployed SCRIPT_RELPATH - is any enabled scheduled entry on
+# this box wired to run the given script? Searched surfaces (all read-only):
+#   - DSM time-triggered GUI tasks: /usr/syno/etc/synoschedule.d/*/*.task
+#     (the cmd= line is base64 of the command text)
+#   - DSM event-triggered GUI tasks (Boot-up): the esynoscheduler sqlite db
+#   - the raw /etc/crontab fallback and the invoking user's crontab
+# Returns 0 found, 1 searchable-but-absent, 2 nothing searchable here (not a
+# DSM box / no readable stores) - callers should stay silent on 2.
+# The SMG_SCHED_* overrides exist for the test suites only.
+scheduler_task_deployed() {
+  _std_script="$1"
+  _std_taskdir="${SMG_SCHED_TASK_DIR:-/usr/syno/etc/synoschedule.d}"
+  _std_db="${SMG_SCHED_EVENT_DB:-/usr/syno/etc/esynoscheduler/esynoscheduler.db}"
+  _std_crontab="${SMG_SCHED_CRONTAB:-/etc/crontab}"
+  _std_searched=0
+  if [ -d "$_std_taskdir" ] && command -v base64 >/dev/null 2>&1; then
+    _std_searched=1
+    for _std_f in "$_std_taskdir"/*/*.task; do
+      [ -f "$_std_f" ] || continue
+      # only enabled tasks count - a disabled task does not run anything
+      grep -q '^state=disabled$' "$_std_f" 2>/dev/null && continue
+      if sed -n 's/^cmd=//p' "$_std_f" | base64 -d 2>/dev/null | grep -q "$_std_script"; then
+        return 0
+      fi
+    done
+  fi
+  if [ -r "$_std_db" ] && command -v sqlite3 >/dev/null 2>&1; then
+    _std_searched=1
+    if sqlite3 "$_std_db" 'select operation from task where enable=1;' 2>/dev/null \
+        | grep -q "$_std_script"; then
+      return 0
+    fi
+  fi
+  if [ -r "$_std_crontab" ]; then
+    _std_searched=1
+    grep -q "$_std_script" "$_std_crontab" 2>/dev/null && return 0
+  fi
+  if crontab -l >/dev/null 2>&1; then
+    _std_searched=1
+    crontab -l 2>/dev/null | grep -q "$_std_script" && return 0
+  fi
+  [ "$_std_searched" = 1 ] && return 1
+  return 2
+}
+
 # scheduler_reload_crond - best-effort compatibility for the unsupported raw
 # /etc/crontab fallback. DSM Task Scheduler does not need this function.
 scheduler_reload_crond() {

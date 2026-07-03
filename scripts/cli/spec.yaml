@@ -311,7 +311,9 @@ json_output:
     "rolled_back","updated_names","failed_names","rolled_back_names"}.
     doctor --json emits {"verb","ok","exit_code","checks":[...]} with
     check names env, docker, arch, tun_device, network, compose, mihomo,
-    tun_gateway, controller, image_arch, dashboard, subscription.
+    tun_gateway, controller, image_arch, dashboard, update_task, boot_task,
+    subscription (update_task/boot_task verify the DSM Task Scheduler
+    deployment; "unknown" means this box has no searchable scheduler).
     Exactly one object on stdout; logs never interleave.
   zh: >-
     status --json 输出一个扁平对象：
@@ -324,5 +326,7 @@ json_output:
     "rolled_back","updated_names","failed_names","rolled_back_names"}。
     doctor --json 输出 {"verb","ok","exit_code","checks":[...]}，检查名为
     env、docker、arch、tun_device、network、compose、mihomo、tun_gateway、
-    controller、image_arch、dashboard、subscription。
+    controller、image_arch、dashboard、update_task、boot_task、subscription
+    （update_task/boot_task 校验 DSM 任务计划的部署情况；"unknown" 表示
+    此机器没有可检索的调度器）。
     标准输出只有这一个对象，日志绝不混入。

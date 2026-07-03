@@ -42,6 +42,10 @@ UPDATE_ENABLED=false，任务在重新启用前不执行任何操作），然后
 为什么更推荐 GUI 任务：crontab 行可能在系统升级时被 DSM 覆盖；而任务计划中的
 任务可在升级后保留。
 
+随时可用  sudo sh scripts/doctor.sh  校验部署：当没有已启用的任务运行
+auto_update.sh，或缺少开机自愈任务（setup_network.sh）时会告警——开机任务
+正是让 TUN 在 NAS 重启后保持存活的关键。
+
 打印出的命令使用绝对工作目录和明确的 /bin/sh，符合 DSM 7 任务脚本建议。
 不要自行添加 ">> ...log" 重定向：更新器已经在
 ../syno-mihomo-gateway-data/logs/auto-update.log 自行写入并轮转日志。

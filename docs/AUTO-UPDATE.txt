@@ -59,6 +59,11 @@ it and click Run once; verify a zero result and check
 Why the GUI task is preferred: a crontab line may be overwritten by DSM during
 a system upgrade. The Task Scheduler task persists across upgrades.
 
+Verify the deployment any time with:  sudo sh scripts/doctor.sh
+It warns when no enabled task runs auto_update.sh, and when the Boot-up
+self-heal task (setup_network.sh) is missing - the boot task is what keeps
+TUN alive across NAS reboots.
+
 --------------------------------------------------------------------------
 How to schedule (an explicit choice)
 --------------------------------------------------------------------------

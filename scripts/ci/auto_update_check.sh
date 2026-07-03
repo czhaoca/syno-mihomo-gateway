@@ -64,6 +64,51 @@ expect_failure "named weekdays rejected consistently" cron_normalize '0 2 * * MO
 if [ "$(cron_daily_hhmm '5 3 * * *')" = '03:05' ]; then ok; else fail "daily time rendering"; fi
 expect_failure "complex cron is not described as one daily time" cron_daily_hhmm '*/5 * * * *'
 if [ "$(shell_quote "a'b")" = "'a'\''b'" ]; then ok; else fail "POSIX shell quoting"; fi
+
+# scheduler_task_deployed: the doctor's deployment check must find a task in
+# each store the DSM GUI actually uses (verified live 2026-07-03: time tasks
+# are base64 cmd= lines in synoschedule.d, boot tasks live in the
+# esynoscheduler db, raw crontab is the fallback) and stay silent (rc 2)
+# where none of those surfaces exist.
+SCHEDFIX="$TMP/schedfix"
+mkdir -p "$SCHEDFIX/tasks/root"
+printf 'type=daily\nname=mihomo-auto-update\nstate=enabled\ncmd=%s\n' \
+  "$(printf "cd '/x' && exec /bin/sh '/x/scripts/auto_update.sh'" | base64 | tr -d '\n')" \
+  > "$SCHEDFIX/tasks/root/7.task"
+SMG_SCHED_TASK_DIR="$SCHEDFIX/tasks" SMG_SCHED_EVENT_DB="$SCHEDFIX/absent.db" SMG_SCHED_CRONTAB="$SCHEDFIX/absent"
+export SMG_SCHED_TASK_DIR SMG_SCHED_EVENT_DB SMG_SCHED_CRONTAB
+expect_success "GUI time task found via base64 cmd" scheduler_task_deployed scripts/auto_update.sh
+expect_failure "unrelated script not falsely found" scheduler_task_deployed scripts/setup_network.sh
+printf 'type=boot\nname=x\nstate=disabled\ncmd=%s\n' \
+  "$(printf "exec /bin/sh '/x/scripts/setup_network.sh'" | base64 | tr -d '\n')" \
+  > "$SCHEDFIX/tasks/root/8.task"
+expect_failure "disabled task does not count as deployed" scheduler_task_deployed scripts/setup_network.sh
+printf '0 2 * * *\troot\tcd /x && exec /bin/sh /x/scripts/setup_network.sh\n' > "$SCHEDFIX/crontab"
+SMG_SCHED_CRONTAB="$SCHEDFIX/crontab"; export SMG_SCHED_CRONTAB
+expect_success "raw crontab fallback line found" scheduler_task_deployed scripts/setup_network.sh
+# event-db store: sqlite3 is stubbed (absent in the CI image, present on DSM)
+SQLITE_BIN="$TMP/sqlite-bin"; mkdir -p "$SQLITE_BIN"
+printf '%s\n' '#!/bin/sh' \
+  'printf "%s\n" "#!/bin/sh cd /x && exec /bin/sh /x/scripts/setup_network.sh"' \
+  > "$SQLITE_BIN/sqlite3"
+chmod +x "$SQLITE_BIN/sqlite3"
+: > "$SCHEDFIX/event.db"
+SMG_SCHED_TASK_DIR="$SCHEDFIX/none" SMG_SCHED_EVENT_DB="$SCHEDFIX/event.db" SMG_SCHED_CRONTAB="$SCHEDFIX/absent"
+export SMG_SCHED_TASK_DIR SMG_SCHED_EVENT_DB SMG_SCHED_CRONTAB
+OLD_PATH="$PATH"; PATH="$SQLITE_BIN:$PATH"; export PATH
+expect_success "boot task found in the event-scheduler db" scheduler_task_deployed scripts/setup_network.sh
+PATH="$OLD_PATH"; export PATH
+# nothing searchable at all -> rc 2, distinct from searched-but-missing
+SMG_SCHED_TASK_DIR="$SCHEDFIX/none" SMG_SCHED_EVENT_DB="$SCHEDFIX/absent.db" SMG_SCHED_CRONTAB="$SCHEDFIX/absent"
+export SMG_SCHED_TASK_DIR SMG_SCHED_EVENT_DB SMG_SCHED_CRONTAB
+if crontab -l >/dev/null 2>&1; then
+  : # a live user crontab makes rc 2 unreachable in this environment; skip
+  ok
+else
+  scheduler_task_deployed scripts/auto_update.sh
+  if [ "$?" = 2 ]; then ok; else fail "undetectable platform must return 2, not a false missing"; fi
+fi
+unset SMG_SCHED_TASK_DIR SMG_SCHED_EVENT_DB SMG_SCHED_CRONTAB
 RELOAD_BIN="$TMP/reload-bin"
 RELOAD_CALLS="$TMP/reload.calls"
 mkdir -p "$RELOAD_BIN"

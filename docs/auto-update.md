@@ -305,6 +305,11 @@ validates `UPDATE_SCHEDULE` and prints a shell-quoted command with an absolute w
 an explicit `/bin/sh`, and no duplicate log redirection. DSM Task Scheduler fires in the NAS
 system timezone; `UPDATE_TZ` controls timestamps inside the updater only.
 
+`sudo sh scripts/doctor.sh` verifies the deployment: it warns when no enabled scheduled task
+runs `auto_update.sh` (with `UPDATE_ENABLED=true`) or when the **Boot-up** self-heal task for
+`setup_network.sh` is missing — the latter is what leaves TUN dead after a reboot. `doctor
+--json` reports the same as the `update_task` / `boot_task` checks.
+
 After creating the task, use **Run** once and verify the log at
 `../syno-mihomo-gateway-data/logs/auto-update.log` — a relative `UPDATE_LOG` resolves under the
 persistent data directory, never the release tree, and once `gateway.sh` has run that file is a
