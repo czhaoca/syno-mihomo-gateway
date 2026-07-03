@@ -14,6 +14,8 @@ SELF_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
 . "$SELF_DIR/lib/network.sh"
 # shellcheck source=scripts/lib/compose.sh
 . "$SELF_DIR/lib/compose.sh"
+# shellcheck source=scripts/lib/resolve.sh
+. "$SELF_DIR/lib/resolve.sh"
 # shellcheck source=scripts/lib/scheduler.sh
 . "$SELF_DIR/lib/scheduler.sh"
 
@@ -114,6 +116,15 @@ if [ "$broken" -eq 0 ]; then
     0) ok "boot self-heal task is scheduled (setup_network.sh)" ;;
     1) warn "no Boot-up task runs scripts/setup_network.sh - TUN/macvlan will not self-heal after a reboot" ;;
   esac
+fi
+
+# Subscription parity with gateway.sh doctor --json (which reports this
+# unconditionally): a missing or still-placeholder subscription means mihomo
+# runs with no proxy providers - degraded, not broken.
+if [ -n "$(subscription_current 2>/dev/null)" ]; then
+  ok "subscription URL is stored"
+else
+  warn "no subscription URL is stored - set one: sudo sh scripts/gateway.sh modify --subscription <URL> --yes"
 fi
 
 if [ "$CHECK_EGRESS" -eq 1 ] && [ "$broken" -eq 0 ]; then

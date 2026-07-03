@@ -216,6 +216,27 @@ _lines="$(wc -l < "$TMP/out" | tr -d ' ')"
 grep -q '"verb":"doctor"' "$TMP/out" || fail "doctor --json missing verb field"
 grep -q '"checks":\[' "$TMP/out" || fail "doctor --json missing checks[]"
 
+# --- doctor subscription parity: human doctor.sh mirrors --json's check ----------
+# subscription.txt was seeded above -> both modes report it as stored, no WARN.
+grep -q '"name":"subscription","value":"ok"' "$TMP/out" \
+  || fail "doctor --json lacks subscription:ok with a stored URL"
+FAKE_UID=0 PATH="$STUB:$PATH" sh "$ROOT/scripts/doctor.sh" </dev/null >"$TMP/dout" 2>"$TMP/derr" || :
+grep -q 'subscription URL is stored' "$TMP/dout" \
+  || fail "doctor.sh did not report the stored subscription"
+if grep -q 'subscription' "$TMP/derr"; then
+  fail "doctor.sh warned despite a stored subscription"
+fi
+# with the file gone, both modes must flag it (missing / WARN) - same severity.
+mv "$DATA/config/subscription.txt" "$DATA/config/subscription.txt.keep"
+FAKE_UID=1000 PATH="$STUB:$PATH" sh "$GW" doctor --json </dev/null >"$TMP/out" 2>"$TMP/err" || :
+grep -q '"name":"subscription","value":"missing"' "$TMP/out" \
+  || fail "doctor --json lacks subscription:missing without a URL"
+FAKE_UID=0 PATH="$STUB:$PATH" sh "$ROOT/scripts/doctor.sh" </dev/null >"$TMP/dout" 2>"$TMP/derr" || :
+grep -q 'WARN.*subscription' "$TMP/derr" \
+  || fail "doctor.sh did not warn about the missing subscription"
+mv "$DATA/config/subscription.txt.keep" "$DATA/config/subscription.txt"
+ok
+
 # --- cron: persists schedule settings without touching any crontab ---------------
 expect_rc 0 gw cron --time 03:30 --tz UTC --enable
 _sched="$(PATH="$STUB:$PATH" sh -c ". '$ROOT/scripts/lib/common.sh'; dotenv_get UPDATE_SCHEDULE" 2>/dev/null)" || _sched=''
