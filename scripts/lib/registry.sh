@@ -232,7 +232,7 @@ pull_failure_hint() {
   case "${PULL_LAST_ERROR:-}" in
     *"pull access denied"*|*"denied"*|*unauthorized*) : ;;
     *"manifest unknown"*|*"manifest for"*)
-      printf '%s' " (not mirrored in ACR? add the upstream image to docker-china-sync/images.txt)" ;;
+      printf '%s' " (not mirrored in ACR? mirror the upstream image into your ACR namespace first)" ;;
   esac
 }
 

@@ -4,9 +4,9 @@
 # The enrollment list is the DEC-1 safety boundary: a container is updated by
 # the generic driver only when (a) it is explicitly enrolled here AND (b) it
 # already runs an image from the configured ACR registry/namespace. There is
-# deliberately NO upstream->ACR name translation: the docker-china-sync
-# flattening convention is ambiguous, so only refs that already resolve in ACR
-# are eligible; everything else is reported, never guessed.
+# deliberately NO upstream->ACR name translation: mirror-repo name-flattening
+# conventions are ambiguous, so only refs that already resolve in ACR are
+# eligible; everything else is reported, never guessed.
 #
 # List file: $GATEWAY_DATA_DIR/state/update-targets, one record per line:
 #   name|strategy|probe
@@ -262,7 +262,7 @@ targets_discover() {
     case "$_td_image" in
       "$DOCKER_REGISTRY/$ACR_NAMESPACE/"*) : ;;
       *)
-        log_warn >&2 "targets: '$_td_name' runs '$_td_image', which is not under $DOCKER_REGISTRY/$ACR_NAMESPACE - excluded. Mirror it first: add the upstream image to docker-china-sync/images.txt, then redeploy the container from the ACR ref."
+        log_warn >&2 "targets: '$_td_name' runs '$_td_image', which is not under $DOCKER_REGISTRY/$ACR_NAMESPACE - excluded. Mirror it first: push the upstream image into your ACR namespace, then redeploy the container from the ACR ref."
         continue ;;
     esac
     printf '%s|%s|%s|%s\n' "$_td_name" "$_td_image" "${_td_strategy:-recreate}" "$_td_probe"

@@ -295,7 +295,7 @@ _msg_en() {
     ask_manage_targets) printf '%s' 'review which OTHER containers auto-update (generic targets)?' ;;
     targets_no_acr)   printf '%s' 'no ACR registry configured (REGISTRY_MODE=docker) - generic targets need images already on your ACR' ;;
     targets_no_docker) printf '%s' 'docker is not available - skipping the container scan' ;;
-    targets_none_found) printf '%s' 'no other running containers use your ACR registry - mirror the image via docker-china-sync/images.txt and redeploy it from the ACR ref first' ;;
+    targets_none_found) printf '%s' 'no other running containers use your ACR registry - mirror the image into your ACR namespace and redeploy it from the ACR ref first' ;;
     targets_excluded) printf '%s' '  %s (%s) - excluded: %s' ;;
     targets_reason_compose) printf '%s' 'compose-managed (its own project recreates it)' ;;
     targets_reason_ambiguous) printf '%s' 'partial compose labels (ambiguous ownership)' ;;
@@ -666,7 +666,7 @@ _msg_zh() {
     ask_manage_targets) printf '%s' '要检查其他容器的自动更新（通用目标）吗？' ;;
     targets_no_acr)   printf '%s' '未配置 ACR 镜像仓库（REGISTRY_MODE=docker）——通用目标需要镜像已在你的 ACR 上' ;;
     targets_no_docker) printf '%s' 'docker 不可用——跳过容器扫描' ;;
-    targets_none_found) printf '%s' '没有其他运行中的容器使用你的 ACR 仓库——请先通过 docker-china-sync/images.txt 镜像该映像，并用 ACR 引用重新部署容器' ;;
+    targets_none_found) printf '%s' '没有其他运行中的容器使用你的 ACR 仓库——请先将该映像镜像到你的 ACR 命名空间，并用 ACR 引用重新部署容器' ;;
     targets_excluded) printf '%s' '  %s（%s）——已排除：%s' ;;
     targets_reason_compose) printf '%s' 'compose 管理（由其自身项目重建）' ;;
     targets_reason_ambiguous) printf '%s' 'compose 标签不完整（归属不明）' ;;

@@ -302,7 +302,7 @@ DISCOVER_LOG="$(cat "$TMP/discover.log")"
 [ "$DISCOVER_OUT" = 'webctr|acr.example/myns/web:latest|recreate|' ] && ok || fail "discovery emitted: $DISCOVER_OUT"
 assert_contains "compose-managed excluded with reason" "$DISCOVER_LOG" 'composectr'
 assert_contains "ambiguous excluded with reason" "$DISCOVER_LOG" 'ambctr'
-assert_contains "non-ACR image excluded actionably" "$DISCOVER_LOG" 'docker-china-sync'
+assert_contains "non-ACR image excluded actionably" "$DISCOVER_LOG" 'Mirror it first'
 assert_contains "gateway trio excluded from discovery" "$DISCOVER_LOG" 'mihomo'
 assert_contains "deny pattern excluded" "$DISCOVER_LOG" 'denctr'
 assert_not_contains "eligible target not warned about" "$DISCOVER_LOG" 'webctr'
@@ -392,8 +392,8 @@ DOCKER_REGISTRY="$_OLD_REG"
   # the mirroring hint; auth/ACL failures must not be misdiagnosed.
   PULL_LAST_ERROR='manifest unknown: manifest unknown'
   case "$(pull_failure_hint)" in
-    *docker-china-sync*) : ;;
-    *) dfail "manifest-unknown pull failure lacks the images.txt hint" ;;
+    *"not mirrored in ACR"*) : ;;
+    *) dfail "manifest-unknown pull failure lacks the mirroring hint" ;;
   esac
   PULL_LAST_ERROR="pull access denied for acr.example/myns/web, repository does not exist or may require 'docker login'"
   case "$(pull_failure_hint)" in
