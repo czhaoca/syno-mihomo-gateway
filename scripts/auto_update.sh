@@ -46,9 +46,12 @@ write_last_run() {
   _wlr_dir="$GATEWAY_DATA_DIR/state"
   mkdir -p "$_wlr_dir" 2>/dev/null || return 0
   chmod 700 "$_wlr_dir" 2>/dev/null || true
+  # Guard-then-strip: the name accumulators are unset on early-abort paths,
+  # and a bare ${var# } aborts BusyBox ash under set -u harnesses.
+  _wlr_un="${updated_names:-}"; _wlr_fn="${failed_names:-}"; _wlr_rn="${rolled_names:-}"
   printf '{"ts":"%s","exit_code":%s,"dry_run":%s,"updated":%s,"unchanged":%s,"failed":%s,"rolled_back":%s,"updated_names":"%s","failed_names":"%s","rolled_back_names":"%s"}\n' \
     "$(_ts)" "$_wlr_rc" "${DRY_RUN:-0}" "${updated_n:-0}" "${unchanged_n:-0}" "${failed_n:-0}" "${rolled_n:-0}" \
-    "${updated_names# }" "${failed_names# }" "${rolled_names# }" \
+    "${_wlr_un# }" "${_wlr_fn# }" "${_wlr_rn# }" \
     >"$_wlr_dir/last-run.json.next" 2>/dev/null || return 0
   chmod 600 "$_wlr_dir/last-run.json.next" 2>/dev/null || true
   mv "$_wlr_dir/last-run.json.next" "$_wlr_dir/last-run.json" 2>/dev/null || true
