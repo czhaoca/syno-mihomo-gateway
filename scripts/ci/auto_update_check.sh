@@ -318,6 +318,15 @@ export AUTO_UPDATE_SOURCE_ONLY AUTO_UPDATE_SELF_DIR
 # shellcheck source=scripts/auto_update.sh
 . "$ROOT/scripts/auto_update.sh"
 
+# Library-completeness guard: check_network's macvlan-drift branch calls
+# macvlan_matches, but only when PARENT_INTERFACE/SUBNET_CIDR/ROUTER_IP are set
+# - true on every real deployment, never in these mocks. A missing source line
+# in auto_update.sh therefore only explodes on the NAS (command-not-found is
+# misread as macvlan drift and aborts the run); pin the sourcing set here.
+if command -v macvlan_matches >/dev/null 2>&1; then ok; else
+  fail "auto_update.sh does not source macvlan_matches (lib/network.sh) - live check_network would abort"
+fi
+
 TRACE="$TMP/orchestrator.trace"
 export TRACE
 

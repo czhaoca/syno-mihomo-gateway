@@ -27,6 +27,11 @@ SELF_DIR="${AUTO_UPDATE_SELF_DIR:-$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 . "$SELF_DIR/lib/common.sh"
 # shellcheck source=scripts/lib/notify.sh
 . "$SELF_DIR/lib/notify.sh"
+# network.sh supplies macvlan_matches, which registry.sh's check_network calls
+# whenever PARENT_INTERFACE/SUBNET_CIDR/ROUTER_IP are set (i.e. on any real
+# deployment; CI leaves them unset, so only a live run reaches that branch).
+# shellcheck source=scripts/lib/network.sh
+. "$SELF_DIR/lib/network.sh"
 # shellcheck source=scripts/lib/registry.sh
 . "$SELF_DIR/lib/registry.sh"
 # shellcheck source=scripts/lib/compose.sh
