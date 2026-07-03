@@ -189,6 +189,24 @@ sh scripts/package.sh --version 1.2.12         # override the VERSION file
   forbidden strings and **fails closed**. When adding tracked files, check both lists in
   `scripts/package.sh`.
 
+## Agent-assisted deploys need a temporary sudo grant
+
+The NAS deployment is a bundle install owned by a **non-root admin account**; the privileged
+steps of a deploy or acceptance run (docker commands, swapping the release tree, creating DSM
+Task Scheduler entries, `doctor.sh`) all need root. When an automation agent performs those
+steps over SSH:
+
+1. **Grant temporary passwordless sudo** for the deploying account — a drop-in under
+   `/etc/sudoers.d/` on the NAS (DSM: Control Panel access or a root shell). The agent should
+   stop and ask for this grant when it hits the first privileged step, not assume it.
+2. Let the agent **batch every privileged step while the grant lasts** — deploy, scheduler
+   tasks, acceptance checks, `doctor` verification — so the grant window stays short.
+3. **Remove the sudoers drop-in immediately after** verification passes. The agent must remind
+   the owner to revoke it at the end of the run; treat a lingering grant as a defect.
+
+The grant is an operational secret-equivalent: never commit its filename, account name, or host
+details to the repo (see the leak gate above).
+
 ## Local checks before pushing
 
 These mirror `.woodpecker.yml` step for step — when you add a CI step, add its local equivalent
