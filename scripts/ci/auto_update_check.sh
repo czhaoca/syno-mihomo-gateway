@@ -29,6 +29,20 @@ assert_contains "scheduler uses explicit /bin/sh" "$SCHED_OUT" "/bin/sh"
 assert_contains "scheduler uses absolute script path" "$SCHED_OUT" "$SCHED_ROOT/scripts/auto_update.sh"
 assert_contains "boot task uses absolute script path" "$SCHED_OUT" "$SCHED_ROOT/scripts/setup_network.sh"
 assert_not_contains "scheduler must not duplicate its own log" "$SCHED_OUT" ">> logs/auto-update.log"
+# Pin the EXACT command shape the owner pastes into the DSM task (verified
+# against a live deployment 2026-07-03: the GUI stores this text verbatim, so
+# any drift here silently changes what root runs at 02:00). Both commands:
+# cd '<root>' && exec /bin/sh '<script>' - single-quoted, cd + exec, nothing else.
+assert_contains "DSM update command is the exact cd+exec contract" "$SCHED_OUT" \
+  "cd '$SCHED_ROOT' && exec /bin/sh '$SCHED_ROOT/scripts/auto_update.sh'"
+assert_contains "DSM boot command is the exact cd+exec contract" "$SCHED_OUT" \
+  "cd '$SCHED_ROOT' && exec /bin/sh '$SCHED_ROOT/scripts/setup_network.sh'"
+# The fallback crontab line must carry the NORMALIZED .env schedule and the
+# DSM user column (root) - a mangled schedule here fires at the wrong time.
+assert_contains "fallback crontab line carries the .env schedule + root column" "$SCHED_OUT" \
+  "5 3 * * *	root	cd '$SCHED_ROOT'"
+# The GUI trigger description must render the same schedule as a daily time.
+assert_contains "GUI schedule description renders the .env time" "$SCHED_OUT" 'first run time 03:05'
 
 # A hand-edited schedule is untrusted data. Reject invalid ranges/extra fields
 # instead of printing an unsafe fallback crontab line.
