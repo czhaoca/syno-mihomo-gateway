@@ -45,6 +45,25 @@ docker or docker compose "command not found"
          /dev/net/tun. See AUTO-UPDATE.txt.
 
 --------------------------------------------------------------------------
+TUN silently dead after a reboot (doctor: "TUN gateway is not ready")
+--------------------------------------------------------------------------
+  Symptom: sudo sh scripts/doctor.sh reports
+           "ERROR in-container TUN gateway is not ready" while everything
+           else passes; docker logs mihomo shows "Start TUN listening
+           error: configure tun interface: no such file or directory".
+           Devices using the explicit proxy ports still work, so this is
+           easy to miss.
+  Cause:   Docker auto-started mihomo BEFORE the boot task created
+           /dev/net/tun, so the container captured an empty device bind.
+           Creating the host node afterwards does not heal the running
+           container.
+  Fix:     sudo docker restart mihomo
+           then verify: docker exec mihomo ls /sys/class/net/  must list
+           mihomo-tun, and doctor.sh must report HEALTHY. Prevention: put
+           the Boot-up task that runs scripts/setup_network.sh EARLIEST in
+           the DSM boot order.
+
+--------------------------------------------------------------------------
 The mihomo IP is already taken / deploy failed on a conflicting IP
 --------------------------------------------------------------------------
   Symptom: the installer warns that the IP you picked for mihomo is already

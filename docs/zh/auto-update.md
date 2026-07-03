@@ -251,7 +251,9 @@ shell 元字符、`|` 和换行符会被拒绝。
    （镜像/身份字段豁免）。出现任何 `DRIFT:` 行即验收失败——仅有一个狭窄例外：
    `labels`/`env`/`cmd`/`entrypoint`/`hc-test`/`hc-meta` 是相对各自镜像的覆盖差集，
    若新镜像恰好内置了逐字节相同的覆盖值，可能出现误报；将这些判为真实回归前请先用
-   `docker inspect` 确认。
+   `docker inspect` 确认。另有两类 Docker 记账形式的变化已按设计归一化，永不判为漂移：
+   绑定挂载与卷附着合并为同一份规范化集合比较（回放的匿名卷会合法地从 `Mounts` 迁移到
+   `Binds`），且 `network_mode` 的 `default` 等同于 `bridge`。
 3. **网关对** —— 按 [运维 › 手动健康检查](operations.md#手动健康检查) 验证。
 
 ## 退出码

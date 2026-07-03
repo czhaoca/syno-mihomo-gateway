@@ -84,6 +84,22 @@ docker compose --env-file ../syno-mihomo-gateway-data/.env up -d
 [运维 › 在 DSM 上配置定时任务](operations.md#在-dsm-上配置定时任务)）。要立即恢复：
 `sudo ./scripts/setup_network.sh && docker compose --env-file ../syno-mihomo-gateway-data/.env up -d`。
 
+## 重启后 TUN 静默失效（启动顺序竞态）
+
+**症状：** `doctor.sh` 报告 `ERROR in-container TUN gateway is not ready`，而其余检查全部通过
+（mihomo 运行中、控制器有响应）；`docker logs mihomo` 出现
+`Start TUN listening error: configure tun interface: no such file or directory`；
+使用显式代理端口的客户端仍然正常，因此这种降级很容易被忽视。
+
+**原因：** Docker 在开机任务创建 `/dev/net/tun` **之前**就自启了 mihomo，容器的设备绑定
+捕获到的是空节点。随后开机任务补建了宿主机节点，但已运行的容器仍保留着空绑定——
+TUN 会一直失效，直到容器重启。
+
+**修复：** `sudo docker restart mihomo`（设备绑定在启动时重新求值；用
+`docker exec mihomo ls /sys/class/net/` 验证——必须能看到 `mihomo-tun`，然后重跑
+`sudo sh scripts/doctor.sh`）。预防方法：把运行 `setup_network.sh` 的**开机**任务排在
+启动顺序**最前**，让 `/dev/net/tun` 在 Container Manager 拉起容器之前就绪。
+
 ## 网络已存在但设置不同
 
 **症状：** `setup_network.sh`（或安装器）记录

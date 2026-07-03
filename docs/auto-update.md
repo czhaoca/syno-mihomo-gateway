@@ -277,7 +277,10 @@ is the required manual gate). On the NAS:
    failed acceptance — with one narrow exception: `labels`/`env`/`cmd`/`entrypoint`/
    `hc-test`/`hc-meta` are compared as overrides relative to each side's own image, so if
    the NEW image bakes in the same override verbatim they can drift falsely; confirm with
-   `docker inspect` before treating those as real regressions.
+   `docker inspect` before treating those as real regressions. Two Docker bookkeeping moves
+   are normalized away by design and never drift: bind mounts and volume attachments compare
+   as ONE canonical set (a replayed anonymous volume legitimately migrates from `Mounts` to
+   `Binds`), and `network_mode` `default` equals `bridge`.
 3. **Gateway pair** — verify via [Operations › Manual health checks](operations.md#manual-health-checks).
 
 ## Exit codes

@@ -93,6 +93,23 @@ the parent interface can also change (`eth0` ↔ `ovs_eth0`).
 [Operations › Scheduling](operations.md#scheduling-on-dsm)). To recover now:
 `sudo ./scripts/setup_network.sh && docker compose --env-file ../syno-mihomo-gateway-data/.env up -d`.
 
+## TUN silently dead after a reboot (boot-order race)
+
+**Symptom:** `doctor.sh` reports `ERROR in-container TUN gateway is not ready` while everything
+else passes (mihomo running, controller answering); `docker logs mihomo` shows
+`Start TUN listening error: configure tun interface: no such file or directory`; clients using
+the explicit proxy ports still work, so the degradation is easy to miss.
+
+**Cause:** Docker autostarted mihomo **before** the boot task created `/dev/net/tun`, so the
+container's device bind captured nothing. The boot task then creates the host node, but the
+already-running container keeps its empty bind — TUN stays down until the container restarts.
+
+**Fix:** `sudo docker restart mihomo` (the bind is re-evaluated at start; verify with
+`docker exec mihomo ls /sys/class/net/` — `mihomo-tun` must be listed, then re-run
+`sudo sh scripts/doctor.sh`). To prevent it, keep the Boot-up task for `setup_network.sh`
+**earliest** in the boot order; it creates `/dev/net/tun` before Container Manager brings
+containers up.
+
 ## Network exists but with different settings
 
 **Symptom:** `setup_network.sh` (or the installer) logs

@@ -198,7 +198,8 @@ container's configuration, snapshot it before and compare after:
    Any "DRIFT:" line means a setting was not preserved (narrow exception:
    labels/healthcheck artifacts are image-relative overrides and can drift
    falsely when the new image bakes in the same value - verify with
-   docker inspect).
+   docker inspect). Bind mounts + volumes compare as one canonical set and
+   network_mode "default" equals "bridge" - those moves never drift.
 3. Gateway checks:  run sudo sh scripts/gateway.sh status and
                     sudo sh scripts/gateway.sh doctor (full reference in
                     CLI.txt); if anything looks wrong, see

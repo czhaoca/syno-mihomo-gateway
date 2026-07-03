@@ -170,7 +170,8 @@ gateway.sh 完整命令参考见 CLI.zh.txt。
                   sudo sh scripts/state_diff.sh compare <容器名> /tmp/before
    出现任何 "DRIFT:" 行即表示有设置未被保留（狭窄例外：labels/健康检查
    工件是相对镜像的覆盖差集，新镜像内置相同值时可能误报——请用
-   docker inspect 复核）。
+   docker inspect 复核）。绑定挂载与卷会合并为同一份规范化集合比较，且
+   network_mode 的 "default" 等同于 "bridge"——这两类变化永不判为漂移。
 3. 网关检查：     运行 sudo sh scripts/gateway.sh status 与
                   sudo sh scripts/gateway.sh doctor（完整参考见
                   CLI.zh.txt）；若有异常，参见 TROUBLESHOOTING.zh.txt。

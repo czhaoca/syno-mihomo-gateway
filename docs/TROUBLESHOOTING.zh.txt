@@ -42,6 +42,21 @@ docker 或 docker compose 提示 "command not found"
         AUTO-UPDATE.zh.txt。
 
 --------------------------------------------------------------------------
+重启后 TUN 静默失效（doctor 报 "TUN gateway is not ready"）
+--------------------------------------------------------------------------
+  症状：sudo sh scripts/doctor.sh 报告
+        "ERROR in-container TUN gateway is not ready"，其余检查全部通过；
+        docker logs mihomo 出现 "Start TUN listening error: configure tun
+        interface: no such file or directory"。使用显式代理端口的设备仍然
+        正常，因此很容易被忽视。
+  原因：Docker 在开机任务创建 /dev/net/tun 之前就自启了 mihomo，容器捕获
+        到的是空的设备绑定。事后补建宿主机节点无法修复已在运行的容器。
+  解决：sudo docker restart mihomo
+        然后验证：docker exec mihomo ls /sys/class/net/ 必须能看到
+        mihomo-tun，且 doctor.sh 报告 HEALTHY。预防：把运行
+        scripts/setup_network.sh 的开机任务排在 DSM 启动顺序的最前面。
+
+--------------------------------------------------------------------------
 mihomo 的 IP 已被占用 / 部署因 IP 冲突失败
 --------------------------------------------------------------------------
   现象：安装程序警告你为 mihomo 选择的 IP 已在局域网上应答，或部署因该 IP
