@@ -11,7 +11,10 @@
 # POSIX /bin/sh (DSM BusyBox). NO bashisms - the real logic lives in the shared,
 # CI-shellchecked scripts/lib/network.sh. Needs root (mknod/chmod, docker network).
 #
-# Exit: 0 ok | 3 config/preflight error.
+# Exit: 0 ok (incl. "stack not deployed here" skips) |
+#       2 network ok but the deployed stack did not start (DSM's
+#         send-run-details-on-error mail fires - that is the point) |
+#       3 config/preflight error.
 
 SELF_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
 # shellcheck source=scripts/lib/common.sh
@@ -20,6 +23,8 @@ SELF_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
 . "$SELF_DIR/lib/network.sh"
 # shellcheck source=scripts/lib/registry.sh
 . "$SELF_DIR/lib/registry.sh"
+# shellcheck source=scripts/lib/compose.sh
+. "$SELF_DIR/lib/compose.sh"
 
 ensure_persistent_state || {
   echo "FATAL: cannot create persistent data directory: $GATEWAY_DATA_DIR" >&2
@@ -36,12 +41,12 @@ echo "========================================"
 wait_for_docker_ready || exit "$EXIT_CONFIG"
 
 # 1. TUN device (mihomo needs it; baked into compose too, but self-heal here).
-echo "[1/3] TUN device (/dev/net/tun)..."
+echo "[1/4] TUN device (/dev/net/tun)..."
 ensure_tun_device || exit "$EXIT_CONFIG"
 
 # 2. Macvlan parent: prefer the interface the installer saved in .env
 #    (PARENT_INTERFACE), else auto-detect the one that routes to ROUTER_IP.
-echo "[2/3] Selecting LAN interface..."
+echo "[2/4] Selecting LAN interface..."
 PARENT_INTERFACE="${PARENT_INTERFACE:-$(detect_parent_interface "${ROUTER_IP:-}")}"
 if [ -z "$PARENT_INTERFACE" ]; then
   log_error "could not auto-detect the LAN interface."
@@ -64,10 +69,27 @@ if ! validate_network_plan "$PARENT_INTERFACE" "${SUBNET_CIDR:-}" \
 fi
 
 # 3. (Re)create the macvlan network.
-echo "[3/3] Creating macvlan '${TPROXY_NETWORK}' (${SUBNET_CIDR:-?})..."
-if recreate_macvlan "$PARENT_INTERFACE"; then
-  echo "========================================"
-  echo "Ready. Start the stack with: docker compose up -d"
-  exit "$EXIT_OK"
-fi
-exit "$EXIT_CONFIG"
+echo "[3/4] Creating macvlan '${TPROXY_NETWORK}' (${SUBNET_CIDR:-?})..."
+recreate_macvlan "$PARENT_INTERFACE" || exit "$EXIT_CONFIG"
+
+# 4. Ensure the deployed stack is actually up. `restart: always` normally
+#    covers a reboot, but the observed failure mode is a container that stayed
+#    down because the macvlan was not usable when dockerd started. A stack
+#    that was never deployed here, or was deliberately taken down, is skipped
+#    - the boot task never resurrects an operator's `compose down`.
+echo "[4/4] Ensuring the gateway stack is up..."
+compose_ensure_up
+case "$?" in
+  0)
+    echo "========================================"
+    echo "Ready. The gateway stack is up."
+    exit "$EXIT_OK" ;;
+  2)
+    echo "      stack not deployed here (or deliberately stopped) - skipping."
+    echo "========================================"
+    echo "Ready. Start the stack with: docker compose up -d"
+    exit "$EXIT_OK" ;;
+  *)
+    log_error "network is ready but the gateway stack did not start - check: docker logs mihomo"
+    exit "$EXIT_PARTIAL" ;;
+esac

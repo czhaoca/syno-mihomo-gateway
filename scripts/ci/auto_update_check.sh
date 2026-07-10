@@ -179,6 +179,54 @@ expect_success "legacy Compose fallback succeeds" compose_up_local
 COMPOSE_LOG="$(cat "$MOCK_COMPOSE_CALLS")"
 assert_not_contains "legacy Compose gets no unsupported pull flag" "$COMPOSE_LOG" "--pull never"
 
+# compose_ensure_up: the boot self-heal's conservative stack completion -
+# skips (rc 2) when unconfigured / no subscription / container absent, no-ops
+# (rc 0) when running, and otherwise applies local images only.
+MOCK_ENSURE_DOCKER="$TMP/docker-ensure"
+printf '%s\n' '#!/bin/sh' \
+  'case "$*" in' \
+  '  "inspect -f {{.State.Running}} mihomo") [ "${MOCK_EXISTS:-1}" = 1 ] || exit 1; echo "${MOCK_RUNNING:-false}"; exit 0 ;;' \
+  '  "inspect mihomo") [ "${MOCK_EXISTS:-1}" = 1 ] && exit 0; exit 1 ;;' \
+  'esac' \
+  'exit 0' > "$MOCK_ENSURE_DOCKER"
+chmod +x "$MOCK_ENSURE_DOCKER"
+DOCKER_BIN="$MOCK_ENSURE_DOCKER"
+SUBSCRIPTION_FILE="$TMP/ensure-sub.txt"
+printf '%s\n' 'https://sub.example/x' > "$SUBSCRIPTION_FILE"
+MOCK_PULL_SUPPORT=1 MOCK_UP_RC=0 MOCK_EXISTS=1 MOCK_RUNNING=false
+export MOCK_PULL_SUPPORT MOCK_UP_RC MOCK_EXISTS MOCK_RUNNING
+
+_old_mi="$MIHOMO_IMAGE"; MIHOMO_IMAGE=""
+: > "$MOCK_COMPOSE_CALLS"
+_rc=0; compose_ensure_up || _rc=$?
+[ "$_rc" = 2 ] && ok || fail "ensure_up with unset images must skip (rc 2, got $_rc)"
+[ ! -s "$MOCK_COMPOSE_CALLS" ] && ok || fail "ensure_up unconfigured skip still invoked compose"
+MIHOMO_IMAGE="$_old_mi"
+
+printf '%s\n' '# comments only' > "$SUBSCRIPTION_FILE"
+_rc=0; compose_ensure_up || _rc=$?
+[ "$_rc" = 2 ] && ok || fail "ensure_up without a usable subscription must skip (got $_rc)"
+printf '%s\n' 'https://sub.example/x' > "$SUBSCRIPTION_FILE"
+
+MOCK_EXISTS=0; export MOCK_EXISTS
+_rc=0; compose_ensure_up || _rc=$?
+[ "$_rc" = 2 ] && ok || fail "ensure_up must respect an absent (downed) container (got $_rc)"
+MOCK_EXISTS=1; export MOCK_EXISTS
+
+MOCK_RUNNING=true; export MOCK_RUNNING
+: > "$MOCK_COMPOSE_CALLS"
+_rc=0; compose_ensure_up || _rc=$?
+[ "$_rc" = 0 ] && ok || fail "ensure_up with a running stack must no-op (got $_rc)"
+[ ! -s "$MOCK_COMPOSE_CALLS" ] && ok || fail "ensure_up no-op still invoked compose"
+
+MOCK_RUNNING=false; export MOCK_RUNNING
+: > "$MOCK_COMPOSE_CALLS"
+expect_success "ensure_up starts a stopped deployed stack" compose_ensure_up
+assert_contains "ensure_up applies local images only" "$(cat "$MOCK_COMPOSE_CALLS")" "--pull never"
+MOCK_UP_RC=1; export MOCK_UP_RC
+expect_failure "ensure_up propagates a failed start" compose_ensure_up
+MOCK_UP_RC=0; export MOCK_UP_RC
+
 # Fake Docker CLI for daemon/config/pull/digest/architecture/change tests.
 MOCK_DOCKER="$TMP/docker-full"
 MOCK_DOCKER_CALLS="$TMP/docker.calls"
@@ -285,6 +333,18 @@ UPDATE_IMAGES="$MIHOMO_IMAGE $METACUBEXD_IMAGE"
 UPDATE_IMAGES="$UPDATE_IMAGES *"
 expect_failure "wildcard image reference is rejected before shell expansion" validate_update_config
 UPDATE_IMAGES="$MIHOMO_IMAGE $METACUBEXD_IMAGE"
+CF_DNS='223.5.5.5,119.29.29.29'
+expect_success "CF_DNS IPv4 list accepted" validate_update_config
+CF_DNS=not-an-ip
+expect_failure "CF_DNS non-address token rejected" validate_update_config
+CF_DNS='8.8.8.8;rm -rf /'
+expect_failure "CF_DNS shell metacharacters rejected" validate_update_config
+CF_DNS='223.5.5.5,'
+expect_failure "CF_DNS trailing empty token rejected" validate_update_config
+CF_DNS='300.1.1.1'
+expect_failure "CF_DNS octet range enforced" validate_update_config
+CF_DNS=
+expect_success "empty CF_DNS accepted" validate_update_config
 
 MOCK_PULL_FAILS=2 MOCK_LOCAL_ID=sha256:new; export MOCK_PULL_FAILS MOCK_LOCAL_ID
 : > "$MOCK_PULL_COUNT"
