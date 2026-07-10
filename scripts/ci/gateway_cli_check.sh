@@ -81,7 +81,7 @@ case "$1" in
       *'{{.Image}}'*) echo sha256:fakerunning; exit 0 ;;
       *compose.service*mihomo-ui*) echo metacubexd; exit 0 ;;
       *compose.service*) echo mihomo; exit 0 ;;
-      *compose.project*) echo syno-mihomo-gateway; exit 0 ;;
+      *compose.project*) echo "${FAKE_COMPOSE_PROJECT:-syno-mihomo-gateway}"; exit 0 ;;
       *mihomo-ui*) exit "${FAKE_UI_RC:-1}" ;;
       *mihomo*) exit "${FAKE_MIHOMO_RC:-1}" ;;
     esac
@@ -128,6 +128,11 @@ EOF
 printf '%s\n' 'https://sub.example/token' > "$DATA/config/subscription.txt"
 
 # gw = run as (fake) root; gwu = run as a (fake) unprivileged user.
+# COMPOSE_PROJECT_NAME pins the expected project regardless of what the CI
+# checkout directory happens to be called (the stub docker reports the same
+# name, so lifecycle sees our own containers unless FAKE_COMPOSE_PROJECT says
+# otherwise).
+export COMPOSE_PROJECT_NAME=syno-mihomo-gateway
 gw()  { FAKE_UID=0    PATH="$STUB:$PATH" sh "$GW" "$@" </dev/null; }
 gwu() { FAKE_UID=1000 PATH="$STUB:$PATH" sh "$GW" "$@" </dev/null; }
 
@@ -173,6 +178,18 @@ if grep -Eq 'network create|up -d|rm -f|network rm|^pull ' "$CALLS"; then
   fail "deploy --dry-run performed a mutating docker call: $(grep -E 'network create|up -d|rm -f|network rm|^pull ' "$CALLS" | head -n1)"
 else ok; fi
 
+# --- foreign compose project: a preserve deploy plan is rejected with 3 ----------
+# The stub reports existing managed containers whose project label differs from
+# ours (a legacy flat install); the plan step must fail before any mutation.
+FAKE_MIHOMO_RC=0 FAKE_UI_RC=0 FAKE_COMPOSE_PROJECT=mihomo
+export FAKE_MIHOMO_RC FAKE_UI_RC FAKE_COMPOSE_PROJECT
+expect_rc 3 gwu deploy --dry-run
+grep -qi "compose project 'mihomo'" "$TMP/out" "$TMP/err" \
+  && ok || fail "foreign-project rejection did not name the foreign project"
+unset FAKE_COMPOSE_PROJECT
+FAKE_MIHOMO_RC=1 FAKE_UI_RC=1
+export FAKE_MIHOMO_RC FAKE_UI_RC
+
 # --- status: read-only, no root, exit 0 ------------------------------------------
 expect_rc 0 gwu status
 grep -q 'fresh' "$TMP/out" || fail "status did not report the fresh stack state"
@@ -208,6 +225,20 @@ grep -q 'verb=status run=' "$GWLOG" || fail "gateway.log lacks verb=/run-id fiel
 [ -L "$DATA/logs/install.log" ] || fail "install.log is not a symlink to the unified log"
 [ -L "$DATA/logs/auto-update.log" ] || fail "auto-update.log is not a symlink to the unified log"
 
+# --- doctor host_dns/geodata fixtures: hermetic resolver probe + cached geodata --
+# The host_dns check probes every nameserver in SMG_RESOLV_CONF via nslookup;
+# stub both so the suite never touches the machine's real resolvers, and
+# pre-seed the geo databases so existing doctor severities stay unchanged.
+cat > "$STUB/nslookup" <<'EOF'
+#!/bin/sh
+exit "${FAKE_NS_RC:-0}"
+EOF
+chmod +x "$STUB/nslookup"
+printf 'nameserver 192.0.2.53\n' > "$TMP/resolv.conf"
+export SMG_RESOLV_CONF="$TMP/resolv.conf"
+printf 'fixture' > "$DATA/config/GeoSite.dat"
+printf 'fixture' > "$DATA/config/geoip.metadb"
+
 # --- doctor --json: one JSON object on stdout, doctor exit semantics (0/2/3) -----
 _rc=0; FAKE_UID=1000 PATH="$STUB:$PATH" sh "$GW" doctor --json </dev/null >"$TMP/out" 2>"$TMP/err" || _rc=$?
 case "$_rc" in 0|2|3) ok ;; *) fail "doctor --json exited $_rc (want 0/2/3)" ;; esac
@@ -235,6 +266,28 @@ FAKE_UID=0 PATH="$STUB:$PATH" sh "$ROOT/scripts/doctor.sh" </dev/null >"$TMP/dou
 grep -q 'WARN.*subscription' "$TMP/derr" \
   || fail "doctor.sh did not warn about the missing subscription"
 mv "$DATA/config/subscription.txt.keep" "$DATA/config/subscription.txt"
+ok
+
+# --- doctor host_dns / geodata parity: both modes, both severities ---------------
+# Fixtures above give an answering resolver + cached geodata -> ok/cached.
+FAKE_UID=1000 PATH="$STUB:$PATH" sh "$GW" doctor --json </dev/null >"$TMP/out" 2>"$TMP/err" || :
+grep -q '"name":"host_dns","value":"ok"' "$TMP/out" || fail "doctor --json lacks host_dns:ok"
+grep -q '"name":"geodata","value":"cached"' "$TMP/out" || fail "doctor --json lacks geodata:cached"
+# a dead resolver degrades BOTH modes the same way.
+FAKE_NS_RC=1; export FAKE_NS_RC
+FAKE_UID=1000 PATH="$STUB:$PATH" sh "$GW" doctor --json </dev/null >"$TMP/out" 2>"$TMP/err" || :
+grep -q '"name":"host_dns","value":"degraded"' "$TMP/out" \
+  || fail "doctor --json lacks host_dns:degraded with a dead resolver"
+FAKE_UID=0 PATH="$STUB:$PATH" sh "$ROOT/scripts/doctor.sh" </dev/null >"$TMP/dout" 2>"$TMP/derr" || :
+grep -q 'WARN.*host DNS' "$TMP/derr" || fail "doctor.sh did not warn about the dead resolver"
+FAKE_NS_RC=0; export FAKE_NS_RC
+# uncached geodata -> missing / WARN on both sides.
+mv "$DATA/config/GeoSite.dat" "$DATA/config/GeoSite.dat.keep"
+FAKE_UID=1000 PATH="$STUB:$PATH" sh "$GW" doctor --json </dev/null >"$TMP/out" 2>"$TMP/err" || :
+grep -q '"name":"geodata","value":"missing"' "$TMP/out" || fail "doctor --json lacks geodata:missing"
+FAKE_UID=0 PATH="$STUB:$PATH" sh "$ROOT/scripts/doctor.sh" </dev/null >"$TMP/dout" 2>"$TMP/derr" || :
+grep -q 'WARN.*geo databases' "$TMP/derr" || fail "doctor.sh did not warn about uncached geodata"
+mv "$DATA/config/GeoSite.dat.keep" "$DATA/config/GeoSite.dat"
 ok
 
 # --- cron: persists schedule settings without touching any crontab ---------------

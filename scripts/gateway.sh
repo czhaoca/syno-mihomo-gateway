@@ -51,6 +51,10 @@ SELF_DIR="${GATEWAY_SELF_DIR:-$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)}"
 . "$SELF_DIR/lib/registry.sh"
 # shellcheck source=scripts/lib/compose.sh
 . "$SELF_DIR/lib/compose.sh"
+# shellcheck source=scripts/lib/geodata.sh
+. "$SELF_DIR/lib/geodata.sh"
+# shellcheck source=scripts/lib/cloudflared.sh
+. "$SELF_DIR/lib/cloudflared.sh"
 # shellcheck source=scripts/lib/network.sh
 . "$SELF_DIR/lib/network.sh"
 # shellcheck source=scripts/lib/lifecycle.sh
@@ -164,6 +168,7 @@ _gw_plan_cleanup() {
   if ! resolve_cleanup_plan "$GW_CLEAN_C" "$GW_CLEAN_N"; then
     case "${RESOLVE_CLEANUP_REASON:-}" in
       ambiguous)        log_error "existing containers are not verifiably ours - clean them up manually first" ;;
+      foreign_project)  log_error "existing containers belong to Compose project '${LIFECYCLE_COMPOSE_PROJECT:-?}' (an older or legacy deployment) - pass --cleanup-containers auto to replace them, or remove them manually first" ;;
       drift)            log_error "network '$TPROXY_NETWORK' exists with a different configuration - pass --cleanup-network auto" ;;
       unrelated)        log_error "network '$TPROXY_NETWORK' has attachments that are not ours - detach them manually first" ;;
       needs_containers) log_error "removing the network needs container cleanup too - pass --cleanup-containers auto" ;;
@@ -209,6 +214,11 @@ _gw_prepare() {
   fi
   rm -rf "$_gw_cfg"
   mihomo_auto_redirect_probe "$MIHOMO_IMAGE" || return "$EXIT_CONFIG"
+  # Pre-seed the geo databases (non-fatal: mihomo can still self-download,
+  # but on a filtered network that fetch can stall the first start).
+  if ! geodata_preseed "$CONFIG_STATE_DIR"; then
+    log_warn "geo databases could not be pre-seeded; the first start may stall while mihomo fetches them"
+  fi
   return 0
 }
 
@@ -545,6 +555,17 @@ gateway_doctor() {
       1) _gw_check_add boot_task missing; _gwd_degraded=1 ;;
       *) _gw_check_add boot_task unknown ;;
     esac
+    # cloudflared parity with doctor.sh: only when the container exists
+    # (absent carries no severity); a down tunnel degrades, never breaks.
+    if "$(_net_docker)" inspect "${CF_CONTAINER_NAME:-cloudflared}" >/dev/null 2>&1; then
+      if cloudflared_probe_connected "${CF_CONTAINER_NAME:-cloudflared}" >/dev/null 2>&1; then
+        _gw_check_add cloudflared ok
+      else
+        _gw_check_add cloudflared down; _gwd_degraded=1
+      fi
+    else
+      _gw_check_add cloudflared absent
+    fi
   else
     _gw_check_add mihomo unknown
   fi
@@ -552,6 +573,19 @@ gateway_doctor() {
     _gw_check_add subscription ok
   else
     _gw_check_add subscription missing; _gwd_degraded=1
+  fi
+  # Host-resolver + geodata parity with doctor.sh (ungated there too);
+  # rc 2 -> unknown, no severity (not every box has a probeable resolver).
+  resolv_conf_probe >/dev/null 2>&1
+  case "$?" in
+    0) _gw_check_add host_dns ok ;;
+    1) _gw_check_add host_dns degraded; _gwd_degraded=1 ;;
+    *) _gw_check_add host_dns unknown ;;
+  esac
+  if geodata_cached "$CONFIG_STATE_DIR"; then
+    _gw_check_add geodata cached
+  else
+    _gw_check_add geodata missing; _gwd_degraded=1
   fi
 
   if [ "$_gwd_broken" = 1 ]; then _gwd_rc="$EXIT_CONFIG"

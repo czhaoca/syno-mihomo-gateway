@@ -14,6 +14,10 @@ SELF_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
 . "$SELF_DIR/lib/network.sh"
 # shellcheck source=scripts/lib/compose.sh
 . "$SELF_DIR/lib/compose.sh"
+# shellcheck source=scripts/lib/geodata.sh
+. "$SELF_DIR/lib/geodata.sh"
+# shellcheck source=scripts/lib/cloudflared.sh
+. "$SELF_DIR/lib/cloudflared.sh"
 # shellcheck source=scripts/lib/resolve.sh
 . "$SELF_DIR/lib/resolve.sh"
 # shellcheck source=scripts/lib/scheduler.sh
@@ -38,6 +42,10 @@ printf '%s\n' 'Mihomo Gateway diagnostics (read-only)'
 
 if [ ! -f "$ENV_FILE" ]; then
   bad ".env is missing: $ENV_FILE"
+  printf '%s\n' "      the release tree is unpacked but not configured - run: sudo sh ./install.sh" >&2
+  if _legacy_dir="$(legacy_install_detect 2>/dev/null)"; then
+    printf '%s\n' "      a legacy flat install exists at $_legacy_dir - import its state first: sudo sh scripts/migrate_legacy.sh --from $_legacy_dir --yes" >&2
+  fi
 else
   load_env
   ok ".env parsed safely"
@@ -116,6 +124,16 @@ if [ "$broken" -eq 0 ]; then
     0) ok "boot self-heal task is scheduled (setup_network.sh)" ;;
     1) warn "no Boot-up task runs scripts/setup_network.sh - TUN/macvlan will not self-heal after a reboot" ;;
   esac
+
+  # cloudflared (optional external tunnel): checked only when the container
+  # exists; a down tunnel degrades but never breaks the gateway itself.
+  if "$DOCKER_BIN" inspect "${CF_CONTAINER_NAME:-cloudflared}" >/dev/null 2>&1; then
+    if cloudflared_probe_connected "${CF_CONTAINER_NAME:-cloudflared}" >/dev/null 2>&1; then
+      ok "cloudflared tunnel is connected"
+    else
+      warn "cloudflared tunnel is not connected - if the host resolvers are unreliable, set CF_DNS in .env and run: sudo sh scripts/gateway.sh update --yes"
+    fi
+  fi
 fi
 
 # Subscription parity with gateway.sh doctor --json (which reports this
@@ -125,6 +143,23 @@ if [ -n "$(subscription_current 2>/dev/null)" ]; then
   ok "subscription URL is stored"
 else
   warn "no subscription URL is stored - set one: sudo sh scripts/gateway.sh modify --subscription <URL> --yes"
+fi
+
+# Host resolver health: a dead resolver in /etc/resolv.conf starves every name
+# lookup on the box AND every bridge container inheriting it (the gateway
+# keeps forwarding LAN clients, so this degrades rather than breaks).
+_hd_out="$(resolv_conf_probe 2>/dev/null)"
+case "$?" in
+  0) ok "host DNS resolvers answer" ;;
+  1) warn "host DNS resolver(s) not answering: ${_hd_out##* } - set reachable resolvers in DSM Control Panel > Network (domestic ones on a filtered network)" ;;
+esac
+
+# Geo databases: the GEOSITE/GEOIP rules need them; when uncached, mihomo's
+# first start must fetch them across a filtered CDN and can stall.
+if geodata_cached "$CONFIG_STATE_DIR"; then
+  ok "geo databases are cached"
+else
+  warn "geo databases are not cached - a deploy pre-seeds them via CDN mirrors; the first start may stall without them"
 fi
 
 if [ "$CHECK_EGRESS" -eq 1 ] && [ "$broken" -eq 0 ]; then

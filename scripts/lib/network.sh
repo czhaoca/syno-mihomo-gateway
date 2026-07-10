@@ -37,6 +37,42 @@ _net_docker() {
   printf 'docker'
 }
 
+# _dns_probe NS DOMAIN - one bounded lookup against one nameserver. Wrapped in
+# `timeout` when available so a black-holing resolver cannot hang the doctor.
+_dns_probe() {
+  if command -v timeout >/dev/null 2>&1; then
+    timeout 3 nslookup "$2" "$1" >/dev/null 2>&1
+  else
+    nslookup "$2" "$1" >/dev/null 2>&1
+  fi
+}
+
+# resolv_conf_probe - probe EVERY nameserver in the host's resolver config
+# (SMG_RESOLV_CONF overrides the path - also the test seam) against
+# ${SMG_DNS_PROBE_DOMAIN:-www.gstatic.com}, the same neutral target the proxy
+# health checks use. A host whose only resolver is unreachable cannot resolve
+# anything - and neither can any bridge container inheriting its resolv.conf.
+# Prints "TOTAL DEAD DEAD_LIST" on stdout.
+# rc 0 = every resolver answers | 1 = at least one is dead | 2 = unknown
+# (no nslookup, unreadable config, or no nameserver lines to probe).
+resolv_conf_probe() {
+  _rcp_conf="${SMG_RESOLV_CONF:-/etc/resolv.conf}"
+  command -v nslookup >/dev/null 2>&1 || return 2
+  [ -r "$_rcp_conf" ] || return 2
+  _rcp_domain="${SMG_DNS_PROBE_DOMAIN:-www.gstatic.com}"
+  _rcp_total=0; _rcp_dead=0; _rcp_dead_list=""
+  for _rcp_ns in $(awk '$1 == "nameserver" { print $2 }' "$_rcp_conf" 2>/dev/null); do
+    _rcp_total=$((_rcp_total + 1))
+    if ! _dns_probe "$_rcp_ns" "$_rcp_domain"; then
+      _rcp_dead=$((_rcp_dead + 1))
+      _rcp_dead_list="${_rcp_dead_list:+$_rcp_dead_list,}$_rcp_ns"
+    fi
+  done
+  [ "$_rcp_total" -gt 0 ] || return 2
+  printf '%s %s %s\n' "$_rcp_total" "$_rcp_dead" "$_rcp_dead_list"
+  [ "$_rcp_dead" -eq 0 ]
+}
+
 # ensure_tun_device - create /dev/net/tun (c 10 200) if missing and make it
 # usable. Needs root (mknod/chmod). Idempotent. Returns non-zero on failure.
 ensure_tun_device() {
