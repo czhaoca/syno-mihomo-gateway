@@ -11,8 +11,8 @@
 # install flavor from the detected hardware:
 #   - Docker compose mode reuses the full DSM-proven deploy pipeline
 #     (digest-gated pulls, health gate, rollback) - needs a 64-bit OS + 1 GB RAM.
-#   - Bare-metal "lite" mode (256-512 MB tier) arrives with the epic's later
-#     tickets; the wizard says so when selected.
+#   - Bare-metal "lite" mode (256-512 MB tier, ARMv6 best-effort): mihomo runs
+#     as a native binary with its built-in dashboard - no Docker, no macvlan.
 #
 # POSIX /bin/sh. Root is required for the deploy/network steps (TUN device,
 # macvlan, docker); the installer detects this and tells you how to re-run.
@@ -76,8 +76,12 @@ PI="$REPO_ROOT/scripts/pi"
 . "$PI/preflight.sh"
 # shellcheck source=scripts/pi/i18n_pi.sh
 . "$PI/i18n_pi.sh"
+# shellcheck source=scripts/pi/lite.sh
+. "$PI/lite.sh"
 # shellcheck source=scripts/pi/flow_compose.sh
 . "$PI/flow_compose.sh"
+# shellcheck source=scripts/pi/flow_lite.sh
+. "$PI/flow_lite.sh"
 
 # Restore terminal echo if a secret prompt or Ctrl-C left it off; on interrupt
 # also reap the config staging dir (holds the subscription URL) and close the

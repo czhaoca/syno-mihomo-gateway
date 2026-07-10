@@ -192,13 +192,15 @@ REPO_ROOT="$ROOT"
 . "$ROOT/scripts/installer/envedit.sh"
 . "$ROOT/scripts/installer/preflight.sh"
 . "$ROOT/scripts/installer/wizards.sh"
-for _pi_mod in detect preflight i18n_pi flow_compose; do
+for _pi_mod in detect preflight i18n_pi flow_compose lite flow_lite; do
   [ -f "$ROOT/scripts/pi/$_pi_mod.sh" ] || die "scripts/pi/$_pi_mod.sh missing"
 done
 . "$ROOT/scripts/pi/detect.sh"
 . "$ROOT/scripts/pi/preflight.sh"
 . "$ROOT/scripts/pi/i18n_pi.sh"
 . "$ROOT/scripts/pi/flow_compose.sh"
+. "$ROOT/scripts/pi/lite.sh"
+. "$ROOT/scripts/pi/flow_lite.sh"
 
 # --- detect: model / memory / arch readers (env-overridable for CI) -----------
 printf 'Raspberry Pi 3 Model B Plus Rev 1.3\0' > "$TD/dt-model"
@@ -305,6 +307,170 @@ _zh_mode="$( (INSTALLER_LANG=zh; msg pi_ask_mode) )"
 [ -n "$_zh_mode" ] && [ "$_zh_mode" != pi_ask_mode ] \
   && ok || fail "pi keys resolve in zh (not the bare key)"
 
+# =============================================================================
+# Ticket #19 - lite runtime: download/verify, external-ui, systemd unit
+# =============================================================================
+
+# --- pi_gh_url: GH_MIRROR prefixing (DEC-4) --------------------------------------
+[ "$( (unset GH_MIRROR; pi_gh_url 'https://github.com/x/y') )" = 'https://github.com/x/y' ] \
+  && ok || fail "pi_gh_url: empty mirror -> direct URL"
+[ "$( (GH_MIRROR='https://m.example'; pi_gh_url 'https://github.com/x/y') )" = 'https://m.example/https://github.com/x/y' ] \
+  && ok || fail "pi_gh_url: mirror prefix applied"
+[ "$( (GH_MIRROR='https://m.example/'; pi_gh_url 'https://github.com/x/y') )" = 'https://m.example/https://github.com/x/y' ] \
+  && ok || fail "pi_gh_url: trailing slash normalized"
+
+# --- pi_resolve_tag: pin wins; redirect resolves through the mirror (G5) ---------
+[ "$( (pi_resolve_tag MetaCubeX/mihomo v9.9.9) )" = v9.9.9 ] \
+  && ok || fail "pi_resolve_tag: pinned version wins without network"
+_out="$( (
+  GH_MIRROR='https://m.example'
+  curl() { printf '%s\n' "$*" >> "$TD/tag-curl-log"; printf 'https://github.com/MetaCubeX/mihomo/releases/tag/v1.2.3'; }
+  pi_resolve_tag MetaCubeX/mihomo ''
+) )"
+[ "$_out" = v1.2.3 ] && ok || fail "pi_resolve_tag: redirect tag extracted (got: $_out)"
+grep -q 'm.example/https://github.com/MetaCubeX/mihomo/releases/latest' "$TD/tag-curl-log" 2>/dev/null \
+  && ok || fail "pi_resolve_tag: resolution went through the GH_MIRROR prefix"
+
+# --- binary install: the verify ladder, fail-closed ------------------------------
+# A fake "binary": a shell script that answers -v with a version containing the
+# tag, so exec-smoke + version-match exercise the real ladder mechanics.
+cat > "$TD/fake-mihomo" <<'EOF'
+#!/bin/sh
+[ "${1:-}" = -v ] && { echo "Mihomo Meta v9.9.9 linux test build"; exit 0; }
+exit 0
+EOF
+chmod +x "$TD/fake-mihomo"
+gzip -c "$TD/fake-mihomo" > "$TD/good.gz"
+printf 'not a gzip archive' > "$TD/bad.gz"
+cat > "$TD/broken-bin" <<'EOF'
+#!/bin/sh
+exit 1
+EOF
+chmod +x "$TD/broken-bin"
+gzip -c "$TD/broken-bin" > "$TD/smokefail.gz"
+
+# happy path: fetch fake copies the good archive; version file + executable land
+( GATEWAY_DATA_DIR="$TD/lite-ok"; SMG_PI_ARCH=aarch64
+  pi_fetch() { cp "$TD/good.gz" "$2"; }
+  pi_lite_install_binary v9.9.9 >/dev/null 2>&1 ) \
+  && [ -x "$TD/lite-ok/bin/mihomo" ] \
+  && [ "$(cat "$TD/lite-ok/state/lite/version")" = v9.9.9 ] \
+  && ok || fail "binary ladder: happy path installs binary + version state"
+# corrupt gzip: fail closed, nothing installed
+( GATEWAY_DATA_DIR="$TD/lite-bad"; SMG_PI_ARCH=aarch64
+  pi_fetch() { cp "$TD/bad.gz" "$2"; }
+  pi_lite_install_binary v9.9.9 >/dev/null 2>&1 ) && fail "corrupt gzip accepted" || ok
+[ ! -e "$TD/lite-bad/bin/mihomo" ] && [ ! -e "$TD/lite-bad/bin/mihomo.next" ] \
+  && ok || fail "corrupt gzip left partial install artifacts"
+# smoke/version failure: fail closed, cleanup
+( GATEWAY_DATA_DIR="$TD/lite-smoke"; SMG_PI_ARCH=aarch64
+  pi_fetch() { cp "$TD/smokefail.gz" "$2"; }
+  pi_lite_install_binary v9.9.9 >/dev/null 2>&1 ) && fail "failed smoke accepted" || ok
+[ ! -e "$TD/lite-smoke/bin/mihomo" ] && ok || fail "failed smoke left a binary behind"
+# wrong version string (tag mismatch): refused, nothing left behind
+( GATEWAY_DATA_DIR="$TD/lite-ver"; SMG_PI_ARCH=aarch64
+  pi_fetch() { cp "$TD/good.gz" "$2"; }
+  pi_lite_install_binary v8.0.0 >/dev/null 2>&1 ) && fail "version mismatch accepted" || ok
+[ ! -e "$TD/lite-ver/bin/mihomo" ] && [ ! -e "$TD/lite-ver/bin/mihomo.next" ] \
+  && ok || fail "version mismatch left partial artifacts"
+
+# --- optional pinned sha (DEC-C): enforced when set, inert when empty ------------
+_good_sha="$(pi_sha256 "$TD/good.gz")"
+[ -n "$_good_sha" ] || die "pi_sha256 unavailable on this host"
+( GATEWAY_DATA_DIR="$TD/lite-sha-ok"; SMG_PI_ARCH=aarch64; MIHOMO_SHA256="$_good_sha"
+  pi_fetch() { cp "$TD/good.gz" "$2"; }
+  pi_lite_install_binary v9.9.9 >/dev/null 2>&1 ) \
+  && ok || fail "pinned sha: matching checksum passes"
+( GATEWAY_DATA_DIR="$TD/lite-sha-bad"; SMG_PI_ARCH=aarch64
+  MIHOMO_SHA256="0000000000000000000000000000000000000000000000000000000000000000"
+  pi_fetch() { cp "$TD/good.gz" "$2"; }
+  pi_lite_install_binary v9.9.9 >/dev/null 2>&1 ) && fail "sha mismatch accepted" || ok
+[ ! -e "$TD/lite-sha-bad/bin/mihomo" ] && ok || fail "sha mismatch left a binary behind"
+
+# --- sideload: a pre-placed asset skips the download entirely --------------------
+mkdir -p "$TD/lite-side/bin"
+cp "$TD/good.gz" "$TD/lite-side/bin/mihomo-linux-arm64-v9.9.9.gz"
+( GATEWAY_DATA_DIR="$TD/lite-side"; SMG_PI_ARCH=aarch64
+  pi_fetch() { echo FETCHED >> "$TD/side-fetch-log"; return 1; }
+  pi_lite_install_binary v9.9.9 >/dev/null 2>&1 ) \
+  && [ ! -e "$TD/side-fetch-log" ] \
+  && ok || fail "sideloaded archive did not bypass the download"
+
+# --- dashboard install: layout-agnostic extraction (DEC-B, G6) -------------------
+mkdir -p "$TD/dash-nested/dist" "$TD/dash-root" "$TD/dash-none"
+echo '<html>ui</html>' > "$TD/dash-nested/dist/index.html"
+echo '<html>ui</html>' > "$TD/dash-root/index.html"
+echo 'no ui here' > "$TD/dash-none/readme.txt"
+tar -czf "$TD/ui-nested.tgz" -C "$TD/dash-nested" dist
+tar -czf "$TD/ui-root.tgz" -C "$TD/dash-root" index.html
+tar -czf "$TD/ui-none.tgz" -C "$TD/dash-none" readme.txt
+( GATEWAY_DATA_DIR="$TD/lite-ui1"
+  pi_fetch() { cp "$TD/ui-nested.tgz" "$2"; }
+  pi_resolve_tag() { echo v1.0.0; }
+  pi_lite_install_dashboard >/dev/null 2>&1 ) \
+  && [ -f "$TD/lite-ui1/ui/metacubexd/index.html" ] \
+  && ok || fail "dashboard: nested dist/ layout installed"
+( GATEWAY_DATA_DIR="$TD/lite-ui2"
+  pi_fetch() { cp "$TD/ui-root.tgz" "$2"; }
+  pi_resolve_tag() { echo v1.0.0; }
+  pi_lite_install_dashboard >/dev/null 2>&1 ) \
+  && [ -f "$TD/lite-ui2/ui/metacubexd/index.html" ] \
+  && ok || fail "dashboard: root layout installed"
+( GATEWAY_DATA_DIR="$TD/lite-ui3"
+  pi_fetch() { cp "$TD/ui-none.tgz" "$2"; }
+  pi_resolve_tag() { echo v1.0.0; }
+  pi_lite_install_dashboard >/dev/null 2>&1 ) && fail "layout without index.html accepted" || ok
+mkdir -p "$TD/lite-ui4/ui"
+cp "$TD/ui-nested.tgz" "$TD/lite-ui4/ui/compressed-dist.tgz"
+( GATEWAY_DATA_DIR="$TD/lite-ui4"
+  pi_fetch() { echo FETCHED >> "$TD/ui-fetch-log"; return 1; }
+  pi_lite_install_dashboard >/dev/null 2>&1 ) \
+  && [ ! -e "$TD/ui-fetch-log" ] && [ -f "$TD/lite-ui4/ui/metacubexd/index.html" ] \
+  && ok || fail "dashboard: sideloaded tgz did not bypass the download"
+
+# --- systemd unit: rendered, correct anchors, idempotent -------------------------
+( REPO_ROOT="$ROOT"; GATEWAY_DATA_DIR="$TD/lite-unit"; CONFIG_STATE_DIR="$TD/lite-unit/config"
+  ENV_FILE="$TD/lite-unit/.env"; SMG_PI_UNIT_FILE="$TD/unit.service"
+  pi_lite_render_unit >/dev/null 2>&1 ) \
+  && grep -q 'ExecStartPre=.*render_config.sh' "$TD/unit.service" \
+  && grep -q 'ExecStartPre=.*load_env' "$TD/unit.service" \
+  && grep -q "ExecStart=$TD/lite-unit/bin/mihomo -d $TD/lite-unit/config" "$TD/unit.service" \
+  && grep -q 'Restart=always' "$TD/unit.service" \
+  && ok || fail "unit render: anchors missing"
+grep -q '^EnvironmentFile=' "$TD/unit.service" \
+  && fail "unit hands .env to systemd's parser (compose-escaping mismatch)" || ok
+cp "$TD/unit.service" "$TD/unit.service.first"
+( REPO_ROOT="$ROOT"; GATEWAY_DATA_DIR="$TD/lite-unit"; CONFIG_STATE_DIR="$TD/lite-unit/config"
+  ENV_FILE="$TD/lite-unit/.env"; SMG_PI_UNIT_FILE="$TD/unit.service"
+  pi_lite_render_unit >/dev/null 2>&1 ) \
+  && cmp -s "$TD/unit.service" "$TD/unit.service.first" \
+  && ok || fail "unit render: not idempotent"
+
+# --- ExecStartPre decodes .env with the APP's parser, not systemd's --------------
+# env_set writes a literal '$' as '$$' (compose convention); systemd's
+# EnvironmentFile would NOT reverse that. Run the REAL ExecStartPre payload
+# from the rendered unit against a '$'-containing secret and prove the
+# rendered config carries the secret verbatim.
+mkdir -p "$TD/lite-rt/config"
+printf 'Default=https://sub.example.com/api?token=abc\n' > "$TD/lite-rt/config/subscription.txt"
+(
+  REPO_ROOT="$ROOT"; GATEWAY_DATA_DIR="$TD/lite-rt"; CONFIG_STATE_DIR="$TD/lite-rt/config"
+  ENV_FILE="$TD/lite-rt/.env"; SMG_PI_UNIT_FILE="$TD/unit-rt.service"
+  : > "$ENV_FILE"
+  env_set CONTROLLER_SECRET 'pa$word'
+  env_set DNS_DEFAULT_NAMESERVER 192.0.2.53
+  env_set DNS_NAMESERVER 192.0.2.53
+  env_set DNS_FALLBACK 192.0.2.54
+  pi_lite_render_unit
+) >/dev/null 2>&1 || die "round-trip fixture setup failed"
+grep -qF 'pa$$word' "$TD/lite-rt/.env" || die "env_set did not compose-escape the fixture secret"
+_rt_pre="$(sed -n 's/^ExecStartPre=//p' "$TD/unit-rt.service")"
+( MIHOMO_CONFIG_DIR="$TD/lite-rt/config"; MIHOMO_TEMPLATE="$ROOT/config/config.template.yaml"
+  export MIHOMO_CONFIG_DIR MIHOMO_TEMPLATE
+  eval "$_rt_pre" ) >/dev/null 2>&1 \
+  && grep -qF 'secret: "pa$word"' "$TD/lite-rt/config/config.yaml" \
+  && ok || fail "ExecStartPre round-trip: a \$-containing secret must decode via the app parser"
+
 # --- install-pi.sh entry: sources cleanly under the CI guard ---------------------
 expect_success "install-pi.sh sources cleanly (INSTALL_SOURCE_ONLY=1)" \
   sh -c 'cd "$1" && INSTALL_SOURCE_ONLY=1 SMG_INSTALL_ROOT="$1" sh -c ". ./install-pi.sh"' _ "$ROOT"
@@ -312,4 +478,4 @@ expect_success "install-pi.sh sources cleanly (INSTALL_SOURCE_ONLY=1)" \
 # --- summary --------------------------------------------------------------------
 printf 'pi_installer_check: %d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ] || exit 1
-echo "OK: pi shared seams + install-pi entry (detect/mode-table/preflight/i18n) verified"
+echo "OK: pi shared seams + install-pi entry + lite runtime (detect/mode-table/preflight/i18n/ladder/unit) verified"

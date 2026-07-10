@@ -67,14 +67,13 @@ pi_flow_redeploy() {
   return 0
 }
 
-# pi_flow_deploy_entry - menu item 1: mode wizard, then dispatch. The lite
-# runtime is staged by the epic's later tickets (#19-#21); say so honestly
-# instead of half-doing it.
+# pi_flow_deploy_entry - menu item 1: mode wizard, then dispatch to the chosen
+# flavor (compose here, lite in flow_lite.sh).
 pi_flow_deploy_entry() {
   pi_mode_wizard || return 1
   case "${PI_MODE:-}" in
     compose) pi_flow_compose ;;
-    lite)    ui_info "$(msg pi_info_lite_pending)"; return 1 ;;
+    lite)    pi_flow_lite ;;
     *)       return 1 ;;
   esac
 }
