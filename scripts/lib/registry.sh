@@ -68,6 +68,28 @@ _config_uint() {
   return 0
 }
 
+# _config_ipv4_list NAME VALUE - empty is valid; otherwise every comma token
+# must be a dotted-quad IPv4 (four 0-255 octets, no spaces). Used for CF_DNS,
+# whose tokens land on the docker run argv as --dns values, so nothing but
+# plain addresses may pass. No ui.sh dependency (the unattended updater
+# sources this file without the installer modules).
+_config_ipv4_list() {
+  _cil_name="$1"; _cil_val="$2"
+  [ -n "$_cil_val" ] || return 0
+  if printf '%s' "$_cil_val" | awk -F, '{
+      for (i = 1; i <= NF; i++) {
+        if (split($i, o, ".") != 4) exit 1
+        for (j = 1; j <= 4; j++) {
+          if (o[j] !~ /^[0-9]+$/ || o[j] + 0 > 255) exit 1
+        }
+      }
+    }'; then
+    return 0
+  fi
+  log_error "$_cil_name must be a comma-separated list of IPv4 addresses (got '$_cil_val')"
+  return 1
+}
+
 _update_list_has() {
   _ul_want="$1"
   for _ul_image in ${UPDATE_IMAGES:-}; do
@@ -96,6 +118,7 @@ validate_update_config() {
   _config_uint HEALTH_INTERVAL "${HEALTH_INTERVAL:-}" 0 || return 1
   _config_uint HEALTH_MAX_RESTARTS "${HEALTH_MAX_RESTARTS:-}" 1 || return 1
   _config_uint CF_HEALTH_TIMEOUT "${CF_HEALTH_TIMEOUT:-}" 1 || return 1
+  _config_ipv4_list CF_DNS "${CF_DNS:-}" || return 1
   _config_uint LOG_KEEP "${LOG_KEEP:-}" 1 || return 1
   _config_uint LOG_MAX_BYTES "${LOG_MAX_BYTES:-}" 1 || return 1
 

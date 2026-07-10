@@ -110,6 +110,19 @@ MOCK_CAND_RUNNING=true MOCK_HEALTH=none MOCK_LOG_CONNECTED=1
 export MOCK_CAND_RUNNING MOCK_HEALTH MOCK_LOG_CONNECTED
 expect_success "registration log proves connector" cloudflared_wait_connected cloudflared-candidate 3
 
+# One-shot doctor probe: native health or a since-scoped registration line;
+# a stopped container never passes.
+MOCK_HEALTH=healthy MOCK_LOG_CONNECTED=0
+export MOCK_HEALTH MOCK_LOG_CONNECTED
+expect_success "probe: native health proves the connector" cloudflared_probe_connected cloudflared-candidate
+MOCK_HEALTH=none; export MOCK_HEALTH
+expect_failure "probe: no health and no log fails" cloudflared_probe_connected cloudflared-candidate
+MOCK_LOG_CONNECTED=1; export MOCK_LOG_CONNECTED
+expect_success "probe: registration log proves the connector" cloudflared_probe_connected cloudflared-candidate
+MOCK_CAND_RUNNING=false; export MOCK_CAND_RUNNING
+expect_failure "probe: a stopped container never passes" cloudflared_probe_connected cloudflared-candidate
+MOCK_CAND_RUNNING=true; export MOCK_CAND_RUNNING
+
 # First provision requires a token and removes a failed new container.
 MOCK_BLUE_INSPECT_RC=1 MOCK_CAND_INSPECT_RC=1 MOCK_RUN_RC=0 MOCK_HEALTH=healthy MOCK_LOG_CONNECTED=0
 export MOCK_BLUE_INSPECT_RC MOCK_CAND_INSPECT_RC MOCK_RUN_RC MOCK_HEALTH MOCK_LOG_CONNECTED
@@ -120,6 +133,19 @@ CF_TUNNEL_TOKEN=secret-token
 expect_success "first provision starts and verifies" cloudflared_blue_green
 assert_contains "first provision receives private env file" "$(cat "$CALLS")" 'env-file-token-present'
 assert_not_contains "first provision keeps token out of argv" "$(grep '^run ' "$CALLS")" 'TUNNEL_TOKEN=secret-token'
+
+# CF_DNS pins explicit resolvers: a fresh provision carries --dns per comma
+# token; unset CF_DNS leaves the argv bit-exact with today's behavior.
+CF_DNS='223.5.5.5,119.29.29.29'
+: >"$CALLS"
+expect_success "first provision with CF_DNS set" cloudflared_blue_green
+FRESH_RUN="$(grep '^run ' "$CALLS" | head -n1)"
+assert_contains "fresh provision pins first resolver" "$FRESH_RUN" '--dns 223.5.5.5'
+assert_contains "fresh provision pins second resolver" "$FRESH_RUN" '--dns 119.29.29.29'
+CF_DNS=
+: >"$CALLS"
+expect_success "first provision with CF_DNS unset" cloudflared_blue_green
+assert_not_contains "unset CF_DNS adds no --dns" "$(grep '^run ' "$CALLS")" '--dns'
 MOCK_RUN_RC=1; export MOCK_RUN_RC
 : >"$CALLS"
 expect_failure "failed first provision propagates" cloudflared_blue_green
@@ -144,6 +170,18 @@ assert_contains "canonical restores static IP" "$FINAL_RUN" '--ip 172.17.0.2'
 assert_contains "multi-part entrypoint preserved" "$FINAL_RUN" '--entrypoint /usr/local/bin/cloudflared'
 assert_contains "command argument with spaces preserved" "$FINAL_RUN" 'name with spaces'
 [ -z "$CF_WORKDIR" ] && ok || fail "private state directory was not cleaned"
+
+# CF_DNS overrides the captured Dns list on BOTH replay runs (candidate and
+# final canonical) - the override is the feature; the mock captures no Dns.
+CF_DNS='223.5.5.5,119.29.29.29'
+: >"$CALLS"
+expect_success "staged update applies the CF_DNS override" cloudflared_blue_green
+DNS_CALLS="$(cat "$CALLS")"
+DNS_CAND="$(printf '%s\n' "$DNS_CALLS" | grep '^run .*--name cloudflared-candidate ' | head -n1)"
+DNS_FINAL="$(printf '%s\n' "$DNS_CALLS" | grep '^run .*--name cloudflared ' | tail -n1)"
+assert_contains "candidate replay carries --dns" "$DNS_CAND" '--dns 223.5.5.5'
+assert_contains "canonical replay carries --dns" "$DNS_FINAL" '--dns 119.29.29.29'
+CF_DNS=
 
 # Canonical replay preserves host networking, filters duplicate volume mounts,
 # and applies a token override only through the private env file.

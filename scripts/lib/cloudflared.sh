@@ -78,12 +78,29 @@ cloudflared_cleanup_candidate() {
   "$DOCKER_BIN" rm -f "$_ccc_cand" >/dev/null 2>&1 || return 1
 }
 
+# _cloudflared_connected_signal NAME SINCE - the registration-log proof shared
+# by the wait loop and the one-shot doctor probe. SINCE (when non-empty)
+# scopes the log to the current boot: a container that was docker start'ed
+# (not recreated) still carries 'Registered tunnel connection' lines from its
+# previous life, which would pass verification without a live connection.
+_cloudflared_connected_signal() {
+  { if [ -n "$2" ]; then "$DOCKER_BIN" logs --since "$2" "$1" 2>&1; else "$DOCKER_BIN" logs "$1" 2>&1; fi; } \
+    | grep -Eqi 'Registered tunnel connection|Connection [0-9a-f-]+ registered|registered tunnel connection'
+}
+
+# cloudflared_probe_connected NAME - one-shot connectivity proof for the
+# doctor: running AND (native health OR a registration line since this boot).
+cloudflared_probe_connected() {
+  _cpc_name="$1"
+  _cloudflared_running "$_cpc_name" || return 1
+  _cpc_health="$("$DOCKER_BIN" inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$_cpc_name" 2>/dev/null)"
+  [ "$_cpc_health" = healthy ] && return 0
+  _cpc_since="$("$DOCKER_BIN" inspect -f '{{.State.StartedAt}}' "$_cpc_name" 2>/dev/null)"
+  _cloudflared_connected_signal "$_cpc_name" "$_cpc_since"
+}
+
 cloudflared_wait_connected() {
   _cwc_name="$1"; _cwc_timeout="$2"; _cwc_waited=0
-  # Scope the log check to the current boot: a container that was docker
-  # start'ed (not recreated) still carries 'Registered tunnel connection'
-  # lines from its previous life, which would pass verification without a
-  # live connection. Falls back to the full log when StartedAt is unreadable.
   _cwc_since="$("$DOCKER_BIN" inspect -f '{{.State.StartedAt}}' "$_cwc_name" 2>/dev/null)"
   while [ "$_cwc_waited" -lt "$_cwc_timeout" ]; do
     _cloudflared_running "$_cwc_name" || {
@@ -92,8 +109,7 @@ cloudflared_wait_connected() {
     }
     _cwc_health="$("$DOCKER_BIN" inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$_cwc_name" 2>/dev/null)"
     [ "$_cwc_health" = healthy ] && return 0
-    if { if [ -n "$_cwc_since" ]; then "$DOCKER_BIN" logs --since "$_cwc_since" "$_cwc_name" 2>&1; else "$DOCKER_BIN" logs "$_cwc_name" 2>&1; fi; } \
-      | grep -Eqi 'Registered tunnel connection|Connection [0-9a-f-]+ registered|registered tunnel connection'; then
+    if _cloudflared_connected_signal "$_cwc_name" "$_cwc_since"; then
       return 0
     fi
     sleep 3
@@ -122,6 +138,23 @@ _cloudflared_set_token_override() {
   mv "$CF_WORKDIR/env.next" "$CF_WORKDIR/env" || return 1
 }
 
+# CF_DNS (optional, comma-separated IPv4s) pins explicit resolvers for the
+# tunnel container so it stops inheriting the host's resolv.conf: a host whose
+# only resolver is unreachable silently kills the tunnel even while the tunnel
+# edge itself stays reachable. Overwrites the captured Dns list on replays -
+# that override IS the feature; empty CF_DNS keeps the captured behavior.
+_cloudflared_set_dns_override() {
+  [ -n "${CF_DNS:-}" ] || return 0
+  : >"$CF_WORKDIR/dns.next" || return 1
+  _csd_oldifs="$IFS"; IFS=,
+  for _csd_tok in $CF_DNS; do
+    [ -n "$_csd_tok" ] || continue
+    printf '%s\n' "$_csd_tok" >>"$CF_WORKDIR/dns.next" || { IFS="$_csd_oldifs"; return 1; }
+  done
+  IFS="$_csd_oldifs"
+  mv "$CF_WORKDIR/dns.next" "$CF_WORKDIR/dns" || return 1
+}
+
 # Capture via the generic engine, then overlay the cloudflared-specific token
 # handling. CF_* names are kept as the public seam for the orchestrator/tests.
 _cloudflared_capture_spec() {
@@ -131,6 +164,7 @@ _cloudflared_capture_spec() {
   fi
   CF_WORKDIR="$CTR_WORKDIR"
   _cloudflared_set_token_override || { cloudflared_cleanup_workdir; return 1; }
+  _cloudflared_set_dns_override || { cloudflared_cleanup_workdir; return 1; }
   CF_OLD_IMAGE_ID="$CTR_OLD_IMAGE_ID"
   return 0
 }
@@ -174,8 +208,15 @@ cloudflared_blue_green() {
     : >"$CF_WORKDIR/env"
     chmod 600 "$CF_WORKDIR/env" 2>/dev/null || { cloudflared_cleanup_workdir; return 1; }
     _cloudflared_set_token_override || { cloudflared_cleanup_workdir; return 1; }
-    if ! "$DOCKER_BIN" run -d --name "$_cbg_blue" --restart unless-stopped \
-      --env-file "$CF_WORKDIR/env" "$CF_IMAGE" tunnel --no-autoupdate run >>"$LOG_FILE" 2>&1; then
+    set -- run -d --name "$_cbg_blue" --restart unless-stopped \
+      --env-file "$CF_WORKDIR/env"
+    _cbg_oldifs="$IFS"; IFS=,
+    for _cbg_dns in ${CF_DNS:-}; do
+      [ -n "$_cbg_dns" ] && set -- "$@" --dns "$_cbg_dns"
+    done
+    IFS="$_cbg_oldifs"
+    set -- "$@" "$CF_IMAGE" tunnel --no-autoupdate run
+    if ! "$DOCKER_BIN" "$@" >>"$LOG_FILE" 2>&1; then
       log_error "failed to start fresh cloudflared"
       "$DOCKER_BIN" rm -f "$_cbg_blue" >/dev/null 2>&1 || true
       cloudflared_cleanup_workdir
