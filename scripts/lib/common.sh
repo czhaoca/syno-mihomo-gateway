@@ -27,6 +27,41 @@ CONFIG_STATE_DIR="${CONFIG_STATE_DIR:-$GATEWAY_DATA_DIR/config}"
 SUBSCRIPTION_FILE="${SUBSCRIPTION_FILE:-$CONFIG_STATE_DIR/subscription.txt}"
 export REPO_ROOT GATEWAY_DATA_DIR ENV_FILE CONFIG_STATE_DIR SUBSCRIPTION_FILE
 
+# --- shipped defaults for optional tunables (SOURCE time, not load_env) ------
+# `:=` fills only unset variables, so precedence is unchanged for every
+# caller: an exported caller value survives these, and dotenv_load (load_env)
+# re-exports whatever .env sets over both. Defaulting at source time - the
+# generalization of the LOCK_DIR incident fix - also covers every path that
+# never runs load_env: gateway.sh status / doctor --json load via dotenv_load
+# only, and deploy/redeploy/modify take the lock BEFORE load_env. A lean .env
+# without CONTROLLER_PORT used to make mihomo_controller_probe hit
+# "http://127.0.0.1:/version" on exactly those paths.
+: "${INSTALLER_LANG:=en}"
+: "${UPDATE_ENABLED:=true}"
+: "${EXPECTED_ARCH:=amd64}"
+: "${CONTROLLER_PORT:=9090}"
+: "${CF_CONTAINER_NAME:=cloudflared}"
+: "${CF_HEALTH_TIMEOUT:=60}"
+: "${NOTIFY_ON_NOCHANGE:=0}"
+: "${UPDATE_LOG:=./logs/auto-update.log}"
+: "${LOG_KEEP:=7}"
+: "${LOG_MAX_BYTES:=1048576}"
+: "${PULL_RETRIES:=3}"
+: "${PULL_RETRY_DELAY:=10}"
+: "${DOCKER_READY_TIMEOUT:=120}"
+: "${DOCKER_READY_INTERVAL:=5}"
+: "${HEALTH_RETRIES:=6}"
+: "${HEALTH_INTERVAL:=10}"
+: "${HEALTH_MAX_RESTARTS:=3}"
+: "${TUN_DEVICE:=mihomo-tun}"
+# Transparent-gateway TUN is ON by default (stack: system keeps the controller
+# reachable - see scripts/render_config.sh and docs/troubleshooting.md). Set
+# TUN_ENABLE=false to run as a plain (non-gateway) proxy.
+: "${TUN_ENABLE:=true}"
+: "${TUN_AUTO_REDIRECT:=false}"
+: "${LOCK_DIR:=/tmp/syno-mihomo-update.lock}"
+export TUN_ENABLE TUN_AUTO_REDIRECT
+
 # Create the persistent layout and import a legacy in-release installation once.
 # Copy (rather than move) so a failed first run can still use the old release.
 ensure_persistent_state() {
@@ -165,33 +200,9 @@ load_env() {
     echo "FATAL: invalid .env at $ENV_FILE" >&2
     exit "$EXIT_CONFIG"
   fi
-
-  # Defaults for optional tunables (keeps .env lean).
-  : "${INSTALLER_LANG:=en}"
-  : "${UPDATE_ENABLED:=true}"
-  : "${EXPECTED_ARCH:=amd64}"
-  : "${CONTROLLER_PORT:=9090}"
-  : "${CF_CONTAINER_NAME:=cloudflared}"
-  : "${CF_HEALTH_TIMEOUT:=60}"
-  : "${NOTIFY_ON_NOCHANGE:=0}"
-  : "${UPDATE_LOG:=./logs/auto-update.log}"
-  : "${LOG_KEEP:=7}"
-  : "${LOG_MAX_BYTES:=1048576}"
-  : "${PULL_RETRIES:=3}"
-  : "${PULL_RETRY_DELAY:=10}"
-  : "${DOCKER_READY_TIMEOUT:=120}"
-  : "${DOCKER_READY_INTERVAL:=5}"
-  : "${HEALTH_RETRIES:=6}"
-  : "${HEALTH_INTERVAL:=10}"
-  : "${HEALTH_MAX_RESTARTS:=3}"
-  : "${TUN_DEVICE:=mihomo-tun}"
-  # Transparent-gateway TUN is ON by default (stack: system keeps the controller
-  # reachable - see scripts/render_config.sh and docs/troubleshooting.md). Set
-  # TUN_ENABLE=false to run as a plain (non-gateway) proxy.
-  : "${TUN_ENABLE:=true}"
-  : "${TUN_AUTO_REDIRECT:=false}"
-  : "${LOCK_DIR:=/tmp/syno-mihomo-update.lock}"
-  export TUN_ENABLE TUN_AUTO_REDIRECT
+  # Optional-tunable defaults live in the source-time block at the top of this
+  # file (they must also cover the dotenv_load-only and pre-load_env paths).
+  # Only derivations that DEPEND on loaded .env values may live below.
 
   # Backward compatibility with the pre-1.2.11 template. The strict loader
   # intentionally does not perform arbitrary shell expansion.
@@ -253,11 +264,10 @@ rotate_log() {
 # LOCK_HELD guards release: only the process that actually acquired the lock may
 # remove it. Without this, a locked-out run's EXIT trap would rm -rf the lock dir
 # owned by the still-running holder, defeating the mutex during a live redeploy.
-# LOCK_DIR defaults HERE (source time), not only in load_env: gateway.sh's
+# LOCK_DIR defaults in the source-time block at the top of this file: gateway.sh's
 # deploy/redeploy/modify take the lock BEFORE load_env runs, and an unset
 # LOCK_DIR made acquire_lock mkdir '' - failing every headless mutating verb
 # on a box that does not export it (found on the production NAS).
-: "${LOCK_DIR:=/tmp/syno-mihomo-update.lock}"
 LOCK_HELD=0
 acquire_lock() {
   if mkdir "$LOCK_DIR" 2>/dev/null; then

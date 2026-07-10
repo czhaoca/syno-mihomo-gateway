@@ -98,19 +98,62 @@ exit 0
 EOF
 chmod +x "$STUB/id"
 
+# validate_network_plan probes the parent interface via `ip link show` (else
+# ifconfig). Stub `ip` so PARENT_INTERFACE=eth0 "exists" on every dev/CI
+# platform (macOS has ifconfig but no eth0; CI containers vary) and every
+# address query returns empty = the code's own "cannot verify, don't block"
+# path. Deterministic on both platforms, no real network I/O.
+cat > "$STUB/ip" <<'EOF'
+#!/bin/sh
+exit 0
+EOF
+chmod +x "$STUB/ip"
+
 DATA="$TMP/data"
 mkdir -p "$DATA/config" "$DATA/logs"
 export GATEWAY_DATA_DIR="$DATA"
 export ENV_FILE="$DATA/.env"
 export LOCK_DIR="$TMP/gw.lock"
 
-# LOCK_DIR must default at SOURCE time, not only inside load_env: gateway.sh
-# takes the deploy/redeploy/modify lock before load_env runs, so a box that
-# does not export LOCK_DIR (every real NAS) otherwise dies on mkdir '' -
-# the redeploy-on-NAS regression. This suite exports LOCK_DIR above for
-# hermeticity, which is exactly why the bug needs its own assertion.
-( unset LOCK_DIR; . "$ROOT/scripts/lib/common.sh"; [ -n "${LOCK_DIR:-}" ] ) \
-  && ok || fail "common.sh does not default LOCK_DIR at source time (headless redeploy lock breaks)"
+# Optional-tunable defaults must exist at SOURCE time, not only inside
+# load_env. Two production paths skip load_env: deploy/redeploy/modify take
+# the lock BEFORE it runs (an unset LOCK_DIR died on mkdir '' - the
+# redeploy-on-NAS regression), and status/doctor --json load via dotenv_load
+# only (a lean .env without CONTROLLER_PORT probed http://127.0.0.1:/version).
+# This suite exports LOCK_DIR and a rich fixture .env above for hermeticity,
+# which is exactly why the CLASS needs its own assertion: unset the whole
+# family, source common.sh, and require every shipped default to be present.
+( unset INSTALLER_LANG UPDATE_ENABLED EXPECTED_ARCH CONTROLLER_PORT \
+        CF_CONTAINER_NAME CF_HEALTH_TIMEOUT NOTIFY_ON_NOCHANGE UPDATE_LOG \
+        LOG_KEEP LOG_MAX_BYTES PULL_RETRIES PULL_RETRY_DELAY \
+        DOCKER_READY_TIMEOUT DOCKER_READY_INTERVAL HEALTH_RETRIES \
+        HEALTH_INTERVAL HEALTH_MAX_RESTARTS TUN_DEVICE TUN_ENABLE \
+        TUN_AUTO_REDIRECT LOCK_DIR
+  . "$ROOT/scripts/lib/common.sh"
+  [ -n "${LOCK_DIR:-}" ] && [ "${CONTROLLER_PORT:-}" = 9090 ] \
+    && [ "${EXPECTED_ARCH:-}" = amd64 ] && [ "${TUN_ENABLE:-}" = true ] \
+    && [ "${TUN_AUTO_REDIRECT:-}" = false ] && [ -n "${HEALTH_RETRIES:-}" ] \
+    && [ -n "${UPDATE_LOG:-}" ] && [ -n "${CF_CONTAINER_NAME:-}" ] \
+    && [ -n "${PULL_RETRIES:-}" ] && [ -n "${TUN_DEVICE:-}" ] ) \
+  && ok || fail "common.sh does not default the optional tunables at source time (pre-load_env and dotenv_load-only paths break on a lean environment)"
+
+# The concrete dotenv_load-only victim: mihomo_controller_probe builds its URL
+# from CONTROLLER_PORT. With the key absent from .env and no source-time
+# default, gateway.sh doctor --json probed http://127.0.0.1:/version - a false
+# 'controller broken' the human doctor (load_env) never showed. Probe the REAL
+# function with the variable unset and require the shipped port in the argv
+# the stub docker records.
+(
+  unset CONTROLLER_PORT CONTROLLER_SECRET
+  PATH="$STUB:$PATH"; export PATH
+  CALLS="$TMP/probe.calls"; : > "$CALLS"; export CALLS
+  . "$ROOT/scripts/lib/common.sh"
+  . "$ROOT/scripts/lib/registry.sh"
+  . "$ROOT/scripts/lib/compose.sh"
+  detect_compose >/dev/null 2>&1 || exit 1   # DOCKER_BIN is set here, not at source
+  mihomo_controller_probe >/dev/null 2>&1 || :
+  grep -q '127\.0\.0\.1:9090/version' "$CALLS"
+) && ok || fail "mihomo_controller_probe does not use the shipped controller port with CONTROLLER_PORT unset (doctor --json false alarm on a lean .env)"
 cat > "$ENV_FILE" <<EOF
 REGISTRY_MODE=docker
 MIHOMO_IMAGE=docker.io/metacubex/mihomo:latest
@@ -297,6 +340,102 @@ FAKE_UID=0 PATH="$STUB:$PATH" sh "$ROOT/scripts/doctor.sh" </dev/null >"$TMP/dou
 grep -q 'WARN.*geo databases' "$TMP/derr" || fail "doctor.sh did not warn about uncached geodata"
 mv "$DATA/config/GeoSite.dat.keep" "$DATA/config/GeoSite.dat"
 ok
+
+# --- hermetic env -i smoke: no harness exports reach the scripts under test ------
+# The LOCK_DIR incident survived CI because the harness exported the very
+# variable whose shipped default was missing (env-bleed). These subprocess
+# runs strip the environment to PATH plus STUB SEAMS ONLY (CALLS/FAKE_*/SMG_*
+# configure the fakes, never the production scripts) over a COPIED tree whose
+# default data-dir path lands inside $TMP - so any production variable that is
+# consumed before load_env, or that lacks a source-time default, fails loudly
+# here instead of riding a harness export. deploy --yes is included on
+# purpose: --dry-run skips acquire_lock, which is how the original incident
+# stayed invisible; the run therefore exercises the REAL default lock path
+# under /tmp (created and released within the run; a crashed run leaves a
+# stale lock the next run reclaims by design).
+# The tree copies under a directory NAMED like the real release checkout so
+# compose_project_name's basename fallback matches the stub docker's project
+# label (env -i strips the COMPOSE_PROJECT_NAME the outer suite exports).
+HERM="$TMP/hermetic/syno-mihomo-gateway"; mkdir -p "$HERM"
+cp -R "$ROOT/scripts" "$HERM/scripts"
+cp -R "$ROOT/config" "$HERM/config"
+# a dev tree may hold REAL gitignored runtime files under config/ - never let
+# them ride into the sandbox (the fixture seeds its own subscription).
+rm -f "$HERM/config/subscription.txt" "$HERM/config/config.yaml"
+cp "$ROOT/docker-compose.yml" "$HERM/docker-compose.yml" 2>/dev/null || :
+HDATA="$TMP/hermetic/syno-mihomo-gateway-data"   # the copied tree's DEFAULT data-dir path
+mkdir -p "$HDATA/config" "$HDATA/logs"
+cat > "$HDATA/.env" <<EOF
+# CONTROLLER_PORT and LOCK_DIR are deliberately ABSENT: the hermetic runs must
+# exercise the shipped source-time defaults on the dotenv_load-only paths.
+REGISTRY_MODE=docker
+MIHOMO_IMAGE=docker.io/metacubex/mihomo:latest
+METACUBEXD_IMAGE=ghcr.io/metacubex/metacubexd:latest
+UPDATE_IMAGES="docker.io/metacubex/mihomo:latest ghcr.io/metacubex/metacubexd:latest"
+PARENT_INTERFACE=eth0
+ROUTER_IP=192.168.1.1
+SUBNET_CIDR=192.168.1.0/24
+MIHOMO_IP=192.168.1.100
+WEB_UI_PORT=8080
+DNS_DEFAULT_NAMESERVER=1.1.1.1
+DNS_NAMESERVER=1.1.1.1
+DNS_FALLBACK=1.1.1.1
+EXPECTED_ARCH=$HOST_ARCH
+TUN_ENABLE=false
+TUN_AUTO_REDIRECT=false
+HEALTH_RETRIES=2
+HEALTH_INTERVAL=0
+PULL_RETRIES=1
+PULL_RETRY_DELAY=0
+EOF
+printf '%s\n' 'https://sub.example/token' > "$HDATA/config/subscription.txt"
+printf 'fixture' > "$HDATA/config/GeoSite.dat"
+printf 'fixture' > "$HDATA/config/geoip.metadb"
+# deploy's ensure_tun_device mknods /dev/net/tun - host state outside this
+# smoke's scope (and root-only on dev machines; a REAL device node in the CI
+# container otherwise). Stub mknod, and chmod ONLY for that path so every
+# other chmod in the run stays real.
+cat > "$STUB/mknod" <<'EOF'
+#!/bin/sh
+exit 0
+EOF
+cat > "$STUB/chmod" <<'EOF'
+#!/bin/sh
+case "$*" in *"/dev/net/tun"*) exit 0 ;; esac
+exec /bin/chmod "$@"
+EOF
+chmod +x "$STUB/mknod" "$STUB/chmod"
+HGW="$HERM/scripts/gateway.sh"
+HCALLS="$TMP/herm.calls"
+# FAKE_IMG_ARCH rides along because the stub docker's arch answer defaults to
+# $HOST_ARCH, which env -i strips (stub seams are allowed through; production
+# variables are not).
+henv() { env -i PATH="$STUB:/usr/bin:/bin" CALLS="$HCALLS" SMG_RESOLV_CONF="$TMP/resolv.conf" FAKE_IMG_ARCH="$HOST_ARCH" "$@"; }
+
+: > "$HCALLS"
+_rc=0; henv sh "$HGW" --help </dev/null >"$TMP/out" 2>"$TMP/err" || _rc=$?
+[ "$_rc" = 0 ] && ok || fail "hermetic --help exited $_rc (stderr: $(tail -n2 "$TMP/err" | tr '\n' ' '))"
+
+_rc=0; henv sh "$HGW" status --json </dev/null >"$TMP/out" 2>"$TMP/err" || _rc=$?
+[ "$_rc" = 0 ] && ok || fail "hermetic status --json exited $_rc (stderr: $(tail -n2 "$TMP/err" | tr '\n' ' '))"
+_lines="$(wc -l < "$TMP/out" | tr -d ' ')"
+[ "$_lines" = 1 ] && ok || fail "hermetic status --json stdout is not exactly one line ($_lines)"
+grep -q '"stack_state":"fresh"' "$TMP/out" || fail "hermetic status --json lacks stack_state"
+
+_rc=0; henv sh "$HGW" doctor --json </dev/null >"$TMP/out" 2>"$TMP/err" || _rc=$?
+case "$_rc" in 0|2|3) ok ;; *) fail "hermetic doctor --json exited $_rc (want 0/2/3; stderr: $(tail -n2 "$TMP/err" | tr '\n' ' '))" ;; esac
+_lines="$(wc -l < "$TMP/out" | tr -d ' ')"
+[ "$_lines" = 1 ] && ok || fail "hermetic doctor --json stdout is not exactly one line ($_lines)"
+grep -q '"name":"env","value":"ok"' "$TMP/out" || fail "hermetic doctor --json did not load the .env (env check not ok)"
+grep -q '"name":"docker","value":"ok"' "$TMP/out" || fail "hermetic doctor --json docker check not ok (stub docker unreachable?)"
+
+: > "$HCALLS"
+_rc=0; henv FAKE_MIHOMO_RUNNING=true FAKE_UI_RUNNING=true sh "$HGW" deploy --yes </dev/null >"$TMP/out" 2>"$TMP/err" || _rc=$?
+[ "$_rc" = 0 ] && ok || fail "hermetic deploy --yes exited $_rc - a production variable may lack its source-time default (last output: $(tail -n3 "$TMP/out" "$TMP/err" 2>/dev/null | grep -v '^==>' | tail -n3 | tr '\n' ' '))"
+grep -q 'up -d' "$HCALLS" && ok || fail "hermetic deploy --yes never reached compose up"
+if grep -q 'could not acquire lock at *$' "$TMP/err"; then
+  fail "hermetic deploy hit the empty-LOCK_DIR lock failure"
+else ok; fi
 
 # --- cron: persists schedule settings without touching any crontab ---------------
 expect_rc 0 gw cron --time 03:30 --tz UTC --enable

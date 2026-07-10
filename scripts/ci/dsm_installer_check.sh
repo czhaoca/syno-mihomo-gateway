@@ -29,11 +29,16 @@ dotenv_load "$ENV_FILE"
 [ "$ACR_PASSWORD" = "$SPECIAL" ] || fail "strict dotenv loader changed a secret"
 [ "$UPDATE_SCHEDULE" = '0 2 * * *' ] || fail "strict dotenv loader changed a schedule"
 
-# Existing .env files omit the v1.2.13 TUN knob; load_env must make that path
-# explicitly DSM-safe without requiring an operator migration.
-unset TUN_AUTO_REDIRECT
-load_env
-[ "$TUN_AUTO_REDIRECT" = false ] || fail "missing TUN_AUTO_REDIRECT did not default to false"
+# Existing .env files omit the v1.2.13 TUN knob; the shipped default (false -
+# DSM-safe) must hold without an operator migration. Since the LOCK_DIR
+# incident fix, optional-tunable defaults bind at SOURCE time in common.sh
+# (not on every load_env call) - assert on a fresh source + load_env, the
+# only shape a real process ever sees.
+( unset TUN_AUTO_REDIRECT
+  . "$ROOT/scripts/lib/common.sh"
+  load_env
+  [ "${TUN_AUTO_REDIRECT:-}" = false ] ) \
+  || fail "missing TUN_AUTO_REDIRECT did not default to false"
 
 # shellcheck disable=SC2016 # Literal payload verifies dotenv values are never evaluated.
 printf '%s\n' 'UNTRUSTED=$(touch SHOULD_NOT_EXIST)' >> "$ENV_FILE"

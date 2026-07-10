@@ -483,7 +483,6 @@ gateway_doctor() {
   else
     _gw_check_add env broken; _gwd_broken=1
   fi
-  : "${EXPECTED_ARCH:=amd64}"
   if detect_compose >/dev/null 2>&1 && "$DOCKER_BIN" info >/dev/null 2>&1; then
     _gw_check_add docker ok
   else
