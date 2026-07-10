@@ -131,6 +131,9 @@ subscription_current() {
 # mode in CLEANUP_CONTAINERS_MODE / CLEANUP_NETWORK_MODE, and on rejection sets
 # RESOLVE_CLEANUP_REASON to a machine-readable token the caller renders:
 #   ambiguous        - containers exist that are not verifiably ours
+#   foreign_project  - the containers belong to a DIFFERENT Compose project (a
+#                      legacy/older deployment); preserving them would make
+#                      `compose up` die on a raw container-name conflict
 #   drift            - the macvlan exists with a different configuration
 #   unrelated        - the network has attachments that are not our containers
 #   needs_containers - removing the network needs container cleanup too
@@ -151,6 +154,16 @@ resolve_cleanup_containers() {
       if [ "${LIFECYCLE_CONTAINERS_SAFE:-0}" != 1 ]; then
         RESOLVE_CLEANUP_REASON=ambiguous
         return 1
+      fi
+      # Managed containers from a DIFFERENT compose project (a legacy install)
+      # cannot be preserved: this deploy's `compose up` would hit a raw
+      # container-name conflict. auto (replace) is the remedy and stays valid.
+      if [ "$1" = preserve ] && [ -n "${LIFECYCLE_COMPOSE_PROJECT:-}" ]; then
+        _rcc_ours="$(compose_project_name 2>/dev/null || echo '')"
+        if [ -n "$_rcc_ours" ] && [ "$LIFECYCLE_COMPOSE_PROJECT" != "$_rcc_ours" ]; then
+          RESOLVE_CLEANUP_REASON=foreign_project
+          return 1
+        fi
       fi
       CLEANUP_CONTAINERS_MODE="$1" ;;
     manual)

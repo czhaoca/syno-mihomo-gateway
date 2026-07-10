@@ -6,6 +6,20 @@
 MIHOMO_CONTAINER="mihomo"
 METACUBEXD_CONTAINER="mihomo-ui"
 
+# compose_project_name - the Compose project THIS checkout deploys as:
+# COMPOSE_PROJECT_NAME wins (compose's own override and the test seam), else
+# the release directory's basename normalized the way compose v2 does
+# (lowercase, invalid chars replaced, must start alphanumeric). Used to tell
+# our own containers from a legacy/foreign deployment that reuses the names.
+compose_project_name() {
+  if [ -n "${COMPOSE_PROJECT_NAME:-}" ]; then
+    printf '%s' "$COMPOSE_PROJECT_NAME"
+    return 0
+  fi
+  basename "$REPO_ROOT" | tr '[:upper:]' '[:lower:]' \
+    | sed -e 's/[^a-z0-9_-]/-/g' -e 's/^[^a-z0-9]*//'
+}
+
 compose_up() {
   # COMPOSE_CMD may be two words ("docker compose"); leave unquoted on purpose.
   # shellcheck disable=SC2086
@@ -47,6 +61,26 @@ compose_recreate() {
   # configuration takes effect even when the image and compose model are unchanged.
   # shellcheck disable=SC2086
   ( cd "$REPO_ROOT" && $COMPOSE_CMD --env-file "$ENV_FILE" up -d --force-recreate ) >>"$LOG_FILE" 2>&1
+}
+
+# compose_ensure_up - boot-time "the stack should be up" completion for the
+# self-heal task. `restart: always` normally brings the stack back by itself,
+# but a reboot can leave mihomo down when the macvlan was not usable at daemon
+# start. Deliberately conservative: rc 2 (skip) when the deploy is not
+# configured (image refs unset), when no usable subscription line exists (the
+# renderer would crash-loop mihomo), or when the mihomo container does not
+# EXIST (a deliberate `compose down` stays down); rc 0 when it is already
+# running; otherwise start the existing model from LOCAL images (no boot-time
+# pull). rc 1 = a start was attempted and failed.
+compose_ensure_up() {
+  [ -n "${MIHOMO_IMAGE:-}" ] && [ -n "${METACUBEXD_IMAGE:-}" ] || return 2
+  _ceu_sub="$(grep -v '^#' "$SUBSCRIPTION_FILE" 2>/dev/null | grep -v '^[[:space:]]*$' | head -n1)"
+  [ -n "$_ceu_sub" ] || return 2
+  "$DOCKER_BIN" inspect "$MIHOMO_CONTAINER" >/dev/null 2>&1 || return 2
+  if [ "$("$DOCKER_BIN" inspect -f '{{.State.Running}}' "$MIHOMO_CONTAINER" 2>/dev/null)" = true ]; then
+    return 0
+  fi
+  compose_up_local
 }
 
 # Probe the controller from INSIDE the mihomo netns (docker exec) so the macvlan

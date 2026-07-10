@@ -225,6 +225,7 @@ _msg_en() {
     prep_auto)         printf '%s' 'Dismantle automatically after validation' ;;
     prep_manual)       printf '%s' 'I will handle it manually' ;;
     prep_ambiguous)    printf '%s' 'a canonical container name is not verifiably owned by this project; automatic cleanup is blocked' ;;
+    prep_foreign_project) printf '%s' "the existing containers belong to Compose project '%s' (an older or legacy deployment); preserving them would fail the deploy - choose automatic cleanup to replace them" ;;
     prep_unrelated)    printf '%s' 'the macvlan has an unrelated attachment; automatic cleanup is blocked' ;;
     prep_drift_requires_cleanup) printf '%s' 'a mismatched macvlan cannot be reused; choose automatic or manual cleanup' ;;
     prep_network_needs_containers) printf '%s' 'remove the attached gateway containers automatically too, or handle the network manually' ;;
@@ -244,6 +245,9 @@ _msg_en() {
     diag_acr_login_fix) printf '%s' 'check DOCKER_USERNAME / ACR_PASSWORD (token expiry?) in .env' ;;
     info_skip_login)  printf '%s' 'REGISTRY_MODE=docker - skipping registry login (public images)' ;;
     info_pulling)     printf '%s' 'pulling %s' ;;
+    info_geodata)     printf '%s' 'pre-seeding geo databases (CDN mirrors)' ;;
+    ok_geodata)       printf '%s' 'geo databases are cached locally' ;;
+    warn_geodata)     printf '%s' 'geo databases could not be pre-seeded - the first start may stall while mihomo fetches them; re-run deploy later or set GEODATA_MIRRORS' ;;
     diag_pull_fail)   printf '%s' 'could not pull %s' ;;
     diag_pull_fail_fix) printf '%s' 'confirm the image exists in your registry and the NAS can reach it' ;;
     diag_arch_mismatch) printf '%s' 'image arch mismatch for %s' ;;
@@ -596,6 +600,7 @@ _msg_zh() {
     prep_auto)         printf '%s' '校验完成后自动拆除' ;;
     prep_manual)       printf '%s' '由我手动处理' ;;
     prep_ambiguous)    printf '%s' '同名容器无法确认属于本项目，已禁止自动清理' ;;
+    prep_foreign_project) printf '%s' "现有容器属于另一个 Compose 项目 '%s'（旧版/历史部署）；保留它们会导致部署失败——请选择自动清理以替换" ;;
     prep_unrelated)    printf '%s' 'macvlan 上连接了无关容器，已禁止自动清理' ;;
     prep_drift_requires_cleanup) printf '%s' '配置不匹配的 macvlan 无法复用，请选择自动或手动清理' ;;
     prep_network_needs_containers) printf '%s' '请同时自动移除已连接的网关容器，或手动处理网络' ;;
@@ -615,6 +620,9 @@ _msg_zh() {
     diag_acr_login_fix) printf '%s' '请检查 .env 中的 DOCKER_USERNAME / ACR_PASSWORD（令牌是否过期？）' ;;
     info_skip_login)  printf '%s' 'REGISTRY_MODE=docker - 跳过仓库登录（公共镜像）' ;;
     info_pulling)     printf '%s' '正在拉取 %s' ;;
+    info_geodata)     printf '%s' '正在预下载 geo 数据库（CDN 镜像）' ;;
+    ok_geodata)       printf '%s' 'geo 数据库已缓存到本地' ;;
+    warn_geodata)     printf '%s' 'geo 数据库预下载失败——首次启动时 mihomo 可能因自行下载而卡住；可稍后重新部署或设置 GEODATA_MIRRORS' ;;
     diag_pull_fail)   printf '%s' '无法拉取 %s' ;;
     diag_pull_fail_fix) printf '%s' '请确认镜像存在于你的仓库中，且 NAS 能够访问它' ;;
     diag_arch_mismatch) printf '%s' '%s 的镜像架构不匹配' ;;

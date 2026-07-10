@@ -46,6 +46,29 @@ ensure_persistent_state() {
   return 0
 }
 
+# legacy_install_detect - find a pre-split FLAT installation (the pre-1.3
+# layout where config.yaml, docker-compose.yml, subscription.txt and the geo
+# databases all lived in one docker-shared folder, separate from this release
+# tree). SMG_LEGACY_DIR overrides the probe list (also the test seam). A hit
+# requires the triple only a configured flat install carries. Prints the
+# first hit; rc 1 when none. Shared by doctor.sh and migrate_legacy.sh.
+legacy_install_detect() {
+  for _lid_dir in ${SMG_LEGACY_DIR:+"$SMG_LEGACY_DIR"} \
+                  ${DOCKER_ROOT:+"$DOCKER_ROOT/mihomo"} \
+                  /volume1/docker/mihomo /volume2/docker/mihomo \
+                  /volume3/docker/mihomo /volume4/docker/mihomo \
+                  /volumeUSB1/docker/mihomo /docker/mihomo; do
+    [ -n "$_lid_dir" ] || continue
+    [ "$_lid_dir" = "$REPO_ROOT" ] && continue
+    if [ -f "$_lid_dir/config.yaml" ] && [ -f "$_lid_dir/docker-compose.yml" ] \
+       && [ -f "$_lid_dir/subscription.txt" ]; then
+      printf '%s\n' "$_lid_dir"
+      return 0
+    fi
+  done
+  return 1
+}
+
 # Exit codes (see README / DSM Task Scheduler email-on-nonzero). The meanings
 # of 0/2/3/4/5 are load-bearing for existing scheduled tasks - never repurpose
 # them; new conditions get NEW codes (6/7 below, added for gateway.sh).

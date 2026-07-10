@@ -27,6 +27,7 @@ _preprocess_show_inventory() {
 _preprocess_warn_reason() {
   case "${RESOLVE_CLEANUP_REASON:-}" in
     ambiguous)        ui_warn "$(msg prep_ambiguous)" ;;
+    foreign_project)  ui_warn "$(msgf prep_foreign_project "${LIFECYCLE_COMPOSE_PROJECT:-?}")" ;;
     drift)            ui_warn "$(msg prep_drift_requires_cleanup)" ;;
     unrelated)        ui_warn "$(msg prep_unrelated)" ;;
     needs_containers) ui_warn "$(msg prep_network_needs_containers)" ;;
