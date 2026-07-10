@@ -103,6 +103,14 @@ mkdir -p "$DATA/config" "$DATA/logs"
 export GATEWAY_DATA_DIR="$DATA"
 export ENV_FILE="$DATA/.env"
 export LOCK_DIR="$TMP/gw.lock"
+
+# LOCK_DIR must default at SOURCE time, not only inside load_env: gateway.sh
+# takes the deploy/redeploy/modify lock before load_env runs, so a box that
+# does not export LOCK_DIR (every real NAS) otherwise dies on mkdir '' -
+# the redeploy-on-NAS regression. This suite exports LOCK_DIR above for
+# hermeticity, which is exactly why the bug needs its own assertion.
+( unset LOCK_DIR; . "$ROOT/scripts/lib/common.sh"; [ -n "${LOCK_DIR:-}" ] ) \
+  && ok || fail "common.sh does not default LOCK_DIR at source time (headless redeploy lock breaks)"
 cat > "$ENV_FILE" <<EOF
 REGISTRY_MODE=docker
 MIHOMO_IMAGE=docker.io/metacubex/mihomo:latest

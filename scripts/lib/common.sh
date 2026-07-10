@@ -253,6 +253,11 @@ rotate_log() {
 # LOCK_HELD guards release: only the process that actually acquired the lock may
 # remove it. Without this, a locked-out run's EXIT trap would rm -rf the lock dir
 # owned by the still-running holder, defeating the mutex during a live redeploy.
+# LOCK_DIR defaults HERE (source time), not only in load_env: gateway.sh's
+# deploy/redeploy/modify take the lock BEFORE load_env runs, and an unset
+# LOCK_DIR made acquire_lock mkdir '' - failing every headless mutating verb
+# on a box that does not export it (found on the production NAS).
+: "${LOCK_DIR:=/tmp/syno-mihomo-update.lock}"
 LOCK_HELD=0
 acquire_lock() {
   if mkdir "$LOCK_DIR" 2>/dev/null; then
