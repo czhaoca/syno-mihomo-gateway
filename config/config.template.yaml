@@ -79,6 +79,14 @@ dns:
   default-nameserver: [ {{DNS_DEFAULT_NAMESERVER}} ]
   nameserver: [ {{DNS_NAMESERVER}} ]
   fallback: [ {{DNS_FALLBACK}} ]
+  # Proxy-server (airport node) hostnames resolve via the domestic list
+  # DIRECTLY, bypassing the fallback-filter below: node IPs are usually
+  # non-CN, so the geoip filter would discard the domestic answer and wait
+  # for the fallback resolvers - which are dialed direct and often
+  # unreachable on a filtered network BEFORE any node is up. Without this,
+  # a fresh start (or an expired node cache) dead-ends with "dns resolve
+  # failed" on every node - observed in production.
+  proxy-server-nameserver: [ {{DNS_NAMESERVER}} ]
   fallback-filter:
     geoip: true
 

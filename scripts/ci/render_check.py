@@ -151,10 +151,13 @@ def main() -> None:
 
     # 5) DNS lists must round-trip EXACTLY: the comma list splits into flow-seq
     # items, and DoH/DoT URL entries stay STRING scalars (a YAML mis-parse would
-    # surface here as a dict or a mangled token).
+    # surface here as a dict or a mangled token). proxy-server-nameserver reuses
+    # the domestic list so node hostnames resolve without the fallback-filter
+    # (the filtered-network chicken-and-egg observed in production).
     dns = doc.get("dns") or {}
     for field, expected in (("default-nameserver", DNS_DEFAULT),
                             ("nameserver", DNS_NS),
+                            ("proxy-server-nameserver", DNS_NS),
                             ("fallback", DNS_FB)):
         servers = dns.get(field)
         if servers != expected:
