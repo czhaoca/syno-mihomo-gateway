@@ -148,7 +148,10 @@ sudo ./scripts/setup_network.sh
 - 如果 `/dev/net/tun` 不存在则创建它，并修复其权限；
 - 自动检测父接口（即路由到 `ROUTER_IP` 的那个接口；否则回退到默认路由）；
 - 创建或复用与你的 `SUBNET_CIDR` / `ROUTER_IP` 一致的 `tproxy_network`（默认 macvlan，
-  当 `TPROXY_DRIVER=ipvlan` 时为 ipvlan）；若同名网络配置不一致，脚本会拒绝删除它。
+  当 `TPROXY_DRIVER=ipvlan` 时为 ipvlan）；若同名网络配置不一致，脚本会拒绝删除它；
+- 若网关栈已经部署却没有在运行，则用本地镜像把它拉起（当镜像引用未设置、没有可用的
+  订阅、或 mihomo 容器是被有意停掉时会干净地跳过）；真正启动失败时以退出码 `2` 结束，
+  从而触发 DSM 计划任务的失败通知邮件。
 
 它**不会登录镜像仓库，也不会拉取镜像** —— 这发生在引导安装器的部署流程中，或在第 5 步
 `docker compose up` 拉取缺失镜像时隐式进行。

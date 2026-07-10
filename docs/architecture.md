@@ -120,7 +120,9 @@ installer (`sh ./install.sh`) — creates a Docker **macvlan** network `tproxy_n
 parent is the installer-saved `PARENT_INTERFACE` from `.env` when present, else auto-detected
 via the route to `ROUTER_IP`; it warns on an Open vSwitch parent on every path, and honors
 `TPROXY_DRIVER` (macvlan default, ipvlan opt-in — a driver change forces clean network
-recreation). mihomo attaches to it with the static `MIHOMO_IP`, so it appears as a
+recreation); as its final boot step it also brings the gateway stack back up from local images
+when it is deployed but not running (a genuinely failed start exits `2`, driving the DSM boot
+task's failure email). mihomo attaches to it with the static `MIHOMO_IP`, so it appears as a
 **first-class device on your LAN** with its own IP — it does not NAT through the NAS host and
 does not disturb host networking.
 

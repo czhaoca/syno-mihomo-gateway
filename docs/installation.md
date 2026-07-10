@@ -163,7 +163,11 @@ This headless script (it is also the DSM boot-up self-heal task):
   default route);
 - creates or reuses a matching `tproxy_network` (macvlan by default, ipvlan when
   `TPROXY_DRIVER=ipvlan`) with your `SUBNET_CIDR` / `ROUTER_IP`; it refuses to remove a mismatched
-  existing network.
+  existing network;
+- brings the gateway stack up from local images if it is deployed but not running (it skips
+  cleanly when the image refs are unset, no usable subscription exists, or the mihomo container
+  was deliberately taken down); a start that genuinely fails exits `2`, so the DSM scheduler's
+  failure email fires.
 
 It performs **no registry login and no image pulls** — that happens in the guided installer's
 deploy flow, or implicitly when `docker compose up` pulls missing images in step 5.

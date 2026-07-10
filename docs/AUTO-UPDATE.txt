@@ -62,7 +62,9 @@ a system upgrade. The Task Scheduler task persists across upgrades.
 Verify the deployment any time with:  sudo sh scripts/doctor.sh
 It warns when no enabled task runs auto_update.sh, and when the Boot-up
 self-heal task (setup_network.sh) is missing - the boot task is what keeps
-TUN alive across NAS reboots.
+TUN alive across NAS reboots, and it also starts the gateway stack (from
+local images, no pull) if it is still down after a boot. A start that
+fails makes the boot task exit non-zero, so its DSM failure email fires.
 
 --------------------------------------------------------------------------
 How to schedule (an explicit choice)

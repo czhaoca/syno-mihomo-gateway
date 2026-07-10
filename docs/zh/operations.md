@@ -139,6 +139,7 @@ sh scripts/ci/auto_update_check.sh
 sh scripts/ci/cloudflared_check.sh
 sh scripts/ci/generic_update_check.sh
 sh scripts/ci/gateway_cli_check.sh
+sh scripts/ci/migrate_legacy_check.sh
 docker compose --env-file .env.example config --quiet
 ```
 
@@ -223,6 +224,11 @@ sudo sh scripts/gateway.sh doctor --json   # 相同检查（compose、tun_gatewa
 其中 `update_task` / `boot_task` 检查校验 DSM 任务计划的部署情况（一个运行
 `auto_update.sh` 的计划任务，以及一个运行 `setup_network.sh` 的开机任务——后者是让 TUN
 在 NAS 重启后保持存活的关键）；`unknown` 表示该机器上没有可搜索的计划任务存储。
+
+另有三项检查覆盖主机侧。`host_dns` 逐个探测 NAS `/etc/resolv.conf` 中的解析器，对失效的
+解析器发出告警——对应“主机 DNS 已死、NAS 连自己的服务都够不着”这类故障。`geodata`
+报告 geo 数据库是否已缓存在配置目录中——缺失意味着首次启动必须跨一个可能被过滤的网络
+去下载。`cloudflared` 报告隧道容器的 ok/down 状态，仅当该容器存在时才会显示。
 
 若要从局域网一侧验证，请在**另一台局域网设备**（而非 NAS）上运行以下原始探测命令
 （原因见 [macvlan 自访问](troubleshooting.md#macvlan-自访问)）：

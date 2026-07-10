@@ -146,6 +146,7 @@ sh scripts/ci/auto_update_check.sh
 sh scripts/ci/cloudflared_check.sh
 sh scripts/ci/generic_update_check.sh
 sh scripts/ci/gateway_cli_check.sh
+sh scripts/ci/migrate_legacy_check.sh
 docker compose --env-file .env.example config --quiet
 ```
 
@@ -237,6 +238,13 @@ sudo sh scripts/gateway.sh doctor --json   # same checks (compose, tun_gateway, 
 The `update_task` / `boot_task` checks verify the DSM Task Scheduler deployment (a scheduled
 task running `auto_update.sh`, and a Boot-up task running `setup_network.sh` — what keeps TUN
 alive across reboots); `unknown` means the box has no searchable scheduler.
+
+Three further checks cover the host side. `host_dns` probes every resolver in the NAS's
+`/etc/resolv.conf` and warns on dead ones — the failure where the NAS cannot reach its own
+services because host DNS is dead. `geodata` reports whether the geo databases are already
+cached in the config directory — missing means the first start must fetch them across a
+possibly filtered network. `cloudflared` reports the tunnel container ok/down, and is only
+shown when that container exists.
 
 To verify from the LAN side, run the raw probes below from **another LAN device**, not the NAS
 (because of [macvlan self-reach](troubleshooting.md#macvlan-self-reach)):

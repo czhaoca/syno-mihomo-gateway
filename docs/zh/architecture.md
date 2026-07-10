@@ -111,7 +111,9 @@ flowchart LR
 一个名为 `tproxy_network` 的 Docker **macvlan** 网络。其父接口优先使用安装器保存在 `.env`
 中的 `PARENT_INTERFACE`（如存在），否则通过到 `ROUTER_IP` 的路由自动检测；它在所有路径上
 都会对 Open vSwitch 父接口发出警告，并遵循 `TPROXY_DRIVER`（默认 macvlan，可选 ipvlan——
-切换驱动会强制干净地重建网络）。mihomo 以静态 `MIHOMO_IP` 接入该网络，因此它会以
+切换驱动会强制干净地重建网络）；作为开机流程的最后一步，它还会在网关栈已部署却未运行时
+用本地镜像把网关栈重新拉起（真正启动失败会以退出码 `2` 结束，从而触发 DSM 开机任务的
+失败邮件）。mihomo 以静态 `MIHOMO_IP` 接入该网络，因此它会以
 **你 LAN 上的一等设备**的形式出现，拥有自己的 IP——它不会通过 NAS 主机做 NAT，也不会
 干扰主机网络。
 

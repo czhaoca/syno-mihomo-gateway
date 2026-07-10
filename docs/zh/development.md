@@ -59,6 +59,7 @@ scripts/
     generic_update_check.sh   # 使用伪 Docker 的通用捕获/重放引擎测试
     gateway_cli_check.sh      # 通过 PATH 桩测试 gateway.sh CLI 契约
     dsm_installer_check.sh    # 使用伪 Docker 的安装器流程测试
+    migrate_legacy_check.sh   # 旧版扁平安装导入器的封闭式（env -i）测试
     lifecycle_check.sh        # 使用伪 Docker 的盘点/清理安全测试
     lib/assert.sh             # sh 测试套件共享的断言
 .woodpecker.yml               # CI：9 个阻断式步骤（见下方 CI 表格）
@@ -141,8 +142,8 @@ EXIT 陷阱不会回收它（`CF_KEEP_CANDIDATE`）。
 | `compose-policy` | `python scripts/ci/compose_policy_check.py` —— 断言 **fail-closed** 的镜像引用：compose 中每个 `image:` 都严格是 `${VAR}`/`${VAR:?msg}`（无默认值、无硬编码引用），且 `.env.example` 定义了这些镜像变量并携带 `REGISTRY_MODE=acr`（ACR 为默认；`docker` 上游是显式可选项，并非被禁止） |
 | `package-check` | `python scripts/ci/package_check.py` —— 在临时仓库中构建开发与最终用户**两种**发布包，证明**任何密钥都不会被打包**（植入的 `.env`/订阅/`config.yaml` 不出现在两种压缩包的文件名*和*字节中）、校验和正确、最终用户包剔除了开发者/`.md`/CI 文件、附带安装器与 `.txt` 指南、不含任何身份字符串，且其防泄漏门对注入的泄漏会以失败告终（fail-closed） |
 | `privacy-check` | 扫描被跟踪文件和可达 blob，拒绝私有运维标识、凭据、私钥和意外跟踪的运行时文件（+ 该守卫的自测） |
-| `dsm-shell-tests` | 七个在 BusyBox `sh` 下、使用伪 Docker/Compose/服务 CLI 的测试套件：`dsm_installer_check`、`lifecycle_check`、`auto_update_check`、`cloudflared_check`、`generic_update_check`、`gateway_cli_check`、`pi_installer_check`（Raspberry Pi 移植的共享接缝） |
-| `shellcheck` | 先对仓库中**每一个** `*.sh` 运行 `sh -n` 语法检查，再对 15 个目标运行 `shellcheck -x`：`install.sh`、`install-pi.sh`、`gateway.sh`、`auto_update.sh`、`pi/auto_update_lite.sh`、`pi/lite_ctl.sh`、`install_scheduler.sh`、`setup_network.sh`、`render_config.sh`、`package.sh`、`doctor.sh`、`state_diff.sh`、`bootstrap.sh`、`lib/container.sh`、`lib/targets.sh`（被 source 的库在上下文中一并检查） |
+| `dsm-shell-tests` | 八个在 BusyBox `sh` 下、使用伪 Docker/Compose/服务 CLI 的测试套件：`dsm_installer_check`、`lifecycle_check`、`auto_update_check`、`cloudflared_check`、`generic_update_check`、`gateway_cli_check`、`migrate_legacy_check`、`pi_installer_check`（Raspberry Pi 移植的共享接缝） |
+| `shellcheck` | 先对仓库中**每一个** `*.sh` 运行 `sh -n` 语法检查，再对 17 个目标运行 `shellcheck -x`：`install.sh`、`install-pi.sh`、`gateway.sh`、`auto_update.sh`、`pi/auto_update_lite.sh`、`pi/lite_ctl.sh`、`install_scheduler.sh`、`setup_network.sh`、`render_config.sh`、`package.sh`、`doctor.sh`、`state_diff.sh`、`migrate_legacy.sh`、`bootstrap.sh`、`lib/container.sh`、`lib/targets.sh`、`lib/geodata.sh`（被 source 的库在上下文中一并检查） |
 
 ## CLI 契约（生成的文件）
 
@@ -183,6 +184,20 @@ sh scripts/package.sh --version 1.2.12         # 覆盖 VERSION 文件
   发现即以失败告终（fail-closed）。新增被跟踪文件时，请同时检查 `scripts/package.sh`
   中的这两个列表。
 
+### 发布一个版本
+
+对外发布遵循固定的顺序——NAS 验证被刻意放在打标签**之前**（它曾抓住 CI 无法发现的
+真实缺陷）：
+
+1. 提交到 `master` 并推送。
+2. 等待该提交上的 Woodpecker CI **全部变绿**。
+3. 构建最终用户包：`sh scripts/package.sh`。
+4. **打标签之前**先把发布包部署到生产 NAS 并完成验证——以
+   [离线发布包 › 验证](release-packaging.md#6-验证)作为验收门。
+5. 对通过验证的那个 SHA 打标签。
+6. 携带四个发布包资产（zip、tar.gz 及两个 `.sha256` 校验文件）发布 GitHub Release。
+7. 删除上一个 Release **及**其标签——仓库只保留最新一个版本。
+
 ## 代理（Agent）辅助部署需要临时 sudo 授权
 
 NAS 上的部署是由**非 root 管理员账户**持有的 bundle 安装；部署或验收运行中的特权步骤
@@ -214,13 +229,13 @@ python3 -m venv /tmp/v && /tmp/v/bin/pip install -q pyyaml
 /tmp/v/bin/python scripts/ci/render_check.py
 /tmp/v/bin/python scripts/ci/cli_contract_check.py   # --write 重新生成这些产物
 
-# shellcheck（经 Docker，与 CI 相同的 15 个目标）
+# shellcheck（经 Docker，与 CI 相同的 17 个目标）
 docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck-alpine:stable \
   shellcheck -x install.sh install-pi.sh scripts/gateway.sh scripts/auto_update.sh \
   scripts/pi/auto_update_lite.sh scripts/pi/lite_ctl.sh \
   scripts/install_scheduler.sh scripts/setup_network.sh scripts/render_config.sh \
-  scripts/package.sh scripts/doctor.sh scripts/state_diff.sh bootstrap.sh \
-  scripts/lib/container.sh scripts/lib/targets.sh
+  scripts/package.sh scripts/doctor.sh scripts/state_diff.sh scripts/migrate_legacy.sh \
+  bootstrap.sh scripts/lib/container.sh scripts/lib/targets.sh scripts/lib/geodata.sh
 
 # compose 渲染（非破坏性，与 CI 相同——绝不触碰你的真实 .env）
 docker compose --env-file .env.example config --quiet
@@ -228,13 +243,14 @@ docker compose --env-file .env.example config --quiet
 # 发布打包安全保障（封闭环境；在临时仓库中构建两种包，需要 git）
 python3 scripts/ci/package_check.py
 
-# CI 运行的七个伪 Docker/PATH 桩 TDD 测试套件（不修改 NAS）
+# CI 运行的八个伪 Docker/PATH 桩 TDD 测试套件（不修改 NAS）
 sh scripts/ci/dsm_installer_check.sh
 sh scripts/ci/lifecycle_check.sh
 sh scripts/ci/auto_update_check.sh
 sh scripts/ci/cloudflared_check.sh
 sh scripts/ci/generic_update_check.sh
 sh scripts/ci/gateway_cli_check.sh
+sh scripts/ci/migrate_legacy_check.sh
 sh scripts/ci/pi_installer_check.sh
 
 # 隐私守卫 + 其自测
