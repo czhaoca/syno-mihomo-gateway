@@ -104,7 +104,7 @@ Compose 兼容的引号，因此包含空格、`&`、`#`、`$`、引号或反斜
 | `UPDATE_IMAGES` | 以空格分隔、需要检查/拉取的镜像引用。两个 Compose 引用必填；`CF_IMAGE` 非空时也必须包含。安装器会保存解析后的具体引用。 | `"${MIHOMO_IMAGE} ${METACUBEXD_IMAGE} ${CF_IMAGE}"` |
 | `UPDATE_SCHEDULE` | 用于配置 DSM 任务计划/后备 crontab 的五字段数字 cron 表达式；输出前会校验范围。**请加引号。** | `"0 2 * * *"` |
 | `UPDATE_TZ` | 更新器日志时间戳所用时区。DSM 触发时间遵循 NAS 的“区域选项”时区。 | `Asia/Shanghai` |
-| `EXPECTED_ARCH` | 防止仅 amd64 的镜像源被装到 ARM 架构的 NAS 上。可选 `amd64`/`arm64`。 | `amd64` |
+| `EXPECTED_ARCH` | 防止仅 amd64 的镜像源被装到 ARM 架构的机器上。可选 `amd64` / `arm64` / `arm`（32 位，如 armv7 树莓派）。树莓派安装器会自动固定为本机架构。 | `amd64` |
 
 ### 通用自动更新目标
 
@@ -147,6 +147,18 @@ dry-run 标志、updated/unchanged/failed/rolled-back 计数与名称——由 `
 | `LOG_KEEP` | 保留的轮转日志代数。 | `7` |
 | `TZ` | 容器时区。 | `Asia/Shanghai` |
 | `INSTALLER_LANG` | `install.sh` 界面语言（`en` 或 `zh`）。由安装器首屏设置并保存于此，重运行时跳过该提示。 | `en` |
+
+### 树莓派 lite 模式
+
+由 [`install-pi.sh`](installation-pi.md) 与 lite 更新器使用；在 DSM 上无害且不生效
+（`.env.example` 中以注释形式提供）。
+
+| 键 | 说明 | 默认值 / 示例 |
+|---|---|---|
+| `GH_MIRROR` | 施加在上游发布下载地址上的镜像前缀（mihomo 二进制、面板、最新版本号解析）：`<镜像站>/<完整上游地址>`。留空 = 直连。 | `` |
+| `MIHOMO_VERSION` | 固定 lite 安装/更新使用的 mihomo 发布版本号。留空 = 最新。 | `` |
+| `MIHOMO_SHA256` | **固定版本**时可选的完整性锚点（上游不发布校验和）：设置后，下载的压缩包必须匹配才会安装——下载经过第三方镜像时建议设置。 | `` |
+| `EXTERNAL_UI_DIR` | mihomo 托管面板的目录（**仅在设置时**渲染进 `external-ui`；lite 向导会设置它，DSM/compose 路径保持不设，其渲染结果因此逐字节不变）。 | `` |
 
 ### 高级可调项（可选的 `.env` 覆盖项）
 

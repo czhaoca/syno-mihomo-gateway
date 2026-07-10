@@ -374,6 +374,65 @@ Build/Update to "fix" it - that bypasses the digest gate, health gate, and rollb
 created a Project entry manually, delete the Project (not the containers) and manage the stack
 via the installer/CLI only.
 
+## Pi: ACR image not mirrored for arm64
+
+**Symptom:** on a Raspberry Pi in compose mode (`install-pi.sh`), the deploy/update fails at
+the pull, or the arch guard refuses with `arch mismatch for … image=amd64 host=arm64` — right
+after the installer printed an ACR architecture notice.
+
+**Cause:** `REGISTRY_MODE=acr` is the default on the Pi too, and the default
+`docker-china-sync` pipeline mirrors `linux/amd64` only — your ACR namespace has no arm64
+copy of the images yet.
+
+**Fix:** mirror arm64 first (`--platform=linux/amd64,linux/arm64` per image in
+`docker-china-sync/images.txt`), let a sync cycle run, then deploy — or switch to
+`REGISTRY_MODE=docker` on an unfiltered network. Same guard as
+[Architecture mismatch (ARM NAS)](#architecture-mismatch-arm-nas): the refusal is the
+protection, not the bug. Background:
+[Installation — Raspberry Pi](installation-pi.md#compose-mode-on-a-pi).
+
+## Pi lite: update rolled back
+
+**Symptom:** the update notification says `rolled back`, `state/lite/last-run.json` shows
+`"rolled_back":1`, exit code `2`.
+
+**Cause:** the freshly installed mihomo binary failed the post-restart health gate (service
+active + restart-count stability + controller probe + TUN link), so the updater restored
+`bin/mihomo.prev` — including the recorded version state, which is what makes the next
+scheduled run retry the update cleanly.
+
+**Fix:** usually nothing — the gateway is running on the previous binary. Check
+`journalctl -u mihomo-gateway -n 50` and `logs/auto-update.log` for why the new one failed;
+pin `MIHOMO_VERSION` to skip a bad release. If the notification says `MANUAL ATTENTION`
+instead, the restore itself failed — run `sh scripts/pi/lite_ctl.sh doctor` and fix what it
+reports.
+
+## Pi: macvlan on Wi-Fi (wlan0) refused
+
+**Symptom:** `install-pi.sh` refuses the chosen/detected parent interface (`wlan0`) in
+compose mode.
+
+**Cause:** macvlan children present extra MAC addresses on the parent link; Wi-Fi drivers and
+AP client isolation typically drop those frames, so the stack would deploy and then be
+unreachable from the LAN.
+
+**Fix:** use wired Ethernet for compose mode — or lite mode, which binds the Pi's own IP and
+works over Wi-Fi. This is a Pi-specific fail-fast; the
+[OVS discussion](#open-vswitch-is-not-the-cause-of-a-dashboardgateway-timeout) is unrelated.
+
+## Pi lite: port 53 already in use
+
+**Symptom:** the lite install warned about port 53; `lite_ctl doctor` warns and names a
+process (commonly `systemd-resolved` or `dnsmasq`); client DNS is dead or mihomo restarts in
+a loop.
+
+**Cause:** mihomo's DNS must bind `:53`, and stock Raspberry Pi OS / Debian images often ship
+a resolver already listening there.
+
+**Fix:** disable the conflicting listener or move it off port 53 (for `systemd-resolved` its
+stub listener; for `dnsmasq` its DNS port), then `sudo sh scripts/pi/lite_ctl.sh start` and
+re-run `doctor` — it should now report port 53 served by mihomo.
+
 ## CI didn't run
 
 The pipeline triggers on branches `main` **and** `master`. If you use another branch name, add

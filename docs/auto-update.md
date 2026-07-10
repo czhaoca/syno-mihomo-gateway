@@ -321,6 +321,31 @@ container:
 sudo sh scripts/auto_update.sh --dry-run
 ```
 
+## Raspberry Pi lite-mode binary updater
+
+The Raspberry Pi port's bare-metal **lite mode** has no images to update, so it ships a
+sibling updater — `scripts/pi/auto_update_lite.sh` — that updates the **native mihomo
+binary** while mirroring this page's operational contract: the same lock, `UPDATE_ENABLED`
+kill-switch, `--dry-run` / `--force`, rotating log (`logs/auto-update.log` under the data
+directory), `NOTIFY_*` notifications, and exit codes `0/2/3/4`. Its last-run record lives at
+`state/lite/last-run.json` (same JSON shape as `state/last-run.json`), beside the installed
+version marker `state/lite/version`.
+
+A run resolves the release tag (a pinned `MIHOMO_VERSION` wins; otherwise the
+`releases/latest` redirect is followed *through* `GH_MIRROR`), fast-exits when the installed
+version already matches, then: keep `bin/mihomo.prev` → download + fail-closed verify ladder
+(optional pinned `MIHOMO_SHA256` → gzip integrity → exec smoke → version match) → swap →
+`systemctl restart mihomo-gateway` → health gate (unit active, restart-count stability,
+controller probe, TUN link when enabled — the shared `HEALTH_RETRIES` / `HEALTH_INTERVAL` /
+`HEALTH_MAX_RESTARTS` knobs). A failed gate restores `.prev` **and** the version state, so
+the next scheduled run retries cleanly; a restore that itself fails is reported as `MANUAL
+ATTENTION`, never as a successful rollback.
+
+Scheduling is `install-pi.sh` menu item 3 — one managed `/etc/crontab` line (there is no DSM
+Task Scheduler on a Pi); a compose-mode Pi schedules the standard `auto_update.sh` above,
+unchanged. Walkthrough and the mirror/sideload story:
+[Installation — Raspberry Pi](installation-pi.md#automatic-updates-on-a-pi).
+
 ## Upstream behavior references
 
 - [Synology DSM 7 Task Scheduler](https://kb.synology.com/en-global/DSM/help/DSM/AdminCenter/system_taskscheduler?version=7)

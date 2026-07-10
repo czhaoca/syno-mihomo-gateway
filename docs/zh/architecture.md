@@ -30,6 +30,12 @@
 | **数据目录** | **同级目录** `../syno-mihomo-gateway-data` | 持久化的运行时状态（`GATEWAY_DATA_DIR`）：生效的 `.env`、渲染出的配置、日志、更新器状态。替换发布目录后仍然保留。见下文。 |
 | **docker-china-sync** | 同级仓库 `../docker-china-sync` | 在自托管 runner 上运行的 GitHub Actions；每晚将上游镜像同步 → 阿里云 ACR。即流水线的"推送"端（在默认的 `REGISTRY_MODE=acr` 下使用）。 |
 
+同一套组件也能跑在**树莓派**上（`sh ./install-pi.sh`——附加入口；上面的 DSM 路径不受
+影响），有两种形态：*compose 同构*（在有线 macvlan 上照搬这套容器拓扑）或*裸机 lite*
+（mihomo 二进制在 systemd 下运行，并经 `external-ui` 自己托管面板——没有 Docker、没有
+macvlan；客户端的网关/DNS 就是树莓派自己的 IP）。硬件下限与模式选择见
+[安装 — 树莓派](installation-pi.md#硬件与模式矩阵)。
+
 ## 持久数据目录
 
 运行时状态保存在发布检出目录的**同级目录**中——`../syno-mihomo-gateway-data`

@@ -104,7 +104,7 @@ against the three resolved refs (see [Auto-Update](auto-update.md#image-refs)).
 | `UPDATE_IMAGES` | Space-separated image refs to check/pull. Both Compose refs are required; when `CF_IMAGE` is non-empty it is required too. The installer persists concrete resolved refs. | `"${MIHOMO_IMAGE} ${METACUBEXD_IMAGE} ${CF_IMAGE}"` |
 | `UPDATE_SCHEDULE` | Five-field numeric cron expression used to configure DSM Task Scheduler / the fallback crontab. It is range-validated before output. **Quote it.** | `"0 2 * * *"` |
 | `UPDATE_TZ` | Timezone used for updater log timestamps. The DSM trigger itself follows the NAS Regional Options timezone. | `Asia/Shanghai` |
-| `EXPECTED_ARCH` | Guard against the amd64-only mirror landing on an ARM NAS. `amd64`/`arm64`. | `amd64` |
+| `EXPECTED_ARCH` | Guard against the amd64-only mirror landing on an ARM box. `amd64` / `arm64` / `arm` (32-bit, e.g. an armv7 Raspberry Pi). The Pi installer pins it to the host automatically. | `amd64` |
 
 ### Generic auto-update targets
 
@@ -147,6 +147,18 @@ the gate is running + stable restarts + the image's own healthcheck when defined
 | `LOG_KEEP` | Rotated log generations to keep. | `7` |
 | `TZ` | Container timezone. | `Asia/Shanghai` |
 | `INSTALLER_LANG` | Language of the `install.sh` UI (`en` or `zh`). The installer's first screen sets it; saved here so re-runs skip the prompt. | `en` |
+
+### Raspberry Pi lite mode
+
+Consumed by [`install-pi.sh`](installation-pi.md) and the lite updater; harmless and unused
+on DSM (`.env.example` ships them commented out).
+
+| Key | Description | Default / Example |
+|---|---|---|
+| `GH_MIRROR` | Mirror prefix applied to upstream release-download URLs (mihomo binary, dashboard, latest-tag resolution): `<mirror>/<full-upstream-url>`. Empty = direct. | `` |
+| `MIHOMO_VERSION` | Pin the mihomo release tag for lite installs/updates. Empty = latest. | `` |
+| `MIHOMO_SHA256` | Optional integrity anchor for a **pinned** release (upstream publishes no checksums): when set, the downloaded archive must match before anything is installed — recommended whenever downloads ride a third-party mirror. | `` |
+| `EXTERNAL_UI_DIR` | Folder mihomo serves the dashboard from (rendered into `external-ui` **only when set**; the lite wizard sets it, the DSM/compose path leaves it unset so its render stays byte-identical). | `` |
 
 ### Advanced tunables (optional `.env` overrides)
 

@@ -218,4 +218,6 @@ Where to look
                when gateway.sh ran first, the names are links to one shared
                file).
   * Settings:  ../syno-mihomo-gateway-data (see CONFIGURE.txt).
+  * Raspberry Pi: installed with install-pi.sh? INSTALL-PI.txt covers the
+               Pi-specific failures (its "If something fails" section).
   * To change and redeploy: install.sh -> 4) Modify an existing deployment.

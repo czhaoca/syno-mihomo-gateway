@@ -29,6 +29,7 @@ and a DSM-scheduled job keeps everything current and safely self-healing.
 |---|---|
 | [Architecture](docs/architecture.md) | components, the mirror→pull pipeline, the macvlan model, the safety model |
 | [Installation](docs/installation.md) | full DSM walkthrough (SSH, network, first run, dashboard) |
+| [Installation — Raspberry Pi](docs/installation-pi.md) | no Synology? the Pi port: compose parity or bare-metal lite, the hardware & RAM sizing matrix, mirror/offline installs |
 | [Release Zip](docs/release-packaging.md) | offline install where GitHub is blocked: build a zip, unpack on the NAS, no git |
 | [Configuration](docs/configuration.md) | **complete `.env` reference**, template, subscription, rules |
 | [Auto-Update](docs/auto-update.md) | ACR setup, the run sequence, health-gate/rollback, generic enrolled targets, cloudflared blue-green, exit codes |
@@ -58,6 +59,9 @@ and a DSM-scheduled job keeps everything current and safely self-healing.
 >
 > **No GitHub on the NAS (mainland China)?** Use the
 > [release zip](docs/release-packaging.md) instead of step 1's clone.
+>
+> **No Synology at all?** The gateway also runs on a **Raspberry Pi** (`sh ./install-pi.sh`) —
+> hardware sizing matrix and walkthrough: [Installation — Raspberry Pi](docs/installation-pi.md).
 
 ```bash
 # 1. Clone (on the NAS, over SSH)

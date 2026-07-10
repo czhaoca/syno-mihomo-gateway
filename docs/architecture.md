@@ -31,6 +31,13 @@ registries directly, for a NAS with unfiltered internet access.
 | **data directory** | **sibling dir** `../syno-mihomo-gateway-data` | Persistent runtime state (`GATEWAY_DATA_DIR`): the live `.env`, rendered config, logs, updater state. Survives replacing the release directory. See below. |
 | **docker-china-sync** | sibling repo `../docker-china-sync` | GitHub Actions on a self-hosted runner; mirrors upstream images → Alibaba ACR nightly. The "push" side of the pipeline (used when `REGISTRY_MODE=acr`, the default). |
 
+The same components also run on a **Raspberry Pi** (`sh ./install-pi.sh` — additive; the DSM
+path above is untouched) in one of two flavors: *compose parity* (this exact container
+topology on wired macvlan) or *bare-metal lite* (the mihomo binary under systemd, serving the
+dashboard itself via `external-ui` — no Docker, no macvlan; the Pi's own IP is the clients'
+gateway/DNS). Hardware floors and mode selection:
+[Installation — Raspberry Pi](installation-pi.md#hardware--mode-matrix).
+
 ## Persistent data directory
 
 Runtime state lives in a **sibling** of the release checkout — `../syno-mihomo-gateway-data`

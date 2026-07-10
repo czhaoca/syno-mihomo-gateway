@@ -60,6 +60,9 @@ cd syno-mihomo-gateway
   它替你填写 `.env`，在触碰正在运行的栈之前完成全部校验，并在失败时自动回滚。
 - **手动：** 下面的第 2–8 步 —— 自己编辑 `.env`，运行 `setup_network.sh`，然后直接
   使用 `docker compose`。
+- **树莓派（没有群晖）？** 本页是 DSM 流程 —— 树莓派有自己的附加安装器
+  （`sudo sh ./install-pi.sh`）、硬件/内存选型矩阵，以及面向小板子的裸机模式：
+  [安装 — 树莓派](installation-pi.md)。
 
 ### 引导安装（推荐）
 

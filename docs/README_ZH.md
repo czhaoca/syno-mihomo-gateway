@@ -26,6 +26,7 @@
 |---|---|
 | [架构](zh/architecture.md) | 组件、镜像同步→拉取流水线、macvlan 网络模型、安全模型 |
 | [安装](zh/installation.md) | 完整的群晖部署流程（SSH、网络、首次启动、面板） |
+| [安装 — 树莓派](zh/installation-pi.md) | 没有群晖？树莓派移植：compose 同构或裸机 lite、硬件与内存选型矩阵、镜像/离线安装 |
 | [离线发布包](zh/release-packaging.md) | GitHub 被封锁时的离线安装：构建压缩包，在 NAS 上解压，无需 git |
 | [配置](zh/configuration.md) | **完整 `.env` 参考**、模板、订阅、规则 |
 | [自动更新](zh/auto-update.md) | ACR 配置、运行流程、健康检查/回滚、通用已登记目标、cloudflared 蓝绿、退出码 |
@@ -52,6 +53,9 @@
 >
 > **NAS 无法访问 GitHub（中国大陆）？** 请改用
 > [离线发布包](zh/release-packaging.md)，无需第 1 步的 git clone。
+>
+> **完全没有群晖设备？** 网关也能跑在**树莓派**上（`sh ./install-pi.sh`）——
+> 硬件选型矩阵与完整流程见[安装 — 树莓派](zh/installation-pi.md)。
 
 ```bash
 # 1. 下载（在群晖上，通过 SSH）

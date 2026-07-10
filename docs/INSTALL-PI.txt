@@ -1,0 +1,182 @@
+Installing the Mihomo Gateway on a Raspberry Pi
+===============================================
+
+This guide installs the gateway on a Raspberry Pi (or any Debian-family
+Linux with systemd) from this release bundle. On a Synology NAS, use
+INSTALL.txt instead - this file is only for the Pi path.
+
+There are two install modes; the installer detects your board and
+recommends one:
+
+  * COMPOSE mode - the same Docker stack as on the NAS (two containers,
+    the gateway gets its own LAN IP, updates are health-checked with
+    automatic rollback). Needs: 64-bit OS, Docker + compose v2, WIRED
+    ethernet, 1 GB RAM minimum (2 GB or more is comfortable).
+  * LITE mode - no Docker: mihomo runs as a normal program under systemd
+    and serves the dashboard itself. Works on 512 MB boards, 32-bit
+    systems, and over Wi-Fi. Clients use the Pi's OWN IP as gateway/DNS.
+
+Which Raspberry Pi is OK?
+-------------------------
+  * Pi 4B (2 GB or more) ......... recommended; compose mode, no tuning.
+  * Pi 5 ......................... effortless.
+  * Pi 3B / 3B+ (1 GB) ........... supported; compose needs a 64-bit OS
+                                   and low-RAM tuning; lite mode is the
+                                   comfortable choice.
+  * Pi Zero 2 W / Pi 2B .......... best-effort, lite mode only
+                                   (Zero 2 W is Wi-Fi-only -> lite only).
+  * Pi 1 / Zero / Zero W (ARMv6) . NOT suitable as a whole-home gateway
+                                   (about 30-40 Mbps tops, weak or no
+                                   ethernet). Lite mode still installs,
+                                   for lab/single-device use, after you
+                                   explicitly accept a warning.
+
+Minimum RAM, in one line: lite mode needs roughly 256 MB (tuned) and is
+comfortable at 512 MB; compose mode needs 1 GB minimum and is comfortable
+at 2 GB.
+
+Overview of the steps
+---------------------
+  1. Transfer this folder to the Pi (any writable location).
+  2. Run install-pi.sh, pick a language, choose "Deploy".
+  3. Accept (or override) the recommended mode.
+  4. Answer the prompts; verify from another device.
+
+--------------------------------------------------------------------------
+1. Transfer this folder to the Pi
+--------------------------------------------------------------------------
+Copy the unpacked folder anywhere writable on the Pi (scp, a USB stick,
+an SMB share). Unlike the NAS there is NO required location - the
+installer only checks that the folder is writable.
+
+--------------------------------------------------------------------------
+2. Run the installer
+--------------------------------------------------------------------------
+Open a terminal in the folder and run:
+
+      sudo sh ./install-pi.sh
+
+Root is required for deployment (TUN device, port 53, and - in compose
+mode - docker). The first run asks for a language (English/Chinese) and
+saves it; you will then see the same six-item menu as the NAS installer:
+Deploy / Redeploy / Set up automatic updates (cron) / Modify / Status /
+Quit. Press Ctrl-D at any prompt to quit cleanly.
+
+--------------------------------------------------------------------------
+3. The mode wizard (start of Deploy)
+--------------------------------------------------------------------------
+Deploy first prints what it detected - board model, usable memory, CPU
+architecture - and a recommendation:
+
+  * 2 GB or more ................. compose
+  * around 1 GB .................. compose (with a low-RAM tuning note;
+                                   lite offered too)
+  * 512 MB, or any 32-bit OS ..... lite
+  * ARMv6 (Pi 1 / Zero / Zero W) . lite, only after you accept the
+                                   best-effort warning (default is No)
+
+You may override the recommendation where the hardware allows a choice.
+
+--------------------------------------------------------------------------
+4a. Compose mode
+--------------------------------------------------------------------------
+After the mode wizard, the deploy is exactly the NAS flow - the prompts,
+the express confirmation screen, and the checks are the ones described in
+INSTALL.txt section 4. Three things are Pi-specific:
+
+  * Wired ethernet is REQUIRED. The installer refuses a Wi-Fi interface
+    (wlan0) as the network parent - Wi-Fi drivers break this network
+    mode. Wi-Fi-only board? Use lite mode.
+  * IMPORTANT if you keep the default "acr" image source: the standard
+    mirror pipeline copies amd64 images only, so your OWN mirror
+    namespace must also carry arm64 images BEFORE the first deploy
+    (in your mirror sync's image list, give each image
+    --platform=linux/amd64,linux/arm64, then let a sync run). On an
+    unfiltered network you can instead pick the "docker" source, which
+    works out of the box.
+  * The expected-CPU guard is set to your Pi automatically.
+
+--------------------------------------------------------------------------
+4b. Lite mode
+--------------------------------------------------------------------------
+The wizard asks for: dashboard port (default 9090) and secret, DNS
+servers, timezone, then the download settings:
+
+  * Download mirror (GH_MIRROR) - if the Pi cannot reach the upstream
+    release host, enter a gh-proxy style mirror URL; leave empty for a
+    direct connection.
+  * Version pin (MIHOMO_VERSION) - empty means "latest". When you pin a
+    version you may also enter a sha256 checksum (MIHOMO_SHA256); with a
+    third-party mirror this is strongly recommended - a tampered download
+    then fails loudly instead of installing a wrong binary.
+
+Then your subscription URL (same format as the NAS: one Name=URL line).
+
+If something on the Pi already uses port 53 (a stock DNS resolver often
+does), the installer warns you now; see "If something fails" below.
+
+The installer then downloads and verifies the mihomo program and the
+dashboard, installs a system service (mihomo-gateway), starts it, and
+prints the dashboard address:
+
+      http://<Pi-IP>:9090/ui
+
+Point client devices' gateway and DNS at the Pi's own IP.
+
+Fully offline install: on a machine with internet, download the two
+files and place them into the data folder next to this one, then pin the
+version in the wizard - nothing is downloaded on the Pi:
+
+      ../syno-mihomo-gateway-data/bin/mihomo-linux-<arch>-<version>.gz
+          (arch is arm64, armv7 or armv6 - the wizard shows yours)
+      ../syno-mihomo-gateway-data/ui/compressed-dist.tgz
+
+--------------------------------------------------------------------------
+5. Automatic updates (menu item 3)
+--------------------------------------------------------------------------
+Works for both modes: pick a daily time and timezone, and the installer
+maintains one line in /etc/crontab (re-running replaces only its own
+line). Compose mode schedules the same updater as the NAS; lite mode
+schedules the lite updater, which downloads the new binary, verifies it,
+swaps it in, health-checks the service, and ROLLS BACK to the previous
+binary if the new one fails - the next scheduled run simply retries.
+You can dry-run once right from the menu.
+
+--------------------------------------------------------------------------
+6. Day-2: status and diagnostics
+--------------------------------------------------------------------------
+Menu item 5 (Status) knows which mode you installed. On a lite box you
+can also run the small CLI directly:
+
+      sh scripts/pi/lite_ctl.sh status
+      sh scripts/pi/lite_ctl.sh doctor
+      sudo sh scripts/pi/lite_ctl.sh start|stop
+      sudo sh scripts/pi/lite_ctl.sh update --dry-run
+
+"doctor" prints ok/WARN/ERROR lines and ends with HEALTHY, DEGRADED or
+BROKEN plus what to fix - run it first whenever something misbehaves.
+
+--------------------------------------------------------------------------
+If something fails
+--------------------------------------------------------------------------
+  * Compose pull fails / "arch mismatch ... refusing to deploy":
+    your mirror namespace has no arm64 images yet - see the IMPORTANT
+    note in 4a. The refusal is the guard protecting you.
+  * Installer refuses your network interface (wlan0):
+    compose mode needs wired ethernet; use lite mode over Wi-Fi.
+  * Lite: port 53 is already in use (doctor names the process, often
+    systemd-resolved or dnsmasq): disable that resolver's listener or
+    move it off port 53, then:  sudo sh scripts/pi/lite_ctl.sh start
+  * Lite update notification says "rolled back": the new release failed
+    the health check and the previous binary was restored automatically -
+    nothing to do; check with lite_ctl doctor, and optionally pin
+    MIHOMO_VERSION to skip a bad release.
+  * Everything else (dashboard, subscription, DNS symptoms) behaves like
+    the NAS install: see TROUBLESHOOTING.txt.
+
+After install
+-------------
+  * CONFIGURE.txt covers every .env setting (the Pi adds GH_MIRROR,
+    MIHOMO_VERSION, MIHOMO_SHA256).
+  * Logs live in ../syno-mihomo-gateway-data/logs/ (install.log,
+    auto-update.log).

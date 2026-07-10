@@ -192,4 +192,6 @@ DSM 7 计划更新没有运行
                    auto-update.log（计划更新）、gateway.log（gateway.sh；若
                    gateway.sh 先运行过，这些名字会链接到同一个共享文件）。
   * 设置：         ../syno-mihomo-gateway-data（见 CONFIGURE.zh.txt）。
+  * 树莓派：       用 install-pi.sh 安装的？树莓派特有的故障见
+                   INSTALL-PI.zh.txt（"如果出了问题"一节）。
   * 修改并重新部署：install.sh -> 4) 修改已有部署。
