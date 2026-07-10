@@ -116,8 +116,12 @@ scheduler_task_deployed() {
   return 2
 }
 
-# scheduler_reload_crond - best-effort compatibility for the unsupported raw
-# /etc/crontab fallback. DSM Task Scheduler does not need this function.
+# scheduler_reload_crond - best-effort compatibility for the raw /etc/crontab
+# fallback. DSM Task Scheduler does not need this function. The syno service
+# tools are tried first (DSM stays first-class); generic Linux (e.g. Raspberry
+# Pi OS) falls back to systemctl with the common unit names cron (Debian),
+# crond (RHEL/Alpine), cronie (Arch). rc 1 stays benign on Debian-family
+# systems - vixie-cron re-reads /etc/crontab by mtime - so callers only warn.
 scheduler_reload_crond() {
   for _sr_ctl in /usr/syno/bin/synosystemctl /usr/local/bin/synosystemctl; do
     [ -x "$_sr_ctl" ] || continue
@@ -134,6 +138,11 @@ scheduler_reload_crond() {
   if command -v synoservice >/dev/null 2>&1; then
     synoservice --restart crond >/dev/null 2>&1 && return 0
     synoservice -restart crond >/dev/null 2>&1 && return 0
+  fi
+  if command -v systemctl >/dev/null 2>&1; then
+    for _sr_unit in cron crond cronie; do
+      systemctl restart "$_sr_unit" >/dev/null 2>&1 && return 0
+    done
   fi
   return 1
 }

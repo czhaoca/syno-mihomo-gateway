@@ -56,6 +56,14 @@ external-controller-cors:
   allow-origins:
     - '*'
   allow-private-network: true
+# {{EXTUI_BEGIN}}
+# Embedded static dashboard (Raspberry Pi bare-metal "lite" mode): mihomo serves the
+# MetaCubeXD build from this folder at /ui on the controller port, replacing the
+# separate dashboard container. The renderer keeps this fenced block ONLY when
+# EXTERNAL_UI_DIR is set; the DSM compose path leaves it unset and the render is
+# byte-identical to the template without this fence.
+external-ui: "{{EXTERNAL_UI_DIR}}"
+# {{EXTUI_END}}
 
 dns:
   enable: true

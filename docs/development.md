@@ -146,7 +146,7 @@ Runs on push/PR to `main` and `master`:
 | `compose-policy` | `python scripts/ci/compose_policy_check.py` — asserts **fail-closed** image refs: every compose `image:` is exactly `${VAR}`/`${VAR:?msg}` (no defaults, no hardcoded refs) and `.env.example` defines the image vars and ships `REGISTRY_MODE=acr` (ACR default; `docker` upstream is an explicit opt-in, not forbidden) |
 | `package-check` | `python scripts/ci/package_check.py` — builds **both** the dev and enduser bundles in throwaway repos and proves **no secret can ship** (planted `.env`/subscription/`config.yaml` absent from both archives' names *and* bytes), checksums verify, the enduser bundle prunes developer/`.md`/CI files, ships the installer + `.txt` guides, contains no identity string, and its leak-gate fails closed on an injected leak |
 | `privacy-check` | Scans tracked files and reachable blobs for private operational identifiers, credentials, private keys, and accidentally tracked runtime files (+ the gate's self-test) |
-| `dsm-shell-tests` | Six BusyBox `sh` suites with fake Docker/Compose CLIs: `dsm_installer_check`, `lifecycle_check`, `auto_update_check`, `cloudflared_check`, `generic_update_check`, `gateway_cli_check` |
+| `dsm-shell-tests` | Seven BusyBox `sh` suites with fake Docker/Compose/service CLIs: `dsm_installer_check`, `lifecycle_check`, `auto_update_check`, `cloudflared_check`, `generic_update_check`, `gateway_cli_check`, `pi_installer_check` (the Raspberry Pi port's shared seams) |
 | `shellcheck` | `sh -n` parse-checks **every** `*.sh` in the repo, then `shellcheck -x` on 12 targets: `install.sh`, `gateway.sh`, `auto_update.sh`, `install_scheduler.sh`, `setup_network.sh`, `render_config.sh`, `package.sh`, `doctor.sh`, `state_diff.sh`, `bootstrap.sh`, `lib/container.sh`, `lib/targets.sh` (sourced libs followed in-context) |
 
 ## The CLI contract (generated files)
@@ -233,13 +233,14 @@ docker compose --env-file .env.example config --quiet
 # release packaging safeguard (hermetic; builds both bundles in temp repos, needs git)
 python3 scripts/ci/package_check.py
 
-# the six fake-Docker/PATH-stub TDD suites CI runs (no NAS mutation)
+# the seven fake-Docker/PATH-stub TDD suites CI runs (no NAS mutation)
 sh scripts/ci/dsm_installer_check.sh
 sh scripts/ci/lifecycle_check.sh
 sh scripts/ci/auto_update_check.sh
 sh scripts/ci/cloudflared_check.sh
 sh scripts/ci/generic_update_check.sh
 sh scripts/ci/gateway_cli_check.sh
+sh scripts/ci/pi_installer_check.sh
 
 # privacy gate + its self-test
 python3 scripts/ci/privacy_check.py

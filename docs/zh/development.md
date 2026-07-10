@@ -141,7 +141,7 @@ EXIT 陷阱不会回收它（`CF_KEEP_CANDIDATE`）。
 | `compose-policy` | `python scripts/ci/compose_policy_check.py` —— 断言 **fail-closed** 的镜像引用：compose 中每个 `image:` 都严格是 `${VAR}`/`${VAR:?msg}`（无默认值、无硬编码引用），且 `.env.example` 定义了这些镜像变量并携带 `REGISTRY_MODE=acr`（ACR 为默认；`docker` 上游是显式可选项，并非被禁止） |
 | `package-check` | `python scripts/ci/package_check.py` —— 在临时仓库中构建开发与最终用户**两种**发布包，证明**任何密钥都不会被打包**（植入的 `.env`/订阅/`config.yaml` 不出现在两种压缩包的文件名*和*字节中）、校验和正确、最终用户包剔除了开发者/`.md`/CI 文件、附带安装器与 `.txt` 指南、不含任何身份字符串，且其防泄漏门对注入的泄漏会以失败告终（fail-closed） |
 | `privacy-check` | 扫描被跟踪文件和可达 blob，拒绝私有运维标识、凭据、私钥和意外跟踪的运行时文件（+ 该守卫的自测） |
-| `dsm-shell-tests` | 六个在 BusyBox `sh` 下、使用伪 Docker/Compose CLI 的测试套件：`dsm_installer_check`、`lifecycle_check`、`auto_update_check`、`cloudflared_check`、`generic_update_check`、`gateway_cli_check` |
+| `dsm-shell-tests` | 七个在 BusyBox `sh` 下、使用伪 Docker/Compose/服务 CLI 的测试套件：`dsm_installer_check`、`lifecycle_check`、`auto_update_check`、`cloudflared_check`、`generic_update_check`、`gateway_cli_check`、`pi_installer_check`（Raspberry Pi 移植的共享接缝） |
 | `shellcheck` | 先对仓库中**每一个** `*.sh` 运行 `sh -n` 语法检查，再对 12 个目标运行 `shellcheck -x`：`install.sh`、`gateway.sh`、`auto_update.sh`、`install_scheduler.sh`、`setup_network.sh`、`render_config.sh`、`package.sh`、`doctor.sh`、`state_diff.sh`、`bootstrap.sh`、`lib/container.sh`、`lib/targets.sh`（被 source 的库在上下文中一并检查） |
 
 ## CLI 契约（生成的文件）
@@ -226,13 +226,14 @@ docker compose --env-file .env.example config --quiet
 # 发布打包安全保障（封闭环境；在临时仓库中构建两种包，需要 git）
 python3 scripts/ci/package_check.py
 
-# CI 运行的六个伪 Docker/PATH 桩 TDD 测试套件（不修改 NAS）
+# CI 运行的七个伪 Docker/PATH 桩 TDD 测试套件（不修改 NAS）
 sh scripts/ci/dsm_installer_check.sh
 sh scripts/ci/lifecycle_check.sh
 sh scripts/ci/auto_update_check.sh
 sh scripts/ci/cloudflared_check.sh
 sh scripts/ci/generic_update_check.sh
 sh scripts/ci/gateway_cli_check.sh
+sh scripts/ci/pi_installer_check.sh
 
 # 隐私守卫 + 其自测
 python3 scripts/ci/privacy_check.py

@@ -1,9 +1,10 @@
 #!/bin/sh
 # render_config.sh - render config.yaml from config.template.yaml.
 # Substitutes the subscription URL (from subscription.txt) and the env-provided
-# tokens (CONTROLLER_*, DNS_*, TUN_*). Used by BOTH the mihomo container
-# entrypoint and CI (scripts/ci/render_check.py), so the exact same renderer is
-# what gets tested.
+# tokens (CONTROLLER_*, DNS_*, TUN_*, EXTERNAL_UI_DIR). Used by the mihomo
+# container entrypoint, the Pi bare-metal path (staged by the raspberry-pi-port
+# epic), and CI (scripts/ci/render_check.py, scripts/ci/pi_installer_check.sh),
+# so the exact same renderer is what gets tested.
 # POSIX /bin/sh (BusyBox-safe). Fails loud (non-zero, no output file) on bad input.
 set -eu
 
@@ -13,6 +14,7 @@ SUB_FILE="$CFG_DIR/subscription.txt"
 OUT="$CFG_DIR/config.yaml"
 TMP="$CFG_DIR/.config.yaml.tmp"
 PRE="$CFG_DIR/.config.yaml.pre"
+PRE2="$CFG_DIR/.config.yaml.pre2"
 
 # Port/secret may default; DNS must come from .env (CLAUDE.md: no hardcoded DNS).
 : "${CONTROLLER_PORT:=9090}"
@@ -30,6 +32,10 @@ case "$TUN_AUTO_REDIRECT" in
   true|false) : ;;
   *) echo "ERROR: TUN_AUTO_REDIRECT must be true or false" >&2; exit 1 ;;
 esac
+# Embedded dashboard dir (Pi bare-metal mode). Empty (the default, and always on
+# the DSM compose path) removes the fenced external-ui block entirely, so the
+# render stays byte-identical to the pre-fence template output.
+: "${EXTERNAL_UI_DIR:=}"
 for _v in DNS_DEFAULT_NAMESERVER DNS_NAMESERVER DNS_FALLBACK; do
   eval "_val=\${$_v:-}"
   [ -n "$_val" ] || { echo "ERROR: $_v must be set in .env (see .env.example)" >&2; exit 1; }
@@ -63,16 +69,24 @@ esc() { printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/&/\\\&/g' -e 's/|/\\|/g'; 
 #   \" is only meaningful inside double quotes.
 yaml_dq() { printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'; }
 
-# Pass 1 - TUN block inclusion. The block is fenced by '# {{TUN_BEGIN}}' / '# {{TUN_END}}'
-# marker lines. Disabled (default): delete the whole fenced range. Enabled: delete only
-# the two marker lines and keep the block (its {{TUN_AUTO_REDIRECT}} token is filled below).
+# Pass 1 - fenced-block inclusion. Each block is fenced by '# {{X_BEGIN}}' /
+# '# {{X_END}}' marker lines. Disabled: delete the whole fenced range. Enabled:
+# delete only the two marker lines and keep the block (its tokens fill below).
+#   TUN block   - kept when TUN_ENABLE=true (the transparent-gateway default).
+#   EXTUI block - kept when EXTERNAL_UI_DIR is non-empty (Pi bare-metal mode).
 if [ "$TUN_ENABLE" = true ]; then
   sed -e '/{{TUN_BEGIN}}/d' -e '/{{TUN_END}}/d' "$TEMPLATE" > "$PRE"
 else
   sed -e '/{{TUN_BEGIN}}/,/{{TUN_END}}/d' "$TEMPLATE" > "$PRE"
 fi
+if [ -n "$EXTERNAL_UI_DIR" ]; then
+  sed -e '/{{EXTUI_BEGIN}}/d' -e '/{{EXTUI_END}}/d' "$PRE" > "$PRE2"
+else
+  sed -e '/{{EXTUI_BEGIN}}/,/{{EXTUI_END}}/d' "$PRE" > "$PRE2"
+fi
 
-# Pass 2 - token substitution (a TUN-off render simply has no {{TUN_AUTO_REDIRECT}} left).
+# Pass 2 - token substitution (a disabled fence simply leaves no token behind;
+# EXTERNAL_UI_DIR renders inside a YAML double-quoted scalar like the secret).
 sed \
   -e "s|{{AIRPORT_URL}}|$(esc "$(yaml_dq "$SUB_URL")")|g" \
   -e "s|{{CONTROLLER_PORT}}|$(esc "$CONTROLLER_PORT")|g" \
@@ -81,7 +95,8 @@ sed \
   -e "s|{{DNS_NAMESERVER}}|$(esc "$DNS_NAMESERVER")|g" \
   -e "s|{{DNS_FALLBACK}}|$(esc "$DNS_FALLBACK")|g" \
   -e "s|{{TUN_AUTO_REDIRECT}}|$(esc "$TUN_AUTO_REDIRECT")|g" \
-  "$PRE" > "$TMP"
-rm -f "$PRE"
+  -e "s|{{EXTERNAL_UI_DIR}}|$(esc "$(yaml_dq "$EXTERNAL_UI_DIR")")|g" \
+  "$PRE2" > "$TMP"
+rm -f "$PRE" "$PRE2"
 mv "$TMP" "$OUT"
 echo "Rendered $OUT"

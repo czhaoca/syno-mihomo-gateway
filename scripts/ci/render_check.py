@@ -53,7 +53,8 @@ def fail(msg: str):
 
 
 def render(raw: str, tun_auto_redirect: str | None = None,
-           tun_enable: str | None = None):
+           tun_enable: str | None = None,
+           external_ui_dir: str | None = None):
     """Run the real renderer in an isolated config directory."""
     with tempfile.TemporaryDirectory() as td:
         tdp = Path(td)
@@ -70,14 +71,32 @@ def render(raw: str, tun_auto_redirect: str | None = None,
         }
         env.pop("TUN_AUTO_REDIRECT", None)
         env.pop("TUN_ENABLE", None)
+        env.pop("EXTERNAL_UI_DIR", None)
         if tun_auto_redirect is not None:
             env["TUN_AUTO_REDIRECT"] = tun_auto_redirect
         if tun_enable is not None:
             env["TUN_ENABLE"] = tun_enable
+        if external_ui_dir is not None:
+            env["EXTERNAL_UI_DIR"] = external_ui_dir
         proc = subprocess.run(["sh", str(RENDERER)], env=env,
                               capture_output=True, text=True)
         out = tdp / "config.yaml"
         return proc, out.read_text() if out.exists() else None
+
+
+def strip_extui_fence(raw: str) -> str:
+    """Delete the {{EXTUI_BEGIN}}..{{EXTUI_END}} range, like the renderer's sed."""
+    out, skipping = [], False
+    for line in raw.splitlines(keepends=True):
+        if "{{EXTUI_BEGIN}}" in line:
+            skipping = True
+            continue
+        if "{{EXTUI_END}}" in line:
+            skipping = False
+            continue
+        if not skipping:
+            out.append(line)
+    return "".join(out)
 
 
 def main() -> None:
@@ -188,10 +207,43 @@ def main() -> None:
     if proc.returncode == 0 or invalid_te is not None:
         fail("invalid TUN_ENABLE was accepted or wrote config.yaml")
 
+    # 9) external-ui fence (Pi bare-metal mode). The DSM compose path never sets
+    # EXTERNAL_UI_DIR, so the default render must carry no external-ui key and be
+    # byte-identical to rendering a template with the fenced range stripped —
+    # the mechanical proof the fence is inert for every existing deployment.
+    if "{{EXTUI_BEGIN}}" not in raw or "{{EXTUI_END}}" not in raw:
+        fail("template must carry the {{EXTUI_BEGIN}}/{{EXTUI_END}} fence")
+    if "external-ui" in (yaml.safe_load(rendered) or {}):
+        fail("default render must NOT contain external-ui (EXTERNAL_UI_DIR unset)")
+    proc_s, stripped_render = render(strip_extui_fence(raw))
+    if proc_s.returncode != 0 or stripped_render is None:
+        fail(f"fence-stripped render failed: {proc_s.stderr.strip()}")
+    if stripped_render != rendered:
+        fail("default render is not byte-identical to a fence-less template render")
+    if "\n\n\n" in rendered:
+        fail("default render contains doubled blank lines — the fence must sit flush "
+             "against its neighbor so range-deletion leaves the original spacing")
+    # TUN-off + EXTUI-unset is the most common alternate DSM config; the
+    # inertness guarantee must hold on that permutation too (`off` is the
+    # TUN_ENABLE=false render from section 6).
+    proc_so, stripped_off = render(strip_extui_fence(raw), tun_enable="false")
+    if proc_so.returncode != 0 or stripped_off is None:
+        fail(f"fence-stripped TUN-off render failed: {proc_so.stderr.strip()}")
+    if stripped_off != off:
+        fail("TUN-off default render is not byte-identical to a fence-less template render")
+    if "\n\n\n" in off:
+        fail("TUN-off default render contains doubled blank lines")
+    ui_dir = "/data/u i/metacubexd"  # space exercises the YAML double-quoted path
+    proc_e, extui = render(raw, external_ui_dir=ui_dir)
+    if proc_e.returncode != 0 or extui is None:
+        fail(f"EXTERNAL_UI_DIR render failed: {proc_e.stderr.strip()}")
+    if yaml.safe_load(extui).get("external-ui") != ui_dir:
+        fail(f"external-ui did not round-trip: {yaml.safe_load(extui).get('external-ui')!r}")
+
     print("OK: renderer preserves URL/secrets; controller, DNS, CORS valid; TUN is ON by "
           "default (stack: system keeps the controller reachable, allow-lan + fake-ip set; "
           "TUN_ENABLE=false omits the block); auto-redirect/enable opt-ins are strict; "
-          "no hardcoded literals.")
+          "external-ui fence inert when unset; no hardcoded literals.")
 
 
 if __name__ == "__main__":
