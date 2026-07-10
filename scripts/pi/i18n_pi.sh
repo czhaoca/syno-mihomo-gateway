@@ -62,6 +62,11 @@ _msg_en_pi() {
     pi_lite_probe_warn)   printf '%s' 'controller did not answer yet - check: journalctl -u mihomo-gateway -n 50 (port 53 conflicts are the usual cause)' ;;
     pi_lite_rep_dashboard) printf '%s' 'dashboard: http://%s:%s/ui' ;;
     pi_lite_rep_client)   printf '%s' 'point LAN clients gateway + DNS at %s (this Pi)' ;;
+    pi_ok_schedule)       printf '%s' 'schedule: daily at %s (device system timezone); log timestamps in %s' ;;
+    pi_ok_cron_installed) printf '%s' 'crontab entry installed - the updater runs on the saved schedule' ;;
+    pi_warn_cron_tz)      printf '%s' 'note: cron fires in this device SYSTEM timezone; UPDATE_TZ only affects in-job log timestamps' ;;
+    pi_ask_dryrun)        printf '%s' 'Run an updater dry-run now (no changes applied)' ;;
+    pi_warn_cron_not_installed) printf '%s' 'crontab entry NOT installed - automatic updates are not scheduled yet' ;;
     *) return 1 ;;
   esac
 }
@@ -120,6 +125,11 @@ _msg_zh_pi() {
     pi_lite_probe_warn)   printf '%s' '控制器暂未应答 - 请检查：journalctl -u mihomo-gateway -n 50（53 端口冲突是最常见原因）' ;;
     pi_lite_rep_dashboard) printf '%s' '面板地址：http://%s:%s/ui' ;;
     pi_lite_rep_client)   printf '%s' '将局域网设备的网关 + DNS 指向 %s（本 Pi）' ;;
+    pi_ok_schedule)       printf '%s' '计划：按设备系统时区每日 %s；日志时间戳时区 %s' ;;
+    pi_ok_cron_installed) printf '%s' '已安装 crontab 条目 - 更新器将按保存的计划运行' ;;
+    pi_warn_cron_tz)      printf '%s' '注意：cron 按本设备系统时区触发；UPDATE_TZ 仅影响任务内日志时间戳' ;;
+    pi_ask_dryrun)        printf '%s' '现在运行一次更新器 dry-run（不做任何更改）' ;;
+    pi_warn_cron_not_installed) printf '%s' '未安装 crontab 条目 - 自动更新尚未列入计划' ;;
     *) return 1 ;;
   esac
 }

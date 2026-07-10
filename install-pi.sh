@@ -146,15 +146,17 @@ main_menu_pi() {
     ui_menu_select _choice "$(msg menu_action)" \
       "$(msg pi_menu_deploy)" \
       "$(msg menu_redeploy)" \
+      "$(msg menu_cron)" \
       "$(msg menu_modify)" \
       "$(msg menu_status)" \
       "$(msg menu_quit)"
     case "$UI_MENU_INDEX" in
       1) pi_flow_deploy_entry || ui_warn "$(msg warn_deploy_unfinished)" ;;
       2) pi_flow_redeploy     || ui_warn "$(msg warn_redeploy_unfinished)" ;;
-      3) flow_modify ;;
-      4) pi_menu_status_flow ;;
-      5) ui_say "$(msg bye)"; return 0 ;;
+      3) pi_flow_cron         || ui_warn "$(msg warn_cron_unfinished)" ;;
+      4) flow_modify ;;
+      5) pi_menu_status_flow ;;
+      6) ui_say "$(msg bye)"; return 0 ;;
     esac
   done
 }

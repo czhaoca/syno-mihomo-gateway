@@ -475,7 +475,316 @@ _rt_pre="$(sed -n 's/^ExecStartPre=//p' "$TD/unit-rt.service")"
 expect_success "install-pi.sh sources cleanly (INSTALL_SOURCE_ONLY=1)" \
   sh -c 'cd "$1" && INSTALL_SOURCE_ONLY=1 SMG_INSTALL_ROOT="$1" sh -c ". ./install-pi.sh"' _ "$ROOT"
 
+# =============================================================================
+# Ticket #20 - lite binary auto-updater with rollback + cron wiring
+# =============================================================================
+
+# --- pi_lite_update_command: quoted absolute exec form (space-safe) --------------
+[ "$( (REPO_ROOT='/opt/a b'; pi_lite_update_command) )" = "cd '/opt/a b' && exec /bin/sh '/opt/a b/scripts/pi/auto_update_lite.sh'" ] \
+  && ok || fail "pi_lite_update_command quotes the root and targets the lite updater"
+
+# --- managed crontab writer: append once, rewrite on change, CRONTAB_FILE --------
+CT="$TD/crontab"
+printf '# host entry kept as-is\n*/5 * * * *\troot\t/usr/bin/other-job\n' > "$CT"
+( CRONTAB_FILE="$CT"; UPDATE_SCHEDULE='30 4 * * *'; REPO_ROOT='/opt/app'
+  scheduler_reload_crond() { : >> "$TD/ct-reload"; }
+  pi_install_lite_crontab ) >/dev/null 2>&1 \
+  && [ "$(grep -c 'scripts/pi/auto_update_lite.sh' "$CT")" = 1 ] \
+  && [ "$(grep 'scripts/pi/auto_update_lite.sh' "$CT")" = "$(printf "30 4 * * *\troot\tcd '/opt/app' && exec /bin/sh '/opt/app/scripts/pi/auto_update_lite.sh'")" ] \
+  && ok || fail "crontab writer: exactly one entry, schedule + root + quoted command"
+[ -f "$TD/ct-reload" ] && ok || fail "crontab writer: crond reload attempted after the write"
+cp "$CT" "$CT.first"
+( CRONTAB_FILE="$CT"; UPDATE_SCHEDULE='30 4 * * *'; REPO_ROOT='/opt/app'
+  scheduler_reload_crond() { :; }
+  pi_install_lite_crontab ) >/dev/null 2>&1 \
+  && cmp -s "$CT" "$CT.first" \
+  && ok || fail "crontab writer: idempotent on an unchanged schedule"
+( CRONTAB_FILE="$CT"; UPDATE_SCHEDULE='0 5 * * *'; REPO_ROOT='/opt/app'
+  scheduler_reload_crond() { :; }
+  pi_install_lite_crontab ) >/dev/null 2>&1 \
+  && [ "$(grep -c 'scripts/pi/auto_update_lite.sh' "$CT")" = 1 ] \
+  && grep -qF "0 5 * * *" "$CT" \
+  && ok || fail "crontab writer: managed rewrite replaces our line on schedule change"
+grep -Fq '30 4 * * *' "$CT" && fail "crontab writer: stale schedule left behind" || ok
+grep -q '/usr/bin/other-job' "$CT" && ok || fail "crontab writer: foreign entries preserved"
+expect_failure "crontab writer: missing crontab file refused" \
+  sh -c 'CRONTAB_FILE="$1/absent-ct" UPDATE_SCHEDULE="0 2 * * *" REPO_ROOT=/opt sh -c "
+    . \"$2/scripts/lib/common.sh\"; . \"$2/scripts/lib/scheduler.sh\"; . \"$2/scripts/pi/lite.sh\"
+    pi_install_lite_crontab" >/dev/null 2>&1' _ "$TD" "$ROOT"
+( CRONTAB_FILE="$CT"; UPDATE_SCHEDULE='not a schedule'; REPO_ROOT='/opt/app'
+  scheduler_reload_crond() { :; }
+  pi_install_lite_crontab ) >/dev/null 2>&1 && fail "invalid UPDATE_SCHEDULE accepted" || ok
+
+# --- lite_health_gate: unit active -> restarts stable -> probe -> TUN link -------
+# systemctl/probe/ip are shell-function fakes (a real systemctl can never be
+# reached), HEALTH_INTERVAL=0 keeps the retry window instant.
+( HEALTH_RETRIES=2; HEALTH_INTERVAL=0; HEALTH_MAX_RESTARTS=3; TUN_ENABLE=false
+  systemctl() { case "${1:-}" in is-active) return 0 ;; show) printf '0\n' ;; esac; return 0; }
+  pi_lite_controller_probe() { return 0; }
+  lite_health_gate ) >/dev/null 2>&1 \
+  && ok || fail "gate: active + stable restarts + probe -> pass"
+( HEALTH_RETRIES=2; HEALTH_INTERVAL=0; HEALTH_MAX_RESTARTS=3; TUN_ENABLE=false
+  systemctl() { case "${1:-}" in is-active) return 1 ;; show) printf '0\n' ;; esac; return 0; }
+  pi_lite_controller_probe() { return 0; }
+  lite_health_gate ) >/dev/null 2>&1 && fail "gate passed with an inactive unit" || ok
+( HEALTH_RETRIES=2; HEALTH_INTERVAL=0; HEALTH_MAX_RESTARTS=9; TUN_ENABLE=false
+  systemctl() {
+    case "${1:-}" in
+      is-active) return 0 ;;
+      show) _g3="$(cat "$TD/g3-n" 2>/dev/null || echo 0)"; echo $((_g3 + 1)) > "$TD/g3-n"; printf '%s\n' "$_g3" ;;
+    esac
+    return 0
+  }
+  pi_lite_controller_probe() { return 0; }
+  lite_health_gate ) >/dev/null 2>&1 && fail "gate passed with a climbing NRestarts" || ok
+# (output captured to a file: bash 3.2 - the macOS /bin/sh - cannot parse a
+# `case` statement inside $(...), so no command substitution around this one)
+( HEALTH_RETRIES=3; HEALTH_INTERVAL=0; HEALTH_MAX_RESTARTS=3; TUN_ENABLE=false
+  systemctl() {
+    case "${1:-}" in
+      is-active) return 0 ;;
+      show) if [ -f "$TD/g4-first" ]; then printf '5\n'; else : > "$TD/g4-first"; printf '0\n'; fi ;;
+    esac
+    return 0
+  }
+  pi_lite_controller_probe() { return 0; }
+  lite_health_gate ) > "$TD/g4-out" 2>&1 && fail "gate passed a crash-looping service" || ok
+assert_contains "gate: crash-loop ceiling gives up early and says so" "$(cat "$TD/g4-out")" 'crash-looping'
+( HEALTH_RETRIES=2; HEALTH_INTERVAL=0; HEALTH_MAX_RESTARTS=3; TUN_ENABLE=false
+  systemctl() { case "${1:-}" in is-active) return 0 ;; show) printf '0\n' ;; esac; return 0; }
+  pi_lite_controller_probe() { return 1; }
+  lite_health_gate ) >/dev/null 2>&1 && fail "gate passed with a dead controller" || ok
+( HEALTH_RETRIES=2; HEALTH_INTERVAL=0; HEALTH_MAX_RESTARTS=3; TUN_ENABLE=true
+  systemctl() { case "${1:-}" in is-active) return 0 ;; show) printf '0\n' ;; esac; return 0; }
+  pi_lite_controller_probe() { return 0; }
+  ip() { return 1; }
+  lite_health_gate ) >/dev/null 2>&1 && fail "gate passed with the TUN link absent" || ok
+( HEALTH_RETRIES=2; HEALTH_INTERVAL=0; HEALTH_MAX_RESTARTS=3; TUN_ENABLE=true
+  systemctl() { case "${1:-}" in is-active) return 0 ;; show) printf '0\n' ;; esac; return 0; }
+  pi_lite_controller_probe() { return 0; }
+  ip() { [ "${1:-} ${2:-} ${3:-}" = 'link show mihomo-tun' ]; }
+  lite_health_gate ) >/dev/null 2>&1 \
+  && ok || fail "gate: TUN on queries 'ip link show mihomo-tun' and passes when present"
+
+# --- the updater end-to-end (sourced with fakes; sideload keeps it offline) ------
+cat > "$TD/upd-old" <<'EOF'
+#!/bin/sh
+[ "${1:-}" = -v ] && { echo "Mihomo Meta v9.9.9 linux test build"; exit 0; }
+exit 0
+EOF
+cat > "$TD/upd-new" <<'EOF'
+#!/bin/sh
+[ "${1:-}" = -v ] && { echo "Mihomo Meta v9.9.10 linux test build"; exit 0; }
+exit 0
+EOF
+chmod +x "$TD/upd-old" "$TD/upd-new"
+gzip -c "$TD/upd-new" > "$TD/upd-new.gz"
+
+# mk_upd_sandbox DIR - an installed lite deployment: old binary, version state,
+# unit file, pinned .env (pin v9.9.10 = DEC-D pin path; no network anywhere).
+mk_upd_sandbox() {
+  _mus="$1"
+  rm -rf "$_mus"
+  mkdir -p "$_mus/bin" "$_mus/state/lite" "$_mus/config"
+  cp "$TD/upd-old" "$_mus/bin/mihomo"
+  chmod +x "$_mus/bin/mihomo"
+  printf 'v9.9.9\n' > "$_mus/state/lite/version"
+  printf '# fixture unit\n' > "$_mus/unit.service"
+  {
+    printf 'UPDATE_ENABLED=true\n'
+    printf 'MIHOMO_VERSION=v9.9.10\n'
+    printf 'HEALTH_RETRIES=2\nHEALTH_INTERVAL=0\nHEALTH_MAX_RESTARTS=3\n'
+    printf 'TUN_ENABLE=false\n'
+  } > "$_mus/.env"
+}
+
+# run_lite_updater DIR PROBE_TAG [args...] - source the REAL updater in an
+# isolated subshell and run its main. Fakes: systemctl logs + always succeeds;
+# curl/pi_fetch fail loudly and log (any network attempt is a test failure);
+# the controller probe succeeds only while the INSTALLED binary reports
+# PROBE_TAG - one knob scripts both gate outcomes ('v9.9.10' = new binary
+# healthy, 'v9.9.9' = new fails + rollback re-gate passes, 'none' = all fail).
+run_lite_updater() {
+  _rlu_d="$1"; _rlu_probe="$2"; shift 2
+  (
+    GATEWAY_DATA_DIR="$_rlu_d"; ENV_FILE="$_rlu_d/.env"
+    CONFIG_STATE_DIR="$_rlu_d/config"; LOCK_DIR="$_rlu_d/lock"
+    SUBSCRIPTION_FILE="$_rlu_d/config/subscription.txt"
+    SMG_PI_UNIT_FILE="$_rlu_d/unit.service"; SMG_PI_ARCH=aarch64
+    AUTO_UPDATE_LITE_SELF_DIR="$ROOT/scripts/pi"
+    AUTO_UPDATE_SOURCE_ONLY=1
+    . "$ROOT/scripts/pi/auto_update_lite.sh" || exit 97
+    systemctl() {
+      printf '%s\n' "$*" >> "$GATEWAY_DATA_DIR/systemctl.log"
+      case "${1:-}" in is-active) return 0 ;; show) printf '0\n' ;; esac
+      return 0
+    }
+    curl() { printf 'CURL %s\n' "$*" >> "$GATEWAY_DATA_DIR/net.log"; return 6; }
+    pi_fetch() { printf 'FETCH %s\n' "$1" >> "$GATEWAY_DATA_DIR/net.log"; return 1; }
+    RLU_PROBE="$_rlu_probe"
+    pi_lite_controller_probe() {
+      [ "$RLU_PROBE" = none ] && return 1
+      "$GATEWAY_DATA_DIR/bin/mihomo" -v 2>/dev/null | grep -q "$RLU_PROBE"
+    }
+    auto_update_lite_main "$@"
+  )
+}
+
+# happy path: swap + restart + gate pass; .prev and version state both persist
+mk_upd_sandbox "$TD/upd-ok"
+cp "$TD/upd-new.gz" "$TD/upd-ok/bin/mihomo-linux-arm64-v9.9.10.gz"
+_rc=0; run_lite_updater "$TD/upd-ok" v9.9.10 >/dev/null 2>&1 || _rc=$?
+[ "$_rc" = 0 ] \
+  && "$TD/upd-ok/bin/mihomo" -v | grep -q v9.9.10 \
+  && "$TD/upd-ok/bin/mihomo.prev" -v | grep -q v9.9.9 \
+  && [ "$(cat "$TD/upd-ok/state/lite/version")" = v9.9.10 ] \
+  && grep -q 'restart mihomo-gateway' "$TD/upd-ok/systemctl.log" \
+  && ok || fail "updater happy path: swap + .prev + version state + restart (rc=$_rc)"
+[ ! -e "$TD/upd-ok/net.log" ] && ok || fail "updater happy path went to the network despite the sideload"
+_lr="$TD/upd-ok/state/lite/last-run.json"
+_lr_missing=''
+for _k in ts exit_code dry_run updated unchanged failed rolled_back updated_names failed_names rolled_back_names; do
+  grep -q "\"$_k\":" "$_lr" 2>/dev/null || _lr_missing="$_lr_missing $_k"
+done
+[ -z "$_lr_missing" ] && ok || fail "last-run.json shape matches auto_update.sh (missing:$_lr_missing)"
+grep -q '"exit_code":0' "$_lr" 2>/dev/null && grep -q '"updated":1' "$_lr" \
+  && grep -q '"updated_names":"mihomo"' "$_lr" \
+  && ok || fail "last-run.json records the applied update"
+
+# no-change fast exit: version already matches the pin; nothing downloaded/touched
+mk_upd_sandbox "$TD/upd-same"
+printf 'v9.9.10\n' > "$TD/upd-same/state/lite/version"
+_rc=0; run_lite_updater "$TD/upd-same" none >/dev/null 2>&1 || _rc=$?
+[ "$_rc" = 0 ] \
+  && [ ! -e "$TD/upd-same/bin/mihomo.prev" ] \
+  && [ ! -e "$TD/upd-same/net.log" ] \
+  && grep -q '"unchanged":1' "$TD/upd-same/state/lite/last-run.json" \
+  && ok || fail "updater no-change: fast exit without touching anything (rc=$_rc)"
+
+# dry-run: detection only - no backup, no swap, no restart, dry_run recorded
+mk_upd_sandbox "$TD/upd-dry"
+cp "$TD/upd-new.gz" "$TD/upd-dry/bin/mihomo-linux-arm64-v9.9.10.gz"
+_rc=0; run_lite_updater "$TD/upd-dry" none --dry-run >/dev/null 2>&1 || _rc=$?
+[ "$_rc" = 0 ] \
+  && "$TD/upd-dry/bin/mihomo" -v | grep -q v9.9.9 \
+  && [ ! -e "$TD/upd-dry/bin/mihomo.prev" ] \
+  && [ "$(cat "$TD/upd-dry/state/lite/version")" = v9.9.9 ] \
+  && grep -q '"dry_run":1' "$TD/upd-dry/state/lite/last-run.json" \
+  && ok || fail "updater dry-run: reports without writing (rc=$_rc)"
+grep -q 'restart' "$TD/upd-dry/systemctl.log" 2>/dev/null \
+  && fail "dry-run restarted the service" || ok
+
+# kill-switch: UPDATE_ENABLED=false no-ops; --force overrides it
+mk_upd_sandbox "$TD/upd-off"
+printf 'v9.9.10\n' > "$TD/upd-off/state/lite/version"
+sed 's/^UPDATE_ENABLED=true$/UPDATE_ENABLED=false/' "$TD/upd-off/.env" > "$TD/upd-off/.env.next" \
+  && mv "$TD/upd-off/.env.next" "$TD/upd-off/.env"
+_rc=0; run_lite_updater "$TD/upd-off" none >/dev/null 2>&1 || _rc=$?
+[ "$_rc" = 0 ] && grep -q '"unchanged":0' "$TD/upd-off/state/lite/last-run.json" \
+  && grep -q 'disabled' "$TD/upd-off/logs/auto-update.log" \
+  && ok || fail "updater kill-switch: disabled run exits 0 before detection (rc=$_rc)"
+_rc=0; run_lite_updater "$TD/upd-off" none --force >/dev/null 2>&1 || _rc=$?
+[ "$_rc" = 0 ] && grep -q '"unchanged":1' "$TD/upd-off/state/lite/last-run.json" \
+  && ok || fail "updater --force: overrides the kill-switch and reaches detection (rc=$_rc)"
+
+# verify-ladder failure: corrupt sideload -> partial exit, binary untouched
+mk_upd_sandbox "$TD/upd-corrupt"
+printf 'not a gzip archive' > "$TD/upd-corrupt/bin/mihomo-linux-arm64-v9.9.10.gz"
+_rc=0; run_lite_updater "$TD/upd-corrupt" none >/dev/null 2>&1 || _rc=$?
+[ "$_rc" = 2 ] \
+  && "$TD/upd-corrupt/bin/mihomo" -v | grep -q v9.9.9 \
+  && [ "$(cat "$TD/upd-corrupt/state/lite/version")" = v9.9.9 ] \
+  && grep -q '"failed":1' "$TD/upd-corrupt/state/lite/last-run.json" \
+  && ok || fail "updater ladder failure: partial exit, running binary untouched (rc=$_rc)"
+grep -q 'restart' "$TD/upd-corrupt/systemctl.log" 2>/dev/null \
+  && fail "ladder failure still restarted the service" || ok
+
+# health-gate failure: rollback restores .prev + version, restarts, re-gates -> 2
+mk_upd_sandbox "$TD/upd-roll"
+cp "$TD/upd-new.gz" "$TD/upd-roll/bin/mihomo-linux-arm64-v9.9.10.gz"
+_rc=0; run_lite_updater "$TD/upd-roll" v9.9.9 >/dev/null 2>&1 || _rc=$?
+[ "$_rc" = 2 ] \
+  && "$TD/upd-roll/bin/mihomo" -v | grep -q v9.9.9 \
+  && [ "$(cat "$TD/upd-roll/state/lite/version")" = v9.9.9 ] \
+  && [ "$(grep -c 'restart mihomo-gateway' "$TD/upd-roll/systemctl.log")" -ge 2 ] \
+  && grep -q '"rolled_back":1' "$TD/upd-roll/state/lite/last-run.json" \
+  && grep -q '"rolled_back_names":"mihomo"' "$TD/upd-roll/state/lite/last-run.json" \
+  && ok || fail "updater rollback: .prev restored + version reverted + re-gated (rc=$_rc)"
+
+# gate fails even after the restore -> manual-attention partial, not a fake 'rolled back'
+mk_upd_sandbox "$TD/upd-manual"
+cp "$TD/upd-new.gz" "$TD/upd-manual/bin/mihomo-linux-arm64-v9.9.10.gz"
+_out="$(run_lite_updater "$TD/upd-manual" none 2>&1)" && _rc=0 || _rc=$?
+[ "$_rc" = 2 ] \
+  && grep -q '"rolled_back":0' "$TD/upd-manual/state/lite/last-run.json" \
+  && grep -q '"failed":1' "$TD/upd-manual/state/lite/last-run.json" \
+  && ok || fail "updater rollback-incomplete: failed (not rolled_back) + partial (rc=$_rc)"
+assert_contains "updater rollback-incomplete: flags manual attention" "$_out" 'MANUAL ATTENTION'
+
+# locked: a live holder wins; the second run must NOT clobber last-run.json
+mk_upd_sandbox "$TD/upd-lock"
+mkdir -p "$TD/upd-lock/lock"
+echo "$$" > "$TD/upd-lock/lock/pid"
+printf '{"seeded":1}\n' > "$TD/upd-lock/state/lite/last-run.json"
+_rc=0; run_lite_updater "$TD/upd-lock" none >/dev/null 2>&1 || _rc=$?
+[ "$_rc" = 4 ] && [ "$(cat "$TD/upd-lock/state/lite/last-run.json")" = '{"seeded":1}' ] \
+  && ok || fail "updater locked: exits 4 and leaves the live run's record alone (rc=$_rc)"
+
+# unpinned resolve failure through the mirror: a classified partial, never silent
+mk_upd_sandbox "$TD/upd-res"
+sed '/^MIHOMO_VERSION=/d' "$TD/upd-res/.env" > "$TD/upd-res/.env.next" \
+  && mv "$TD/upd-res/.env.next" "$TD/upd-res/.env"
+_rc=0; run_lite_updater "$TD/upd-res" none >/dev/null 2>&1 || _rc=$?
+[ "$_rc" = 2 ] && grep -q '"failed":1' "$TD/upd-res/state/lite/last-run.json" \
+  && ok || fail "updater resolve failure: classified partial exit (rc=$_rc)"
+
+# --- pi_flow_cron: crontab-only, dispatches by the install-mode marker -----------
+# Prompt/UI primitives are stubbed (defaults accepted, yesno answers with its
+# own default); the assertion surface is the crontab file the flow writes.
+pfc_stubs() {
+  ui_step() { :; }; ui_say() { :; }; ui_ok() { :; }; ui_warn() { :; }; ui_info() { :; }
+  diagnose() { :; }; pi_sudo_rerun_hint() { :; }
+  ui_ask_validated() { eval "$1=\"\$3\""; }
+  ui_ask() { eval "$1=\"\$3\""; }
+  ui_yesno() { [ "${2:-n}" = y ]; }
+  scheduler_reload_crond() { :; }
+}
+mk_flow_cron_env() {
+  rm -rf "$1"
+  mkdir -p "$1/state"
+  printf '%s\n' "$2" > "$1/state/install-mode"
+  : > "$1/ct"
+  printf 'UPDATE_SCHEDULE="0 2 * * *"\nUPDATE_TZ=UTC\n' > "$1/.env"
+}
+mk_flow_cron_env "$TD/fc-lite" pi-lite
+( GATEWAY_DATA_DIR="$TD/fc-lite"; ENV_FILE="$TD/fc-lite/.env"; CRONTAB_FILE="$TD/fc-lite/ct"
+  pfc_stubs; is_root() { return 0; }
+  pi_flow_cron ) >/dev/null 2>&1 \
+  && grep -q 'scripts/pi/auto_update_lite.sh' "$TD/fc-lite/ct" \
+  && ok || fail "pi_flow_cron: pi-lite marker schedules the lite updater"
+( unset UPDATE_ENABLED; dotenv_load "$TD/fc-lite/.env" >/dev/null 2>&1
+  [ "${UPDATE_ENABLED:-}" = true ] ) \
+  && ok || fail "pi_flow_cron: persists UPDATE_ENABLED=true on an accepted default"
+mk_flow_cron_env "$TD/fc-comp" pi-compose
+( GATEWAY_DATA_DIR="$TD/fc-comp"; ENV_FILE="$TD/fc-comp/.env"; CRONTAB_FILE="$TD/fc-comp/ct"
+  pfc_stubs; is_root() { return 0; }
+  pi_flow_cron ) >/dev/null 2>&1 \
+  && grep -q 'scripts/auto_update.sh' "$TD/fc-comp/ct" \
+  && ok || fail "pi_flow_cron: pi-compose marker schedules the stock compose updater"
+grep -q 'auto_update_lite' "$TD/fc-comp/ct" \
+  && fail "pi_flow_cron: compose install got the lite updater scheduled" || ok
+mk_flow_cron_env "$TD/fc-root" pi-lite
+( GATEWAY_DATA_DIR="$TD/fc-root"; ENV_FILE="$TD/fc-root/.env"; CRONTAB_FILE="$TD/fc-root/ct"
+  pfc_stubs; is_root() { return 1; }
+  pi_flow_cron ) >/dev/null 2>&1 && fail "pi_flow_cron proceeded without root" || ok
+[ ! -s "$TD/fc-root/ct" ] && ok || fail "pi_flow_cron wrote a crontab entry without root"
+
+# --- menu wiring: the Pi menu now carries the cron item -----------------------
+grep -q 'pi_flow_cron' "$ROOT/install-pi.sh" \
+  && grep -q 'msg menu_cron' "$ROOT/install-pi.sh" \
+  && ok || fail "install-pi.sh menu wires the cron item to pi_flow_cron"
+
 # --- summary --------------------------------------------------------------------
 printf 'pi_installer_check: %d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ] || exit 1
-echo "OK: pi shared seams + install-pi entry + lite runtime (detect/mode-table/preflight/i18n/ladder/unit) verified"
+echo "OK: pi shared seams + install-pi entry + lite runtime + lite updater (gate/swap/rollback/cron) verified"

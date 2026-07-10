@@ -5,7 +5,9 @@
 # No Docker anywhere: mihomo binds the host directly (the Pi's own IP is the
 # clients' gateway/DNS). Shared by the install flow (#19), the binary updater
 # (#20), and lite_ctl (#21). Requires common.sh (GATEWAY_DATA_DIR, logging)
-# and detect.sh (pi_lite_asset_arch) sourced first. POSIX /bin/sh.
+# and detect.sh (pi_lite_asset_arch) sourced first; the crontab helpers also
+# need scheduler.sh (cron_normalize, shell_quote, scheduler_reload_crond).
+# POSIX /bin/sh.
 #
 # Artifact decisions (owner-resolved on the ticket):
 #   DEC-B: dashboard = the metacubexd `compressed-dist.tgz` RELEASE asset
@@ -281,4 +283,103 @@ pi_lite_controller_probe() {
     sleep "${PI_PROBE_INTERVAL:-2}"
   done
   return 1
+}
+
+# lite_health_gate - the updater's post-swap verdict (#20), mirroring
+# auto_update.sh's generic_health_gate ladder in systemd terms: unit active ->
+# restart-count stable across HEALTH_INTERVAL (NRestarts only ever grows, so a
+# crossed HEALTH_MAX_RESTARTS ceiling gives up immediately) -> controller
+# answers on loopback -> the TUN link exists when TUN_ENABLE=true. Retries and
+# knobs are the same HEALTH_* .env settings the compose gate uses.
+lite_health_gate() {
+  _lhg_unit=mihomo-gateway
+  _lhg_retries="${HEALTH_RETRIES:-6}"
+  _lhg_try=0
+  _lhg_start="$(systemctl show -p NRestarts --value "$_lhg_unit" 2>/dev/null)"
+  case "$_lhg_start" in ''|*[!0-9]*) _lhg_start=0 ;; esac
+  while [ "$_lhg_try" -lt "$_lhg_retries" ]; do
+    _lhg_try=$((_lhg_try + 1))
+    if ! systemctl is-active --quiet "$_lhg_unit" 2>/dev/null; then
+      log_warn "health[$_lhg_try/$_lhg_retries]: $_lhg_unit not active yet"
+      sleep "${HEALTH_INTERVAL:-10}"; continue
+    fi
+    _lhg_n1="$(systemctl show -p NRestarts --value "$_lhg_unit" 2>/dev/null)"
+    sleep "${HEALTH_INTERVAL:-10}"
+    _lhg_n2="$(systemctl show -p NRestarts --value "$_lhg_unit" 2>/dev/null)"
+    case "$_lhg_n1" in ''|*[!0-9]*) _lhg_n1=0 ;; esac
+    case "$_lhg_n2" in ''|*[!0-9]*) _lhg_n2=0 ;; esac
+    if ! systemctl is-active --quiet "$_lhg_unit" 2>/dev/null || [ "$_lhg_n1" != "$_lhg_n2" ]; then
+      log_warn "health[$_lhg_try/$_lhg_retries]: $_lhg_unit unstable (restarts $_lhg_n1->$_lhg_n2)"
+      continue
+    fi
+    if [ "$((_lhg_n2 - _lhg_start))" -ge "${HEALTH_MAX_RESTARTS:-3}" ]; then
+      log_error "health: $_lhg_unit crash-looping (restarted $((_lhg_n2 - _lhg_start))x since the swap) - giving up"
+      return 1
+    fi
+    # Single-shot probe per try (the gate loop owns the retrying); a subshell
+    # keeps the override from leaking - POSIX lets VAR=x func persist VAR.
+    if ! ( PI_PROBE_RETRIES=1; PI_PROBE_INTERVAL=0; pi_lite_controller_probe ); then
+      log_warn "health[$_lhg_try/$_lhg_retries]: controller probe failed"
+      continue
+    fi
+    if [ "${TUN_ENABLE:-true}" = true ] && ! ip link show "${TUN_DEVICE:-mihomo-tun}" >/dev/null 2>&1; then
+      log_warn "health[$_lhg_try/$_lhg_retries]: TUN link ${TUN_DEVICE:-mihomo-tun} absent"
+      continue
+    fi
+    log_info "health: $_lhg_unit passed (active + stable restarts + controller up)"
+    return 0
+  done
+  log_error "health gate FAILED for $_lhg_unit after $_lhg_retries tries"
+  return 1
+}
+
+# pi_lite_update_command - the exact cron command for the lite updater; same
+# absolute-path + explicit-shell shape as scheduler_update_command.
+pi_lite_update_command() {
+  _pluc_root="$(shell_quote "$REPO_ROOT")" || return 1
+  _pluc_script="$(shell_quote "$REPO_ROOT/scripts/pi/auto_update_lite.sh")" || return 1
+  printf 'cd %s && exec /bin/sh %s' "$_pluc_root" "$_pluc_script"
+}
+
+# pi_install_crontab_entry MATCH CMD - ONE managed /etc/crontab entry (the
+# gateway.sh _gw_apply_crontab discipline): append when absent, leave an
+# identical line alone, REWRITE our line when the schedule changed (silently
+# keeping the old one would diverge from .env forever). CRONTAB_FILE overrides
+# the target for the test suites; cat-overwrite preserves inode + permissions.
+# UI-free (log_* only) - the interactive wrapping lives in pi_flow_cron.
+pi_install_crontab_entry() {
+  _pic_match="$1"; _pic_cmd="$2"
+  _pic_ct="${CRONTAB_FILE:-/etc/crontab}"
+  [ -f "$_pic_ct" ] || { log_error "no crontab at $_pic_ct"; return 1; }
+  _pic_sched="$(cron_normalize "${UPDATE_SCHEDULE:-0 2 * * *}")" || {
+    log_error "UPDATE_SCHEDULE is not a valid five-field cron expression"
+    return 1
+  }
+  _pic_line="$(printf '%s\troot\t%s' "$_pic_sched" "$_pic_cmd")"
+  if grep -Fq "$_pic_match" "$_pic_ct" 2>/dev/null; then
+    if grep -Fq "$_pic_line" "$_pic_ct" 2>/dev/null; then
+      log_info "a $_pic_match entry already exists in $_pic_ct (schedule unchanged)"
+      return 0
+    fi
+    grep -Fv "$_pic_match" "$_pic_ct" >"$_pic_ct.next" 2>/dev/null || : >>"$_pic_ct.next"
+    printf '%s\n' "$_pic_line" >>"$_pic_ct.next" \
+      || { rm -f "$_pic_ct.next"; log_error "cannot write $_pic_ct"; return 1; }
+    cat "$_pic_ct.next" >"$_pic_ct" \
+      || { rm -f "$_pic_ct.next"; log_error "cannot write $_pic_ct"; return 1; }
+    rm -f "$_pic_ct.next"
+    scheduler_reload_crond || log_warn "crond was not reloaded - the entry applies after the next crond restart"
+    log_info "crontab entry UPDATED in $_pic_ct ($_pic_sched)"
+    return 0
+  fi
+  printf '%s\n' "$_pic_line" >> "$_pic_ct" \
+    || { log_error "cannot write $_pic_ct"; return 1; }
+  scheduler_reload_crond || log_warn "crond was not reloaded - the entry applies after the next crond restart"
+  log_info "crontab entry installed in $_pic_ct ($_pic_sched)"
+  return 0
+}
+
+# pi_install_lite_crontab - schedule scripts/pi/auto_update_lite.sh (#20).
+pi_install_lite_crontab() {
+  _pil_cmd="$(pi_lite_update_command)" || return 1
+  pi_install_crontab_entry 'scripts/pi/auto_update_lite.sh' "$_pil_cmd"
 }

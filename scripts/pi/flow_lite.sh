@@ -1,6 +1,7 @@
 #!/bin/sh
 # flow_lite.sh (scripts/pi) - the interactive bare-metal "lite" install flow
-# (#19). Wizard -> subscription -> render (fail-fast) -> binary -> dashboard ->
+# (#19) plus the Pi cron-scheduling flow (#20, pi_flow_cron - both flavors).
+# Wizard -> subscription -> render (fail-fast) -> binary -> dashboard ->
 # geodata -> systemd unit -> start -> readiness probe -> mode marker -> report.
 # Reuses the stock subscription wizard and validation/prompt primitives; the
 # network-topology wizards are deliberately SKIPPED (no macvlan in lite mode -
@@ -155,5 +156,78 @@ pi_flow_lite() {
   ui_step "$(msg step_deploy_done)"
   ui_say "$(msgf pi_lite_rep_dashboard "$_pfl_ip" "${CONTROLLER_PORT:-9090}")"
   ui_say "$(msgf pi_lite_rep_client "$_pfl_ip")"
+  return 0
+}
+
+# _pi_default_hhmm - HH:MM default from the saved UPDATE_SCHEDULE (mirrors
+# flow_cron.sh's _default_hhmm; that DSM module is not sourced by install-pi.sh).
+_pi_default_hhmm() {
+  _pdh_s="$(env_get UPDATE_SCHEDULE 2>/dev/null || echo '0 2 * * *')"
+  cron_daily_hhmm "$_pdh_s" 2>/dev/null || printf '02:00'
+}
+
+# pi_flow_cron (#20) - schedule the auto-updater on a Pi: crontab ONLY (no DSM
+# Task Scheduler exists here), targeting the flavor the install-mode marker
+# records - pi-lite runs scripts/pi/auto_update_lite.sh, anything else the
+# stock scripts/auto_update.sh (verified portable: the compose updater runs
+# unchanged from cron). Root is gated up front: .env lives under the
+# root-owned data dir and /etc/crontab needs it too.
+pi_flow_cron() {
+  ui_step "$(msg step_cron)"
+  if ! is_root; then
+    ui_warn "$(msg cron_need_root)"
+    pi_sudo_rerun_hint
+    return 1
+  fi
+  if [ ! -f "$ENV_FILE" ]; then
+    diagnose "$(msg diag_no_env)" "$(msg diag_no_env_fix)"
+    return 1
+  fi
+  load_env
+
+  # --- daily time (HH:MM, local) -> cron "M H * * *" ---
+  ui_ask_validated _pfc_time "$(msg q_daily_time)" "$(_pi_default_hhmm)" is_hhmm
+  _pfc_hh="${_pfc_time%%:*}"; _pfc_mm="${_pfc_time#*:}"
+  # Strip a leading zero by hand: printf %d (and $((...))) octal-parse "08"
+  # and "09" to 0 on POSIX shells, silently corrupting the schedule.
+  case "$_pfc_hh" in 0?) _pfc_hh="${_pfc_hh#0}" ;; esac
+  case "$_pfc_mm" in 0?) _pfc_mm="${_pfc_mm#0}" ;; esac
+  UPDATE_SCHEDULE="$_pfc_mm $_pfc_hh * * *"
+  env_set UPDATE_SCHEDULE "$UPDATE_SCHEDULE"
+
+  ui_ask UPDATE_TZ "$(msg q_tz_freeform)" "$(env_get UPDATE_TZ 2>/dev/null || echo Asia/Shanghai)"
+  env_set UPDATE_TZ "$UPDATE_TZ"
+
+  if ui_yesno "$(msg ask_enable_updates)" y; then
+    env_set UPDATE_ENABLED true
+  else
+    env_set UPDATE_ENABLED false
+    ui_warn "$(msg warn_updates_disabled)"
+  fi
+  load_env
+  ui_ok "$(msgf pi_ok_schedule "$_pfc_time" "$UPDATE_TZ")"
+
+  # --- the managed crontab entry, per install flavor ---
+  _pfc_mode="$(cat "$GATEWAY_DATA_DIR/state/install-mode" 2>/dev/null)"
+  case "$_pfc_mode" in
+    pi-lite)
+      _pfc_match='scripts/pi/auto_update_lite.sh'
+      _pfc_cmd="$(pi_lite_update_command)" || return 1
+      _pfc_dry="$REPO_ROOT/scripts/pi/auto_update_lite.sh" ;;
+    *)
+      _pfc_match='scripts/auto_update.sh'
+      _pfc_cmd="$(scheduler_update_command)" || return 1
+      _pfc_dry="$REPO_ROOT/scripts/auto_update.sh" ;;
+  esac
+  if ! pi_install_crontab_entry "$_pfc_match" "$_pfc_cmd"; then
+    ui_warn "$(msg pi_warn_cron_not_installed)"
+    return 1
+  fi
+  ui_ok "$(msg pi_ok_cron_installed)"
+  ui_warn "$(msg pi_warn_cron_tz)"
+
+  if ui_yesno "$(msg pi_ask_dryrun)" n; then
+    sh "$_pfc_dry" --dry-run || ui_warn "$(msg warn_dry_run_nonzero)"
+  fi
   return 0
 }
