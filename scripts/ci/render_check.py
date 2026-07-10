@@ -20,7 +20,16 @@ Enforces:
     and dns enhanced-mode fake-ip; TUN_ENABLE=false OMITS the block (plain proxy);
     auto-redirect defaults to the DSM-safe false, and non-boolean TUN_* fail closed;
   * NO hardcoded DNS server / user network address remains in the committed template
-    (CLAUDE.md rule) — only the generic bind/loopback constants are allowed.
+    (CLAUDE.md rule) — only the generic bind/loopback constants are allowed;
+  * template semantic invariants: every rules[] target is a proxy-group or a
+    builtin and NEVER a proxy-provider (the `MATCH,my-airport` crash-loop
+    class), group use:/proxies: references resolve, fence markers pair exactly
+    once without overlap (an unpaired {{TUN_END}} otherwise makes the
+    renderer's range-delete silently eat to end-of-file on the TUN-off
+    render), and the template's {{TOKEN}} set equals the renderer's sed
+    mapping set in BOTH directions (no unrendered token, no dead mapping);
+  * EVERY rendered variant (default, TUN-off, TUN-on, auto-redirect, EXTUI) is
+    scanned for unresolved {{...}} placeholders, not just the default one.
 
 Exit non-zero on any failure.
 """
@@ -51,7 +60,10 @@ SECRET = 's3cr&t|"x\\y'  # & | render via esc(); " and \ render via yaml_dq()
 # DNS fixtures mirror the shipped .env.example shape: plain-IP comma lists for
 # bootstrap/domestic, DoH + DoT URLs for the anti-pollution fallback. The URLs
 # must survive esc() (sed) and parse as YAML flow-sequence STRING scalars.
-DNS_DEFAULT = ["114.114.114.114", "223.5.5.5"]
+# DEFAULT and NS are deliberately DISTINCT values so a swapped
+# {{DNS_DEFAULT_NAMESERVER}} <-> {{DNS_NAMESERVER}} substitution cannot pass
+# the round-trip assertions.
+DNS_DEFAULT = ["223.6.6.6", "119.29.29.29"]
 DNS_NS = ["114.114.114.114", "223.5.5.5"]
 DNS_FB = ["https://1.1.1.1/dns-query", "tls://8.8.8.8:853"]
 
@@ -69,8 +81,13 @@ def render(raw: str, tun_auto_redirect: str | None = None,
         tdp = Path(td)
         (tdp / "config.template.yaml").write_text(raw)
         (tdp / "subscription.txt").write_text(SUB_LINE + "\n")
+        # Minimal env, NOT **os.environ: the checker itself must not inherit
+        # dev/CI shell variables (a stray MIHOMO_TEMPLATE or TUN_ENABLE would
+        # silently redirect or skew the render under test) — the same
+        # env-bleed class that once masked a source-time-default bug in the
+        # shell harnesses. Only PATH passes through (sh/sed/awk locations).
         env = {
-            **os.environ,
+            "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
             "MIHOMO_CONFIG_DIR": str(tdp),
             "CONTROLLER_PORT": "9090",
             "CONTROLLER_SECRET": SECRET,
@@ -78,9 +95,6 @@ def render(raw: str, tun_auto_redirect: str | None = None,
             "DNS_NAMESERVER": ",".join(DNS_NS),
             "DNS_FALLBACK": ",".join(DNS_FB),
         }
-        env.pop("TUN_AUTO_REDIRECT", None)
-        env.pop("TUN_ENABLE", None)
-        env.pop("EXTERNAL_UI_DIR", None)
         if tun_auto_redirect is not None:
             env["TUN_AUTO_REDIRECT"] = tun_auto_redirect
         if tun_enable is not None:
@@ -108,6 +122,106 @@ def strip_extui_fence(raw: str) -> str:
     return "".join(out)
 
 
+TOKEN = re.compile(r"\{\{([A-Z0-9_]+)\}\}")
+FENCE = re.compile(r"\{\{([A-Z0-9_]+)_(BEGIN|END)\}\}")
+
+
+def assert_resolved(variant: str, rendered: str):
+    """No {{...}} may survive into any rendered variant."""
+    unresolved = re.findall(r"\{\{[^}]+\}\}", rendered)
+    if unresolved:
+        fail(f"[{variant}] unresolved placeholders after render: {unresolved}")
+
+
+def check_fences(raw: str):
+    """Fence markers pair exactly once, BEGIN before END, ranges disjoint.
+
+    The renderer deletes a disabled fence with `sed /BEGIN/,/END/d`: with the
+    END marker missing, sed's range runs to end-of-file and silently deletes
+    the rest of the template — every downstream assertion on that variant
+    still passes because both sides of the byte-identity compare are mangled
+    the same way. This is the structural guard.
+    """
+    names = {m.group(1) for m in FENCE.finditer(raw)}
+    spans = []
+    for name in sorted(names):
+        begins = [m.start() for m in re.finditer(re.escape(f"{{{{{name}_BEGIN}}}}"), raw)]
+        ends = [m.start() for m in re.finditer(re.escape(f"{{{{{name}_END}}}}"), raw)]
+        if len(begins) != 1 or len(ends) != 1:
+            fail(f"fence {name}: {len(begins)}x BEGIN / {len(ends)}x END "
+                 f"(need exactly one pair; an unpaired marker makes the renderer's "
+                 f"range-delete eat to end-of-file)")
+        if begins[0] >= ends[0]:
+            fail(f"fence {name}: BEGIN marker appears after END")
+        spans.append((begins[0], ends[0], name))
+    spans.sort()
+    for (_, e1, n1), (b2, _, n2) in zip(spans, spans[1:]):
+        if b2 < e1:
+            fail(f"fences {n1} and {n2} overlap — range-deletes would interleave")
+
+
+def check_token_mapping(raw: str):
+    """Template {{TOKEN}} set == renderer token set, both directions.
+
+    A template token with no renderer mapping survives into config.yaml (an
+    unresolved placeholder mihomo chokes on); a renderer mapping with no
+    template site is a dead or typo'd sed rule. Both directions are compared
+    against the literal {{TOKEN}} strings in scripts/render_config.sh (fence
+    markers included — the renderer names those in its sed ranges too).
+    """
+    template_tokens = {m.group(1) for m in TOKEN.finditer(raw)}
+    # Template comments COUNT (fence markers live on '# {{X_BEGIN}}' lines);
+    # renderer comments do not (its prose mentions generic {{X_BEGIN}} names) —
+    # only the renderer's code lines carry real sed patterns.
+    renderer_code = "\n".join(
+        line for line in RENDERER.read_text().splitlines()
+        if not line.lstrip().startswith("#"))
+    renderer_tokens = {m.group(1) for m in TOKEN.finditer(renderer_code)}
+    missing = template_tokens - renderer_tokens
+    if missing:
+        fail(f"template token(s) with no renderer mapping (would survive into "
+             f"config.yaml): {sorted(missing)}")
+    dead = renderer_tokens - template_tokens
+    if dead:
+        fail(f"renderer mapping(s) with no template site (dead/typo'd sed rule): "
+             f"{sorted(dead)}")
+
+
+def check_rule_targets(doc):
+    """Every rule/group reference resolves; a rule may NEVER target a provider.
+
+    `MATCH,my-airport` (a proxy-provider target) crash-looped mihomo in
+    production — rules can only target a proxy-group or a builtin. Groups'
+    use:/proxies: references are held to the same standard.
+    """
+    groups = [g.get("name") for g in doc.get("proxy-groups") or [] if isinstance(g, dict)]
+    providers = set((doc.get("proxy-providers") or {}).keys())
+    builtins = {"DIRECT", "REJECT", "REJECT-DROP", "PASS"}
+    valid = set(groups) | builtins
+    if len(set(groups)) != len(groups):
+        fail(f"duplicate proxy-group names: {groups}")
+    for rule in doc.get("rules") or []:
+        parts = [p.strip() for p in str(rule).split(",")]
+        if len(parts) < 2:
+            fail(f"malformed rule: {rule!r}")
+        target = parts[1] if parts[0] == "MATCH" else (parts[2] if len(parts) >= 3 else None)
+        if target is None:
+            fail(f"rule has no target: {rule!r}")
+        if target in providers and target not in valid:
+            fail(f"rule {rule!r} targets proxy-provider {target!r}: rules may only "
+                 f"target a group or builtin (a provider target crash-loops mihomo)")
+        if target not in valid:
+            fail(f"rule {rule!r} targets unknown {target!r} "
+                 f"(groups: {sorted(set(groups))}, builtins: {sorted(builtins)})")
+    for g in doc.get("proxy-groups") or []:
+        for u in g.get("use") or []:
+            if u not in providers:
+                fail(f"group {g.get('name')!r} uses unknown provider {u!r}")
+        for p in g.get("proxies") or []:
+            if p not in valid:
+                fail(f"group {g.get('name')!r} references unknown proxy/group {p!r}")
+
+
 def main() -> None:
     raw = TEMPLATE.read_text()
 
@@ -117,14 +231,16 @@ def main() -> None:
         fail(f"hardcoded IP literal(s) in {TEMPLATE.name}: {sorted(set(leftover))} "
              f"(use {{placeholders}} + .env per CLAUDE.md)")
 
+    # 1b) Static semantic invariants: fence pairing + bidirectional token map.
+    check_fences(raw)
+    check_token_mapping(raw)
+
     # 2) Run the REAL renderer with the backwards-compatible omitted-key path.
     proc, rendered = render(raw)
     if proc.returncode != 0 or rendered is None:
         fail(f"render_config.sh exited {proc.returncode}: {proc.stderr.strip()}")
 
-    unresolved = re.findall(r"\{\{[^}]+\}\}", rendered)
-    if unresolved:
-        fail(f"unresolved placeholders after render: {unresolved}")
+    assert_resolved("default", rendered)
 
     doc = yaml.safe_load(rendered)
 
@@ -163,6 +279,10 @@ def main() -> None:
         if servers != expected:
             fail(f"dns.{field} did not round-trip: got {servers!r}, expected {expected!r}")
 
+    # 5b) Rule / group / provider reference integrity (the MATCH,my-airport
+    # crash-loop class) on the fully rendered document.
+    check_rule_targets(doc)
+
     # 6) DEFAULT render is TUN-ON (this is a transparent gateway). The tun block MUST be
     # present with stack: system, which (unlike mixed/gvisor) does NOT hijack the
     # external-controller reply path (mihomo #1493) - the VERIFIED working config.
@@ -184,6 +304,7 @@ def main() -> None:
     proc_off, off = render(raw, tun_enable="false")
     if proc_off.returncode != 0 or off is None:
         fail(f"TUN_ENABLE=false render failed: {proc_off.stderr.strip()}")
+    assert_resolved("TUN-off", off)
     if yaml.safe_load(off).get("tun") is not None:
         fail("TUN_ENABLE=false must OMIT the tun block (plain-proxy mode)")
 
@@ -192,6 +313,7 @@ def main() -> None:
     proc, tun_on = render(raw, tun_enable="true")
     if proc.returncode != 0 or tun_on is None:
         fail(f"TUN_ENABLE=true render failed: {proc.stderr.strip()}")
+    assert_resolved("TUN-on", tun_on)
     tun = (yaml.safe_load(tun_on).get("tun") or {})
     required_tun = {
         "enable": True,
@@ -214,6 +336,7 @@ def main() -> None:
     proc, opted_in = render(raw, tun_auto_redirect="true", tun_enable="true")
     if proc.returncode != 0 or opted_in is None:
         fail(f"TUN auto-redirect opt-in failed: {proc.stderr.strip()}")
+    assert_resolved("TUN-on+auto-redirect", opted_in)
     if (yaml.safe_load(opted_in).get("tun") or {}).get("auto-redirect") is not True:
         fail("TUN_AUTO_REDIRECT=true did not render as YAML true")
     proc, invalid = render(raw, tun_auto_redirect="yes")
@@ -253,13 +376,16 @@ def main() -> None:
     proc_e, extui = render(raw, external_ui_dir=ui_dir)
     if proc_e.returncode != 0 or extui is None:
         fail(f"EXTERNAL_UI_DIR render failed: {proc_e.stderr.strip()}")
+    assert_resolved("EXTUI", extui)
     if yaml.safe_load(extui).get("external-ui") != ui_dir:
         fail(f"external-ui did not round-trip: {yaml.safe_load(extui).get('external-ui')!r}")
 
     print("OK: renderer preserves URL/secrets; controller, DNS, CORS valid; TUN is ON by "
           "default (stack: system keeps the controller reachable, allow-lan + fake-ip set; "
           "TUN_ENABLE=false omits the block); auto-redirect/enable opt-ins are strict; "
-          "external-ui fence inert when unset; no hardcoded literals.")
+          "external-ui fence inert when unset; no hardcoded literals; fences pair, "
+          "tokens map bidirectionally, rule/group targets resolve (never a provider), "
+          "and every variant renders placeholder-free.")
 
 
 if __name__ == "__main__":
