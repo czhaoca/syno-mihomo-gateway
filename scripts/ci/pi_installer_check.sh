@@ -11,6 +11,9 @@
 # never mutates the host (real service managers are always shadowed or absent).
 # shellcheck disable=SC1091 # sources resolve via $ROOT at runtime
 # shellcheck disable=SC2016 # single-quoted sh -c bodies expand via their own $1/$2
+# shellcheck disable=SC2015 # `[ ] && ok || fail` is safe: ok() cannot fail
+# shellcheck disable=SC2034 # subshell-scoped fixtures are read by the functions under test
+# shellcheck disable=SC2329 # subshell function overrides are invoked indirectly
 set -eu
 
 ROOT="$(CDPATH='' cd -- "$(dirname -- "$0")/../.." && pwd)"
@@ -175,7 +178,138 @@ _out_tunoff="$(cat "$TD/out-tunoff.yaml")"
 assert_not_contains "tun off + extui: no tun block" "$_out_tunoff" 'mihomo-tun'
 assert_contains "tun off + extui: external-ui still present" "$_out_tunoff" 'external-ui: "/data/ui/metacubexd"'
 
+# =============================================================================
+# Ticket #18 - install-pi.sh entry, hardware detect, compose-parity mode
+# =============================================================================
+# The pi modules build on the shared installer stack; bring it up the same way
+# dsm_installer_check.sh does (REPO_ROOT set first so common.sh respects it).
+REPO_ROOT="$ROOT"
+. "$ROOT/scripts/lib/common.sh"
+. "$ROOT/scripts/lib/network.sh"
+. "$ROOT/scripts/lib/registry.sh"
+. "$ROOT/scripts/installer/ui.sh"
+. "$ROOT/scripts/installer/i18n.sh"
+. "$ROOT/scripts/installer/envedit.sh"
+. "$ROOT/scripts/installer/preflight.sh"
+. "$ROOT/scripts/installer/wizards.sh"
+for _pi_mod in detect preflight i18n_pi flow_compose; do
+  [ -f "$ROOT/scripts/pi/$_pi_mod.sh" ] || die "scripts/pi/$_pi_mod.sh missing"
+done
+. "$ROOT/scripts/pi/detect.sh"
+. "$ROOT/scripts/pi/preflight.sh"
+. "$ROOT/scripts/pi/i18n_pi.sh"
+. "$ROOT/scripts/pi/flow_compose.sh"
+
+# --- detect: model / memory / arch readers (env-overridable for CI) -----------
+printf 'Raspberry Pi 3 Model B Plus Rev 1.3\0' > "$TD/dt-model"
+[ "$( (SMG_PI_MODEL_FILE="$TD/dt-model"; pi_model) )" = 'Raspberry Pi 3 Model B Plus Rev 1.3' ] \
+  && ok || fail "pi_model reads the override file and strips the trailing NUL"
+[ "$( (SMG_PI_MODEL_FILE="$TD/absent"; pi_model) )" = unknown ] \
+  && ok || fail "pi_model degrades to 'unknown' when unreadable"
+printf 'MemTotal:         948304 kB\nMemFree:            1000 kB\n' > "$TD/mi-1g"
+[ "$( (SMG_PI_MEMINFO="$TD/mi-1g"; pi_mem_mb) )" = 926 ] \
+  && ok || fail "pi_mem_mb converts MemTotal kB to MB"
+[ "$( (SMG_PI_MEMINFO="$TD/absent"; pi_mem_mb) )" = 0 ] \
+  && ok || fail "pi_mem_mb degrades to 0 when unreadable"
+arch_of() { ( SMG_PI_ARCH="$1"; pi_lite_asset_arch ); }
+[ "$(arch_of aarch64)" = arm64 ] && ok || fail "arch map: aarch64 -> arm64"
+[ "$(arch_of armv7l)" = armv7 ] && ok || fail "arch map: armv7l -> armv7"
+[ "$(arch_of armv6l)" = armv6 ] && ok || fail "arch map: armv6l -> armv6"
+[ "$(arch_of x86_64)" = amd64 ] && ok || fail "arch map: x86_64 -> amd64 (dev box)"
+
+# --- detect: the owner-decided mode table (DEC-5 + DEC-A) ----------------------
+# Fixtures mirror REAL reported sizes: boards reserve GPU/firmware memory, so a
+# nominal 2 GB reports ~1870 MB and 1 GB ~926 MB - the table keys on the class.
+printf 'MemTotal:        3884300 kB\n' > "$TD/mi-4g"     # 3793 MB
+printf 'MemTotal:        1914896 kB\n' > "$TD/mi-2g"     # 1870 MB
+printf 'MemTotal:        1048576 kB\n' > "$TD/mi-1gn"    # 1024 MB nominal
+printf 'MemTotal:         524288 kB\n' > "$TD/mi-512n"   #  512 MB nominal
+printf 'MemTotal:         441548 kB\n' > "$TD/mi-512"    #  431 MB real 512-board
+rec_of() { ( SMG_PI_ARCH="$1"; SMG_PI_MEMINFO="$2"; pi_recommend_mode ); }
+[ "$(rec_of armv6l "$TD/mi-512")" = lite ] && ok || fail "mode table: armv6 -> lite"
+[ "$(rec_of armv7l "$TD/mi-4g")" = lite ] && ok || fail "mode table: armv7 -> lite even with RAM (DEC-A)"
+[ "$(rec_of aarch64 "$TD/mi-4g")" = compose ] && ok || fail "mode table: arm64 4GB -> compose"
+[ "$(rec_of aarch64 "$TD/mi-2g")" = compose ] && ok || fail "mode table: arm64 real-2GB -> compose"
+[ "$(rec_of aarch64 "$TD/mi-1gn")" = compose-tuned ] && ok || fail "mode table: arm64 1GB -> compose-tuned"
+[ "$(rec_of aarch64 "$TD/mi-1g")" = compose-tuned ] && ok || fail "mode table: arm64 real-1GB -> compose-tuned"
+[ "$(rec_of aarch64 "$TD/mi-512n")" = lite ] && ok || fail "mode table: arm64 512MB -> lite"
+[ "$(rec_of aarch64 "$TD/mi-512")" = lite ] && ok || fail "mode table: arm64 real-512MB -> lite"
+modes_of() { ( SMG_PI_ARCH="$1"; pi_available_modes ); }
+[ "$(modes_of armv6l)" = lite ] && ok || fail "compose refused on armv6 (no arm/v6 images)"
+[ "$(modes_of armv7l)" = lite ] && ok || fail "compose refused on armv7 (DEC-A: no metacubexd arm/v7)"
+[ "$(modes_of aarch64)" = 'compose lite' ] && ok || fail "arm64 offers compose and lite"
+
+# --- detect: mode marker --------------------------------------------------------
+( GATEWAY_DATA_DIR="$TD/pi-data"; pi_write_mode_marker pi-compose ) \
+  && [ "$(cat "$TD/pi-data/state/install-mode")" = pi-compose ] \
+  && ok || fail "mode marker written under the data dir"
+( GATEWAY_DATA_DIR="$TD/pi-data"; pi_write_mode_marker pi-compose ) \
+  && [ "$(wc -l < "$TD/pi-data/state/install-mode" | tr -d ' ')" = 1 ] \
+  && ok || fail "mode marker idempotent on re-run"
+
+# --- pi preflight: ACR arch notice (DEC-3 firing rules) -------------------------
+_out="$( ( host_arch() { echo arm64; }; REGISTRY_MODE=acr; pi_acr_arch_notice ) 2>&1 )"
+assert_contains "acr + arm64 host: notice fires, names the arch" "$_out" 'arm64'
+_out="$( ( host_arch() { echo amd64; }; REGISTRY_MODE=acr; pi_acr_arch_notice ) 2>&1 )"
+[ -z "$_out" ] && ok || fail "acr + amd64 host: silent"
+_out="$( ( host_arch() { echo arm64; }; REGISTRY_MODE=docker; pi_acr_arch_notice ) 2>&1 )"
+[ -z "$_out" ] && ok || fail "docker mode: silent regardless of arch"
+
+# --- pi preflight: wireless macvlan parent guard --------------------------------
+( PARENT_INTERFACE=wlan0; pi_wlan_guard >/dev/null 2>&1 ) && fail "wlan0 parent accepted" || ok
+( PARENT_INTERFACE=eth0; pi_wlan_guard >/dev/null 2>&1 ) && ok || fail "eth0 parent refused"
+( PARENT_INTERFACE=''; detect_parent_interface() { echo wlan1; }; pi_wlan_guard >/dev/null 2>&1 ) \
+  && fail "detected wlan1 parent accepted" || ok
+( PARENT_INTERFACE=''; detect_parent_interface() { echo end0; }; pi_wlan_guard >/dev/null 2>&1 ) \
+  && ok || fail "detected wired end0 parent refused"
+
+# --- pi preflight: guarded create_network (the choke point every path hits) ------
+# The Modify menu and the redeploy re-pick branch call create_network directly,
+# bypassing pi_flow_*'s early guard - the interposition must refuse wl* there.
+( CHOSEN_IFACE=wlan0; pi_stock_create_network() { echo REACHED >> "$TD/cn-log1"; }
+  create_network >/dev/null 2>&1 ) && fail "guarded create_network accepted wlan0" || ok
+[ ! -e "$TD/cn-log1" ] && ok || fail "stock body reached despite the wireless refusal"
+( CHOSEN_IFACE=eth0; pi_stock_create_network() { echo REACHED >> "$TD/cn-log2"; }
+  create_network >/dev/null 2>&1 ) && ok || fail "guarded create_network refused wired eth0"
+[ -e "$TD/cn-log2" ] && ok || fail "wired call did not delegate to the stock body"
+# The CAPTURED stock body is the real one: with a wired parent and no root it
+# must take netscan.sh's own not-root branch (proves genuine delegation).
+_out="$( ( CHOSEN_IFACE=eth0; is_root() { return 1; }; create_network ) 2>&1 )" || true
+assert_contains "captured stock body runs netscan.sh's not-root branch" \
+  "$_out" "$( (INSTALLER_LANG=en; msg warn_net_need_root) )"
+
+# --- pi preflight: ARMv6 acknowledgment gate (DEC-5) -----------------------------
+( ui_yesno() { return 1; }; pi_armv6_ack >/dev/null 2>&1 ) && fail "declined ack proceeded" || ok
+( ui_yesno() { return 0; }; pi_armv6_ack >/dev/null 2>&1 ) && ok || fail "accepted ack refused"
+
+# --- pi preflight: EXPECTED_ARCH aligned to the host before the deploy flow -----
+mkdir -p "$TD/pi-app" "$TD/pi-align/config"
+cp "$ROOT/.env.example" "$TD/pi-app/.env.example"
+(
+  REPO_ROOT="$TD/pi-app"; GATEWAY_DATA_DIR="$TD/pi-align"
+  ENV_FILE="$TD/pi-align/.env"; CONFIG_STATE_DIR="$TD/pi-align/config"
+  SUBSCRIPTION_FILE="$TD/pi-align/config/subscription.txt"
+  host_arch() { echo arm64; }
+  pi_align_expected_arch >/dev/null 2>&1
+) && [ "$( (unset EXPECTED_ARCH; dotenv_load "$TD/pi-align/.env" >/dev/null 2>&1; printf '%s' "$EXPECTED_ARCH") )" = arm64 ] \
+  && ok || fail "pi_align_expected_arch seeds .env and pins EXPECTED_ARCH to the host"
+
+# --- pi i18n overlay -------------------------------------------------------------
+_pi_en_keys="$(sed -n '/^_msg_en_pi()/,/^}/p' "$ROOT/scripts/pi/i18n_pi.sh" | sed -n 's/^    \([a-z0-9_]*\)).*/\1/p' | sort)"
+_pi_zh_keys="$(sed -n '/^_msg_zh_pi()/,/^}/p' "$ROOT/scripts/pi/i18n_pi.sh" | sed -n 's/^    \([a-z0-9_]*\)).*/\1/p' | sort)"
+[ -n "$_pi_en_keys" ] && [ "$_pi_en_keys" = "$_pi_zh_keys" ] \
+  && ok || fail "pi i18n en/zh key sets are identical"
+[ "$( (INSTALLER_LANG=en; msg menu_modify) )" = 'Modify an existing deployment' ] \
+  && ok || fail "overlay msg() falls back to the stock catalog"
+_zh_mode="$( (INSTALLER_LANG=zh; msg pi_ask_mode) )"
+[ -n "$_zh_mode" ] && [ "$_zh_mode" != pi_ask_mode ] \
+  && ok || fail "pi keys resolve in zh (not the bare key)"
+
+# --- install-pi.sh entry: sources cleanly under the CI guard ---------------------
+expect_success "install-pi.sh sources cleanly (INSTALL_SOURCE_ONLY=1)" \
+  sh -c 'cd "$1" && INSTALL_SOURCE_ONLY=1 SMG_INSTALL_ROOT="$1" sh -c ". ./install-pi.sh"' _ "$ROOT"
+
 # --- summary --------------------------------------------------------------------
 printf 'pi_installer_check: %d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ] || exit 1
-echo "OK: pi shared seams (scheduler systemctl branch + external-ui fence) verified"
+echo "OK: pi shared seams + install-pi entry (detect/mode-table/preflight/i18n) verified"
