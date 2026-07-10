@@ -75,6 +75,8 @@ ENDUSER_MUST_INCLUDE = [
     PREFIX + "scripts/lib/lifecycle.sh",
     PREFIX + "scripts/lib/scheduler.sh",
     PREFIX + "scripts/doctor.sh",
+    PREFIX + "scripts/migrate_legacy.sh",
+    PREFIX + "scripts/lib/geodata.sh",
     PREFIX + "docs/README.txt",
     PREFIX + ".env.example",
     PREFIX + "docker-compose.yml",
@@ -82,6 +84,10 @@ ENDUSER_MUST_INCLUDE = [
     PREFIX + "VERSION",
 ]
 ENDUSER_MUST_EXCLUDE = [
+    PREFIX + "install-pi.sh",
+    PREFIX + "scripts/pi/lite.sh",
+    PREFIX + "docs/INSTALL-PI.txt",
+    PREFIX + "docs/INSTALL-PI.zh.txt",
     PREFIX + "scripts/cli/spec.yaml",
     PREFIX + "docs/cli.md",
     PREFIX + "README.md",
@@ -295,8 +301,10 @@ def build_enduser_fixture(root: Path):
     (root / "scripts" / "gateway.sh").write_text("#!/bin/sh\n# non-interactive CLI\n:\n")
     (root / "docs" / "CLI.txt").write_text("Command-line reference for gateway.sh.\n")
     (root / "docs" / "CLI.zh.txt").write_text("gateway.sh command line reference (zh).\n")
-    for s in ("auto_update.sh", "render_config.sh", "install_scheduler.sh", "setup_network.sh"):
+    for s in ("auto_update.sh", "render_config.sh", "install_scheduler.sh", "setup_network.sh",
+              "migrate_legacy.sh"):
         (root / "scripts" / s).write_text("#!/bin/sh\n:\n")
+    (root / "scripts" / "lib" / "geodata.sh").write_text("#!/bin/sh\n:\n")
     (root / "scripts" / "doctor.sh").write_text("#!/bin/sh\n:\n")
     (root / "docs" / "README.txt").write_text("Mihomo Gateway - start here.\nRun: sh ./install.sh\n")
     (root / "docs" / "INSTALL.txt").write_text("Move this folder into the Docker shared folder.\n")
@@ -309,6 +317,17 @@ def build_enduser_fixture(root: Path):
     (root / "docs" / "installation.md").write_text("git clone https://github.com/czhaoca/x.git\n")
     (root / "docs" / "zh" / "installation.md").write_text("clone https://github.com/czhaoca/x\n")
     (root / "scripts" / "ci" / "check.py").write_text("# woodpecker ci helper\n")
+    # The Pi port carries FUNCTIONAL upstream download URLs that the leak-gate
+    # forbids in shipped files; the enduser profile must prune it entirely, or
+    # the build fails on these decoys.
+    (root / "install-pi.sh").write_text("#!/bin/sh\n# Pi installer; downloads from GitHub\n:\n")
+    (root / "scripts" / "pi").mkdir(parents=True)
+    (root / "scripts" / "pi" / "lite.sh").write_text(
+        "#!/bin/sh\nURL=https://github.com/MetaCubeX/mihomo/releases\n:\n")
+    # The Pi guides ship with the Pi profile, not the DSM bundle (their
+    # installer is pruned above; a guide for an absent installer is noise).
+    (root / "docs" / "INSTALL-PI.txt").write_text("Raspberry Pi install guide.\n")
+    (root / "docs" / "INSTALL-PI.zh.txt").write_text("Raspberry Pi install guide (zh).\n")
     (root / "scripts" / "cli").mkdir(parents=True)
     (root / "scripts" / "cli" / "spec.yaml").write_text(
         "# CLI contract spec - dev-only; see github.com/czhaoca upstream\n")

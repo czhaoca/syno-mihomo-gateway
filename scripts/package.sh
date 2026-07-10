@@ -40,11 +40,13 @@ DO_ZIP=1
 DO_TAR=1
 PROFILE=enduser
 
-# Files removed from the --profile enduser bundle: developer/CI/internal metadata
-# and the maintainer-only packager. The leak-gate below is the belt-and-suspenders
+# Files removed from the --profile enduser bundle: developer/CI/internal metadata,
+# the maintainer-only packager, and the Raspberry-Pi port (it ships via its own
+# profile when that epic releases, and its functional upstream download URLs
+# would trip the leak-gate below). The leak-gate is the belt-and-suspenders
 # that fails the build if any identifying string survives anyway. ('.' = include
 # everything tracked, then subtract.) No entry contains a space.
-ENDUSER_EXCLUDES=". :(exclude)README.md :(exclude)AGENTS.md :(exclude)CLAUDE.md :(exclude).woodpecker.yml :(exclude).gitignore :(exclude)docs/*.md :(exclude)docs/zh :(exclude)scripts/ci :(exclude)scripts/cli :(exclude)scripts/package.sh"
+ENDUSER_EXCLUDES=". :(exclude)README.md :(exclude)AGENTS.md :(exclude)CLAUDE.md :(exclude).woodpecker.yml :(exclude).gitignore :(exclude)docs/*.md :(exclude)docs/zh :(exclude)scripts/ci :(exclude)scripts/cli :(exclude)scripts/package.sh :(exclude)install-pi.sh :(exclude)scripts/pi :(exclude)docs/INSTALL-PI.txt :(exclude)docs/INSTALL-PI.zh.txt"
 
 _ts() { date '+%Y-%m-%d %H:%M:%S %z'; }
 log()       { printf '%s [%s] %s\n' "$(_ts)" "$1" "$2" >&2; }
