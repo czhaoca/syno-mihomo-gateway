@@ -67,6 +67,8 @@ _msg_en_pi() {
     pi_warn_cron_tz)      printf '%s' 'note: cron fires in this device SYSTEM timezone; UPDATE_TZ only affects in-job log timestamps' ;;
     pi_ask_dryrun)        printf '%s' 'Run an updater dry-run now (no changes applied)' ;;
     pi_warn_cron_not_installed) printf '%s' 'crontab entry NOT installed - automatic updates are not scheduled yet' ;;
+    pi_ctl_usage)         printf '%s' 'usage: sh scripts/pi/lite_ctl.sh {status|doctor|start|stop|update [--dry-run|--force]}' ;;
+    pi_ctl_usage2)        printf '%s' 'read-only: status, doctor; root required: start, stop; update delegates to the lite auto-updater' ;;
     *) return 1 ;;
   esac
 }
@@ -130,6 +132,8 @@ _msg_zh_pi() {
     pi_warn_cron_tz)      printf '%s' '注意：cron 按本设备系统时区触发；UPDATE_TZ 仅影响任务内日志时间戳' ;;
     pi_ask_dryrun)        printf '%s' '现在运行一次更新器 dry-run（不做任何更改）' ;;
     pi_warn_cron_not_installed) printf '%s' '未安装 crontab 条目 - 自动更新尚未列入计划' ;;
+    pi_ctl_usage)         printf '%s' '用法：sh scripts/pi/lite_ctl.sh {status|doctor|start|stop|update [--dry-run|--force]}' ;;
+    pi_ctl_usage2)        printf '%s' '只读：status、doctor；需要 root：start、stop；update 会委托给精简模式自动更新器' ;;
     *) return 1 ;;
   esac
 }

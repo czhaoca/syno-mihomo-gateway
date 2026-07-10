@@ -784,7 +784,249 @@ grep -q 'pi_flow_cron' "$ROOT/install-pi.sh" \
   && grep -q 'msg menu_cron' "$ROOT/install-pi.sh" \
   && ok || fail "install-pi.sh menu wires the cron item to pi_flow_cron"
 
+# =============================================================================
+# Ticket #21 - lite_ctl status/doctor + scheduler coverage
+# =============================================================================
+
+# mk_ctl_sandbox DIR - a healthy lite install for lite_ctl: binary + version +
+# unit + marker + subscription + a .env whose DNS fixtures are RFC 5737.
+mk_ctl_sandbox() {
+  _mcs="$1"
+  rm -rf "$_mcs"
+  mkdir -p "$_mcs/bin" "$_mcs/state/lite" "$_mcs/config" "$_mcs/logs"
+  cp "$TD/upd-old" "$_mcs/bin/mihomo"
+  chmod +x "$_mcs/bin/mihomo"
+  printf 'v9.9.9\n' > "$_mcs/state/lite/version"
+  printf '%s\n' pi-lite > "$_mcs/state/install-mode"
+  printf '# fixture unit\n' > "$_mcs/unit.service"
+  printf 'Default=https://sub.example.com/api?token=abc\n' > "$_mcs/config/subscription.txt"
+  printf '{"ts":"fixture","exit_code":0,"dry_run":0}\n' > "$_mcs/state/lite/last-run.json"
+  : > "$_mcs/crontab"
+  {
+    printf 'UPDATE_ENABLED=true\n'
+    printf 'MIHOMO_VERSION=v9.9.10\n'
+    printf 'HEALTH_RETRIES=2\nHEALTH_INTERVAL=0\nHEALTH_MAX_RESTARTS=3\n'
+    printf 'TUN_ENABLE=false\n'
+    printf 'CONTROLLER_PORT=9090\n'
+    printf 'DNS_DEFAULT_NAMESERVER=192.0.2.53\nDNS_NAMESERVER=192.0.2.53\nDNS_FALLBACK=192.0.2.54\n'
+  } > "$_mcs/.env"
+}
+
+# run_lite_ctl DIR FLAGS VERB [args...] - source the REAL lite_ctl in an
+# isolated subshell with systemd/probe/net fakes and run its main. FLAGS is a
+# comma-separated fake-behavior list: active (unit is-active ok), probe (the
+# controller answers), tun (ip link succeeds), ss53 (a fake dnsmasq owns :53).
+# Host schedulers are never reachable: crontab -l is stubbed out and the
+# SMG_SCHED_* stores point into the sandbox.
+run_lite_ctl() {
+  _rlc_d="$1"; _rlc_flags="$2"; shift 2
+  (
+    GATEWAY_DATA_DIR="$_rlc_d"; ENV_FILE="$_rlc_d/.env"
+    CONFIG_STATE_DIR="$_rlc_d/config"; LOCK_DIR="$_rlc_d/lock"
+    SUBSCRIPTION_FILE="$_rlc_d/config/subscription.txt"
+    SMG_PI_UNIT_FILE="$_rlc_d/unit.service"; SMG_PI_ARCH=aarch64
+    SMG_SCHED_TASK_DIR="$_rlc_d/absent-taskdir"
+    SMG_SCHED_EVENT_DB="$_rlc_d/absent-db"
+    SMG_SCHED_CRONTAB="$_rlc_d/crontab"
+    LITE_CTL_SELF_DIR="$ROOT/scripts/pi"
+    LITE_CTL_SOURCE_ONLY=1
+    . "$ROOT/scripts/pi/lite_ctl.sh" || exit 97
+    RLC_FLAGS=",$_rlc_flags,"
+    systemctl() {
+      printf '%s\n' "$*" >> "$GATEWAY_DATA_DIR/systemctl.log"
+      case "${1:-}" in
+        is-active) case "$RLC_FLAGS" in *,active,*) return 0 ;; *) return 1 ;; esac ;;
+        show) printf '0\n' ;;
+      esac
+      return 0
+    }
+    pi_lite_controller_probe() { case "$RLC_FLAGS" in *,probe,*) return 0 ;; *) return 1 ;; esac; }
+    ip() { case "$RLC_FLAGS" in *,tun,*) return 0 ;; *) return 1 ;; esac; }
+    ss() {
+      case "$RLC_FLAGS" in
+        *,ss53,*) printf 'udp   UNCONN 0 0  0.0.0.0:53  0.0.0.0:*  users:(("dnsmasq",pid=419,fd=4))\n' ;;
+      esac
+      return 0
+    }
+    crontab() { return 1; }
+    is_root() { return 0; }
+    lite_ctl_main "$@"
+  )
+}
+
+# --- usage: bilingual, plain (not spec-generated), config exit code -------------
+_rc=0; run_lite_ctl "$TD/ctl-any" '' >/dev/null 2>&1 || _rc=$?
+[ "$_rc" = 3 ] && ok || fail "lite_ctl with no verb exits with the config code (rc=$_rc)"
+mk_ctl_sandbox "$TD/ctl-use"
+( INSTALLER_LANG=en; run_lite_ctl "$TD/ctl-use" '' bogus-verb ) > "$TD/ctl-use-out" 2>&1 || :
+grep -q 'status' "$TD/ctl-use-out" && grep -q 'doctor' "$TD/ctl-use-out" \
+  && ok || fail "usage names the verbs"
+( INSTALLER_LANG=zh; run_lite_ctl "$TD/ctl-use" '' bogus-verb ) > "$TD/ctl-use-zh" 2>&1 || :
+grep -q 'pi_ctl_usage' "$TD/ctl-use-zh" && fail "zh usage prints the bare i18n key" || ok
+
+# --- doctor: all-green -> HEALTHY 0 (crontab seeded via the CRONTAB_FILE writer,
+# then FOUND by scheduler_task_deployed through SMG_SCHED_CRONTAB - the lite
+# scheduler-coverage acceptance criterion) -----------------------------------
+mk_ctl_sandbox "$TD/ctl-ok"
+( CRONTAB_FILE="$TD/ctl-ok/crontab"; UPDATE_SCHEDULE='0 2 * * *'; REPO_ROOT="$ROOT"
+  scheduler_reload_crond() { :; }
+  pi_install_lite_crontab ) >/dev/null 2>&1 || fail "seeding the lite crontab entry failed"
+( SMG_SCHED_CRONTAB="$TD/ctl-ok/crontab"; SMG_SCHED_TASK_DIR="$TD/absent"
+  SMG_SCHED_EVENT_DB="$TD/absent"; crontab() { return 1; }
+  scheduler_task_deployed "scripts/pi/auto_update_lite.sh" ) \
+  && ok || fail "scheduler_task_deployed finds the CRONTAB_FILE-written lite entry"
+_rc=0; run_lite_ctl "$TD/ctl-ok" 'active,probe' doctor > "$TD/ctl-ok-out" 2>&1 || _rc=$?
+[ "$_rc" = 0 ] && grep -q 'Result: HEALTHY' "$TD/ctl-ok-out" \
+  && ok || fail "doctor all-green exits 0 HEALTHY (rc=$_rc)"
+grep -q 'auto-update task is scheduled' "$TD/ctl-ok-out" \
+  && ok || fail "doctor reports the scheduled lite update task"
+
+# --- doctor: unit inactive -> BROKEN 3 -------------------------------------------
+mk_ctl_sandbox "$TD/ctl-down"
+_rc=0; run_lite_ctl "$TD/ctl-down" 'probe' doctor > "$TD/ctl-down-out" 2>&1 || _rc=$?
+[ "$_rc" = 3 ] && grep -q 'Result: BROKEN' "$TD/ctl-down-out" \
+  && ok || fail "doctor with an inactive unit exits 3 BROKEN (rc=$_rc)"
+
+# --- doctor: managed binary missing -> BROKEN 3; version state missing -> warn 2 --
+mk_ctl_sandbox "$TD/ctl-nobin"
+rm -f "$TD/ctl-nobin/bin/mihomo"
+_rc=0; run_lite_ctl "$TD/ctl-nobin" 'active,probe' doctor >/dev/null 2>&1 || _rc=$?
+[ "$_rc" = 3 ] && ok || fail "doctor without the managed binary exits 3 (rc=$_rc)"
+mk_ctl_sandbox "$TD/ctl-nover"
+rm -f "$TD/ctl-nover/state/lite/version"
+( CRONTAB_FILE="$TD/ctl-nover/crontab"; UPDATE_SCHEDULE='0 2 * * *'; REPO_ROOT="$ROOT"
+  scheduler_reload_crond() { :; }
+  pi_install_lite_crontab ) >/dev/null 2>&1
+_rc=0; run_lite_ctl "$TD/ctl-nover" 'active,probe' doctor > "$TD/ctl-nover-out" 2>&1 || _rc=$?
+[ "$_rc" = 2 ] && grep -q 'Result: DEGRADED' "$TD/ctl-nover-out" \
+  && ok || fail "doctor without version state degrades to 2 (rc=$_rc)"
+
+# --- doctor: update task missing -> warn 2; UPDATE_ENABLED=false -> no check -----
+mk_ctl_sandbox "$TD/ctl-nosched"
+_rc=0; run_lite_ctl "$TD/ctl-nosched" 'active,probe' doctor > "$TD/ctl-nosched-out" 2>&1 || _rc=$?
+[ "$_rc" = 2 ] && grep -q 'auto_update_lite' "$TD/ctl-nosched-out" \
+  && ok || fail "doctor warns (2) when no task runs the lite updater (rc=$_rc)"
+mk_ctl_sandbox "$TD/ctl-schedoff"
+sed 's/^UPDATE_ENABLED=true$/UPDATE_ENABLED=false/' "$TD/ctl-schedoff/.env" > "$TD/ctl-schedoff/.env.next" \
+  && mv "$TD/ctl-schedoff/.env.next" "$TD/ctl-schedoff/.env"
+_rc=0; run_lite_ctl "$TD/ctl-schedoff" 'active,probe' doctor > "$TD/ctl-schedoff-out" 2>&1 || _rc=$?
+[ "$_rc" = 0 ] && ok || fail "doctor skips the scheduler check when updates are disabled (rc=$_rc)"
+
+# --- doctor: scheduler rc 2 (nothing searchable) stays SILENT, not a warn --------
+mk_ctl_sandbox "$TD/ctl-unk"
+rm -f "$TD/ctl-unk/crontab"
+_rc=0; run_lite_ctl "$TD/ctl-unk" 'active,probe' doctor > "$TD/ctl-unk-out" 2>&1 || _rc=$?
+[ "$_rc" = 0 ] && ok || fail "doctor stays healthy when no scheduler store is searchable (rc=$_rc)"
+grep -q 'auto-update task' "$TD/ctl-unk-out" \
+  && fail "doctor printed a scheduler verdict despite rc 2 (unknown)" || ok
+
+# --- doctor: TUN enabled but link absent -> BROKEN 3 ------------------------------
+mk_ctl_sandbox "$TD/ctl-tun"
+sed 's/^TUN_ENABLE=false$/TUN_ENABLE=true/' "$TD/ctl-tun/.env" > "$TD/ctl-tun/.env.next" \
+  && mv "$TD/ctl-tun/.env.next" "$TD/ctl-tun/.env"
+( CRONTAB_FILE="$TD/ctl-tun/crontab"; UPDATE_SCHEDULE='0 2 * * *'; REPO_ROOT="$ROOT"
+  scheduler_reload_crond() { :; }
+  pi_install_lite_crontab ) >/dev/null 2>&1
+_rc=0; run_lite_ctl "$TD/ctl-tun" 'active,probe' doctor >/dev/null 2>&1 || _rc=$?
+[ "$_rc" = 3 ] && ok || fail "doctor: TUN enabled without the link exits 3 (rc=$_rc)"
+_rc=0; run_lite_ctl "$TD/ctl-tun" 'active,probe,tun' doctor >/dev/null 2>&1 || _rc=$?
+[ "$_rc" = 0 ] && ok || fail "doctor: TUN link present -> the same box goes HEALTHY (rc=$_rc)"
+
+# --- doctor: port 53 held by a foreign resolver -> actionable warn naming it (G7) -
+mk_ctl_sandbox "$TD/ctl-53"
+( CRONTAB_FILE="$TD/ctl-53/crontab"; UPDATE_SCHEDULE='0 2 * * *'; REPO_ROOT="$ROOT"
+  scheduler_reload_crond() { :; }
+  pi_install_lite_crontab ) >/dev/null 2>&1
+_rc=0; run_lite_ctl "$TD/ctl-53" 'active,probe,ss53' doctor > "$TD/ctl-53-out" 2>&1 || _rc=$?
+[ "$_rc" = 2 ] && grep -q 'dnsmasq' "$TD/ctl-53-out" \
+  && ok || fail "doctor warns naming the foreign port-53 resolver (rc=$_rc)"
+
+# --- doctor: missing subscription degrades (parity with doctor.sh) ---------------
+mk_ctl_sandbox "$TD/ctl-nosub"
+rm -f "$TD/ctl-nosub/config/subscription.txt"
+( CRONTAB_FILE="$TD/ctl-nosub/crontab"; UPDATE_SCHEDULE='0 2 * * *'; REPO_ROOT="$ROOT"
+  scheduler_reload_crond() { :; }
+  pi_install_lite_crontab ) >/dev/null 2>&1
+_rc=0; run_lite_ctl "$TD/ctl-nosub" 'active,probe' doctor > "$TD/ctl-nosub-out" 2>&1 || _rc=$?
+[ "$_rc" = 2 ] && grep -qi 'subscription' "$TD/ctl-nosub-out" \
+  && ok || fail "doctor degrades on a missing subscription (rc=$_rc)"
+
+# --- status: surfaces mode, version, and the last-run record ---------------------
+mk_ctl_sandbox "$TD/ctl-st"
+run_lite_ctl "$TD/ctl-st" 'active' status > "$TD/ctl-st-out" 2>&1 || :
+grep -q 'v9.9.9' "$TD/ctl-st-out" && grep -q 'pi-lite' "$TD/ctl-st-out" \
+  && grep -q '"ts":"fixture"' "$TD/ctl-st-out" \
+  && ok || fail "status surfaces version + mode + last-run.json"
+
+# --- update: delegates to the REAL updater (lock/kill-switch/dry-run intact) -----
+# The delegation is a real subprocess, so the sandbox rides EXPORTED env and a
+# PATH-appended systemctl fake (nothing real shadows it on CI or dev boxes);
+# dry-run exits before any restart or probe, so no other fake is needed.
+mk_ctl_sandbox "$TD/ctl-upd"
+mkdir -p "$TD/ctl-fakebin"
+printf '#!/bin/sh\nexit 0\n' > "$TD/ctl-fakebin/systemctl"
+chmod +x "$TD/ctl-fakebin/systemctl"
+_rc=0
+(
+  GATEWAY_DATA_DIR="$TD/ctl-upd"; ENV_FILE="$TD/ctl-upd/.env"
+  CONFIG_STATE_DIR="$TD/ctl-upd/config"; LOCK_DIR="$TD/ctl-upd/lock"
+  SUBSCRIPTION_FILE="$TD/ctl-upd/config/subscription.txt"
+  SMG_PI_UNIT_FILE="$TD/ctl-upd/unit.service"; SMG_PI_ARCH=aarch64
+  PATH="$PATH:$TD/ctl-fakebin"
+  export GATEWAY_DATA_DIR ENV_FILE CONFIG_STATE_DIR LOCK_DIR SUBSCRIPTION_FILE \
+    SMG_PI_UNIT_FILE SMG_PI_ARCH PATH
+  LITE_CTL_SELF_DIR="$ROOT/scripts/pi"; LITE_CTL_SOURCE_ONLY=1
+  . "$ROOT/scripts/pi/lite_ctl.sh" || exit 97
+  lite_ctl_main update --dry-run
+) >/dev/null 2>&1 || _rc=$?
+[ "$_rc" = 0 ] && grep -q '"dry_run":1' "$TD/ctl-upd/state/lite/last-run.json" 2>/dev/null \
+  && ok || fail "update verb delegates to auto_update_lite.sh (dry-run recorded, rc=$_rc)"
+
+# --- start/stop: root-gated, drive systemctl -------------------------------------
+mk_ctl_sandbox "$TD/ctl-ss"
+run_lite_ctl "$TD/ctl-ss" '' start >/dev/null 2>&1 || :
+grep -q 'start mihomo-gateway' "$TD/ctl-ss/systemctl.log" 2>/dev/null \
+  && ok || fail "start verb drives systemctl start"
+run_lite_ctl "$TD/ctl-ss" '' stop >/dev/null 2>&1 || :
+grep -q 'stop mihomo-gateway' "$TD/ctl-ss/systemctl.log" 2>/dev/null \
+  && ok || fail "stop verb drives systemctl stop"
+_rc=0
+( GATEWAY_DATA_DIR="$TD/ctl-ss"; ENV_FILE="$TD/ctl-ss/.env"
+  LITE_CTL_SELF_DIR="$ROOT/scripts/pi"; LITE_CTL_SOURCE_ONLY=1
+  . "$ROOT/scripts/pi/lite_ctl.sh" || exit 97
+  is_root() { return 1; }
+  lite_ctl_main start ) >/dev/null 2>&1 || _rc=$?
+[ "$_rc" = 6 ] && ok || fail "start without root exits with the root code (rc=$_rc)"
+
+# --- install-pi.sh status menu: dispatches on the install-mode marker ------------
+# Overrides land AFTER sourcing (the modules would otherwise redefine them);
+# INSTALL_SOURCE_ONLY keeps the interactive entry from running.
+mk_ctl_sandbox "$TD/ctl-menu"
+( GATEWAY_DATA_DIR="$TD/ctl-menu"; ENV_FILE="$TD/ctl-menu/.env"
+  INSTALL_SOURCE_ONLY=1; SMG_INSTALL_ROOT="$ROOT"
+  . "$ROOT/install-pi.sh" || exit 97
+  ui_step() { :; }; ui_say() { :; }; ui_ok() { :; }; ui_warn() { :; }
+  ui_yesno() { [ "${2:-n}" = y ]; }
+  _run_lite_status() { echo LITE >> "$TD/ctl-menu/dispatch.log"; }
+  lifecycle_inspect() { echo COMPOSE >> "$TD/ctl-menu/dispatch.log"; }
+  pi_menu_status_flow ) >/dev/null 2>&1 || :
+grep -q 'LITE' "$TD/ctl-menu/dispatch.log" 2>/dev/null \
+  && ok || fail "status menu: pi-lite marker routes to the lite status"
+grep -q 'COMPOSE' "$TD/ctl-menu/dispatch.log" 2>/dev/null \
+  && fail "status menu: lite install still ran the compose inspection" || ok
+printf '%s\n' pi-compose > "$TD/ctl-menu/state/install-mode"
+( GATEWAY_DATA_DIR="$TD/ctl-menu"; ENV_FILE="$TD/ctl-menu/.env"
+  INSTALL_SOURCE_ONLY=1; SMG_INSTALL_ROOT="$ROOT"
+  . "$ROOT/install-pi.sh" || exit 97
+  ui_step() { :; }; ui_say() { :; }; ui_ok() { :; }; ui_warn() { :; }
+  ui_yesno() { [ "${2:-n}" = y ]; }
+  _run_lite_status() { echo LITE2 >> "$TD/ctl-menu/dispatch.log"; }
+  lifecycle_inspect() { echo COMPOSE2 >> "$TD/ctl-menu/dispatch.log"; }
+  pi_menu_status_flow ) >/dev/null 2>&1 || :
+grep -q 'COMPOSE2' "$TD/ctl-menu/dispatch.log" 2>/dev/null \
+  && ok || fail "status menu: pi-compose marker keeps the compose inspection"
+
 # --- summary --------------------------------------------------------------------
 printf 'pi_installer_check: %d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ] || exit 1
-echo "OK: pi shared seams + install-pi entry + lite runtime + lite updater (gate/swap/rollback/cron) verified"
+echo "OK: pi shared seams + install-pi entry + lite runtime + updater + lite_ctl (doctor/status/dispatch) verified"

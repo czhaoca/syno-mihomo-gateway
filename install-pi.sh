@@ -114,11 +114,28 @@ _pm_banner() {
 
 # _run_doctor - seam for tests; interactively this is the real diagnostics run.
 _run_doctor() { sh "$REPO_ROOT/scripts/doctor.sh"; }
+# Lite-mode counterparts (#21): status/doctor come from lite_ctl, not the
+# docker-based surfaces.
+_run_lite_status() { sh "$REPO_ROOT/scripts/pi/lite_ctl.sh" status; }
+_run_lite_doctor() { sh "$REPO_ROOT/scripts/pi/lite_ctl.sh" doctor; }
 
-# pi_menu_status_flow - read-only status summary + optional doctor run
-# (mirrors install.sh's menu_status_flow; compose-mode surfaces are identical).
+# pi_menu_status_flow - read-only status summary + optional doctor run,
+# dispatched on the install-mode marker: a pi-lite box has no containers to
+# inspect, so it routes to lite_ctl; anything else keeps the compose surfaces
+# (mirrors install.sh's menu_status_flow).
 pi_menu_status_flow() {
   ui_step "$(msg status_title)"
+  if [ "$(cat "$GATEWAY_DATA_DIR/state/install-mode" 2>/dev/null)" = pi-lite ]; then
+    _run_lite_status
+    if ui_yesno "$(msg ask_run_doctor)" n; then
+      if _run_lite_doctor; then
+        ui_ok "$(msg ok_doctor_done)"
+      else
+        ui_warn "$(msgf warn_doctor_rc "$?")"
+      fi
+    fi
+    return 0
+  fi
   [ -f "$ENV_FILE" ] && dotenv_load "$ENV_FILE" >/dev/null 2>&1
   lifecycle_inspect 2>/dev/null
   ui_say "$(msgf status_state "$(stack_state 2>/dev/null)")"

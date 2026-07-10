@@ -87,4 +87,4 @@ steps:
       # + scripts/lib/*.sh; auto_update.sh + setup_network.sh pull in their libs.
       # setup_network.sh is now POSIX /bin/sh (no more bash exception).
       - 'for f in $(find . -path ./.git -prune -o -name "*.sh" -print); do sh -n "$f" || exit 1; done'
-      - shellcheck -x install.sh install-pi.sh scripts/gateway.sh scripts/auto_update.sh scripts/pi/auto_update_lite.sh scripts/install_scheduler.sh scripts/setup_network.sh scripts/render_config.sh scripts/package.sh scripts/doctor.sh scripts/state_diff.sh bootstrap.sh scripts/lib/container.sh scripts/lib/targets.sh
+      - shellcheck -x install.sh install-pi.sh scripts/gateway.sh scripts/auto_update.sh scripts/pi/auto_update_lite.sh scripts/pi/lite_ctl.sh scripts/install_scheduler.sh scripts/setup_network.sh scripts/render_config.sh scripts/package.sh scripts/doctor.sh scripts/state_diff.sh bootstrap.sh scripts/lib/container.sh scripts/lib/targets.sh
