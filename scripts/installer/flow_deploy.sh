@@ -142,6 +142,20 @@ prepare_stack() {
     return 1
   fi
   rm -rf "$_cfg_test"; SMG_CFG_STAGE=""
+
+  # Pre-seed the geo databases so mihomo's FIRST start never blocks on a
+  # cross-border download (GEOSITE/GEOIP rules need them). Non-fatal: mihomo
+  # can still fetch them itself; the doctor reports the cache state.
+  if geodata_cached "$CONFIG_STATE_DIR"; then
+    ui_ok "$(msg ok_geodata)"
+  else
+    ui_info "$(msg info_geodata)"
+    if geodata_preseed "$CONFIG_STATE_DIR"; then
+      ui_ok "$(msg ok_geodata)"
+    else
+      ui_warn "$(msg warn_geodata)"
+    fi
+  fi
   return 0
 }
 

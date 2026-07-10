@@ -39,6 +39,8 @@ INST="$REPO_ROOT/scripts/installer"
 . "$LIB/registry.sh"
 # shellcheck source=scripts/lib/compose.sh
 . "$LIB/compose.sh"
+# shellcheck source=scripts/lib/geodata.sh
+. "$LIB/geodata.sh"
 # shellcheck source=scripts/lib/cloudflared.sh
 . "$LIB/cloudflared.sh"
 # shellcheck source=scripts/lib/targets.sh

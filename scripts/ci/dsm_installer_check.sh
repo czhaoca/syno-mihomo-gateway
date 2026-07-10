@@ -216,6 +216,21 @@ grep -v '^[[:space:]]*#' "$ROOT/scripts/lib/resolve.sh" \
   LIFECYCLE_CONTAINERS_SAFE=1
   resolve_cleanup_containers auto || fail "safe containers rejected for auto"
   [ "$CLEANUP_CONTAINERS_MODE" = auto ] || fail "containers mode not recorded"
+
+  # foreign compose project: preserve would name-conflict inside compose up,
+  # so it is rejected with its own reason; auto (replace) is the remedy and
+  # stays accepted; a matching project or a label-less container passes.
+  LIFECYCLE_COMPOSE_PROJECT=mihomo COMPOSE_PROJECT_NAME=syno-mihomo-gateway
+  resolve_cleanup_containers preserve && fail "foreign-project containers accepted for preserve"
+  [ "$RESOLVE_CLEANUP_REASON" = foreign_project ] \
+    || fail "wrong reason for foreign-project preserve: $RESOLVE_CLEANUP_REASON"
+  resolve_cleanup_containers auto || fail "foreign-project containers rejected for auto"
+  LIFECYCLE_COMPOSE_PROJECT=syno-mihomo-gateway
+  resolve_cleanup_containers preserve || fail "matching-project preserve rejected"
+  LIFECYCLE_COMPOSE_PROJECT=''
+  resolve_cleanup_containers preserve || fail "label-less preserve rejected"
+  unset COMPOSE_PROJECT_NAME
+
   LIFECYCLE_CONTAINERS_PRESENT=0
   resolve_cleanup_containers auto || fail "absent containers rejected"
   [ "$CLEANUP_CONTAINERS_MODE" = preserve ] || fail "absent containers not normalized to preserve"
@@ -237,6 +252,58 @@ grep -v '^[[:space:]]*#' "$ROOT/scripts/lib/resolve.sh" \
   resolve_cleanup_plan preserve preserve || fail "a fully-valid preserve plan was rejected"
   resolve_cleanup_plan bogus preserve && fail "an unknown cleanup mode was accepted"
   [ "$RESOLVE_CLEANUP_REASON" = invalid ] || fail "wrong reason for unknown mode: $RESOLVE_CLEANUP_REASON"
+  exit 0
+) || exit 1
+
+# legacy_install_detect: the SMG_LEGACY_DIR seam wins; a dir missing the
+# config.yaml + docker-compose.yml + subscription.txt triple is not a hit.
+(
+  _LG="$TD/legacy-fixture"; mkdir -p "$_LG"
+  SMG_LEGACY_DIR="$_LG"
+  legacy_install_detect >/dev/null && fail "an empty dir was detected as a legacy install"
+  printf 'x' > "$_LG/config.yaml"; printf 'x' > "$_LG/docker-compose.yml"
+  printf 'x' > "$_LG/subscription.txt"
+  [ "$(legacy_install_detect)" = "$_LG" ] || fail "legacy_install_detect missed the seam dir"
+  exit 0
+) || exit 1
+
+# geodata pre-seed: cache detection, mirror fallback, size sanity - with the
+# network fetch stubbed (the seam _geodata_fetch exists for exactly this).
+(
+  # shellcheck source=scripts/lib/geodata.sh
+  . "$ROOT/scripts/lib/geodata.sh"
+  _GD="$TD/geodata"; mkdir -p "$_GD"
+  FETCH_LOG="$TD/geodata.fetch"; : >"$FETCH_LOG"
+  GEODATA_MIN_BYTES=8
+
+  # cache hit -> a no-op, no fetch attempted
+  printf 'x' > "$_GD/GeoSite.dat"; printf 'x' > "$_GD/geoip.metadb"
+  _geodata_fetch() { echo "$1" >>"$FETCH_LOG"; return 0; }
+  geodata_preseed "$_GD" || fail "cached geodata treated as a miss"
+  [ ! -s "$FETCH_LOG" ] || fail "cache hit still attempted a download"
+
+  # full seed: the first mirror fails, the second delivers a size-sane payload
+  rm -f "$_GD/GeoSite.dat" "$_GD/geoip.metadb"
+  _geodata_fetch() {
+    echo "$1" >>"$FETCH_LOG"
+    case "$1" in *testingcf*) return 1 ;; esac
+    printf 'PAYLOADPAYLOAD' > "$2"
+  }
+  geodata_preseed "$_GD" || fail "mirror-fallback seed failed"
+  [ -s "$_GD/GeoSite.dat" ] || fail "GeoSite.dat was not seeded"
+  [ -s "$_GD/geoip.metadb" ] || fail "geoip.metadb was not seeded"
+  grep -q 'fastly' "$FETCH_LOG" || fail "the second mirror was never tried"
+
+  # an undersized download (CDN error page) is rejected and leaves no partial file
+  rm -f "$_GD/GeoSite.dat" "$_GD/geoip.metadb"
+  _geodata_fetch() { printf 'x' > "$2"; }
+  geodata_preseed "$_GD" && fail "undersized geodata was accepted"
+  [ ! -f "$_GD/GeoSite.dat" ] || fail "undersized GeoSite.dat left in place"
+  [ ! -f "$_GD/.geodata.tmp" ] || fail "temp download was not cleaned up"
+
+  # alternate cached spellings (older cores) count as cached
+  printf 'x' > "$_GD/geosite.dat"; printf 'x' > "$_GD/country.mmdb"
+  geodata_cached "$_GD" || fail "alternate geodata spellings not honored"
   exit 0
 ) || exit 1
 
@@ -824,7 +891,8 @@ done
               express_tz express_images warn_gen_secret_failed \
               warn_secret_empty ask_gen_secret ok_secret_generated warn_secret_none \
               verify_title verify_ok verify_failed verify_skip verify_controller \
-              verify_tun verify_tun_off verify_ui rep_secret_loc warn_dashboard_open; do
+              verify_tun verify_tun_off verify_ui rep_secret_loc warn_dashboard_open \
+              info_geodata ok_geodata warn_geodata prep_foreign_project; do
       [ "$(msg "$_k")" != "$_k" ] \
         || fail "the $_lang catalog lacks '$_k' (msg falls through to the raw key)"
     done
