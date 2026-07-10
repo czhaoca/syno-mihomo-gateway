@@ -444,3 +444,53 @@ If devices use `MIHOMO_IP` as gateway/DNS and mihomo is down, they're cut off. Q
 recovery: point the affected device's gateway/DNS back to the router, then fix mihomo
 (`docker compose --env-file ../syno-mihomo-gateway-data/.env up -d mihomo`, check logs). Consider
 the kill-switch + maintenance windows for risky changes.
+
+## The NAS itself cannot reach vendor services (dead host resolvers)
+
+**Symptom:** DSM cannot reach its vendor services / Package Center; every name lookup on the
+NAS fails; bridge containers (which inherit the NAS's `resolv.conf`) are DNS-dead too — while
+the gateway keeps forwarding LAN clients (they use mihomo's DNS, not the NAS's).
+
+**Cause:** the NAS's own DNS (Control Panel → Network → General) points at resolvers that are
+unreachable from the deploy network — a `1.1.1.1`-only setup on a filtered network is the
+classic case.
+
+**Fix:** set reachable resolvers (domestic ones on a filtered network, e.g. `223.5.5.5` and
+`119.29.29.29`). `doctor` / `gateway.sh doctor --json` now probe every configured resolver
+(the `host_dns` check) and degrade with the dead ones named.
+
+## cloudflared tunnel down although the network is up
+
+**Symptom:** the tunnel stays disconnected even though raw TCP to the tunnel edge works.
+
+**Cause:** bridge containers copy the host `resolv.conf` when they START; with a dead host
+resolver (previous entry) cloudflared cannot resolve the edge hostname.
+
+**Fix:** fix the host DNS, then `docker restart cloudflared`. To decouple permanently, set
+`CF_DNS` in `.env` (comma-separated IPv4s) and run `sudo sh scripts/gateway.sh update --yes` —
+the blue-green replay applies it as `--dns`. `doctor` reports `cloudflared` ok/down/absent
+whenever the container exists.
+
+## First start hangs downloading geo databases
+
+**Symptom:** mihomo never finishes its first start; logs show a stalled geo-database download.
+
+**Cause:** the `GEOSITE,CN` / `GEOIP,CN` rules need the geo databases; when uncached, mihomo
+fetches them at start via a CDN that filtered networks often block.
+
+**Fix:** deploys now pre-seed `GeoSite.dat` + `geoip.metadb` into the data dir with mirror
+fallback (`scripts/lib/geodata.sh`; override the list with `GEODATA_MIRRORS`). `doctor` warns
+(the `geodata` check) while they are uncached; re-running the deploy pre-seeds again.
+
+## Upgrading from a legacy flat install
+
+**Symptom:** after unpacking a release next to an old everything-in-one-folder install,
+`doctor` reports `.env is missing`, and a preserve-mode deploy is refused because the existing
+`mihomo`/`mihomo-ui` containers belong to a **foreign/legacy Compose project**
+(`foreign_project` cleanup reason).
+
+**Fix:** run `sudo sh scripts/migrate_legacy.sh --yes` first (auto-detects the legacy dir;
+`--from DIR` / `--dry-run` supported) — it copies the subscription, geo databases and
+`cache.db` into the data dir and prints `.env` hints, never touching the legacy install.
+Then `sudo sh ./install.sh` → deploy, choosing **automatic cleanup** when the planner flags
+the legacy containers, so the new stack takes over the container names.

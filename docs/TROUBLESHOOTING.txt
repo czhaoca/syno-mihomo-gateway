@@ -211,6 +211,63 @@ DSM 7 scheduled update does not run
     duplicates output and interferes with the updater's own rotation.
 
 --------------------------------------------------------------------------
+The NAS itself cannot reach its vendor services / every lookup fails
+--------------------------------------------------------------------------
+  Cause: the NAS's OWN DNS servers (DSM Control Panel > Network > General)
+         are unreachable from your network. On a filtered network a
+         1.1.1.1-only configuration is a common victim: the NAS then cannot
+         resolve ANY name, so vendor services, package updates and every
+         bridge-network container (they inherit the NAS's resolv.conf) fail
+         at once. The gateway keeps forwarding LAN clients - they use
+         mihomo's own DNS, not the NAS's.
+  Fix:   set reachable resolvers in DSM Control Panel > Network > General
+         (on a filtered network use domestic ones, e.g. 223.5.5.5 and
+         119.29.29.29). The doctor probes every configured NAS resolver
+         and warns about dead ones (the "host DNS" check).
+
+--------------------------------------------------------------------------
+cloudflared tunnel is down although the network is up
+--------------------------------------------------------------------------
+  Cause: bridge containers copy the NAS's resolv.conf when they START. If
+         the NAS's resolver is unreachable (previous entry), cloudflared
+         cannot resolve the tunnel edge and stays disconnected - even when
+         the edge itself is perfectly reachable.
+  Fix:   fix the NAS DNS first, then restart the container:
+         docker restart cloudflared. To make the tunnel independent of the
+         NAS's resolv.conf permanently, set CF_DNS in .env (comma-separated
+         IPv4s; mirror DNS_NAMESERVER) and run:
+         sudo sh scripts/gateway.sh update --yes
+         The doctor reports the tunnel ok/down whenever the container exists.
+
+--------------------------------------------------------------------------
+First start hangs while downloading geo databases
+--------------------------------------------------------------------------
+  Cause: the GEOSITE/GEOIP rules need the geo databases; when they are not
+         cached, mihomo downloads them at start, and on a filtered network
+         that download can stall the whole first start.
+  Fix:   deploys now pre-seed them via CDN mirrors before the first start
+         (override the mirror list with GEODATA_MIRRORS if yours is
+         blocked). The doctor warns while they are not cached; re-running
+         the deploy pre-seeds them again.
+
+--------------------------------------------------------------------------
+Upgrading from an old flat installation (everything in one folder)
+--------------------------------------------------------------------------
+  Cause: very old setups kept config.yaml, subscription.txt, the geo
+         databases and docker-compose.yml in ONE docker-shared folder.
+         Unpacking a release next to it migrates NOTHING by itself: the
+         doctor reports ".env is missing" and the old containers still own
+         the container names, so a preserve-mode deploy is refused
+         (they belong to a foreign/legacy Compose project).
+  Fix:   import the old state first (copies, never moves):
+         sudo sh scripts/migrate_legacy.sh --yes
+         (auto-detects the old folder; --from DIR to point at it;
+         --dry-run to preview). Then run sudo sh ./install.sh and deploy -
+         when the cleanup planner flags the old containers as a
+         legacy/foreign project, choose automatic cleanup so the new stack
+         takes over the names.
+
+--------------------------------------------------------------------------
 Where to look
 --------------------------------------------------------------------------
   * Logs:      ../syno-mihomo-gateway-data/logs/ - install.log (installer),

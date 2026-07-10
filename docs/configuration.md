@@ -61,9 +61,17 @@ renderer fails loudly if any is empty — no DNS is hardcoded in the repo).
 
 | Key | Req | Description | Example |
 |---|:--:|---|---|
-| `DNS_DEFAULT_NAMESERVER` | ✅ | Bootstrap resolvers (plain IPs, used to resolve the others). | `1.1.1.1,1.0.0.1` |
-| `DNS_NAMESERVER` | ✅ | Primary/domestic resolvers. | `1.1.1.1,1.0.0.1` |
-| `DNS_FALLBACK` | ✅ | Overseas / anti-pollution resolvers. | `1.1.1.1,1.0.0.1` |
+| `DNS_DEFAULT_NAMESERVER` | ✅ | Bootstrap resolvers (plain IPs, used to resolve the others). | `223.5.5.5,119.29.29.29` |
+| `DNS_NAMESERVER` | ✅ | Primary/domestic resolvers. | `223.5.5.5,119.29.29.29` |
+| `DNS_FALLBACK` | ✅ | Overseas / anti-pollution resolvers; DoH (`https://…`) / DoT (`tls://…`) entries are allowed and preferred. | `https://1.1.1.1/dns-query,tls://8.8.8.8:853` |
+
+The shipped `.env.example` defaults match the mainland-China posture of `REGISTRY_MODE=acr`
+(plain-IP domestic bootstrap/domestic lists, encrypted anti-pollution fallback); on an
+unfiltered network `1.1.1.1,8.8.8.8` everywhere is fine. These settings configure the
+**gateway** — the NAS's own resolvers (DSM Control Panel → Network) must be reachable too,
+and `doctor` now probes them (`host_dns`). Deploys also pre-seed the geo databases via CDN
+mirrors (`GEODATA_MIRRORS` overrides the mirror list) so a first start never blocks on a
+cross-border fetch.
 
 ### Container images
 
@@ -136,6 +144,7 @@ the gate is running + stable restarts + the image's own healthcheck when defined
 | `CF_CONTAINER_NAME` | | Canonical name of the running cloudflared container. | `cloudflared` |
 | `CF_TUNNEL_TOKEN` | 🔒 | Token **override**. Blank = reuse the token from the running container (preferred) — the installer detects an existing `cloudflared` container and offers reuse, only requiring a token when provisioning the first one. Required for first-time provisioning when no container exists. | `` |
 | `CF_HEALTH_TIMEOUT` | | Seconds to wait for the new connector to report "connected" before cutover. | `60` |
+| `CF_DNS` | | Explicit `--dns` resolvers for the tunnel container (comma-separated IPv4s) so it stops inheriting the host's resolv.conf — an unreachable host resolver otherwise silently kills the tunnel. Applied on the next provision/blue-green update; empty = inherit. | `223.5.5.5,119.29.29.29` |
 
 ### Reporting & system
 

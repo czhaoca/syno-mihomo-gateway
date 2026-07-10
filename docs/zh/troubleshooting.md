@@ -389,3 +389,49 @@ IP，在 Wi-Fi 上也能工作。这是树莓派特有的快速失败；
 ## 整个家庭断网
 
 如果设备使用 `MIHOMO_IP` 作为网关 / DNS 而 mihomo 宕机，它们就会被切断连接。最快的恢复方法：将受影响设备的网关 / DNS 改回路由器，然后修复 mihomo（`docker compose --env-file ../syno-mihomo-gateway-data/.env up -d mihomo`，检查日志）。对于有风险的改动，请考虑使用 kill-switch（紧急切断）+ 维护窗口。
+
+## NAS 自身无法访问厂商服务（主机解析器失效）
+
+**症状：** DSM 无法访问厂商服务/套件中心；NAS 上所有域名解析失败；bridge 容器（继承 NAS 的
+`resolv.conf`）也全部无法解析——而网关仍在正常转发局域网客户端（它们用的是 mihomo 的 DNS，
+不是 NAS 的）。
+
+**原因：** NAS 自己的 DNS（控制面板 → 网络 → 常规）指向了在当前网络不可达的解析器——在有
+过滤的网络上只配 `1.1.1.1` 是典型案例。
+
+**解决：** 设置可达的解析器（有过滤的网络用国内解析器，如 `223.5.5.5` 与 `119.29.29.29`）。
+`doctor` / `gateway.sh doctor --json` 现在会逐一探测配置的解析器（`host_dns` 检查），并点名
+失效者、降级报告。
+
+## 网络正常但 cloudflared 隧道掉线
+
+**症状：** 到隧道边缘节点的原始 TCP 明明可达，隧道却一直断开。
+
+**原因：** bridge 容器在**启动时**复制主机的 `resolv.conf`；主机解析器失效（见上一条）时
+cloudflared 无法解析边缘节点域名。
+
+**解决：** 先修复主机 DNS，然后 `docker restart cloudflared`。若要永久解耦，在 `.env` 设置
+`CF_DNS`（逗号分隔 IPv4）并执行 `sudo sh scripts/gateway.sh update --yes`——蓝绿重建会把它
+作为 `--dns` 应用。只要容器存在，`doctor` 就报告 `cloudflared` 的 ok/down/absent。
+
+## 首次启动卡在下载 geo 数据库
+
+**症状：** mihomo 首次启动迟迟不能完成；日志显示 geo 数据库下载停滞。
+
+**原因：** `GEOSITE,CN` / `GEOIP,CN` 规则需要 geo 数据库；未缓存时 mihomo 会在启动时经由
+常被过滤网络屏蔽的 CDN 下载。
+
+**解决：** 部署现在会以镜像回退的方式把 `GeoSite.dat` + `geoip.metadb` 预下载到数据目录
+（`scripts/lib/geodata.sh`；`GEODATA_MIRRORS` 可覆盖镜像列表）。未缓存时 `doctor` 会警告
+（`geodata` 检查）；重新部署会再次预下载。
+
+## 从旧的平铺安装升级
+
+**症状：** 在旧的“所有文件一个文件夹”安装旁解压新版本后，`doctor` 报告 `.env is missing`，
+且保留模式的部署被拒绝——现有 `mihomo`/`mihomo-ui` 容器属于**旧的/外来 Compose 项目**
+（`foreign_project` 清理原因）。
+
+**解决：** 先执行 `sudo sh scripts/migrate_legacy.sh --yes`（自动探测旧目录；支持
+`--from DIR` / `--dry-run`）——它把订阅、geo 数据库和 `cache.db` 复制进数据目录并打印
+`.env` 提示，绝不改动旧安装。然后 `sudo sh ./install.sh` → 部署，当规划器把旧容器标记为
+旧版/外来项目时选择**自动清理**，让新栈接管容器名。

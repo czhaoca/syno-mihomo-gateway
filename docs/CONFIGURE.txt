@@ -100,6 +100,16 @@ DNS settings
       Comma-separated lists of DNS servers. These control how the gateway
       resolves names. A bad DNS configuration can leave the gateway
       unhealthy after deploy.
+      The shipped defaults are mainland-China-safe: plain-IP domestic
+      resolvers for the bootstrap and domestic lists, and encrypted DoH/DoT
+      entries (https://... or tls://... URLs are allowed) for the
+      anti-pollution fallback. On an unfiltered network you may prefer
+      e.g. 1.1.1.1,8.8.8.8 for all three.
+      These settings are for the GATEWAY only. The NAS's OWN DNS lives in
+      DSM Control Panel > Network > General and must also point at
+      resolvers reachable from your network - a NAS whose only resolver is
+      unreachable cannot reach its vendor services or update anything
+      (see TROUBLESHOOTING.txt; the doctor probes the NAS resolvers too).
 
 --------------------------------------------------------------------------
 General
@@ -196,6 +206,14 @@ Optional / advanced: tunnel
       image step asks "Also manage a cloudflared tunnel container? (advanced,
       optional)" -- default No. Answering yes collects CF_TAG and a tunnel
       token (Enter reuses the token of an already-running container).
+
+  CF_DNS
+      Optional: comma-separated IPv4 resolvers passed to the tunnel
+      container as docker --dns, so it stops inheriting the NAS's own
+      resolv.conf (an unreachable NAS resolver otherwise silently kills the
+      tunnel). Takes effect on the next provision or blue-green update
+      (sudo sh scripts/gateway.sh update --yes). Empty keeps the current
+      behavior. Suggestion: mirror DNS_NAMESERVER.
 
 --------------------------------------------------------------------------
 Subscription URL
