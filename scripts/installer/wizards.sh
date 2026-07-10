@@ -86,9 +86,9 @@ wizard_express() {
   [ -n "$_we_ip" ] || return 1
   _we_web="$(env_get WEB_UI_PORT 2>/dev/null || echo 8080)"
   _we_ctl="$(env_get CONTROLLER_PORT 2>/dev/null || echo 9090)"
-  _we_dns_b="$(env_get DNS_DEFAULT_NAMESERVER 2>/dev/null || echo 1.1.1.1)"
-  _we_dns_d="$(env_get DNS_NAMESERVER 2>/dev/null || echo 1.1.1.1)"
-  _we_dns_f="$(env_get DNS_FALLBACK 2>/dev/null || echo 1.1.1.1)"
+  _we_dns_b="$(env_get DNS_DEFAULT_NAMESERVER 2>/dev/null || echo 223.5.5.5,119.29.29.29)"
+  _we_dns_d="$(env_get DNS_NAMESERVER 2>/dev/null || echo 223.5.5.5,119.29.29.29)"
+  _we_dns_f="$(env_get DNS_FALLBACK 2>/dev/null || echo 'https://1.1.1.1/dns-query,tls://8.8.8.8:853')"
   _we_tz="$(env_get TZ 2>/dev/null || echo Asia/Shanghai)"
 
   ui_step "$(msg step_express)"
@@ -185,11 +185,11 @@ wizard_env() {
     _secret_guard   # empty -> offer to generate (explicit opt-out preserved)
   fi
 
-  ui_ask_validated DNS_DEFAULT_NAMESERVER "$(msg q_dns_bootstrap)" "$(env_get DNS_DEFAULT_NAMESERVER || echo 1.1.1.1)" is_dns_list
+  ui_ask_validated DNS_DEFAULT_NAMESERVER "$(msg q_dns_bootstrap)" "$(env_get DNS_DEFAULT_NAMESERVER || echo 223.5.5.5,119.29.29.29)" is_dns_list
   env_set DNS_DEFAULT_NAMESERVER "$DNS_DEFAULT_NAMESERVER"
-  ui_ask_validated DNS_NAMESERVER "$(msg q_dns_domestic)" "$(env_get DNS_NAMESERVER || echo 1.1.1.1)" is_dns_list
+  ui_ask_validated DNS_NAMESERVER "$(msg q_dns_domestic)" "$(env_get DNS_NAMESERVER || echo 223.5.5.5,119.29.29.29)" is_dns_list
   env_set DNS_NAMESERVER "$DNS_NAMESERVER"
-  ui_ask_validated DNS_FALLBACK "$(msg q_dns_fallback)" "$(env_get DNS_FALLBACK || echo 1.1.1.1)" is_dns_list
+  ui_ask_validated DNS_FALLBACK "$(msg q_dns_fallback)" "$(env_get DNS_FALLBACK || echo 'https://1.1.1.1/dns-query,tls://8.8.8.8:853')" is_dns_list
   env_set DNS_FALLBACK "$DNS_FALLBACK"
 
   ui_ask TZ "$(msg q_tz)" "$(env_get TZ || echo Asia/Shanghai)"
@@ -391,9 +391,9 @@ precheck_env() {
   fi
   _pc_need WEB_UI_PORT     is_port     q_web_port        8080
   _pc_need CONTROLLER_PORT is_port     q_controller_port 9090
-  _pc_need DNS_DEFAULT_NAMESERVER is_dns_list q_dns_bootstrap 1.1.1.1
-  _pc_need DNS_NAMESERVER         is_dns_list q_dns_domestic  1.1.1.1
-  _pc_need DNS_FALLBACK           is_dns_list q_dns_fallback  1.1.1.1
+  _pc_need DNS_DEFAULT_NAMESERVER is_dns_list q_dns_bootstrap 223.5.5.5,119.29.29.29
+  _pc_need DNS_NAMESERVER         is_dns_list q_dns_domestic  223.5.5.5,119.29.29.29
+  _pc_need DNS_FALLBACK           is_dns_list q_dns_fallback  'https://1.1.1.1/dns-query,tls://8.8.8.8:853'
   # Image refs must resolve or compose fails closed (${MIHOMO_IMAGE:?}).
   if [ -z "$(env_get MIHOMO_IMAGE 2>/dev/null || echo '')" ] \
      || [ -z "$(env_get METACUBEXD_IMAGE 2>/dev/null || echo '')" ]; then

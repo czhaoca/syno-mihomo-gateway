@@ -12,7 +12,9 @@ Enforces:
     incl. the YAML double-quoted-scalar escaping — url renders inside `url: "..."`);
   * a controller secret containing `&`, `|`, `"` AND `\` renders verbatim
     (secret renders inside `secret: "..."`, so `"`/`\` must be YAML-escaped);
-  * external-controller + DNS sections are present and correctly typed (lists);
+  * external-controller + DNS sections round-trip the injected lists EXACTLY,
+    including DoH (https://) / DoT (tls://) URL entries in the fallback list
+    (the China-safe .env defaults ship exactly that shape);
   * TUN is ON by default (transparent gateway): the DEFAULT render INCLUDES the tun block
     with stack: system (which does NOT hijack the controller reply path), allow-lan true,
     and dns enhanced-mode fake-ip; TUN_ENABLE=false OMITS the block (plain proxy);
@@ -46,6 +48,13 @@ SUB_URL = 'https://h.example.com/api/v1/subscribe?token=a&flag=1&list=clash&note
 SUB_LINE = f"Default={SUB_URL}"
 SECRET = 's3cr&t|"x\\y'  # & | render via esc(); " and \ render via yaml_dq()
 
+# DNS fixtures mirror the shipped .env.example shape: plain-IP comma lists for
+# bootstrap/domestic, DoH + DoT URLs for the anti-pollution fallback. The URLs
+# must survive esc() (sed) and parse as YAML flow-sequence STRING scalars.
+DNS_DEFAULT = ["114.114.114.114", "223.5.5.5"]
+DNS_NS = ["114.114.114.114", "223.5.5.5"]
+DNS_FB = ["https://1.1.1.1/dns-query", "tls://8.8.8.8:853"]
+
 
 def fail(msg: str):
     print(f"FAIL: {msg}")
@@ -65,9 +74,9 @@ def render(raw: str, tun_auto_redirect: str | None = None,
             "MIHOMO_CONFIG_DIR": str(tdp),
             "CONTROLLER_PORT": "9090",
             "CONTROLLER_SECRET": SECRET,
-            "DNS_DEFAULT_NAMESERVER": "114.114.114.114,223.5.5.5",
-            "DNS_NAMESERVER": "114.114.114.114,223.5.5.5",
-            "DNS_FALLBACK": "8.8.8.8,8.8.4.4",
+            "DNS_DEFAULT_NAMESERVER": ",".join(DNS_DEFAULT),
+            "DNS_NAMESERVER": ",".join(DNS_NS),
+            "DNS_FALLBACK": ",".join(DNS_FB),
         }
         env.pop("TUN_AUTO_REDIRECT", None)
         env.pop("TUN_ENABLE", None)
@@ -140,12 +149,16 @@ def main() -> None:
     if cors.get("allow-private-network") is not True:
         fail("external-controller-cors.allow-private-network must be true (Chrome PNA preflight)")
 
-    # 5) DNS lists.
+    # 5) DNS lists must round-trip EXACTLY: the comma list splits into flow-seq
+    # items, and DoH/DoT URL entries stay STRING scalars (a YAML mis-parse would
+    # surface here as a dict or a mangled token).
     dns = doc.get("dns") or {}
-    for field in ("default-nameserver", "nameserver", "fallback"):
+    for field, expected in (("default-nameserver", DNS_DEFAULT),
+                            ("nameserver", DNS_NS),
+                            ("fallback", DNS_FB)):
         servers = dns.get(field)
-        if not isinstance(servers, list) or not servers:
-            fail(f"dns.{field} did not parse as a non-empty list: {servers!r}")
+        if servers != expected:
+            fail(f"dns.{field} did not round-trip: got {servers!r}, expected {expected!r}")
 
     # 6) DEFAULT render is TUN-ON (this is a transparent gateway). The tun block MUST be
     # present with stack: system, which (unlike mixed/gvisor) does NOT hijack the

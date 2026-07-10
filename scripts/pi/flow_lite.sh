@@ -42,11 +42,11 @@ pi_lite_wizard() {
     _secret_guard
   fi
 
-  ui_ask_validated DNS_DEFAULT_NAMESERVER "$(msg q_dns_bootstrap)" "$(env_get DNS_DEFAULT_NAMESERVER || echo 1.1.1.1)" is_dns_list
+  ui_ask_validated DNS_DEFAULT_NAMESERVER "$(msg q_dns_bootstrap)" "$(env_get DNS_DEFAULT_NAMESERVER || echo 223.5.5.5,119.29.29.29)" is_dns_list
   env_set DNS_DEFAULT_NAMESERVER "$DNS_DEFAULT_NAMESERVER"
-  ui_ask_validated DNS_NAMESERVER "$(msg q_dns_domestic)" "$(env_get DNS_NAMESERVER || echo 1.1.1.1)" is_dns_list
+  ui_ask_validated DNS_NAMESERVER "$(msg q_dns_domestic)" "$(env_get DNS_NAMESERVER || echo 223.5.5.5,119.29.29.29)" is_dns_list
   env_set DNS_NAMESERVER "$DNS_NAMESERVER"
-  ui_ask_validated DNS_FALLBACK "$(msg q_dns_fallback)" "$(env_get DNS_FALLBACK || echo 1.1.1.1)" is_dns_list
+  ui_ask_validated DNS_FALLBACK "$(msg q_dns_fallback)" "$(env_get DNS_FALLBACK || echo 'https://1.1.1.1/dns-query,tls://8.8.8.8:853')" is_dns_list
   env_set DNS_FALLBACK "$DNS_FALLBACK"
 
   ui_ask TZ "$(msg q_tz)" "$(env_get TZ || echo Asia/Shanghai)"
