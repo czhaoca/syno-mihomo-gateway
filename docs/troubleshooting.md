@@ -482,6 +482,20 @@ fetches them at start via a CDN that filtered networks often block.
 fallback (`scripts/lib/geodata.sh`; override the list with `GEODATA_MIRRORS`). `doctor` warns
 (the `geodata` check) while they are uncached; re-running the deploy pre-seeds again.
 
+## Niche domestic site slow or unreachable after enabling no-resolve
+
+**Symptom:** with `DNS_GEOIP_NO_RESOLVE=true`, a small/regional Chinese site loads slowly or
+refuses access, while the big Chinese sites are fine.
+
+**Cause:** `no-resolve` stops the `GEOIP,CN,DIRECT` rule from resolving domains, so a CN domain
+missing from `geosite:cn` no longer short-circuits to DIRECT — it falls through to `MATCH` and
+rides the proxy. That is the knob's documented trade-off, not a fault: the site usually still
+works (tunneled), and only breaks when it rejects out-of-country visitors.
+
+**Fix:** set `DNS_GEOIP_NO_RESOLVE=false` in `.env` and redeploy — the rule resolves unlisted
+domains via the domestic resolvers again, which is the privacy residual documented in the
+[configuration DNS matrix](configuration.md#dns-injected-into-the-config-template).
+
 ## Upgrading from a legacy flat install
 
 **Symptom:** after unpacking a release next to an old everything-in-one-folder install,

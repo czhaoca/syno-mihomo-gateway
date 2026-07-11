@@ -97,14 +97,43 @@ DNS settings
   DNS_DEFAULT_NAMESERVER
   DNS_NAMESERVER
   DNS_FALLBACK
+  DNS_CN_NAMESERVER
+  DNS_FOREIGN_NAMESERVER
       Comma-separated lists of DNS servers. These control how the gateway
-      resolves names. A bad DNS configuration can leave the gateway
-      unhealthy after deploy.
-      The shipped defaults are mainland-China-safe: plain-IP domestic
-      resolvers for the bootstrap and domestic lists, and encrypted DoH/DoT
-      entries (https://... or tls://... URLs are allowed) for the
-      anti-pollution fallback. On an unfiltered network you may prefer
-      e.g. 1.1.1.1,8.8.8.8 for all three.
+      resolves names; a bad DNS configuration can leave the gateway
+      unhealthy after deploy. The shipped defaults are mainland-China-safe
+      and privacy-hardened: every entry is an IP or an encrypted DoH URL
+      on an IP (nothing needs resolving first), and an entry ending in
+      #PROXY is dialed THROUGH the proxy tunnel instead of directly.
+      DNS_CN_NAMESERVER / DNS_FOREIGN_NAMESERVER are the split-horizon
+      pair: Chinese-list names resolve only domestically, foreign-list
+      names only via the tunnel. Set BOTH or NEITHER (neither = the older
+      all-domestic behavior; exactly one refuses to render).
+      Keep DNS_NAMESERVER domestic and never #PROXY-suffixed: it also
+      resolves the airport node names BEFORE any proxy exists, so a
+      tunneled entry there can dead-end a fresh start.
+
+  Who can see your DNS queries (with the shipped defaults)
+      * AliDNS (Alibaba) / DNSPod (Tencent): names on the China list,
+        over encrypted DoH - plus names on NEITHER list, because the
+        "is this IP Chinese?" routing rule still resolves those locally.
+        Foreign-list names never reach them.
+      * Your ISP / anyone on the wire: only that the gateway talks to
+        well-known resolver IPs over encryption - not the names you
+        look up.
+      * The airport operator: the foreign traffic it proxies anyway,
+        which now includes your tunneled foreign DNS.
+      * Cloudflare / Google (the foreign resolvers): foreign-list names,
+        arriving through the tunnel - they see the airport's address,
+        not your home address.
+
+  DNS_GEOIP_NO_RESOLVE
+      true stops the routing rule from resolving unlisted names locally,
+      closing the residual above. Trade-off: a Chinese site missing from
+      the built-in China list goes through the proxy instead of directly
+      (usually just slower - see TROUBLESHOOTING.txt). Keep false unless
+      that residual matters to you. Only true or false.
+
       These settings are for the GATEWAY only. The NAS's OWN DNS lives in
       DSM Control Panel > Network > General and must also point at
       resolvers reachable from your network - a NAS whose only resolver is

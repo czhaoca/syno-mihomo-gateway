@@ -251,6 +251,21 @@ First start hangs while downloading geo databases
          the deploy pre-seeds them again.
 
 --------------------------------------------------------------------------
+Niche domestic site slow or unreachable after enabling no-resolve
+--------------------------------------------------------------------------
+  Cause: DNS_GEOIP_NO_RESOLVE=true stops the "is this IP Chinese?" rule
+         from resolving names, so a Chinese site MISSING from the built-in
+         China domain list no longer short-circuits to a direct
+         connection - it rides the proxy tunnel like a foreign site.
+         Usually it still works, just slower; it only breaks when the
+         site rejects out-of-country visitors.
+  Fix:   set DNS_GEOIP_NO_RESOLVE=false in .env and redeploy (install.sh
+         > modify an existing deployment). That restores the direct route,
+         at the cost of the gateway resolving unlisted names through the
+         domestic resolvers again (see CONFIGURE.txt, "Who can see your
+         DNS queries").
+
+--------------------------------------------------------------------------
 Upgrading from an old flat installation (everything in one folder)
 --------------------------------------------------------------------------
   Cause: very old setups kept config.yaml, subscription.txt, the geo

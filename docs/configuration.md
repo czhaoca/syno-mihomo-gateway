@@ -56,22 +56,48 @@ backslashes round-trip safely. When editing by hand, keep one `KEY=VALUE` assign
 
 ### DNS (injected into the config template)
 
-Comma-separated lists → rendered as YAML flow sequences. **All three are required** (the
-renderer fails loudly if any is empty — no DNS is hardcoded in the repo).
+Comma-separated lists → rendered as YAML flow sequences. **The first three are required**
+(the renderer fails loudly if any is empty — no DNS is hardcoded in the repo). A `#PROXY`
+suffix on a server is mihomo's proxy-group fragment syntax: that resolver is dialed
+**through** the proxy group literally named `PROXY` in the shipped template (rename both
+together). Every shipped entry is a plain IP or a **DoH-on-IP** URL, so no entry depends on
+resolving a hostname first — no bootstrap chicken-and-egg on a cold start.
 
 | Key | Req | Description | Example |
 |---|:--:|---|---|
-| `DNS_DEFAULT_NAMESERVER` | ✅ | Bootstrap resolvers (plain IPs, used to resolve the others). | `223.5.5.5,119.29.29.29` |
-| `DNS_NAMESERVER` | ✅ | Primary/domestic resolvers. | `223.5.5.5,119.29.29.29` |
-| `DNS_FALLBACK` | ✅ | Overseas / anti-pollution resolvers; DoH (`https://…`) / DoT (`tls://…`) entries are allowed and preferred. | `https://1.1.1.1/dns-query,tls://8.8.8.8:853` |
+| `DNS_DEFAULT_NAMESERVER` | ✅ | Bootstrap resolvers — used only to resolve DoH/DoT server **hostnames** appearing elsewhere in this section (idle while every entry is IP-hosted). Must stay plain-IP, domestic-reachable, **untunneled**. | `223.5.5.5,119.29.29.29` |
+| `DNS_NAMESERVER` | ✅ | The general upstream, **and** — rendered as `proxy-server-nameserver` — what resolves the airport node hostnames before any proxy exists (see below). DoH-on-IP, domestic, **never** `#PROXY`-suffixed. | `https://223.5.5.5/dns-query,https://120.53.53.53/dns-query` |
+| `DNS_FALLBACK` | ✅ | Overseas / anti-pollution resolvers, consulted when an answer's geoip is not CN. Tunneled by default — dialed direct from a filtered network, they are unstable (the 2026-07-10 outage); through the tunnel they are fast. | `https://1.1.1.1/dns-query#PROXY,tls://8.8.8.8:853#PROXY` |
+| `DNS_CN_NAMESERVER` | | **Split-horizon pair (a):** domains on mihomo's `geosite:cn` list resolve ONLY here — domestic, dialed direct. Set together with `DNS_FOREIGN_NAMESERVER` or not at all: exactly one set refuses to render; **neither** set renders byte-identical to the pre-1.3.8 config (existing `.env` files keep working unchanged). | `https://223.5.5.5/dns-query,https://120.53.53.53/dns-query` |
+| `DNS_FOREIGN_NAMESERVER` | | **Split-horizon pair (b):** domains on `geosite:geolocation-!cn` resolve ONLY here — overseas, tunneled. Those names never reach a domestic operator at all. | `https://1.1.1.1/dns-query#PROXY,https://8.8.8.8/dns-query#PROXY` |
+| `DNS_GEOIP_NO_RESOLVE` | | `true` renders `no-resolve` onto the `GEOIP,CN,DIRECT` rule so it stops forcing local lookups of domains on **neither** geosite list. Trade-off: CN domains missing from `geosite:cn` lose the direct short-circuit and ride the proxy via `MATCH` (see [troubleshooting](troubleshooting.md#niche-domestic-site-slow-or-unreachable-after-enabling-no-resolve)). Only lowercase `true`/`false`. | `false` |
+
+**Who can observe your DNS queries** (with the shipped split-horizon defaults):
+
+| Observer | Sees | What changes it |
+|---|---|---|
+| Domestic resolver operators — AliDNS (Alibaba), DNSPod (Tencent) | CN-listed domain names, over encrypted DoH — **plus** domains on *neither* geosite list, because the `GEOIP,CN` routing rule resolves those locally just to test "is this IP in CN?". Foreign-listed names never arrive here. | `DNS_GEOIP_NO_RESOLVE=true` closes the neither-list residual. Unsetting the split-horizon pair sends **all** names here (pre-1.3.8 behavior). |
+| Your ISP / anyone on the wire path | Only that the gateway talks DoH/DoT to well-known resolver IPs — the query names are encrypted, and the tunneled entries do not even appear as DNS on the wire. | Plain-UDP entries (e.g. bare `223.5.5.5` in `DNS_NAMESERVER`) would put names back on the wire; the shipped defaults avoid that. |
+| Airport (proxy) operator | The foreign connections it proxies anyway, which now include your tunneled foreign/fallback DNS. The subscription-refresh fetch is dialed direct (recorded residual — its SNI is wire-visible). | Inherent to proxying — choose the airport accordingly. |
+| Foreign DoH vendors — Cloudflare, Google | Foreign-listed domain names, arriving **through the tunnel** (they observe the airport's exit IP, not your home IP). | The vendor set in `DNS_FOREIGN_NAMESERVER` / `DNS_FALLBACK` is yours to edit. |
+
+**`proxy-server-nameserver` — the cold-start invariant.** The rendered config reuses
+`DNS_NAMESERVER` as mihomo's `proxy-server-nameserver`: airport node hostnames resolve via the
+domestic list, dialed **direct**, bypassing the fallback-filter. Node IPs are usually non-CN, so
+the geoip filter would discard the domestic answer and wait for the fallback resolvers — which
+are tunneled (or, dialed direct, filtered), i.e. unreachable **before any node is up**. Without
+this, a fresh start or an expired node cache dead-ends with `dns resolve failed` on every node —
+observed in production (2026-07-10). This is why `DNS_NAMESERVER` must stay domestic and must
+never carry a `#PROXY` fragment; CI asserts both properties on every rendered variant.
 
 The shipped `.env.example` defaults match the mainland-China posture of `REGISTRY_MODE=acr`
-(plain-IP domestic bootstrap/domestic lists, encrypted anti-pollution fallback); on an
-unfiltered network `1.1.1.1,8.8.8.8` everywhere is fine. These settings configure the
-**gateway** — the NAS's own resolvers (DSM Control Panel → Network) must be reachable too,
-and `doctor` now probes them (`host_dns`). Deploys also pre-seed the geo databases via CDN
-mirrors (`GEODATA_MIRRORS` overrides the mirror list) so a first start never blocks on a
-cross-border fetch.
+(split-horizon on, everything encrypted, foreign path tunneled); on an unfiltered network
+`1.1.1.1,8.8.8.8` everywhere — with the split-horizon pair left unset — is fine. These settings
+configure the **gateway** — the NAS's own resolvers (DSM Control Panel → Network) must be
+reachable too, and `doctor` probes them (`host_dns`). Deploys also pre-seed the geo databases
+via CDN mirrors (`GEODATA_MIRRORS` overrides the mirror list) so a first start never blocks on
+a cross-border fetch — with split-horizon on, the `geosite:` lists in `nameserver-policy` make
+that pre-seed load-bearing for DNS itself.
 
 ### Container images
 

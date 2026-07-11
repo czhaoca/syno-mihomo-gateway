@@ -425,6 +425,19 @@ cloudflared 无法解析边缘节点域名。
 （`scripts/lib/geodata.sh`；`GEODATA_MIRRORS` 可覆盖镜像列表）。未缓存时 `doctor` 会警告
 （`geodata` 检查）；重新部署会再次预下载。
 
+## 开启 no-resolve 后小众国内网站变慢或打不开
+
+**症状：** 设 `DNS_GEOIP_NO_RESOLVE=true` 后，某个小众/地方性国内网站变慢或拒绝访问，
+而大型国内网站一切正常。
+
+**原因：** `no-resolve` 让 `GEOIP,CN,DIRECT` 规则不再解析域名，于是 `geosite:cn` 漏收的
+国内域名不再走 DIRECT 捷径——它落到 `MATCH` 上、经代理访问。这是该开关已写明的代价，
+不是故障：网站通常仍可用（走隧道），只有当它拒绝境外访客时才会打不开。
+
+**解决：** 在 `.env` 设 `DNS_GEOIP_NO_RESOLVE=false` 并重新部署——规则恢复为经国内解析器
+解析未命中的域名，即[配置 DNS 矩阵](configuration.md#dns注入到配置模板中)中记录的隐私
+残余。
+
 ## 从旧的平铺安装升级
 
 **症状：** 在旧的“所有文件一个文件夹”安装旁解压新版本后，`doctor` 报告 `.env is missing`，
