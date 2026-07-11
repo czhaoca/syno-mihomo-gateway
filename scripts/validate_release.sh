@@ -31,6 +31,12 @@
 # every .env key (lib sourcing + load_env), an inherited REPO_ROOT breaks the
 # childrens' lib locators, and docker compose lets process env override
 # --env-file - both bit validation run 2.
+# PROXY-group egress probes fire only after a group-wide url-test kick, and
+# the parked caches are RESTORED after the cold-start block, never dropped:
+# cache.db carries the dashboard-selected node, and the template's `auto`
+# url-test group is lazy - with the selection wiped and zero LAN traffic
+# after a recreate, every probe measures an untested default node that no
+# real client would ride - both bit validation run 3.
 set -u
 
 STAGE="${SMG_STAGE:-/volume1/docker/smg-staging}"
@@ -88,6 +94,25 @@ run_scrubbed() { env -i PATH="$PATH" HOME="${HOME:-/tmp}" "$@"; }
 # anything else (e.g. 1 = the script itself crashed while sourcing) must
 # FAIL, never pass (run 2's lax "!= 3" gate accepted a crash as a pass).
 doctor_rc_ok() { case "$1" in 0|2) return 0 ;; *) return 1 ;; esac; }
+
+# Result accumulation. The separator is the ASCII unit separator, which never
+# appears in a message - run 3 used '|' and the summary split every doctor
+# message ("rc 0 (0 healthy | 2 degraded)") across two lines.
+US=$(printf '\037')
+PASS=""; FAIL=""
+ok()  { echo "PASS: $*"; PASS="$PASS$US$*"; }
+bad() { echo "FAIL: $*"; FAIL="$FAIL$US$*"; }
+say() { echo; echo "=== $* ==="; }
+
+# unpark PATH - put PATH back from PATH.v138park (file or directory),
+# replacing whatever the cold run rebuilt; no-op without a park. Run 3
+# dropped the park on pass, which reset the PROXY selector to the group
+# default and lost the owner's dashboard-selected node.
+unpark() {
+  [ -e "$1.v138park" ] || return 0
+  rm -rf "$1"
+  mv "$1.v138park" "$1"
+}
 
 # ---- self-test (CI: unprivileged, no docker) ---------------------------------
 
@@ -176,9 +201,35 @@ EOF
     if doctor_rc_ok "$_rc"; then st_bad "doctor_rc_ok accepted rc $_rc"; else st_ok; fi
   done
 
+  # 7) summary accumulator: a message containing '|' must render as ONE line
+  #    (run 3's summary split the doctor messages at every pipe)
+  PASS=""; FAIL=""
+  ok "doctor rc 0 (0 healthy | 2 degraded)" >/dev/null
+  ok "second entry" >/dev/null
+  _n=$(printf '%s\n' "$PASS" | tr "$US" '\n' | sed '/^$/d' | wc -l | tr -d ' ')
+  if [ "$_n" = 2 ]; then st_ok; else st_bad "summary accumulator rendered $_n lines, want 2"; fi
+  PASS=""; FAIL=""
+
+  # 8) unpark restores the parked copy over the rebuilt one (file and dir)
+  #    and is a no-op without a park
+  printf 'rebuilt' > "$TMP/cache.db"; printf 'owner' > "$TMP/cache.db.v138park"
+  unpark "$TMP/cache.db"
+  if [ "$(cat "$TMP/cache.db")" = owner ] && [ ! -e "$TMP/cache.db.v138park" ]; then
+    st_ok
+  else st_bad "unpark(file) did not restore the park"; fi
+  mkdir -p "$TMP/proxies" "$TMP/proxies.v138park"
+  printf 'rebuilt' > "$TMP/proxies/p.yaml"; printf 'owner' > "$TMP/proxies.v138park/p.yaml"
+  unpark "$TMP/proxies"
+  if [ "$(cat "$TMP/proxies/p.yaml")" = owner ] && [ ! -e "$TMP/proxies.v138park" ]; then
+    st_ok
+  else st_bad "unpark(dir) did not restore the park"; fi
+  printf 'live' > "$TMP/plain"
+  unpark "$TMP/plain"
+  if [ "$(cat "$TMP/plain")" = live ]; then st_ok; else st_bad "unpark(no park) touched the live file"; fi
+
   echo "validate_release self-test: $_stp passed, $_stf failed"
   [ "$_stf" -eq 0 ] || exit 1
-  echo "OK: measurement helpers (policy/knob/psn rule anchoring, alive-count, quoted-.env parsing, .env.example key coverage, scrubbed child env, doctor rc gate)"
+  echo "OK: measurement helpers (policy/knob/psn rule anchoring, alive-count, quoted-.env parsing, .env.example key coverage, scrubbed child env, doctor rc gate, summary accumulator, cache unpark)"
   exit 0
 }
 [ "$SELF_TEST" = 1 ] && self_test
@@ -190,9 +241,6 @@ EOF
 main() {
 
 PASS=""; FAIL=""
-ok()  { echo "PASS: $*"; PASS="$PASS|$*"; }
-bad() { echo "FAIL: $*"; FAIL="$FAIL|$*"; }
-say() { echo; echo "=== $* ==="; }
 
 say "A0: staged bundle"
 TARBALL=$(find "$STAGE" -maxdepth 1 -name 'syno-mihomo-gateway-*.tar.gz' 2>/dev/null | sort | tail -n1)
@@ -269,6 +317,23 @@ delay_probe() {
   return 1
 }
 
+# kick_urltest - run a group-wide delay test over the template's `auto`
+# url-test group so its node pick rests on fresh data. `auto` is lazy: with
+# the selection cache wiped and zero LAN traffic since the recreate, its
+# pick can be an untested dead node no real client would ride - run 3
+# probed exactly that for nine minutes while 9 nodes sat alive. A renamed
+# group makes this a harmless no-op (the PROXY probe still decides).
+kick_urltest() {
+  ctl_get "/group/auto/delay?timeout=5000&url=http://www.gstatic.com/generate_204" >/dev/null 2>&1 || true
+}
+
+# diag_egress - after a failed PROXY probe, log who is selected and which
+# members actually pass, so a failure is diagnosable from the transcript.
+diag_egress() {
+  echo "  diag PROXY group: $(ctl_get /proxies/PROXY)"
+  echo "  diag per-member delay: $(ctl_get "/group/PROXY/delay?timeout=8000&url=http://www.gstatic.com/generate_204")"
+}
+
 restore_env() {  # put the pre-validation .env back
   [ -f "$ORIG" ] && cat "$ORIG" > "$ENV_FILE" && rm -f "$ORIG"
 }
@@ -333,6 +398,7 @@ for _i in 1 2 3 4 5 6; do
   echo "  t+$((_i*15))s alive nodes: $N"
   [ "$N" -gt 0 ] && break
 done
+kick_urltest
 if delay_probe PROXY "http://www.gstatic.com/generate_204"; then EGRESS=1; else EGRESS=0; fi
 if [ "$N" -gt 0 ] || [ "$EGRESS" = 1 ]; then
   ok "COLD START: alive=$N egress_delay_probe=$EGRESS with no caches + dead tunnel resolvers"
@@ -340,22 +406,15 @@ else
   bad "COLD START: no alive node and no egress after 90s"
   "$DOCKER_BIN" logs "$MIHOMO_CONTAINER" 2>&1 | tail -40 | sed 's/^/    /'
 fi
-if [ "$N" -gt 0 ] || [ "$EGRESS" = 1 ]; then
-  # cold start passed: the freshly built caches are the good ones now
-  rm -f "$GATEWAY_DATA_DIR/config/cache.db.v138park"
-  rm -rf "$GATEWAY_DATA_DIR/config/proxies.v138park"
-else
-  # cold start FAILED: put the known-good caches back so the restored
-  # config comes up warm instead of forcing a second cold rebuild
-  if [ -f "$GATEWAY_DATA_DIR/config/cache.db.v138park" ]; then
-    rm -f "$GATEWAY_DATA_DIR/config/cache.db"
-    mv "$GATEWAY_DATA_DIR/config/cache.db.v138park" "$GATEWAY_DATA_DIR/config/cache.db"
-  fi
-  if [ -d "$GATEWAY_DATA_DIR/config/proxies.v138park" ]; then
-    rm -rf "$GATEWAY_DATA_DIR/config/proxies"
-    mv "$GATEWAY_DATA_DIR/config/proxies.v138park" "$GATEWAY_DATA_DIR/config/proxies"
-  fi
-fi
+[ "$EGRESS" = 1 ] || diag_egress
+# Put the owner's caches back regardless of outcome: cache.db carries the
+# dashboard-selected node (run 3 dropped it on pass, reset the selection to
+# the group default, and measured THAT for the rest of the run), and the
+# parked provider list spares a refetch. The cold container holds its
+# cache.db open by file descriptor, so replacing the path now is safe -
+# the B2 recreate starts from the restored files.
+unpark "$GATEWAY_DATA_DIR/config/cache.db"
+unpark "$GATEWAY_DATA_DIR/config/proxies"
 
 say "B2: real tunnel resolvers back + doctor --egress"
 env_set DNS_FALLBACK "$(example_dns DNS_FALLBACK)"
@@ -378,10 +437,12 @@ if [ "$SKIP_KNOB" = 0 ]; then
   else
     bad "CN egress via DIRECT failed (baidu delay probe)"
   fi
+  kick_urltest
   if delay_probe PROXY "http://www.gstatic.com/generate_204"; then
     ok "foreign egress via PROXY (mihomo-fetched gstatic 204 through the node)"
   else
     bad "foreign egress via PROXY failed (gstatic delay probe)"
+    diag_egress
   fi
   echo
   echo ">>> LAN spot-check, from any device using the gateway - example sites:"
@@ -424,8 +485,8 @@ run_scrubbed sh "$REL/scripts/doctor.sh"; RC=$?
 if doctor_rc_ok "$RC"; then ok "final doctor rc $RC (0 healthy | 2 degraded)"; else bad "final doctor rc $RC (crash or broken)"; fi
 
 say "SUMMARY"
-echo "PASS:"; printf '%s' "$PASS" | tr '|' '\n' | sed '/^$/d;s/^/  + /'
-echo "FAIL:"; printf '%s' "$FAIL" | tr '|' '\n' | sed '/^$/d;s/^/  - /'
+echo "PASS:"; printf '%s\n' "$PASS" | tr "$US" '\n' | sed '/^$/d;s/^/  + /'
+echo "FAIL:"; printf '%s\n' "$FAIL" | tr "$US" '\n' | sed '/^$/d;s/^/  - /'
 echo
 echo "log: $LOG"
 if [ -z "$FAIL" ]; then
