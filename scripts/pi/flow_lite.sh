@@ -74,6 +74,10 @@ pi_lite_wizard() {
 # pi_lite_render_config - host-side render through the SAME CI-tested renderer
 # the container entrypoint runs; explicit env passing (dotenv values are data,
 # never exported wholesale). Fails loudly before anything is downloaded.
+# The split-horizon knobs are read from .env via env_get: the lite wizard
+# never prompts for them (they ship pre-set in .env.example), so unlike the
+# prompted DNS_* vars above there is no shell variable to expand - and the
+# boot-time render (the systemd unit's load_env) must see the SAME values.
 pi_lite_render_config() {
   MIHOMO_CONFIG_DIR="$CONFIG_STATE_DIR" \
   MIHOMO_TEMPLATE="$REPO_ROOT/config/config.template.yaml" \
@@ -82,6 +86,9 @@ pi_lite_render_config() {
   DNS_DEFAULT_NAMESERVER="${DNS_DEFAULT_NAMESERVER:-}" \
   DNS_NAMESERVER="${DNS_NAMESERVER:-}" \
   DNS_FALLBACK="${DNS_FALLBACK:-}" \
+  DNS_CN_NAMESERVER="$(env_get DNS_CN_NAMESERVER 2>/dev/null || echo '')" \
+  DNS_FOREIGN_NAMESERVER="$(env_get DNS_FOREIGN_NAMESERVER 2>/dev/null || echo '')" \
+  DNS_GEOIP_NO_RESOLVE="$(env_get DNS_GEOIP_NO_RESOLVE 2>/dev/null || echo false)" \
   TUN_ENABLE="${TUN_ENABLE:-true}" \
   TUN_AUTO_REDIRECT="${TUN_AUTO_REDIRECT:-false}" \
   EXTERNAL_UI_DIR="${EXTERNAL_UI_DIR:-}" \

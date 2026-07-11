@@ -77,6 +77,21 @@ dns:
   fake-ip-range: 198.18.0.1/16
   # DNS servers are injected from .env as comma-separated lists -> YAML flow sequences.
   default-nameserver: [ {{DNS_DEFAULT_NAMESERVER}} ]
+# {{DNSPOLICY_BEGIN}}
+  # Split-horizon resolution (DNS privacy): a domain matching a key below is
+  # resolved ONLY by that key's servers, bypassing nameserver/fallback and the
+  # fallback-filter entirely. CN domains resolve via the domestic list, dialed
+  # DIRECT; the listed foreign categories resolve via overseas servers TUNNELED
+  # through the proxy - a '#PROXY' suffix on a server is mihomo's
+  # route-via-proxy-group syntax, and PROXY is the LITERAL group name defined
+  # under proxy-groups below (rename both together). The renderer keeps this
+  # block only when BOTH lists are set in .env; with neither set the render is
+  # byte-identical to the pre-split-horizon output, so existing .env files
+  # keep working unchanged.
+  nameserver-policy:
+    'geosite:cn': [ {{DNS_CN_NAMESERVER}} ]
+    'geosite:geolocation-!cn': [ {{DNS_FOREIGN_NAMESERVER}} ]
+# {{DNSPOLICY_END}}
   nameserver: [ {{DNS_NAMESERVER}} ]
   fallback: [ {{DNS_FALLBACK}} ]
   # Proxy-server (airport node) hostnames resolve via the domestic list
@@ -146,5 +161,12 @@ proxy-groups:
 # Basic rules - adjust as needed
 rules:
   - 'GEOSITE,CN,DIRECT'
-  - 'GEOIP,CN,DIRECT'
+  # GEOIP needs a destination IP, so by default mihomo RESOLVES every remaining
+  # domain via the local upstreams just to evaluate this rule - that is how the
+  # domestic resolvers get to see foreign hostnames too. Setting
+  # DNS_GEOIP_NO_RESOLVE=true in .env renders a `,no-resolve` suffix here: the
+  # rule then matches only connections that already carry an IP and never
+  # forces a lookup. Trade-off: CN domains MISSED by geosite:cn above lose
+  # their direct short-circuit and ride the proxy via MATCH instead.
+  - 'GEOIP,CN,DIRECT{{GEOIP_NO_RESOLVE}}'
   - 'MATCH,PROXY'

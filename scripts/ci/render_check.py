@@ -13,8 +13,18 @@ Enforces:
   * a controller secret containing `&`, `|`, `"` AND `\` renders verbatim
     (secret renders inside `secret: "..."`, so `"`/`\` must be YAML-escaped);
   * external-controller + DNS sections round-trip the injected lists EXACTLY,
-    including DoH (https://) / DoT (tls://) URL entries in the fallback list
-    (the China-safe .env defaults ship exactly that shape);
+    including DoH (https://) / DoT (tls://) URL entries and '#PROXY' proxy-group
+    fragments in the fallback list (the China-safe .env defaults ship exactly
+    that shape);
+  * the split-horizon DNSPOLICY fence: knobs-unset renders byte-identical to a
+    fence-stripped template (pre-1.3.8 .env compat, mirroring the EXTUI proof),
+    both-knobs-set renders the exact nameserver-policy mapping with '#PROXY'
+    fragments preserved while default-nameserver / proxy-server-nameserver stay
+    UNPROXIED plain lists (the cold-start invariant from the 2026-07 incident),
+    exactly-one-set fails loud naming the missing var, and DNS_GEOIP_NO_RESOLVE
+    renders ',no-resolve' / bare / fails closed on garbage;
+  * geox-url mirrors point at hosts reachable from mainland China — never the
+    blocked upstream Git host or the flaky primary jsDelivr domain;
   * TUN is ON by default (transparent gateway): the DEFAULT render INCLUDES the tun block
     with stack: system (which does NOT hijack the controller reply path), allow-lan true,
     and dns enhanced-mode fake-ip; TUN_ENABLE=false OMITS the block (plain proxy);
@@ -39,6 +49,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from urllib.parse import urlparse
 
 import yaml
 
@@ -57,15 +68,31 @@ SUB_URL = 'https://h.example.com/api/v1/subscribe?token=a&flag=1&list=clash&note
 SUB_LINE = f"Default={SUB_URL}"
 SECRET = 's3cr&t|"x\\y'  # & | render via esc(); " and \ render via yaml_dq()
 
-# DNS fixtures mirror the shipped .env.example shape: plain-IP comma lists for
-# bootstrap/domestic, DoH + DoT URLs for the anti-pollution fallback. The URLs
-# must survive esc() (sed) and parse as YAML flow-sequence STRING scalars.
-# DEFAULT and NS are deliberately DISTINCT values so a swapped
-# {{DNS_DEFAULT_NAMESERVER}} <-> {{DNS_NAMESERVER}} substitution cannot pass
-# the round-trip assertions.
+# DNS fixtures mirror the shipped .env.example shape: a plain-IP bootstrap
+# list, DoH-on-IP domestic lists, and '#PROXY'-fragment (proxy-group-tunneled)
+# foreign/fallback entries. The URLs must survive esc() (sed) and parse as YAML
+# flow-sequence STRING scalars — '#' preceded by a non-space is NOT a YAML
+# comment, and the exact-equality assertions prove the fragments survive.
+# All six lists are pairwise DISTINCT so ANY swapped {{DNS_*}} substitution
+# fails the round-trip assertions.
 DNS_DEFAULT = ["223.6.6.6", "119.29.29.29"]
-DNS_NS = ["114.114.114.114", "223.5.5.5"]
-DNS_FB = ["https://1.1.1.1/dns-query", "tls://8.8.8.8:853"]
+DNS_NS = ["https://223.5.5.5/dns-query", "https://120.53.53.53/dns-query"]
+DNS_FB = ["https://1.1.1.1/dns-query#PROXY", "tls://8.8.8.8:853#PROXY"]
+DNS_CN = ["https://223.4.4.4/dns-query", "https://120.53.53.102/dns-query"]
+DNS_FOREIGN = ["https://1.0.0.1/dns-query#PROXY", "https://8.8.4.4/dns-query#PROXY"]
+
+# geox-url mirror hosts that are unreachable (or too flaky to ship) from
+# mainland China: the upstream Git host pair mihomo defaults to, and the
+# primary jsDelivr domain (ICP-revoked; the *.jsdelivr.net CDN alternates the
+# template uses instead are fine). CI-side blocklist only — scripts/ci is
+# excluded from the enduser bundle, so naming them here cannot trip the
+# release leak gate.
+BLOCKED_GEOX_HOSTS = {
+    "github.com",
+    "raw.githubusercontent.com",
+    "objects.githubusercontent.com",
+    "cdn.jsdelivr.net",
+}
 
 
 def fail(msg: str):
@@ -75,7 +102,10 @@ def fail(msg: str):
 
 def render(raw: str, tun_auto_redirect: str | None = None,
            tun_enable: str | None = None,
-           external_ui_dir: str | None = None):
+           external_ui_dir: str | None = None,
+           dns_cn: str | None = None,
+           dns_foreign: str | None = None,
+           geoip_no_resolve: str | None = None):
     """Run the real renderer in an isolated config directory."""
     with tempfile.TemporaryDirectory() as td:
         tdp = Path(td)
@@ -101,20 +131,29 @@ def render(raw: str, tun_auto_redirect: str | None = None,
             env["TUN_ENABLE"] = tun_enable
         if external_ui_dir is not None:
             env["EXTERNAL_UI_DIR"] = external_ui_dir
+        # Split-horizon knobs stay ABSENT unless a case opts in, so every
+        # pre-existing render in this suite doubles as the legacy-path
+        # (pre-1.3.8 .env) regression.
+        if dns_cn is not None:
+            env["DNS_CN_NAMESERVER"] = dns_cn
+        if dns_foreign is not None:
+            env["DNS_FOREIGN_NAMESERVER"] = dns_foreign
+        if geoip_no_resolve is not None:
+            env["DNS_GEOIP_NO_RESOLVE"] = geoip_no_resolve
         proc = subprocess.run(["sh", str(RENDERER)], env=env,
                               capture_output=True, text=True)
         out = tdp / "config.yaml"
         return proc, out.read_text() if out.exists() else None
 
 
-def strip_extui_fence(raw: str) -> str:
-    """Delete the {{EXTUI_BEGIN}}..{{EXTUI_END}} range, like the renderer's sed."""
+def strip_fence(raw: str, name: str) -> str:
+    """Delete the {{NAME_BEGIN}}..{{NAME_END}} range, like the renderer's sed."""
     out, skipping = [], False
     for line in raw.splitlines(keepends=True):
-        if "{{EXTUI_BEGIN}}" in line:
+        if f"{{{{{name}_BEGIN}}}}" in line:
             skipping = True
             continue
-        if "{{EXTUI_END}}" in line:
+        if f"{{{{{name}_END}}}}" in line:
             skipping = False
             continue
         if not skipping:
@@ -283,6 +322,23 @@ def main() -> None:
     # crash-loop class) on the fully rendered document.
     check_rule_targets(doc)
 
+    # 5c) geox-url mirrors must be pinned and reachable from mainland China.
+    # mihomo's compiled-in default source is the blocked upstream Git host, so
+    # a first start with no cached geodata would hang forever behind the GFW —
+    # the template must keep pointing every entry at a reachable CDN mirror.
+    geox = doc.get("geox-url") or {}
+    for key in ("geoip", "geosite", "mmdb"):
+        u = geox.get(key)
+        if not u:
+            fail(f"geox-url.{key} missing: the template must pin a geodata mirror "
+                 f"(mihomo's default source is blocked in mainland China)")
+        host = urlparse(str(u)).hostname or ""
+        if host in BLOCKED_GEOX_HOSTS:
+            fail(f"geox-url.{key} points at {host!r}, which is unreachable/flaky "
+                 f"from mainland China — use a reachable CDN mirror")
+        if not str(u).startswith("https://"):
+            fail(f"geox-url.{key} must be https:// (got {u!r})")
+
     # 6) DEFAULT render is TUN-ON (this is a transparent gateway). The tun block MUST be
     # present with stack: system, which (unlike mixed/gvisor) does NOT hijack the
     # external-controller reply path (mihomo #1493) - the VERIFIED working config.
@@ -354,7 +410,7 @@ def main() -> None:
         fail("template must carry the {{EXTUI_BEGIN}}/{{EXTUI_END}} fence")
     if "external-ui" in (yaml.safe_load(rendered) or {}):
         fail("default render must NOT contain external-ui (EXTERNAL_UI_DIR unset)")
-    proc_s, stripped_render = render(strip_extui_fence(raw))
+    proc_s, stripped_render = render(strip_fence(raw, "EXTUI"))
     if proc_s.returncode != 0 or stripped_render is None:
         fail(f"fence-stripped render failed: {proc_s.stderr.strip()}")
     if stripped_render != rendered:
@@ -365,7 +421,7 @@ def main() -> None:
     # TUN-off + EXTUI-unset is the most common alternate DSM config; the
     # inertness guarantee must hold on that permutation too (`off` is the
     # TUN_ENABLE=false render from section 6).
-    proc_so, stripped_off = render(strip_extui_fence(raw), tun_enable="false")
+    proc_so, stripped_off = render(strip_fence(raw, "EXTUI"), tun_enable="false")
     if proc_so.returncode != 0 or stripped_off is None:
         fail(f"fence-stripped TUN-off render failed: {proc_so.stderr.strip()}")
     if stripped_off != off:
@@ -380,12 +436,108 @@ def main() -> None:
     if yaml.safe_load(extui).get("external-ui") != ui_dir:
         fail(f"external-ui did not round-trip: {yaml.safe_load(extui).get('external-ui')!r}")
 
+    # 10) Split-horizon DNS policy fence (privacy hardening). Knobs UNSET —
+    # which is every render above — must be INERT: no nameserver-policy key,
+    # the bare GEOIP rule, and byte-identity against a template with the
+    # DNSPOLICY fence stripped and the {{GEOIP_NO_RESOLVE}} token removed.
+    # That is the mechanical proof a pre-1.3.8 .env renders exactly as before.
+    if "{{DNSPOLICY_BEGIN}}" not in raw or "{{DNSPOLICY_END}}" not in raw:
+        fail("template must carry the {{DNSPOLICY_BEGIN}}/{{DNSPOLICY_END}} fence")
+    if "{{GEOIP_NO_RESOLVE}}" not in raw:
+        fail("template must carry the {{GEOIP_NO_RESOLVE}} token on the GEOIP,CN rule")
+    if "nameserver-policy" in (doc.get("dns") or {}):
+        fail("default render must NOT contain nameserver-policy (knobs unset)")
+    if doc.get("rules") != ["GEOSITE,CN,DIRECT", "GEOIP,CN,DIRECT", "MATCH,PROXY"]:
+        fail(f"default rules must be the bare legacy triple in order: {doc.get('rules')!r}")
+    legacy_raw = strip_fence(raw, "DNSPOLICY").replace("{{GEOIP_NO_RESOLVE}}", "")
+    proc_l, legacy = render(legacy_raw)
+    if proc_l.returncode != 0 or legacy is None:
+        fail(f"DNSPOLICY-stripped render failed: {proc_l.stderr.strip()}")
+    if legacy != rendered:
+        fail("knobs-unset render is not byte-identical to a DNSPOLICY-less "
+             "template render — the fence/token are not inert for existing .env files")
+    # EMPTY-STRING knobs must behave exactly like unset ones: docker-compose
+    # passes '${DNS_CN_NAMESERVER:-}' through as an empty env var for every
+    # pre-1.3.8 .env, so empty==off is the interop contract with the compose
+    # environment allowlist (the renderer's ':=' colon-form normalizes null).
+    proc_es, empty_set = render(raw, dns_cn="", dns_foreign="", geoip_no_resolve="")
+    if proc_es.returncode != 0 or empty_set != rendered:
+        fail("empty-string knobs must render byte-identical to unset knobs "
+             "(the compose ':-' pass-through contract)")
+
+    # Both knobs set: the policy block renders with the exact mapping, and the
+    # '#PROXY' proxy-group fragments survive into the parsed YAML values. The
+    # cold-start invariants hold on THIS variant too: default-nameserver and
+    # proxy-server-nameserver keep their plain domestic lists with NO '#'
+    # fragment (proxied bootstrap = the 2026-07 incident chicken-and-egg).
+    proc_p, pol = render(raw, dns_cn=",".join(DNS_CN), dns_foreign=",".join(DNS_FOREIGN))
+    if proc_p.returncode != 0 or pol is None:
+        fail(f"split-horizon render failed: {proc_p.stderr.strip()}")
+    assert_resolved("DNSPOLICY", pol)
+    if "\n\n\n" in pol:
+        fail("split-horizon render contains doubled blank lines — the fence must "
+             "sit flush against its neighbors")
+    pdoc = yaml.safe_load(pol)
+    policy = (pdoc.get("dns") or {}).get("nameserver-policy")
+    expected_policy = {"geosite:cn": DNS_CN, "geosite:geolocation-!cn": DNS_FOREIGN}
+    if policy != expected_policy:
+        fail(f"nameserver-policy did not round-trip: got {policy!r}, "
+             f"expected {expected_policy!r}")
+    for field, expected in (("default-nameserver", DNS_DEFAULT),
+                            ("nameserver", DNS_NS),
+                            ("proxy-server-nameserver", DNS_NS),
+                            ("fallback", DNS_FB)):
+        if (pdoc.get("dns") or {}).get(field) != expected:
+            fail(f"[DNSPOLICY] dns.{field} did not round-trip: "
+                 f"{(pdoc.get('dns') or {}).get(field)!r}")
+    for field in ("default-nameserver", "proxy-server-nameserver"):
+        tunneled = [e for e in (pdoc.get("dns") or {}).get(field) or [] if "#" in str(e)]
+        if tunneled:
+            fail(f"dns.{field} must stay UNPROXIED — no '#group' fragments "
+                 f"(cold-start invariant): {tunneled}")
+    check_rule_targets(pdoc)
+
+    # Exactly ONE knob set is a broken half-configuration: fail loud, write
+    # nothing, and NAME the missing variable in the error.
+    for kwargs, missing in (({"dns_cn": "223.5.5.5"}, "DNS_FOREIGN_NAMESERVER"),
+                            ({"dns_foreign": "https://1.0.0.1/dns-query#PROXY"},
+                             "DNS_CN_NAMESERVER")):
+        proc_h, half = render(raw, **kwargs)
+        if proc_h.returncode == 0 or half is not None:
+            fail(f"half-configured split-horizon ({list(kwargs)[0]} only) was "
+                 f"accepted or wrote config.yaml")
+        if missing not in proc_h.stderr:
+            fail(f"half-configured error must name the missing {missing}: "
+                 f"{proc_h.stderr.strip()!r}")
+
+    # 11) DNS_GEOIP_NO_RESOLVE opt-in, independent of the policy knobs:
+    # true appends ',no-resolve' to the GEOIP rule (and ONLY that rule),
+    # false is byte-identical to unset, garbage fails closed.
+    proc_nr, nr = render(raw, geoip_no_resolve="true")
+    if proc_nr.returncode != 0 or nr is None:
+        fail(f"DNS_GEOIP_NO_RESOLVE=true render failed: {proc_nr.stderr.strip()}")
+    assert_resolved("no-resolve", nr)
+    nrdoc = yaml.safe_load(nr)
+    if nrdoc.get("rules") != ["GEOSITE,CN,DIRECT", "GEOIP,CN,DIRECT,no-resolve",
+                              "MATCH,PROXY"]:
+        fail(f"DNS_GEOIP_NO_RESOLVE=true rules wrong: {nrdoc.get('rules')!r}")
+    check_rule_targets(nrdoc)  # the trailing flag must not confuse target resolution
+    proc_nf, nf = render(raw, geoip_no_resolve="false")
+    if proc_nf.returncode != 0 or nf != rendered:
+        fail("DNS_GEOIP_NO_RESOLVE=false must render byte-identical to unset")
+    proc_nb, nb = render(raw, geoip_no_resolve="yes")
+    if proc_nb.returncode == 0 or nb is not None:
+        fail("invalid DNS_GEOIP_NO_RESOLVE was accepted or wrote config.yaml")
+
     print("OK: renderer preserves URL/secrets; controller, DNS, CORS valid; TUN is ON by "
           "default (stack: system keeps the controller reachable, allow-lan + fake-ip set; "
           "TUN_ENABLE=false omits the block); auto-redirect/enable opt-ins are strict; "
-          "external-ui fence inert when unset; no hardcoded literals; fences pair, "
-          "tokens map bidirectionally, rule/group targets resolve (never a provider), "
-          "and every variant renders placeholder-free.")
+          "external-ui + split-horizon DNSPOLICY fences inert when unset (byte-identical "
+          "legacy render); policy-on round-trips nameserver-policy with #PROXY fragments "
+          "while default/proxy-server-nameserver stay unproxied; half-config fails loud; "
+          "GEOIP no-resolve knob strict; geox-url hosts China-reachable; no hardcoded "
+          "literals; fences pair, tokens map bidirectionally, rule/group targets resolve "
+          "(never a provider), and every variant renders placeholder-free.")
 
 
 if __name__ == "__main__":

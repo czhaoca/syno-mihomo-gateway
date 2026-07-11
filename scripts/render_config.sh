@@ -15,6 +15,7 @@ OUT="$CFG_DIR/config.yaml"
 TMP="$CFG_DIR/.config.yaml.tmp"
 PRE="$CFG_DIR/.config.yaml.pre"
 PRE2="$CFG_DIR/.config.yaml.pre2"
+PRE3="$CFG_DIR/.config.yaml.pre3"
 
 # Port/secret may default; DNS must come from .env (CLAUDE.md: no hardcoded DNS).
 : "${CONTROLLER_PORT:=9090}"
@@ -36,6 +37,32 @@ esac
 # the DSM compose path) removes the fenced external-ui block entirely, so the
 # render stays byte-identical to the pre-fence template output.
 : "${EXTERNAL_UI_DIR:=}"
+# Split-horizon DNS policy (privacy hardening): BOTH lists set keeps the fenced
+# nameserver-policy block; BOTH empty/unset removes it, rendering byte-identical
+# to the pre-split-horizon output so existing .env files keep working untouched.
+# Exactly ONE set is a half-configuration - fail loud, write nothing.
+: "${DNS_CN_NAMESERVER:=}"
+: "${DNS_FOREIGN_NAMESERVER:=}"
+if [ -n "$DNS_CN_NAMESERVER" ] && [ -z "$DNS_FOREIGN_NAMESERVER" ]; then
+  echo "ERROR: DNS_CN_NAMESERVER is set but DNS_FOREIGN_NAMESERVER is empty - set both (split-horizon) or neither (legacy)" >&2
+  exit 1
+fi
+if [ -z "$DNS_CN_NAMESERVER" ] && [ -n "$DNS_FOREIGN_NAMESERVER" ]; then
+  echo "ERROR: DNS_FOREIGN_NAMESERVER is set but DNS_CN_NAMESERVER is empty - set both (split-horizon) or neither (legacy)" >&2
+  exit 1
+fi
+# true appends ',no-resolve' to the GEOIP,CN rule so it stops forcing local
+# lookups of unmatched domains (see the template comment for the trade-off).
+: "${DNS_GEOIP_NO_RESOLVE:=false}"
+case "$DNS_GEOIP_NO_RESOLVE" in
+  true|false) : ;;
+  *) echo "ERROR: DNS_GEOIP_NO_RESOLVE must be true or false" >&2; exit 1 ;;
+esac
+if [ "$DNS_GEOIP_NO_RESOLVE" = true ]; then
+  GEOIP_NO_RESOLVE=",no-resolve"
+else
+  GEOIP_NO_RESOLVE=""
+fi
 for _v in DNS_DEFAULT_NAMESERVER DNS_NAMESERVER DNS_FALLBACK; do
   eval "_val=\${$_v:-}"
   [ -n "$_val" ] || { echo "ERROR: $_v must be set in .env (see .env.example)" >&2; exit 1; }
@@ -72,8 +99,10 @@ yaml_dq() { printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'; }
 # Pass 1 - fenced-block inclusion. Each block is fenced by '# {{X_BEGIN}}' /
 # '# {{X_END}}' marker lines. Disabled: delete the whole fenced range. Enabled:
 # delete only the two marker lines and keep the block (its tokens fill below).
-#   TUN block   - kept when TUN_ENABLE=true (the transparent-gateway default).
-#   EXTUI block - kept when EXTERNAL_UI_DIR is non-empty (Pi bare-metal mode).
+#   TUN block       - kept when TUN_ENABLE=true (the transparent-gateway default).
+#   EXTUI block     - kept when EXTERNAL_UI_DIR is non-empty (Pi bare-metal mode).
+#   DNSPOLICY block - kept when the split-horizon lists are set (validated
+#                     above: both or neither, so testing one suffices).
 if [ "$TUN_ENABLE" = true ]; then
   sed -e '/{{TUN_BEGIN}}/d' -e '/{{TUN_END}}/d' "$TEMPLATE" > "$PRE"
 else
@@ -83,6 +112,11 @@ if [ -n "$EXTERNAL_UI_DIR" ]; then
   sed -e '/{{EXTUI_BEGIN}}/d' -e '/{{EXTUI_END}}/d' "$PRE" > "$PRE2"
 else
   sed -e '/{{EXTUI_BEGIN}}/,/{{EXTUI_END}}/d' "$PRE" > "$PRE2"
+fi
+if [ -n "$DNS_CN_NAMESERVER" ]; then
+  sed -e '/{{DNSPOLICY_BEGIN}}/d' -e '/{{DNSPOLICY_END}}/d' "$PRE2" > "$PRE3"
+else
+  sed -e '/{{DNSPOLICY_BEGIN}}/,/{{DNSPOLICY_END}}/d' "$PRE2" > "$PRE3"
 fi
 
 # Pass 2 - token substitution (a disabled fence simply leaves no token behind;
@@ -94,9 +128,12 @@ sed \
   -e "s|{{DNS_DEFAULT_NAMESERVER}}|$(esc "$DNS_DEFAULT_NAMESERVER")|g" \
   -e "s|{{DNS_NAMESERVER}}|$(esc "$DNS_NAMESERVER")|g" \
   -e "s|{{DNS_FALLBACK}}|$(esc "$DNS_FALLBACK")|g" \
+  -e "s|{{DNS_CN_NAMESERVER}}|$(esc "$DNS_CN_NAMESERVER")|g" \
+  -e "s|{{DNS_FOREIGN_NAMESERVER}}|$(esc "$DNS_FOREIGN_NAMESERVER")|g" \
+  -e "s|{{GEOIP_NO_RESOLVE}}|$(esc "$GEOIP_NO_RESOLVE")|g" \
   -e "s|{{TUN_AUTO_REDIRECT}}|$(esc "$TUN_AUTO_REDIRECT")|g" \
   -e "s|{{EXTERNAL_UI_DIR}}|$(esc "$(yaml_dq "$EXTERNAL_UI_DIR")")|g" \
-  "$PRE2" > "$TMP"
-rm -f "$PRE" "$PRE2"
+  "$PRE3" > "$TMP"
+rm -f "$PRE" "$PRE2" "$PRE3"
 mv "$TMP" "$OUT"
 echo "Rendered $OUT"
