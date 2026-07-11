@@ -147,8 +147,8 @@ Runs on push/PR to `main` and `master`:
 | `compose-policy` | `python scripts/ci/compose_policy_check.py` — asserts **fail-closed** image refs: every compose `image:` is exactly `${VAR}`/`${VAR:?msg}` (no defaults, no hardcoded refs) and `.env.example` defines the image vars and ships `REGISTRY_MODE=acr` (ACR default; `docker` upstream is an explicit opt-in, not forbidden) |
 | `package-check` | `python scripts/ci/package_check.py` — builds **both** the dev and enduser bundles in throwaway repos and proves **no secret can ship** (planted `.env`/subscription/`config.yaml` absent from both archives' names *and* bytes), checksums verify, the enduser bundle prunes developer/`.md`/CI files, ships the installer + `.txt` guides, contains no identity string, and its leak-gate fails closed on an injected leak |
 | `privacy-check` | Scans tracked files and reachable blobs for private operational identifiers, credentials, private keys, and accidentally tracked runtime files (+ the gate's self-test) |
-| `dsm-shell-tests` | Eight BusyBox `sh` suites with fake Docker/Compose/service CLIs: `dsm_installer_check`, `lifecycle_check`, `auto_update_check`, `cloudflared_check`, `generic_update_check`, `gateway_cli_check`, `migrate_legacy_check`, `pi_installer_check` (the Raspberry Pi port's shared seams) |
-| `shellcheck` | `sh -n` parse-checks **every** `*.sh` in the repo, then `shellcheck -x` on 17 targets: `install.sh`, `install-pi.sh`, `gateway.sh`, `auto_update.sh`, `pi/auto_update_lite.sh`, `pi/lite_ctl.sh`, `install_scheduler.sh`, `setup_network.sh`, `render_config.sh`, `package.sh`, `doctor.sh`, `state_diff.sh`, `migrate_legacy.sh`, `bootstrap.sh`, `lib/container.sh`, `lib/targets.sh`, `lib/geodata.sh` (sourced libs followed in-context) |
+| `dsm-shell-tests` | Eight BusyBox `sh` suites with fake Docker/Compose/service CLIs: `dsm_installer_check`, `lifecycle_check`, `auto_update_check`, `cloudflared_check`, `generic_update_check`, `gateway_cli_check`, `migrate_legacy_check`, `pi_installer_check` (the Raspberry Pi port's shared seams) — plus `validate_release.sh --self-test`, the unit checks of the on-NAS release-validation helper's measurement functions |
+| `shellcheck` | `sh -n` parse-checks **every** `*.sh` in the repo, then `shellcheck -x` on 18 targets: `install.sh`, `install-pi.sh`, `gateway.sh`, `auto_update.sh`, `pi/auto_update_lite.sh`, `pi/lite_ctl.sh`, `install_scheduler.sh`, `setup_network.sh`, `render_config.sh`, `package.sh`, `doctor.sh`, `state_diff.sh`, `migrate_legacy.sh`, `bootstrap.sh`, `lib/container.sh`, `lib/targets.sh`, `lib/geodata.sh`, `validate_release.sh` (sourced libs followed in-context) |
 
 ## The CLI contract (generated files)
 
@@ -237,13 +237,14 @@ python3 -m venv /tmp/v && /tmp/v/bin/pip install -q pyyaml
 /tmp/v/bin/python scripts/ci/render_check.py
 /tmp/v/bin/python scripts/ci/cli_contract_check.py   # --write regenerates the artifacts
 
-# shellcheck (via Docker, same 17 targets as CI)
+# shellcheck (via Docker, same 18 targets as CI)
 docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck-alpine:stable \
   shellcheck -x install.sh install-pi.sh scripts/gateway.sh scripts/auto_update.sh \
   scripts/pi/auto_update_lite.sh scripts/pi/lite_ctl.sh \
   scripts/install_scheduler.sh scripts/setup_network.sh scripts/render_config.sh \
   scripts/package.sh scripts/doctor.sh scripts/state_diff.sh scripts/migrate_legacy.sh \
-  bootstrap.sh scripts/lib/container.sh scripts/lib/targets.sh scripts/lib/geodata.sh
+  bootstrap.sh scripts/lib/container.sh scripts/lib/targets.sh scripts/lib/geodata.sh \
+  scripts/validate_release.sh
 
 # compose renders (non-destructive, same as CI - never touches your real .env)
 docker compose --env-file .env.example config --quiet
@@ -251,7 +252,8 @@ docker compose --env-file .env.example config --quiet
 # release packaging safeguard (hermetic; builds both bundles in temp repos, needs git)
 python3 scripts/ci/package_check.py
 
-# the eight fake-Docker/PATH-stub TDD suites CI runs (no NAS mutation)
+# the eight fake-Docker/PATH-stub TDD suites CI runs, plus the
+# release-validation helper's self-test (no NAS mutation)
 sh scripts/ci/dsm_installer_check.sh
 sh scripts/ci/lifecycle_check.sh
 sh scripts/ci/auto_update_check.sh
@@ -260,6 +262,7 @@ sh scripts/ci/generic_update_check.sh
 sh scripts/ci/gateway_cli_check.sh
 sh scripts/ci/migrate_legacy_check.sh
 sh scripts/ci/pi_installer_check.sh
+sh scripts/validate_release.sh --self-test
 
 # privacy gate + its self-test
 python3 scripts/ci/privacy_check.py

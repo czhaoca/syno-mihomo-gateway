@@ -82,6 +82,7 @@ ENDUSER_MUST_INCLUDE = [
     PREFIX + "docker-compose.yml",
     PREFIX + "bootstrap.sh",
     PREFIX + "VERSION",
+    PREFIX + "scripts/validate_release.sh",
 ]
 ENDUSER_MUST_EXCLUDE = [
     PREFIX + "install-pi.sh",
@@ -302,7 +303,7 @@ def build_enduser_fixture(root: Path):
     (root / "docs" / "CLI.txt").write_text("Command-line reference for gateway.sh.\n")
     (root / "docs" / "CLI.zh.txt").write_text("gateway.sh command line reference (zh).\n")
     for s in ("auto_update.sh", "render_config.sh", "install_scheduler.sh", "setup_network.sh",
-              "migrate_legacy.sh"):
+              "migrate_legacy.sh", "validate_release.sh"):
         (root / "scripts" / s).write_text("#!/bin/sh\n:\n")
     (root / "scripts" / "lib" / "geodata.sh").write_text("#!/bin/sh\n:\n")
     (root / "scripts" / "doctor.sh").write_text("#!/bin/sh\n:\n")
