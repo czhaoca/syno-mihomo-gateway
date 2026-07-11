@@ -26,7 +26,11 @@
 # on this NAS a macvlan child is reachable from LAN peers but NOT from the
 # host itself, so host-side curls measure nothing (learned the hard way).
 # .env values are read via the repo's dotenv parser, which handles quoted
-# values - never with a bare cut(1).
+# values - never with a bare cut(1). Children (gateway.sh, doctor.sh, docker
+# compose) run with a SCRUBBED environment: this shell exports REPO_ROOT and
+# every .env key (lib sourcing + load_env), an inherited REPO_ROOT breaks the
+# childrens' lib locators, and docker compose lets process env override
+# --env-file - both bit validation run 2.
 set -u
 
 STAGE="${SMG_STAGE:-/volume1/docker/smg-staging}"
@@ -75,6 +79,15 @@ alive_count() { grep -o '"alive":true' | wc -l | tr -d ' '; }
 # example_dns KEY - read a shipped default from the release .env.example
 # (the committed script itself must not hardcode DNS servers - CLAUDE.md).
 example_dns() { grep "^$1=" "$REL/.env.example" | head -n1 | cut -d= -f2-; }
+
+# run_scrubbed CMD... - run a child with a clean environment (PATH/HOME only),
+# so nothing this shell sourced or load_env exported can leak into it.
+run_scrubbed() { env -i PATH="$PATH" HOME="${HOME:-/tmp}" "$@"; }
+
+# doctor_rc_ok RC - doctor's contract is 0 healthy | 2 degraded | 3 broken;
+# anything else (e.g. 1 = the script itself crashed while sourcing) must
+# FAIL, never pass (run 2's lax "!= 3" gate accepted a crash as a pass).
+doctor_rc_ok() { case "$1" in 0|2) return 0 ;; *) return 1 ;; esac; }
 
 # ---- self-test (CI: unprivileged, no docker) ---------------------------------
 
@@ -148,9 +161,24 @@ EOF
   # shellcheck disable=SC2181 # the subshell above is the tested unit
   if [ $? -eq 0 ]; then st_ok; else st_bad "dotenv parser did not strip quotes"; fi
 
+  # 5) children get a scrubbed environment (the run-2 env-bleed class:
+  #    exported .env keys override compose --env-file; an exported REPO_ROOT
+  #    breaks the child lib locators)
+  # shellcheck disable=SC2016 # the expansion must happen in the CHILD shell
+  _out=$(FOO_BLEED=bad run_scrubbed sh -c 'echo "${FOO_BLEED:-CLEAN}"')
+  if [ "$_out" = CLEAN ]; then st_ok; else st_bad "run_scrubbed leaked env: $_out"; fi
+
+  # 6) doctor rc gate: only the documented 0|2 pass; crash rc must fail
+  for _rc in 0 2; do
+    if doctor_rc_ok "$_rc"; then st_ok; else st_bad "doctor_rc_ok rejected rc $_rc"; fi
+  done
+  for _rc in 1 3; do
+    if doctor_rc_ok "$_rc"; then st_bad "doctor_rc_ok accepted rc $_rc"; else st_ok; fi
+  done
+
   echo "validate_release self-test: $_stp passed, $_stf failed"
   [ "$_stf" -eq 0 ] || exit 1
-  echo "OK: measurement helpers (policy/knob/psn rule anchoring, alive-count, quoted-.env parsing, .env.example key coverage)"
+  echo "OK: measurement helpers (policy/knob/psn rule anchoring, alive-count, quoted-.env parsing, .env.example key coverage, scrubbed child env, doctor rc gate)"
   exit 0
 }
 [ "$SELF_TEST" = 1 ] && self_test
@@ -207,7 +235,7 @@ env_set() {
 }
 
 recreate() {
-  ( cd "$REL" && "$DOCKER_BIN" compose --env-file "$ENV_FILE" up -d --force-recreate "$MIHOMO_CONTAINER" ) || return 1
+  ( cd "$REL" && run_scrubbed "$DOCKER_BIN" compose --env-file "$ENV_FILE" up -d --force-recreate "$MIHOMO_CONTAINER" ) || return 1
   sleep 20
 }
 
@@ -225,6 +253,22 @@ ctl_get() {
   fi
 }
 
+# delay_probe GROUP URL - ask mihomo ITSELF to fetch URL through GROUP via
+# the controller delay endpoint (authoritative: the request traverses the
+# real egress path). Retried: nodes may still be health-checking right after
+# a recreate. (Run 2's http_proxy-wget probes were unreliable - busybox wget
+# ignored the proxy, so baidu "passed" direct and gstatic failed direct.)
+delay_probe() {
+  _dp_i=0
+  while [ "$_dp_i" -lt 3 ]; do
+    case "$(ctl_get "/proxies/$1/delay?timeout=5000&url=$2")" in
+      *'"delay"'*) return 0 ;;
+    esac
+    _dp_i=$((_dp_i+1)); sleep 10
+  done
+  return 1
+}
+
 restore_env() {  # put the pre-validation .env back
   [ -f "$ORIG" ] && cat "$ORIG" > "$ENV_FILE" && rm -f "$ORIG"
 }
@@ -233,10 +277,10 @@ on_abort() { echo "INTERRUPTED - restoring original .env"; restore_env; recreate
 trap on_abort INT TERM
 
 say "A2: redeploy + baseline doctor"
-sh "$REL/scripts/gateway.sh" redeploy --yes; RC=$?
+run_scrubbed sh "$REL/scripts/gateway.sh" redeploy --yes; RC=$?
 if [ "$RC" = 0 ]; then ok "redeploy rc 0"; else bad "redeploy rc $RC"; fi
-sh "$REL/scripts/doctor.sh"; RC=$?
-if [ "$RC" != 3 ]; then ok "baseline doctor rc $RC"; else bad "baseline doctor rc 3"; fi
+run_scrubbed sh "$REL/scripts/doctor.sh"; RC=$?
+if doctor_rc_ok "$RC"; then ok "baseline doctor rc $RC (0 healthy | 2 degraded)"; else bad "baseline doctor rc $RC (crash or broken)"; fi
 
 say "A2.5: measurement preflight (controller reachable from inside the container)"
 if mihomo_controller_probe >/dev/null 2>&1; then
@@ -289,11 +333,7 @@ for _i in 1 2 3 4 5 6; do
   echo "  t+$((_i*15))s alive nodes: $N"
   [ "$N" -gt 0 ] && break
 done
-DELAY_OUT="$(ctl_get "/proxies/PROXY/delay?timeout=5000&url=http://www.gstatic.com/generate_204")"
-case "$DELAY_OUT" in
-  *'"delay"'*) EGRESS=1 ;;
-  *) EGRESS=0 ;;
-esac
+if delay_probe PROXY "http://www.gstatic.com/generate_204"; then EGRESS=1; else EGRESS=0; fi
 if [ "$N" -gt 0 ] || [ "$EGRESS" = 1 ]; then
   ok "COLD START: alive=$N egress_delay_probe=$EGRESS with no caches + dead tunnel resolvers"
 else
@@ -322,29 +362,26 @@ env_set DNS_FALLBACK "$(example_dns DNS_FALLBACK)"
 env_set DNS_FOREIGN_NAMESERVER "$(example_dns DNS_FOREIGN_NAMESERVER)"
 recreate || bad "compose recreate (restore resolvers)"
 load_env || true
-sh "$REL/scripts/doctor.sh" --egress; RC=$?
-if [ "$RC" = 0 ]; then ok "doctor --egress rc 0"
-elif [ "$RC" = 2 ]; then ok "doctor --egress rc 2 (degraded-optional - read output above)"
-else bad "doctor --egress rc $RC"; fi
+run_scrubbed sh "$REL/scripts/doctor.sh" --egress; RC=$?
+if doctor_rc_ok "$RC"; then ok "doctor --egress rc $RC (0 healthy | 2 degraded-optional)"
+else bad "doctor --egress rc $RC (crash or broken)"; fi
 
 if [ "$SKIP_KNOB" = 0 ]; then
   say "C: DNS_GEOIP_NO_RESOLVE flip (renders, routes, reverts)"
   env_set DNS_GEOIP_NO_RESOLVE true
   recreate || bad "compose recreate (knob on)"
   if rendered_knob_on "$CFG"; then ok "no-resolve rendered onto the GEOIP rule"; else bad "no-resolve did not render"; fi
-  # automated routing probes THROUGH the rule engine (explicit proxy port,
-  # run inside the container - the host cannot reach the macvlan IP):
-  # shellcheck disable=SC2016
-  if "$DOCKER_BIN" exec "$MIHOMO_CONTAINER" sh -c 'http_proxy="http://127.0.0.1:7890" exec wget -q -T 12 -O /dev/null "$1"' _ "http://www.baidu.com" 2>/dev/null; then
-    ok "CN mainstream probe via rule engine (baidu)"
+  # automated egress probes: mihomo itself fetches through each path via the
+  # controller delay endpoint (the same mechanism doctor --egress trusts)
+  if delay_probe DIRECT "http://www.baidu.com"; then
+    ok "CN egress via DIRECT (mihomo-fetched baidu)"
   else
-    bad "CN mainstream probe failed (baidu via 7890)"
+    bad "CN egress via DIRECT failed (baidu delay probe)"
   fi
-  # shellcheck disable=SC2016
-  if "$DOCKER_BIN" exec "$MIHOMO_CONTAINER" sh -c 'http_proxy="http://127.0.0.1:7890" exec wget -q -T 12 -O /dev/null "$1"' _ "http://www.gstatic.com/generate_204" 2>/dev/null; then
-    ok "foreign probe via rule engine (gstatic 204 through the node)"
+  if delay_probe PROXY "http://www.gstatic.com/generate_204"; then
+    ok "foreign egress via PROXY (mihomo-fetched gstatic 204 through the node)"
   else
-    bad "foreign probe failed (gstatic via 7890)"
+    bad "foreign egress via PROXY failed (gstatic delay probe)"
   fi
   echo
   echo ">>> LAN spot-check, from any device using the gateway - example sites:"
@@ -383,8 +420,8 @@ else
 fi
 
 say "final doctor"
-sh "$REL/scripts/doctor.sh"; RC=$?
-if [ "$RC" != 3 ]; then ok "final doctor rc $RC"; else bad "final doctor rc 3"; fi
+run_scrubbed sh "$REL/scripts/doctor.sh"; RC=$?
+if doctor_rc_ok "$RC"; then ok "final doctor rc $RC (0 healthy | 2 degraded)"; else bad "final doctor rc $RC (crash or broken)"; fi
 
 say "SUMMARY"
 echo "PASS:"; printf '%s' "$PASS" | tr '|' '\n' | sed '/^$/d;s/^/  + /'
