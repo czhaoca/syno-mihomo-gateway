@@ -37,6 +37,12 @@
 # url-test group is lazy - with the selection wiped and zero LAN traffic
 # after a recreate, every probe measures an untested default node that no
 # real client would ride - both bit validation run 3.
+# Node counts are PROVIDER members (never the global "alive" flags: built-ins
+# like DIRECT/REJECT are always alive, and an EMPTY group degrades to the
+# COMPATIBLE placeholder), and an egress PASS requires the effective member to
+# be a real node (gstatic's generate_204 is served by Google's China edge, so
+# a COMPATIBLE/DIRECT egress can fetch it without any node) - both masked the
+# 2026-07-12 zero-node provider outage as a cold-start pass.
 set -u
 
 STAGE="${SMG_STAGE:-/volume1/docker/smg-staging}"
@@ -79,8 +85,29 @@ rendered_psn_untunneled() {
   grep '^  proxy-server-nameserver:' "$1" | grep -vq '#'
 }
 
-# alive_count - count alive nodes from /proxies JSON on stdin.
-alive_count() { grep -o '"alive":true' | wc -l | tr -d ' '; }
+# members_of - group JSON on stdin -> member names, one per line.
+members_of() {
+  sed -n 's/.*"all":\[\([^]]*\)\].*/\1/p' | tr ',' '\n' | sed -n 's/^"\(.*\)"$/\1/p'
+}
+
+# real_node_count - provider nodes in a group JSON on stdin, excluding the
+# COMPATIBLE placeholder an EMPTY group degrades to. Never count the global
+# /proxies "alive" flags: built-ins (DIRECT/REJECT/PASS/...) are always alive,
+# which read the 2026-07-12 zero-node outage as "alive=9".
+real_node_count() { members_of | grep -c -v '^COMPATIBLE$'; }
+
+# effective_now - the "now" (selected member) from group JSON on stdin.
+effective_now() { sed -n 's/.*"now":"\([^"]*\)".*/\1/p'; }
+
+# now_is_real NAME - the member actually tunnels: not empty, not a built-in,
+# not the empty-group placeholder (COMPATIBLE dials DIRECT, and gstatic's
+# generate_204 is reachable direct from CN via Google's China edge).
+now_is_real() {
+  case "$1" in
+    ''|COMPATIBLE|DIRECT|REJECT|REJECT-DROP|PASS) return 1 ;;
+    *) return 0 ;;
+  esac
+}
 
 # example_dns KEY - read a shipped default from the release .env.example
 # (the committed script itself must not hardcode DNS servers - CLAUDE.md).
@@ -144,6 +171,11 @@ self_test() {
   #    a legacy render carries the no-resolve COMMENT but the bare rule.
   cat > "$TMP/legacy.yaml" <<'EOF'
 dns:
+  # a v1.3.8 legacy render still carries the BOOTSTRAP pins (mirror + panel);
+  # rendered_policy_on must not read them as split-horizon opt-in
+  nameserver-policy:
+    'testingcf.jsdelivr.net': [ https://192.0.2.53/dns-query ]
+    'panel.example.com': [ https://192.0.2.53/dns-query ]
   nameserver: [ 192.0.2.53 ]
   proxy-server-nameserver: [ 192.0.2.53 ]
 rules:
@@ -154,7 +186,7 @@ rules:
 EOF
   if rendered_knob_on "$TMP/legacy.yaml"; then st_bad "knob_on fooled by comment prose"; else st_ok; fi
   if rendered_knob_off "$TMP/legacy.yaml"; then st_ok; else st_bad "knob_off missed the bare rule"; fi
-  if rendered_policy_on "$TMP/legacy.yaml"; then st_bad "policy_on false positive"; else st_ok; fi
+  if rendered_policy_on "$TMP/legacy.yaml"; then st_bad "policy_on read the bootstrap pins as split-horizon"; else st_ok; fi
   if rendered_psn_untunneled "$TMP/legacy.yaml"; then st_ok; else st_bad "psn check false negative"; fi
   cat > "$TMP/policy.yaml" <<'EOF'
 dns:
@@ -169,9 +201,22 @@ EOF
   if rendered_knob_on "$TMP/policy.yaml"; then st_ok; else st_bad "knob_on missed the real rule"; fi
   if rendered_psn_untunneled "$TMP/policy.yaml"; then st_bad "psn check missed a #PROXY fragment"; else st_ok; fi
 
-  # 3) alive-count parser
-  _n=$(printf '{"proxies":{"a":{"alive":true},"b":{"alive":false},"c":{"alive":true}}}' | alive_count)
-  if [ "$_n" = 2 ]; then st_ok; else st_bad "alive_count got $_n, want 2"; fi
+  # 3) provider-node counting: the COMPATIBLE placeholder of an EMPTY group is
+  #    never a node (run 3.5: "alive=9" was built-ins while the provider had
+  #    zero nodes), and the effective-member gate rejects placeholder/builtin
+  #    egress (gstatic 204 is fetchable DIRECT from CN).
+  _n=$(printf '{"all":["COMPATIBLE"],"emptyFallback":"COMPATIBLE","now":"COMPATIBLE"}' | real_node_count)
+  if [ "$_n" = 0 ]; then st_ok; else st_bad "real_node_count counted the COMPATIBLE placeholder: $_n"; fi
+  _n=$(printf '{"all":["HK01","JP02","COMPATIBLE"],"now":"HK01"}' | real_node_count)
+  if [ "$_n" = 2 ]; then st_ok; else st_bad "real_node_count miscounted a live provider group: $_n"; fi
+  _n=$(printf '{"name":"auto","type":"URLTest"}' | real_node_count)
+  if [ "$_n" = 0 ]; then st_ok; else st_bad "real_node_count invented members with no all[]: $_n"; fi
+  _now=$(printf '{"all":["A","B"],"now":"HK09","type":"Selector"}' | effective_now)
+  if [ "$_now" = "HK09" ]; then st_ok; else st_bad "effective_now got '$_now'"; fi
+  for _m in COMPATIBLE DIRECT REJECT ""; do
+    if now_is_real "$_m"; then st_bad "now_is_real accepted '$_m'"; else st_ok; fi
+  done
+  if now_is_real "HK09"; then st_ok; else st_bad "now_is_real rejected a real node"; fi
 
   # 4) .env values are parsed via the repo dotenv parser, which strips quotes
   #    (v1 read them raw and built literal-quote URLs).
@@ -229,7 +274,7 @@ EOF
 
   echo "validate_release self-test: $_stp passed, $_stf failed"
   [ "$_stf" -eq 0 ] || exit 1
-  echo "OK: measurement helpers (policy/knob/psn rule anchoring, alive-count, quoted-.env parsing, .env.example key coverage, scrubbed child env, doctor rc gate, summary accumulator, cache unpark)"
+  echo "OK: measurement helpers (policy/knob/psn rule anchoring incl. bootstrap-pin immunity, provider-node counting + real-member egress gate, quoted-.env parsing, .env.example key coverage, scrubbed child env, doctor rc gate, summary accumulator, cache unpark)"
   exit 0
 }
 [ "$SELF_TEST" = 1 ] && self_test
@@ -331,7 +376,18 @@ kick_urltest() {
 # members actually pass, so a failure is diagnosable from the transcript.
 diag_egress() {
   echo "  diag PROXY group: $(ctl_get /proxies/PROXY)"
+  echo "  diag auto group: $(ctl_get /proxies/auto)"
   echo "  diag per-member delay: $(ctl_get "/group/PROXY/delay?timeout=8000&url=http://www.gstatic.com/generate_204")"
+}
+
+# egress_via_real_node - the PROXY group's EFFECTIVE member (one level of
+# `auto` indirection resolved) is an actual provider node. A delay-probe PASS
+# alone is not egress proof: an empty group degrades to COMPATIBLE (= DIRECT),
+# and gstatic's generate_204 answers direct from CN (run 3.5's false PASS).
+egress_via_real_node() {
+  _evn=$(ctl_get /proxies/PROXY | effective_now)
+  [ "$_evn" = auto ] && _evn=$(ctl_get /proxies/auto | effective_now)
+  now_is_real "$_evn"
 }
 
 restore_env() {  # put the pre-validation .env back
@@ -362,6 +418,23 @@ else
   ok "pre-split-horizon .env renders WITHOUT nameserver-policy (byte-compat path)"
 fi
 if rendered_knob_off "$CFG"; then ok "GEOIP rule bare (knob off/unset)"; else bad "bare GEOIP rule missing"; fi
+# Bootstrap panel pin (2026-07-12 outage): the airport-panel host must sit in
+# nameserver-policy in EVERY mode. Derive the host exactly like the renderer;
+# an IP-literal subscription host is pinless by design - note and skip.
+PH=$(grep -v '^#' "$SUBSCRIPTION_FILE" | grep -v '^[[:space:]]*$' | head -n1 \
+  | sed -e 's/^[A-Za-z0-9_.-]*=//' -e 's/[[:space:]]*$//' \
+  | sed -n 's|^[A-Za-z][A-Za-z0-9+.-]*://\([^/?#]*\).*|\1|p' \
+  | sed -e 's/^.*@//' -e 's/:[0-9]*$//')
+case "$PH" in
+  ''|\[*) echo "note: no panel pin expected (unparseable/IPv6-literal subscription host)" ;;
+  *[!0-9.]*)
+    if grep -q "^    '$PH':" "$CFG"; then
+      ok "bootstrap panel pin rendered ($PH -> domestic nameserver)"
+    else
+      bad "bootstrap panel pin missing for $PH"
+    fi ;;
+  *) echo "note: no panel pin expected (IP-literal subscription host $PH)" ;;
+esac
 
 say "A4: enable split-horizon from the shipped .env.example defaults"
 cp -p "$ENV_FILE" "$ORIG"
@@ -394,16 +467,20 @@ load_env || true
 N=0
 for _i in 1 2 3 4 5 6; do
   sleep 15
-  N=$(ctl_get /proxies | alive_count); N=${N:-0}
-  echo "  t+$((_i*15))s alive nodes: $N"
+  N=$(ctl_get /proxies/auto | real_node_count); N=${N:-0}
+  echo "  t+$((_i*15))s provider nodes: $N"
   [ "$N" -gt 0 ] && break
 done
 kick_urltest
-if delay_probe PROXY "http://www.gstatic.com/generate_204"; then EGRESS=1; else EGRESS=0; fi
-if [ "$N" -gt 0 ] || [ "$EGRESS" = 1 ]; then
-  ok "COLD START: alive=$N egress_delay_probe=$EGRESS with no caches + dead tunnel resolvers"
+if delay_probe PROXY "http://www.gstatic.com/generate_204" && egress_via_real_node; then
+  EGRESS=1
 else
-  bad "COLD START: no alive node and no egress after 90s"
+  EGRESS=0
+fi
+if [ "$N" -gt 0 ]; then
+  ok "COLD START: provider_nodes=$N egress_via_real_node=$EGRESS with no caches + dead tunnel resolvers"
+else
+  bad "COLD START: provider delivered no node after 90s (a live fetch must work with the panel pin)"
   "$DOCKER_BIN" logs "$MIHOMO_CONTAINER" 2>&1 | tail -40 | sed 's/^/    /'
 fi
 [ "$EGRESS" = 1 ] || diag_egress
@@ -438,10 +515,10 @@ if [ "$SKIP_KNOB" = 0 ]; then
     bad "CN egress via DIRECT failed (baidu delay probe)"
   fi
   kick_urltest
-  if delay_probe PROXY "http://www.gstatic.com/generate_204"; then
-    ok "foreign egress via PROXY (mihomo-fetched gstatic 204 through the node)"
+  if delay_probe PROXY "http://www.gstatic.com/generate_204" && egress_via_real_node; then
+    ok "foreign egress via PROXY (mihomo-fetched gstatic 204 through a real node)"
   else
-    bad "foreign egress via PROXY failed (gstatic delay probe)"
+    bad "foreign egress via PROXY failed (probe failed, or effective member is a placeholder/builtin)"
     diag_egress
   fi
   echo
