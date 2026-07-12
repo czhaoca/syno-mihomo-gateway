@@ -29,7 +29,7 @@ _msg_en_pi() {
     pi_info_compose_armv6) printf '%s' 'compose mode is unavailable on ARMv6 - continuing with lite mode' ;;
     pi_info_compose_armv7) printf '%s' 'compose mode needs a 64-bit OS (arm64): this system reports a 32-bit userland (armv7) and the dashboard image ships no arm/v7 build - reinstall 64-bit Raspberry Pi OS for compose, or use lite mode (works on 32-bit)' ;;
     pi_warn_acr_arch)     printf '%s' 'REGISTRY_MODE=acr on a %s host: your ACR namespace must mirror %s images' ;;
-    pi_warn_acr_arch_fix) printf '%s' 'extend your docker-china-sync (or equivalent mirror pipeline) to publish %s images first, or pick the docker (upstream) source in the image wizard' ;;
+    pi_warn_acr_arch_fix) printf '%s' 'extend your ACR image-sync pipeline to publish %s images first, or pick the docker (upstream) source in the image wizard' ;;
     pi_err_wlan_parent)   printf '%s' 'the network parent %s is a wireless interface: macvlan over Wi-Fi is typically broken (driver/AP isolation) - compose mode needs wired Ethernet' ;;
     pi_err_wlan_parent_fix) printf '%s' 'connect the Pi with an Ethernet cable and re-run, or use lite mode (works over Wi-Fi)' ;;
     pi_step_lite)         printf '%s' 'Bare-metal lite install' ;;
@@ -94,7 +94,7 @@ _msg_zh_pi() {
     pi_info_compose_armv6) printf '%s' 'ARMv6 上无法使用 compose 模式 - 将继续使用精简模式' ;;
     pi_info_compose_armv7) printf '%s' 'compose 模式需要 64 位系统（arm64）：当前系统是 32 位（armv7），且面板镜像没有 arm/v7 构建 - 重装 64 位 Raspberry Pi OS 后可用 compose，或使用精简模式（支持 32 位）' ;;
     pi_warn_acr_arch)     printf '%s' 'REGISTRY_MODE=acr 且主机架构为 %s：你的 ACR 命名空间必须镜像 %s 架构的镜像' ;;
-    pi_warn_acr_arch_fix) printf '%s' '请先扩展你的 docker-china-sync（或同类镜像同步）以发布 %s 镜像，或在镜像向导中选择 docker（上游）源' ;;
+    pi_warn_acr_arch_fix) printf '%s' '请先扩展你的 ACR 镜像同步流水线以发布 %s 镜像，或在镜像向导中选择 docker（上游）源' ;;
     pi_err_wlan_parent)   printf '%s' '网络父接口 %s 是无线网卡：Wi-Fi 上的 macvlan 通常不可用（驱动/AP 隔离）- compose 模式需要有线以太网' ;;
     pi_err_wlan_parent_fix) printf '%s' '请用网线连接 Pi 后重试，或使用精简模式（支持 Wi-Fi）' ;;
     pi_step_lite)         printf '%s' '裸机精简模式安装' ;;

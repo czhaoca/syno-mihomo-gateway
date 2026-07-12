@@ -5,13 +5,18 @@
 # NAS. It produces a source-only release archive an operator can transfer to the
 # NAS and unpack into the Docker shared folder, then run `sh ./install.sh`.
 #
-# Two profiles:
+# Three profiles:
 #   --profile dev      the full tracked tree (docs, CI, metadata).
 #                      Internal use; what CI's package check builds.
 #   --profile enduser  (default) the curated, self-contained distribution: runtime files +
 #                      the interactive installer + the plain-text guides, with all
 #                      developer/internal files removed and a leak-gate that fails
 #                      the build if any identifying string would ship.
+#   --profile pi       the enduser set PLUS the Raspberry-Pi port (install-pi.sh,
+#                      scripts/pi, the INSTALL-PI guides). Same identity gate;
+#                      generic forge hostnames are tolerated here because the Pi
+#                      runtime downloads from upstream releases (DEC-R3, #31).
+#                      Artifacts are named syno-mihomo-gateway-pi-<version>.*.
 #
 # Container images are intentionally out of scope here - they reach the NAS via a
 # registry mirror, not this zip.
@@ -22,7 +27,7 @@
 #
 # POSIX /bin/sh, ASCII only, no `set -e` (explicit return-code checks).
 #
-# Usage: scripts/package.sh [--profile dev|enduser] [--version X.Y.Z]
+# Usage: scripts/package.sh [--profile dev|enduser|pi] [--version X.Y.Z]
 #                           [--allow-dirty] [--no-zip] [--no-tar]
 # Output: dist/syno-mihomo-gateway-<version>.{tar.gz,zip} (+ .sha256 sidecars)
 
@@ -48,6 +53,16 @@ PROFILE=enduser
 # everything tracked, then subtract.) No entry contains a space.
 ENDUSER_EXCLUDES=". :(exclude)README.md :(exclude)AGENTS.md :(exclude)CLAUDE.md :(exclude).woodpecker.yml :(exclude).gitignore :(exclude)docs/*.md :(exclude)docs/zh :(exclude)scripts/ci :(exclude)scripts/cli :(exclude)scripts/package.sh :(exclude)install-pi.sh :(exclude)scripts/pi :(exclude)docs/INSTALL-PI.txt :(exclude)docs/INSTALL-PI.zh.txt"
 
+# The pi bundle is the enduser set PLUS the Raspberry-Pi port: derived, not
+# copied, so the two pathspecs can never diverge anywhere else (DEC-R4, #31).
+PI_EXCLUDES=""
+for _tok in $ENDUSER_EXCLUDES; do
+  case "$_tok" in
+    ':(exclude)install-pi.sh'|':(exclude)scripts/pi'|':(exclude)docs/INSTALL-PI.txt'|':(exclude)docs/INSTALL-PI.zh.txt') : ;;
+    *) PI_EXCLUDES="${PI_EXCLUDES}${PI_EXCLUDES:+ }$_tok" ;;
+  esac
+done
+
 _ts() { date '+%Y-%m-%d %H:%M:%S %z'; }
 log()       { printf '%s [%s] %s\n' "$(_ts)" "$1" "$2" >&2; }
 log_info()  { log INFO  "$*"; }
@@ -58,7 +73,8 @@ usage() {
   cat >&2 <<'EOF'
 Usage: scripts/package.sh [options]
 
-  --profile dev|enduser   enduser (default) = curated self-contained distribution;
+  --profile dev|enduser|pi  enduser (default) = curated self-contained distribution;
+                          pi = enduser set + the Raspberry-Pi port (-pi artifacts);
                           dev = full tracked tree for internal use
   --version X.Y.Z         Override the version (default: ./VERSION, else git describe)
   --allow-dirty           Package even with uncommitted changes (archives HEAD)
@@ -86,13 +102,20 @@ emit_sha256() {
   log_info "checksum -> ${_base}.sha256"
 }
 
-# leak_scan <dir> - grep the assembled tree for any developer/identifying string.
-# Returns non-zero (and prints offenders) if ANY is present. Fixed strings are
-# matched case-insensitively; a generic email regex is the author-email catch-all.
+# leak_scan <dir> <profile> - grep the assembled tree for forbidden strings.
+# The IDENTITY set (personal/infra identifiers + the email regex catch-all) is
+# forbidden in EVERY gated profile; the FORGE set (generic code-forge hostnames)
+# is additionally forbidden everywhere EXCEPT the pi profile, whose runtime
+# legitimately downloads from upstream releases (DEC-R3, #31). Fixed strings
+# match case-insensitively. Keep scripts/ci/package_check.py's split in sync.
 leak_scan() {
-  _dir="$1"; _hit=0
+  _dir="$1"; _lprofile="$2"; _hit=0
   _private_site='yvr''lab'
-  for _s in github gitlab bitbucket gitea git@ czhaoca chao.zhao Nimbus docker-china-sync woodpecker ALIYUN_NAME_SPACE "$_private_site"; do
+  set -- czhaoca chao.zhao Nimbus docker-china-sync woodpecker ALIYUN_NAME_SPACE "$_private_site"
+  if [ "$_lprofile" != pi ]; then
+    set -- "$@" github gitlab bitbucket gitea git@
+  fi
+  for _s in "$@"; do
     _m="$(grep -rInF -i -e "$_s" "$_dir" 2>/dev/null)"
     if [ -n "$_m" ]; then printf 'LEAK [%s]:\n%s\n' "$_s" "$_m" >&2; _hit=1; fi
   done
@@ -101,14 +124,15 @@ leak_scan() {
   [ "$_hit" -eq 0 ]
 }
 
-# ea_archive <format> <outfile> - git archive the enduser pathspec (prefix +
-# excludes). `set -f` disables shell globbing so the `*` in a pathspec reaches git.
+# ea_archive <format> <outfile> - git archive the active profile's pathspec
+# (prefix + excludes from $ARCHIVE_EXCLUDES, set by the profile arm below).
+# `set -f` disables shell globbing so the `*` in a pathspec reaches git.
 ea_archive() {
   _fmt="$1"; _out="$2"
   set -f
   # shellcheck disable=SC2086  # intentional word-split of the pathspec list (no spaces); globbing disabled
   # NOTE: -o must precede the `-- <pathspec>`; anything after `--` is a pathspec.
-  git -C "$REPO_ROOT" archive --format="$_fmt" -9 --prefix="$PREFIX" -o "$_out" HEAD -- $ENDUSER_EXCLUDES
+  git -C "$REPO_ROOT" archive --format="$_fmt" -9 --prefix="$PREFIX" -o "$_out" HEAD -- $ARCHIVE_EXCLUDES
   _rc=$?
   set +f
   return "$_rc"
@@ -133,8 +157,8 @@ while [ "$#" -gt 0 ]; do
 done
 
 case "$PROFILE" in
-  dev|enduser) : ;;
-  *) log_error "--profile must be 'dev' or 'enduser' (got '$PROFILE')"; exit "$EXIT_CONFIG" ;;
+  dev|enduser|pi) : ;;
+  *) log_error "--profile must be 'dev', 'enduser', or 'pi' (got '$PROFILE')"; exit "$EXIT_CONFIG" ;;
 esac
 
 # --- guard: must run from the source git checkout, not an extracted release ---
@@ -180,20 +204,26 @@ fi
 
 mkdir -p "$DIST" || { log_error "cannot create $DIST"; exit "$EXIT_CONFIG"; }
 
-TARBALL="$DIST/syno-mihomo-gateway-${VERSION}.tar.gz"
-ZIPFILE="$DIST/syno-mihomo-gateway-${VERSION}.zip"
+# The pi artifacts carry a distinct stem so both curated bundles can sit in
+# dist/ side by side; the in-archive root dir (PREFIX) is identical.
+ARTIFACT_STEM="syno-mihomo-gateway"
+[ "$PROFILE" = pi ] && ARTIFACT_STEM="syno-mihomo-gateway-pi"
+TARBALL="$DIST/${ARTIFACT_STEM}-${VERSION}.tar.gz"
+ZIPFILE="$DIST/${ARTIFACT_STEM}-${VERSION}.zip"
 built=0
 
-if [ "$PROFILE" = enduser ]; then
+if [ "$PROFILE" = enduser ] || [ "$PROFILE" = pi ]; then
   # Stage the curated tree (tracked-only, excludes applied) and prove it carries
-  # no identifying string BEFORE writing any artifact.
+  # no forbidden string BEFORE writing any artifact.
+  ARCHIVE_EXCLUDES="$ENDUSER_EXCLUDES"
+  [ "$PROFILE" = pi ] && ARCHIVE_EXCLUDES="$PI_EXCLUDES"
   STAGE="$(mktemp -d "${TMPDIR:-/tmp}/smg-pkg.XXXXXX")" || { log_error "mktemp failed"; exit "$EXIT_CONFIG"; }
   # shellcheck disable=SC2064  # expand STAGE now so the trap removes this exact dir
   trap "rm -rf \"$STAGE\"" EXIT INT TERM
   _staged_tar="$STAGE/tree.tar"
   set -f
   # shellcheck disable=SC2086  # intentional word-split; globbing disabled
-  git -C "$REPO_ROOT" archive --format=tar -o "$_staged_tar" HEAD -- $ENDUSER_EXCLUDES
+  git -C "$REPO_ROOT" archive --format=tar -o "$_staged_tar" HEAD -- $ARCHIVE_EXCLUDES
   _rc=$?
   set +f
   [ "$_rc" -eq 0 ] || { log_error "failed to stage the tracked tree for scanning"; exit "$EXIT_CONFIG"; }
@@ -202,23 +232,23 @@ if [ "$PROFILE" = enduser ]; then
     log_error "failed to extract the staged tree"; exit "$EXIT_CONFIG"
   fi
 
-  if ! leak_scan "$STAGE/tree"; then
-    log_error "IDENTITY LEAK: the enduser bundle would ship a forbidden string (above)."
+  if ! leak_scan "$STAGE/tree" "$PROFILE"; then
+    log_error "IDENTITY LEAK: the $PROFILE bundle would ship a forbidden string (above)."
     log_error "scrub it from the offending tracked file and rebuild. NO artifact written."
     exit "$EXIT_CONFIG"
   fi
-  log_info "leak-gate passed: no developer/identifying strings in the staged bundle"
+  log_info "leak-gate passed: no forbidden strings in the staged $PROFILE bundle"
 
   if [ "$DO_TAR" = 1 ]; then
     if ea_archive tar.gz "$TARBALL"; then
-      log_info "built $(basename "$TARBALL") (enduser)"; emit_sha256 "$TARBALL"; built=$((built + 1))
+      log_info "built $(basename "$TARBALL") ($PROFILE)"; emit_sha256 "$TARBALL"; built=$((built + 1))
     else
       log_error "failed to build $TARBALL"; exit "$EXIT_CONFIG"
     fi
   fi
   if [ "$DO_ZIP" = 1 ]; then
     if ea_archive zip "$ZIPFILE"; then
-      log_info "built $(basename "$ZIPFILE") (enduser)"; emit_sha256 "$ZIPFILE"; built=$((built + 1))
+      log_info "built $(basename "$ZIPFILE") ($PROFILE)"; emit_sha256 "$ZIPFILE"; built=$((built + 1))
     else
       log_error "failed to build $ZIPFILE"; exit "$EXIT_CONFIG"
     fi
@@ -248,9 +278,9 @@ fi
 
 log_info "release ${VERSION} (${PROFILE}) ready in ${DIST}:"
 ls -lh "$DIST" >&2
-if [ "$PROFILE" = enduser ]; then
-  log_info "Next: transfer to the NAS, unpack into the Docker shared folder, run 'sh ./install.sh'."
-else
-  log_info "dev bundle (internal). For the distributable archive use: --profile enduser"
-fi
+case "$PROFILE" in
+  enduser) log_info "Next: transfer to the NAS, unpack into the Docker shared folder, run 'sh ./install.sh'." ;;
+  pi)      log_info "Next: transfer to the Pi, unpack, run 'sudo sh ./install-pi.sh' (see docs/INSTALL-PI.txt)." ;;
+  *)       log_info "dev bundle (internal). For the distributable archives use: --profile enduser or --profile pi" ;;
+esac
 exit "$EXIT_OK"

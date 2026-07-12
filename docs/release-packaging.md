@@ -59,7 +59,7 @@ built with `git archive`, so it contains **only tracked files** — your `.env`,
 
 ### Profiles: what's inside the bundle
 
-`scripts/package.sh` builds one of two profiles:
+`scripts/package.sh` builds one of three profiles:
 
 - **`--profile enduser` (default)** — the curated, self-contained distribution: runtime files, the
   interactive installer, and the **plain-text guides only**. All Markdown docs (`README.md`,
@@ -69,6 +69,13 @@ built with `git archive`, so it contains **only tracked files** — your `.env`,
   `.zh.txt` Chinese variants). This page — and [Installation](installation.md), and every other
   `.md` cross-link in this guide — is **not** in the bundle; read the `.md` manual on the
   connected machine or online.
+- **`--profile pi`** — the enduser set **plus the Raspberry Pi port**: `install-pi.sh`,
+  `scripts/pi/`, and the `docs/INSTALL-PI.txt` / `docs/INSTALL-PI.zh.txt` guides. Artifacts are
+  named `syno-mihomo-gateway-pi-<version>.{zip,tar.gz}` (same in-archive folder name), so both
+  bundles can sit side by side. The Pi runtime downloads mihomo/dashboard artifacts from upstream
+  releases, so this profile — and only this profile — tolerates generic code-forge hostnames in
+  shipped files; the identity gate below still applies in full. On the Pi, unpack and run
+  `sudo sh ./install-pi.sh` (see the bundled `docs/INSTALL-PI.txt`).
 - **`--profile dev`** — the full tracked tree (docs, CI, metadata). Internal use; it is what CI's
   package check builds.
 
@@ -82,11 +89,13 @@ built with `git archive`, so it contains **only tracked files** — your `.env`,
   anything under `logs/` is tracked by git (`git archive` would ship it); untrack with
   `git rm --cached <path>` first.
 - **Not a git checkout** — it must run from the source clone, not an unpacked release bundle.
-- **Identity leak-gate** (enduser profile only) — before writing any artifact, the staged tree is
-  scanned for developer/identifying strings (plus an email-address regex). Any hit aborts with
+- **Identity leak-gate** (enduser and pi profiles) — before writing any artifact, the staged tree
+  is scanned for developer/identifying strings (plus an email-address regex). Any hit aborts with
   `IDENTITY LEAK`, names the offending string and file, and writes **no artifact**. The fix is to
   scrub the string from the offending *tracked* file, commit, and rebuild — re-running without a
-  fix changes nothing.
+  fix changes nothing. The forbidden list is split: **identity** strings are forbidden in both
+  curated profiles, while generic **forge hostnames** are forbidden in the enduser bundle but
+  tolerated in the pi bundle (its runtime needs functional upstream download URLs).
 
 Other flags: `--no-zip` / `--no-tar` skip one artifact (passing both is an error).
 

@@ -146,7 +146,7 @@ Runs on push/PR to `main` and `master`:
 | `render-config` | `python scripts/ci/render_check.py` — runs the **real** renderer against a fixture URL with a `Name=` prefix + `&` params and asserts the URL round-trips exactly; also enforces the no-hardcoded-DNS rule |
 | `cli-contract` | `python scripts/ci/cli_contract_check.py` — byte-diffs the committed `help.sh`/`cli.md` (en+zh)/`CLI.txt` (en+zh) against a fresh regeneration from `scripts/cli/spec.yaml`, and asserts the spec's exit codes match `common.sh`, its verb set matches `gateway.sh`'s dispatch, and `gateway.sh --help` serves the spec text verbatim |
 | `compose-policy` | `python scripts/ci/compose_policy_check.py` — asserts **fail-closed** image refs: every compose `image:` is exactly `${VAR}`/`${VAR:?msg}` (no defaults, no hardcoded refs) and `.env.example` defines the image vars and ships `REGISTRY_MODE=acr` (ACR default; `docker` upstream is an explicit opt-in, not forbidden) |
-| `package-check` | `python scripts/ci/package_check.py` — builds **both** the dev and enduser bundles in throwaway repos and proves **no secret can ship** (planted `.env`/subscription/`config.yaml` absent from both archives' names *and* bytes), checksums verify, the enduser bundle prunes developer/`.md`/CI files, ships the installer + `.txt` guides, contains no identity string, and its leak-gate fails closed on an injected leak |
+| `package-check` | `python scripts/ci/package_check.py` — builds the dev, enduser, **and pi** bundles in throwaway repos and proves **no secret can ship** (planted `.env`/subscription/`config.yaml` absent from the archives' names *and* bytes), checksums verify, the enduser bundle prunes developer/`.md`/CI files (including the Pi port), ships the installer + `.txt` guides, contains no identity string, and its leak-gate fails closed on an injected leak; the pi bundle ships the Pi port on top of the enduser set, keeps the identity gate fail-closed, and tolerates the upstream forge URLs its runtime needs |
 | `privacy-check` | Scans tracked files and reachable blobs for private operational identifiers, credentials, private keys, and accidentally tracked runtime files (+ the gate's self-test) |
 | `dsm-shell-tests` | Nine BusyBox `sh` suites with fake Docker/Compose/service CLIs: `dsm_installer_check`, `lifecycle_check`, `auto_update_check`, `cloudflared_check`, `generic_update_check`, `gateway_cli_check`, `migrate_legacy_check`, `seed_provider_check`, `pi_installer_check` (the Raspberry Pi port's shared seams) — plus `validate_release.sh --self-test`, the unit checks of the on-NAS release-validation helper's measurement functions |
 | `shellcheck` | `sh -n` parse-checks **every** `*.sh` in the repo, then `shellcheck -x` on 19 targets: `install.sh`, `install-pi.sh`, `gateway.sh`, `auto_update.sh`, `pi/auto_update_lite.sh`, `pi/lite_ctl.sh`, `install_scheduler.sh`, `setup_network.sh`, `render_config.sh`, `package.sh`, `doctor.sh`, `state_diff.sh`, `migrate_legacy.sh`, `seed_provider.sh`, `bootstrap.sh`, `lib/container.sh`, `lib/targets.sh`, `lib/geodata.sh`, `validate_release.sh` (sourced libs followed in-context) |
@@ -172,6 +172,7 @@ Maintainers produce the offline bundle consumed in [Release Zip](release-packagi
 
 ```bash
 sh scripts/package.sh                         # curated DSM end-user bundle (default)
+sh scripts/package.sh --profile pi            # enduser set + the Raspberry-Pi port (-pi artifacts)
 sh scripts/package.sh --profile dev           # full internal/developer bundle
 sh scripts/package.sh --version 1.2.12         # override the VERSION file
 ```
@@ -186,10 +187,13 @@ sh scripts/package.sh --version 1.2.12         # override the VERSION file
 - Safeguards: `package.sh` refuses to build if a secret path is tracked, and CI's `package-check`
   (`scripts/ci/package_check.py`) proves the archive ships no secret on every push.
 - The default (enduser) profile prunes developer/CI files via the `ENDUSER_EXCLUDES` pathspec in
-  `package.sh` (README.md, AGENTS.md, `docs/*.md`, `docs/zh`, `scripts/ci`, `scripts/cli`, …) and
-  ships the `.txt` guides + `install.sh`; a `leak_scan` identity gate greps the staged tree for
-  forbidden strings and **fails closed**. When adding tracked files, check both lists in
-  `scripts/package.sh`.
+  `package.sh` (README.md, AGENTS.md, `docs/*.md`, `docs/zh`, `scripts/ci`, `scripts/cli`, the Pi
+  port, …) and ships the `.txt` guides + `install.sh`; a `leak_scan` identity gate greps the
+  staged tree for forbidden strings and **fails closed**. The pi profile's `PI_EXCLUDES` is
+  **derived** from `ENDUSER_EXCLUDES` (minus exactly the four Pi paths), and the forbidden list
+  is split: identity strings apply to both curated profiles, forge hostnames to enduser only.
+  When adding tracked files or forbidden strings, keep `scripts/package.sh` and
+  `scripts/ci/package_check.py` in sync (both carry the split).
 
 ### Shipping a release
 

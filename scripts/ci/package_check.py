@@ -10,7 +10,11 @@ checkout), then invokes the REAL scripts/package.sh and bootstrap.sh and asserts
   * the shipped templates and scripts ARE present, and checksums verify;
   * every package.sh guard fires - tracked secret, dirty tree, non-git dir;
   * bootstrap.sh seeds .env (mode 600) + subscription from the examples, restores
-    the exec bit the .zip extraction drops, and is idempotent (no clobber).
+    the exec bit the .zip extraction drops, and is idempotent (no clobber);
+  * the pi profile ships the enduser set PLUS the Raspberry-Pi port (DEC-R4,
+    issue #31): its IDENTITY gate still fails closed, while the FORGE hostnames
+    the pi runtime's upstream download URLs need are tolerated there - and only
+    there, never in the enduser bundle.
 
 Mirrors scripts/ci/render_check.py: exercise the REAL scripts (a reimplementation
 would miss the very bugs this guards against), fail() -> exit 1, print OK: on pass.
@@ -53,11 +57,15 @@ MUST_EXCLUDE = [
 
 # --- enduser profile (curated, self-contained, identity-free distribution) ----
 # Forbidden substrings mirror scripts/package.sh's leak-gate (case-insensitive).
-FORBIDDEN_SUBSTRINGS = [
-    "github", "gitlab", "bitbucket", "gitea", "git@",
+# DEC-R3 (issue #31): IDENTITY strings are forbidden in EVERY gated profile;
+# FORGE hostnames are additionally forbidden in the enduser bundle only (the
+# pi bundle legitimately carries upstream release-download URLs).
+IDENTITY_SUBSTRINGS = [
     "czhaoca", "chao.zhao", "nimbus", "docker-china-sync",
     "woodpecker", "aliyun_name_space", "yvr" + "lab",
 ]
+FORGE_SUBSTRINGS = ["github", "gitlab", "bitbucket", "gitea", "git@"]
+FORBIDDEN_SUBSTRINGS = FORGE_SUBSTRINGS + IDENTITY_SUBSTRINGS
 EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 
 ENDUSER_MUST_INCLUDE = [
@@ -103,6 +111,18 @@ ENDUSER_MUST_EXCLUDE = [
     PREFIX + "scripts/ci/check.py",
     PREFIX + "scripts/package.sh",
 ]
+
+# --- pi profile (the enduser set PLUS the Raspberry-Pi port; DEC-R4, #31) ------
+# Derived, not copied: the pi lists differ from the enduser lists by exactly
+# the four pi paths, mirroring package.sh's PI_EXCLUDES derivation.
+PI_EXTRA_INCLUDE = [
+    PREFIX + "install-pi.sh",
+    PREFIX + "scripts/pi/lite.sh",
+    PREFIX + "docs/INSTALL-PI.txt",
+    PREFIX + "docs/INSTALL-PI.zh.txt",
+]
+PI_MUST_INCLUDE = ENDUSER_MUST_INCLUDE + PI_EXTRA_INCLUDE
+PI_MUST_EXCLUDE = [p for p in ENDUSER_MUST_EXCLUDE if p not in PI_EXTRA_INCLUDE]
 
 
 def fail(msg):
@@ -382,6 +402,40 @@ def check_enduser_archive(path: Path):
         fail(f"{label}: enduser bundle contains an email-like string {m.group(0)!r}")
 
 
+def check_pi_archive(path: Path):
+    label = path.name
+    names = archive_names(path)
+    for want in PI_MUST_INCLUDE:
+        if want not in names:
+            fail(f"{label}: pi bundle missing required entry {want}")
+    for bad in PI_MUST_EXCLUDE:
+        if bad in names:
+            fail(f"{label}: pi bundle shipped an excluded file {bad}")
+    for n in names:
+        if n.endswith(".md"):
+            fail(f"{label}: pi bundle ships a .md doc: {n}")
+        if n.startswith(PREFIX + "scripts/ci/"):
+            fail(f"{label}: pi bundle ships scripts/ci: {n}")
+        if n.startswith(PREFIX + "scripts/cli/"):
+            fail(f"{label}: pi bundle ships the CLI spec dir scripts/cli: {n}")
+        if n.startswith(PREFIX + "docs/zh/"):
+            fail(f"{label}: pi bundle ships docs/zh: {n}")
+    blob = archive_blob(path)
+    for sentinel in (ENV_SENTINEL, SUB_SENTINEL):
+        if sentinel.encode() in blob:
+            fail(f"{label}: SECRET LEAK - sentinel {sentinel!r} in the pi bundle")
+    text = blob.decode("utf-8", "ignore")
+    low = text.lower()
+    for s in IDENTITY_SUBSTRINGS:
+        if s in low:
+            fail(f"{label}: pi bundle contains forbidden identity string {s!r}")
+    if "https://github.com/" not in text:
+        fail(f"{label}: pi bundle lost its functional upstream download URL")
+    m = EMAIL_RE.search(text)
+    if m:
+        fail(f"{label}: pi bundle contains an email-like string {m.group(0)!r}")
+
+
 def check_enduser(base: Path):
     """Build the enduser bundle in its own fixture and assert prune + no-leak, then
     prove the leak-gate FIRES (exit 3, no artifact) when a kept file carries an
@@ -416,6 +470,44 @@ def check_enduser(base: Path):
         fail("leak-gate fired but still wrote an artifact")
     if "docker-china-sync" not in (r2.stdout + r2.stderr):
         fail("leak-gate fired but did not name the offending string")
+
+
+def check_pi(base: Path):
+    """Build the pi bundle (the enduser superset; DEC-R4) from the same fixture
+    tree - its pi decoys become shipped content - and assert the pi files ship,
+    the forge URL the pi runtime needs survives (the gate tolerates it), and an
+    injected IDENTITY string still fails the build closed."""
+    pi = base / "pi"
+    pi.mkdir()
+    build_enduser_fixture(pi)
+    pkg = pi / "scripts" / "package.sh"
+    dist = pi / "dist"
+
+    r = run(["sh", str(pkg), "--profile", "pi", "--version", "9.9.9-pi"])
+    if r.returncode != 0:
+        fail(f"pi build failed (exit {r.returncode}): {r.stderr.strip()}")
+    tar = dist / "syno-mihomo-gateway-pi-9.9.9-pi.tar.gz"
+    zp = dist / "syno-mihomo-gateway-pi-9.9.9-pi.zip"
+    for f in (tar, zp):
+        if not f.exists():
+            fail(f"pi artifact missing: {f.name}")
+    for art in (tar, zp):
+        check_pi_archive(art)
+        check_checksum(art)
+
+    # The IDENTITY gate must still FIRE for the pi profile: inject an identity
+    # string into a kept, tracked file -> exit 3, no artifact, string named.
+    cmp_path = pi / "docker-compose.yml"
+    cmp_path.write_text(cmp_path.read_text() + "# mirror via docker-china-sync\n")
+    git(["commit", "-aqm", "inject identity leak"], cwd=pi)
+    r2 = run(["sh", str(pkg), "--profile", "pi", "--version", "9.9.9-pileak"])
+    if r2.returncode != 3:
+        fail(f"pi leak-gate: expected exit 3 on an injected identity leak, got {r2.returncode}")
+    if (dist / "syno-mihomo-gateway-pi-9.9.9-pileak.tar.gz").exists() or \
+       (dist / "syno-mihomo-gateway-pi-9.9.9-pileak.zip").exists():
+        fail("pi leak-gate fired but still wrote an artifact")
+    if "docker-china-sync" not in (r2.stdout + r2.stderr):
+        fail("pi leak-gate fired but did not name the offending string")
 
 
 def main():
@@ -456,11 +548,16 @@ def main():
         # enduser profile: curated, identity-free distribution.
         check_enduser(base)
 
+        # pi profile: the enduser superset that carries the Raspberry-Pi port.
+        check_pi(base)
+
     print("OK: dev archive ships templates+scripts but no secret bytes (zip & tar.gz); "
           "checksums verify; tracked-secret/dirty/non-git guards fire; bootstrap.sh seeds "
           "config (mode 600), restores +x, is idempotent. enduser profile prunes all "
           "developer/.md/CI files, ships the installer + .txt guides, leaks no identity "
-          "string or secret, and its leak-gate fails closed on an injected leak.")
+          "string or secret, and its leak-gate fails closed on an injected leak. pi "
+          "profile ships the Pi port on top of the enduser set, keeps the identity gate "
+          "fail-closed, and tolerates the upstream forge URLs the Pi runtime needs.")
 
 
 if __name__ == "__main__":
