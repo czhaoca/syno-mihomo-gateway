@@ -57,59 +57,66 @@ backslashes round-trip safely. When editing by hand, keep one `KEY=VALUE` assign
 ### DNS (injected into the config template)
 
 Comma-separated lists → rendered as YAML flow sequences. **The first three are required**
-(the renderer fails loudly if any is empty — no DNS is hardcoded in the repo). A `#PROXY`
-suffix on a server is mihomo's proxy-group fragment syntax: that resolver is dialed
-**through** the proxy group literally named `PROXY` in the shipped template (rename both
-together). Every shipped entry is a plain IP or a **DoH-on-IP** URL, so no entry depends on
-resolving a hostname first — no bootstrap chicken-and-egg on a cold start.
+(the renderer fails loudly if any is empty — no DNS is hardcoded in the repo). A `#auto`
+suffix on a server is mihomo's group-detour fragment syntax: that resolver is dialed
+**through** the group literally named `auto` in the shipped template (rename both together;
+CI verifies every fragment names a real group). The detour rides `auto` — the url-test
+group — rather than the `PROXY` selector on purpose: `auto` always picks a live node by
+health, so DNS keeps working even when you pin `PROXY` to `DIRECT` in the dashboard. Every
+shipped entry is a plain IP or a **DoH-on-IP** URL, so no entry depends on resolving a
+hostname first — no bootstrap chicken-and-egg on a cold start.
 
 | Key | Req | Description | Example |
 |---|:--:|---|---|
 | `DNS_DEFAULT_NAMESERVER` | ✅ | Bootstrap resolvers — used only to resolve DoH/DoT server **hostnames** appearing elsewhere in this section (idle while every entry is IP-hosted). Must stay plain-IP, domestic-reachable, **untunneled**. | `223.5.5.5,119.29.29.29` |
-| `DNS_NAMESERVER` | ✅ | The general upstream, **and** — rendered as `proxy-server-nameserver` — what resolves the airport node hostnames before any proxy exists (see below). DoH-on-IP, domestic, **never** `#PROXY`-suffixed. | `https://223.5.5.5/dns-query,https://120.53.53.53/dns-query` |
-| `DNS_FALLBACK` | ✅ | Overseas / anti-pollution resolvers, consulted when an answer's geoip is not CN. Tunneled by default — dialed direct from a filtered network, they are unstable (the 2026-07-10 outage); through the tunnel they are fast. | `https://1.1.1.1/dns-query#PROXY,tls://8.8.8.8:853#PROXY` |
-| `DNS_CN_NAMESERVER` | | **Split-horizon pair (a):** domains on mihomo's `geosite:cn` list resolve ONLY here — domestic, dialed direct. Set together with `DNS_FOREIGN_NAMESERVER` or not at all: exactly one set refuses to render; **neither** set renders byte-identical to the pre-1.3.8 config (existing `.env` files keep working unchanged). | `https://223.5.5.5/dns-query,https://120.53.53.53/dns-query` |
-| `DNS_FOREIGN_NAMESERVER` | | **Split-horizon pair (b):** domains on `geosite:geolocation-!cn` resolve ONLY here — overseas, tunneled. Those names never reach a domestic operator at all. | `https://1.1.1.1/dns-query#PROXY,https://8.8.8.8/dns-query#PROXY` |
-| `DNS_GEOIP_NO_RESOLVE` | | `true` renders `no-resolve` onto the `GEOIP,CN,DIRECT` rule so it stops forcing local lookups of domains on **neither** geosite list. Trade-off: CN domains missing from `geosite:cn` lose the direct short-circuit and ride the proxy via `MATCH` (see [troubleshooting](troubleshooting.md#niche-domestic-site-slow-or-unreachable-after-enabling-no-resolve)). Only lowercase `true`/`false`. | `false` |
+| `DNS_NAMESERVER` | ✅ | What the bootstrap pins (geodata mirror, health-check host, airport panel) resolve through, **and** — rendered as `proxy-server-nameserver` — what resolves the airport node hostnames before any proxy exists (see below). With the split-horizon pair unset (legacy profile) it is also the general upstream. DoH-on-IP, domestic, **never** fragment-suffixed. | `https://223.5.5.5/dns-query,https://120.53.53.53/dns-query` |
+| `DNS_FALLBACK` | ✅ | **Legacy profile only:** overseas anti-pollution resolvers for the fallback dual-query, consulted when an answer's geoip is not CN. With split-horizon set this is unused and **not rendered at all** — v2 has no fallback, because the dual-query is what copied every long-tail hostname to the domestic resolvers. Kept required so flipping back to legacy always renders. | `https://1.1.1.1/dns-query#auto,tls://8.8.8.8:853#auto` |
+| `DNS_CN_NAMESERVER` | | **Split-horizon pair (a):** domains on mihomo's `geosite:cn` list resolve ONLY here — domestic, dialed direct. Set together with `DNS_FOREIGN_NAMESERVER` or not at all: exactly one set refuses to render; **neither** set renders the legacy profile byte-identical to the pre-1.3.8 config (existing `.env` files keep working unchanged — the redeploy wizard offers the upgrade). | `https://223.5.5.5/dns-query,https://120.53.53.53/dns-query` |
+| `DNS_FOREIGN_NAMESERVER` | | **Split-horizon pair (b), v2 foreign-by-default:** rendered as the **default** `nameserver` — every domain *not* matched by a policy entry (geosite-listed foreign **and** the unlisted long tail) resolves ONLY here — overseas, tunneled via `#auto`. Those names never reach a domestic operator; a dead tunnel fails **closed** (SERVFAIL) instead of silently leaking. | `https://1.1.1.1/dns-query#auto,https://8.8.8.8/dns-query#auto` |
+| `DNS_GEOIP_NO_RESOLVE` | | `true` renders `no-resolve` onto the `GEOIP,CN,DIRECT` rule so it never forces a lookup at all. Under v2 the forced lookup already rides the tunneled foreign list (private), so the default stays `false` and unlisted CN domains keep their DIRECT short-circuit. Trade-off of `true`: CN domains missing from `geosite:cn` ride the proxy via `MATCH` (see [troubleshooting](troubleshooting.md#niche-domestic-site-slow-or-unreachable-after-enabling-no-resolve)). Only lowercase `true`/`false`. | `false` |
 
-**Who can observe your DNS queries** (with the shipped split-horizon defaults):
+**Who can observe your DNS queries** (with the shipped split-horizon v2 defaults):
 
 | Observer | Sees | What changes it |
 |---|---|---|
-| Domestic resolver operators — AliDNS (Alibaba), DNSPod (Tencent) | CN-listed domain names, over encrypted DoH — **plus** domains on *neither* geosite list, because the `GEOIP,CN` routing rule resolves those locally just to test "is this IP in CN?". Foreign-listed names never arrive here. | `DNS_GEOIP_NO_RESOLVE=true` closes the neither-list residual. Unsetting the split-horizon pair sends **all** names here (pre-1.3.8 behavior). |
-| Your ISP / anyone on the wire path | Only that the gateway talks DoH/DoT to well-known resolver IPs — the query names are encrypted, and the tunneled entries do not even appear as DNS on the wire. | Plain-UDP entries (e.g. bare `223.5.5.5` in `DNS_NAMESERVER`) would put names back on the wire; the shipped defaults avoid that. |
-| Airport (proxy) operator | The foreign connections it proxies anyway, which now include your tunneled foreign/fallback DNS. The subscription-refresh fetch is dialed direct (recorded residual — its SNI is wire-visible). | Inherent to proxying — choose the airport accordingly. |
-| Foreign DoH vendors — Cloudflare, Google | Foreign-listed domain names, arriving **through the tunnel** (they observe the airport's exit IP, not your home IP). | The vendor set in `DNS_FOREIGN_NAMESERVER` / `DNS_FALLBACK` is yours to edit. |
+| Domestic resolver operators — AliDNS (Alibaba), DNSPod (Tencent) | CN-listed domain names over encrypted DoH, plus the bootstrap pins (geodata mirror, health-check host, airport panel, node hostnames). **Nothing else** — foreign-listed and long-tail names never arrive here, and a dnsleaktest.com extended test from a LAN client shows no domestic resolver. | Unsetting the split-horizon pair (legacy profile) sends **all** names here — pre-v1.3.10 renders also leaked the long tail via the `GEOIP,CN` lookup + fallback dual-query; `doctor` reports the profile as `dns_privacy`. |
+| Your ISP / anyone on the wire path | Only that the gateway talks DoH to well-known resolver IPs — the query names are encrypted, and the tunneled entries do not even appear as DNS on the wire. | Plain-UDP entries (e.g. bare `223.5.5.5` in `DNS_NAMESERVER`) would put names back on the wire; the shipped defaults avoid that. |
+| Airport (proxy) operator | The foreign connections it proxies anyway, which include your tunneled DNS (now covering the long tail too). The subscription-refresh fetch is dialed direct (recorded residual — its SNI is wire-visible). | Inherent to proxying — choose the airport accordingly. |
+| Foreign DoH vendors — Cloudflare, Google | Foreign-listed **and long-tail** domain names, arriving **through the tunnel** (they observe the airport's exit IP, not your home IP). | The vendor set in `DNS_FOREIGN_NAMESERVER` is yours to edit. |
 
 **`proxy-server-nameserver` — the cold-start invariant.** The rendered config reuses
 `DNS_NAMESERVER` as mihomo's `proxy-server-nameserver`: airport node hostnames resolve via the
-domestic list, dialed **direct**, bypassing the fallback-filter. Node IPs are usually non-CN, so
-the geoip filter would discard the domestic answer and wait for the fallback resolvers — which
-are tunneled (or, dialed direct, filtered), i.e. unreachable **before any node is up**. Without
-this, a fresh start or an expired node cache dead-ends with `dns resolve failed` on every node —
-observed in production (2026-07-10). This is why `DNS_NAMESERVER` must stay domestic and must
-never carry a `#PROXY` fragment; CI asserts both properties on every rendered variant.
+domestic list, dialed **direct**, outside every tunnel-dependent path. Node IPs are usually
+non-CN, so under the legacy profile the geoip fallback-filter would divert them to tunneled
+resolvers, and under v2 the default resolver itself is tunneled — either way unreachable
+**before any node is up**. Without this, a fresh start or an expired node cache dead-ends with
+`dns resolve failed` on every node — observed in production (2026-07-10). This is why
+`DNS_NAMESERVER` must stay domestic and must never carry a `#group` fragment; CI asserts both
+properties on every rendered variant.
 
-**Bootstrap DNS pins (v1.3.8).** `proxy-server-nameserver` covers node hostnames only — two more
-hosts must resolve **before any node is up** or a cold start can never bootstrap: the geodata
-mirror and your airport panel itself (its hostname is derived from `subscription.txt` at render
-time). Both are pinned in `nameserver-policy` to `DNS_NAMESERVER` (domestic, dialed direct) and
-excluded from fake-ip, in **every** mode — legacy and split-horizon alike, no knob. Without the
-pin both hosts usually sit on non-CN IPs, so the `fallback-filter` diverts them to the fallback
-resolvers — dead at cold start — and the provider can never fetch its node list (the 2026-07-12
-outage). An IP-literal subscription host needs no DNS, so the panel pin is skipped automatically;
-the provider also caches its node list at the stable path `config/proxies/my-airport.yaml`, which
-`scripts/seed_provider.sh` can (re)write when a live fetch is impossible (see
+**Bootstrap DNS pins (v1.3.8; gstatic added in v1.3.10).** `proxy-server-nameserver` covers node
+hostnames only — three more hosts must resolve **before any node is up** or a cold start can
+never bootstrap: the geodata mirror, the health-check host `www.gstatic.com` (delay probes and
+the empty-group `COMPATIBLE` placeholder dial it DIRECT), and your airport panel itself (its
+hostname is derived from `subscription.txt` at render time). All are pinned in
+`nameserver-policy` to `DNS_NAMESERVER` (domestic, dialed direct) in **every** mode — legacy and
+split-horizon alike, no knob — and the mirror + panel are excluded from fake-ip. Without the pins
+these hosts would resolve through a tunnel that does not exist yet, and the provider could never
+fetch its node list (the 2026-07-12 outage). An IP-literal subscription host needs no DNS, so the
+panel pin is skipped automatically; the provider also caches its node list at the stable path
+`config/proxies/my-airport.yaml`, which `scripts/seed_provider.sh` can (re)write when a live
+fetch is impossible (see
 [troubleshooting](troubleshooting.md#provider-has-no-nodes-foreign-sites-dead-node-list-empty)).
 
 The shipped `.env.example` defaults match the mainland-China posture of `REGISTRY_MODE=acr`
-(split-horizon on, everything encrypted, foreign path tunneled); on an unfiltered network
-`1.1.1.1,8.8.8.8` everywhere — with the split-horizon pair left unset — is fine. These settings
-configure the **gateway** — the NAS's own resolvers (DSM Control Panel → Network) must be
-reachable too, and `doctor` probes them (`host_dns`). Deploys also pre-seed the geo databases
-via CDN mirrors (`GEODATA_MIRRORS` overrides the mirror list) so a first start never blocks on
-a cross-border fetch — with split-horizon on, the `geosite:` lists in `nameserver-policy` make
-that pre-seed load-bearing for DNS itself.
+(split-horizon v2 on, everything encrypted, foreign + long-tail path tunneled); on an unfiltered
+network `1.1.1.1,8.8.8.8` everywhere — with the split-horizon pair left unset — is fine. These
+settings configure the **gateway** — the NAS's own resolvers (DSM Control Panel → Network) must
+be reachable too, and `doctor` probes them (`host_dns`) and reports the rendered profile
+(`dns_privacy`). Deploys also pre-seed the geo databases via CDN mirrors (`GEODATA_MIRRORS`
+overrides the mirror list) so a first start never blocks on a cross-border fetch — the
+`geosite:` lists in `nameserver-policy` and the routing rules make that pre-seed load-bearing
+for DNS and routing alike.
 
 ### Container images
 
@@ -233,6 +240,8 @@ Holds the Mihomo config with placeholders the renderer fills:
 | `{{AIRPORT_URL}}` | first line of `../syno-mihomo-gateway-data/config/subscription.txt` (label stripped) |
 | `{{CONTROLLER_PORT}}` / `{{CONTROLLER_SECRET}}` | `.env` |
 | `{{DNS_DEFAULT_NAMESERVER}}` / `{{DNS_NAMESERVER}}` / `{{DNS_FALLBACK}}` | `.env` |
+| `{{DNS_CN_NAMESERVER}}` / `{{DNS_FOREIGN_NAMESERVER}}` | `.env` (split-horizon pair; also selects which fenced DNS core renders — v2 foreign-by-default when set, legacy `nameserver`+`fallback` when unset) |
+| `{{GEOIP_NO_RESOLVE}}` | `.env` `DNS_GEOIP_NO_RESOLVE` (renders `,no-resolve` onto the GEOIP rule when `true`) |
 | `{{TUN_AUTO_REDIRECT}}` | `.env` (defaults to `false` when absent) |
 
 Edit proxy **rules**, the `proxy-groups` / `proxy-providers` blocks, ports, etc. directly in the
@@ -244,11 +253,18 @@ docker compose --env-file ../syno-mihomo-gateway-data/.env up -d --force-recreat
 
 (or `sudo sh scripts/gateway.sh redeploy --yes`). A plain `up -d mihomo` is a **no-op** when
 the image and compose model are unchanged — the entrypoint only re-renders on recreate, so a
-template-only edit is silently ignored. To customize routing, edit the `rules:` list — the defaults
-are `GEOSITE,CN,DIRECT` / `GEOIP,CN,DIRECT` / `MATCH,PROXY` (CN traffic direct, everything
-else through the `PROXY` group). `PROXY` is a selectable group that defaults to `auto` (the
-fastest node from your subscription) and also offers `DIRECT` / `REJECT`; rules must target a
-**proxy-group** (e.g. `PROXY`), never a `proxy-provider` directly.
+template-only edit is silently ignored. To customize routing, edit the `rules:` list — the
+defaults are `GEOSITE,NETFLIX,STREAMING` / `GEOSITE,CN,DIRECT` /
+`GEOSITE,GEOLOCATION-!CN,PROXY` / `GEOIP,CN,DIRECT` / `MATCH,PROXY`: streaming rides its own
+pinnable group, CN traffic goes direct, listed-foreign domains ride the proxy **without** any
+local DNS lookup, and the GEOIP fallthrough catches the rest. `PROXY` is a selectable group
+that defaults to `auto` (the fastest node from your subscription) and also offers `DIRECT` /
+`REJECT`; `STREAMING` is a second selector that defaults to `PROXY` — pin a
+streaming-unlock-capable node there from MetaCubeXD to move **only** streaming traffic
+(`auto` picks nodes by latency, which is rarely an unlock node). Rules must target a
+**proxy-group**, never a `proxy-provider` directly, and the geosite categories (`netflix`,
+`cn`, `geolocation-!cn`) come from the community-maintained lists already shipped in the
+pre-seeded `geosite.dat` — no extra downloads.
 
 The template also carries a `geo-auto-update` / `geox-url` block that points the geo-database
 downloads (needed by the `GEOSITE`/`GEOIP` rules) at a jsdelivr CDN mirror — mihomo's default

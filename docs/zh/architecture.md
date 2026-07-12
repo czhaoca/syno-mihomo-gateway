@@ -172,7 +172,10 @@ config/config.template.yaml ──(scripts/render_config.sh)──► ../syno-mi
 `../syno-mihomo-gateway-data/config/subscription.txt`）以及 `.env` 提供的令牌
 （`CONTROLLER_*`、`DNS_*`、`TUN_*`）替换进模板：`TUN_ENABLE` 决定保留还是删除由
 `{{TUN_BEGIN}}`/`{{TUN_END}}` 围起的 `tun:` 块，`{{TUN_AUTO_REDIRECT}}` 则是一个被替换的
-令牌（两者都按严格的 `true`/`false` 校验）。CI 运行的也是**同一个脚本**
+令牌（两者都按严格的 `true`/`false` 校验），分域解析对决定渲染哪套围栏 DNS 核心——
+设置时为境外优先的 v2，未设时为传统 `nameserver`+`fallback` 核心（见
+[配置](configuration.md)）。路由是静态 `rules:` 列表（流媒体 → 可固定的 `STREAMING`
+选择器，国内直连，境外列表 → `PROXY`，GEOIP 兜底）。CI 运行的也是**同一个脚本**
 （`scripts/ci/render_check.py`），因此渲染路径实际上是经过测试的。由于渲染发生在容器
 入口点中，应用模板或订阅的修改需要重建容器：
 `docker compose --env-file ../syno-mihomo-gateway-data/.env up -d --force-recreate mihomo`

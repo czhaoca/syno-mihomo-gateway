@@ -57,53 +57,57 @@ Compose 兼容的引号，因此包含空格、`&`、`#`、`$`、引号或反斜
 ### DNS（注入到配置模板中）
 
 逗号分隔的列表 → 渲染为 YAML 流式序列。**前三项必填**（若任一为空，渲染器会显式报错
-失败——仓库中不会硬编码任何 DNS）。服务器末尾的 `#PROXY` 是 mihomo 的代理组片段语法：
-该解析器会**经由**模板中字面命名为 `PROXY` 的代理组拨号（两处名字要一起改）。出厂条目
-全部是纯 IP 或 **DoH-on-IP** URL，任何条目都不依赖先解析一个域名——冷启动没有引导
-鸡生蛋问题。
+失败——仓库中不会硬编码任何 DNS）。服务器末尾的 `#auto` 是 mihomo 的分组绕行片段语法：
+该解析器会**经由**模板中字面命名为 `auto` 的分组拨号（两处名字要一起改；CI 会校验每个
+片段都指向真实存在的分组）。绕行特意走 `auto`（url-test 组）而非 `PROXY` 选择器：`auto`
+总是按健康度选一个存活节点，因此即使你在面板里把 `PROXY` 固定为 `DIRECT`，DNS 解析也
+照常工作。出厂条目全部是纯 IP 或 **DoH-on-IP** URL，任何条目都不依赖先解析一个域名——
+冷启动没有引导鸡生蛋问题。
 
 | 键 | Req | 说明 | 示例 |
 |---|:--:|---|---|
 | `DNS_DEFAULT_NAMESERVER` | ✅ | 引导解析器——仅用于解析本节中出现的 DoH/DoT 服务器**域名**（当所有条目都以 IP 承载时处于闲置）。必须保持纯 IP、国内可达、**不走隧道**。 | `223.5.5.5,119.29.29.29` |
-| `DNS_NAMESERVER` | ✅ | 通用上游，**同时**——渲染为 `proxy-server-nameserver`——在任何代理就绪之前解析机场节点域名（见下文）。DoH-on-IP、国内、**绝不**加 `#PROXY` 后缀。 | `https://223.5.5.5/dns-query,https://120.53.53.53/dns-query` |
-| `DNS_FALLBACK` | ✅ | 境外/抗污染解析器，当应答的 geoip 不是 CN 时使用。默认走隧道——在有过滤的网络上直连它们并不稳定（2026-07-10 的故障），走隧道则快而稳。 | `https://1.1.1.1/dns-query#PROXY,tls://8.8.8.8:853#PROXY` |
-| `DNS_CN_NAMESERVER` | | **分域解析对 (a)：** 命中 mihomo `geosite:cn` 列表的域名只在这里解析——国内、直连。与 `DNS_FOREIGN_NAMESERVER` 同设或同不设：只设一个会拒绝渲染；**都不设**时渲染结果与 1.3.8 之前逐字节一致（现有 `.env` 原样可用）。 | `https://223.5.5.5/dns-query,https://120.53.53.53/dns-query` |
-| `DNS_FOREIGN_NAMESERVER` | | **分域解析对 (b)：** 命中 `geosite:geolocation-!cn` 的域名只在这里解析——境外、走隧道。这些域名完全不会到达任何国内运营方。 | `https://1.1.1.1/dns-query#PROXY,https://8.8.8.8/dns-query#PROXY` |
-| `DNS_GEOIP_NO_RESOLVE` | | `true` 会在 `GEOIP,CN,DIRECT` 规则上渲染出 `no-resolve`，使其不再为**两个列表都未命中**的域名强制本地解析。代价：`geosite:cn` 漏收的国内域名失去直连捷径，经 `MATCH` 走代理（见[故障排查](troubleshooting.md#开启-no-resolve-后小众国内网站变慢或打不开)）。仅接受小写 `true`/`false`。 | `false` |
+| `DNS_NAMESERVER` | ✅ | 引导钉扎（geo 镜像、健康检查主机、机场面板）的解析出口，**同时**——渲染为 `proxy-server-nameserver`——在任何代理就绪之前解析机场节点域名（见下文）。分域解析对未设时（传统配置档）它也是通用上游。DoH-on-IP、国内、**绝不**加分组片段后缀。 | `https://223.5.5.5/dns-query,https://120.53.53.53/dns-query` |
+| `DNS_FALLBACK` | ✅ | **仅传统配置档使用：** fallback 双查询的境外抗污染解析器，当应答的 geoip 不是 CN 时使用。分域解析设置后完全不使用、**根本不会渲染**——v2 没有 fallback，因为双查询正是把所有长尾域名抄送国内解析器的通道。保持必填是为了随时能切回传统配置档。 | `https://1.1.1.1/dns-query#auto,tls://8.8.8.8:853#auto` |
+| `DNS_CN_NAMESERVER` | | **分域解析对 (a)：** 命中 mihomo `geosite:cn` 列表的域名只在这里解析——国内、直连。与 `DNS_FOREIGN_NAMESERVER` 同设或同不设：只设一个会拒绝渲染；**都不设**时渲染传统配置档，与 1.3.8 之前逐字节一致（现有 `.env` 原样可用——重新部署向导会主动提议升级）。 | `https://223.5.5.5/dns-query,https://120.53.53.53/dns-query` |
+| `DNS_FOREIGN_NAMESERVER` | | **分域解析对 (b)，v2 境外优先：** 渲染为**默认** `nameserver`——所有未被策略条目命中的域名（geosite 境外列表**以及**未列出的长尾）只在这里解析——境外、经 `#auto` 走隧道。这些域名完全不会到达任何国内运营方；隧道全灭时解析**失败关闭**（SERVFAIL），绝不悄悄泄漏。 | `https://1.1.1.1/dns-query#auto,https://8.8.8.8/dns-query#auto` |
+| `DNS_GEOIP_NO_RESOLVE` | | `true` 会在 `GEOIP,CN,DIRECT` 规则上渲染出 `no-resolve`，使其完全不再强制任何解析。在 v2 下这次强制解析本就走隧道境外列表（私密），所以默认保持 `false`，未列出的国内域名保住直连捷径。`true` 的代价：`geosite:cn` 漏收的国内域名经 `MATCH` 走代理（见[故障排查](troubleshooting.md#开启-no-resolve-后小众国内网站变慢或打不开)）。仅接受小写 `true`/`false`。 | `false` |
 
-**谁能看到你的 DNS 查询**（在出厂的分域解析默认值下）：
+**谁能看到你的 DNS 查询**（在出厂的分域解析 v2 默认值下）：
 
 | 观察方 | 能看到什么 | 什么会改变它 |
 |---|---|---|
-| 国内解析服务运营方——AliDNS（阿里）、DNSPod（腾讯） | 中国列表内的域名（经加密 DoH）——**外加**两个列表都未命中的域名，因为 `GEOIP,CN` 路由规则为了判断"这个 IP 在不在中国"仍会本地解析它们。境外列表内的域名完全不会到达这里。 | `DNS_GEOIP_NO_RESOLVE=true` 关闭未命中残余。取消分域解析对则**所有**域名都会到这里（1.3.8 之前的行为）。 |
-| 你的 ISP / 线路上的任何人 | 只能看到网关在与知名解析器 IP 进行 DoH/DoT 通信——查询的域名是加密的，走隧道的条目在线路上甚至不表现为 DNS。 | 若在 `DNS_NAMESERVER` 里放明文 UDP 条目（如裸 `223.5.5.5`），域名会重新暴露在线路上；出厂默认避免了这一点。 |
-| 机场（代理）运营方 | 它本来就代理的境外连接，现在包括你走隧道的境外/fallback DNS。订阅刷新请求是直连的（已记录的残余——其 SNI 在线路上可见）。 | 代理的固有属性——据此选择机场。 |
-| 境外 DoH 服务商——Cloudflare、Google | 境外列表内的域名，**经隧道**到达（它们看到的是机场出口 IP，不是你家的 IP）。 | `DNS_FOREIGN_NAMESERVER` / `DNS_FALLBACK` 里的服务商由你决定。 |
+| 国内解析服务运营方——AliDNS（阿里）、DNSPod（腾讯） | 中国列表内的域名（经加密 DoH），加上引导钉扎（geo 镜像、健康检查主机、机场面板、节点域名）。**仅此而已**——境外列表与长尾域名完全不会到达这里；从局域网客户端跑 dnsleaktest.com 扩展测试不会出现国内解析器。 | 取消分域解析对（传统配置档）会把**所有**域名送到这里——v1.3.10 之前的渲染也会经 `GEOIP,CN` 解析 + fallback 双查询泄漏长尾；`doctor` 以 `dns_privacy` 报告当前配置档。 |
+| 你的 ISP / 线路上的任何人 | 只能看到网关在与知名解析器 IP 进行 DoH 通信——查询的域名是加密的，走隧道的条目在线路上甚至不表现为 DNS。 | 若在 `DNS_NAMESERVER` 里放明文 UDP 条目（如裸 `223.5.5.5`），域名会重新暴露在线路上；出厂默认避免了这一点。 |
+| 机场（代理）运营方 | 它本来就代理的境外连接，其中包括你走隧道的 DNS（现在也覆盖长尾）。订阅刷新请求是直连的（已记录的残余——其 SNI 在线路上可见）。 | 代理的固有属性——据此选择机场。 |
+| 境外 DoH 服务商——Cloudflare、Google | 境外列表内**以及长尾**的域名，**经隧道**到达（它们看到的是机场出口 IP，不是你家的 IP）。 | `DNS_FOREIGN_NAMESERVER` 里的服务商由你决定。 |
 
 **`proxy-server-nameserver`——冷启动不变量。** 渲染后的配置把 `DNS_NAMESERVER` 复用为
-mihomo 的 `proxy-server-nameserver`：机场节点域名经国内列表**直连**解析，绕过
-fallback-filter。节点 IP 通常不在国内，geoip 过滤器会丢弃国内应答、转而等待 fallback
-解析器——而后者走隧道（或直连时被过滤），也就是说**在任何节点就绪之前**都不可达。没有
-这一条，全新启动或节点缓存过期时会在每个节点上以 `dns resolve failed` 收场——生产环境
-实际发生过（2026-07-10）。因此 `DNS_NAMESERVER` 必须保持国内、且绝不能带 `#PROXY`
-片段；CI 会在每个渲染变体上断言这两条性质。
+mihomo 的 `proxy-server-nameserver`：机场节点域名经国内列表**直连**解析，处于一切依赖
+隧道的路径之外。节点 IP 通常不在国内：传统配置档下 geoip 过滤器会把它们转给走隧道的
+fallback 解析器，v2 下默认解析器本身就走隧道——无论哪种，**在任何节点就绪之前**都不可
+达。没有这一条，全新启动或节点缓存过期时会在每个节点上以 `dns resolve failed` 收场——
+生产环境实际发生过（2026-07-10）。因此 `DNS_NAMESERVER` 必须保持国内、且绝不能带
+`#分组` 片段；CI 会在每个渲染变体上断言这两条性质。
 
-**引导 DNS 钉扎（v1.3.8）。** `proxy-server-nameserver` 只覆盖节点域名——还有两个主机
-必须在**任何节点就绪之前**就能解析，否则冷启动永远无法完成引导：geo 数据镜像站，以及
-机场面板本身（其主机名在渲染时从 `subscription.txt` 推导）。二者都被钉进
-`nameserver-policy`，指向 `DNS_NAMESERVER`（国内、直连），并从 fake-ip 中排除——在
-**每种**模式下都生效（传统与分域解析一视同仁，无开关）。没有这层钉扎，这两个主机通常
-落在非国内 IP 上，`fallback-filter` 会把它们转给 fallback 解析器——冷启动时是死路——
-订阅便永远拉不下来（2026-07-12 故障）。订阅主机若是 IP 字面量则无需 DNS，面板钉扎自动
-跳过；此外订阅节点列表固定缓存在 `config/proxies/my-airport.yaml`，当实时拉取不可行时
-可由 `scripts/seed_provider.sh` 直接（重）写入（见故障排查"机场节点全部消失"一节）。
+**引导 DNS 钉扎（v1.3.8；v1.3.10 增加 gstatic）。** `proxy-server-nameserver` 只覆盖节点
+域名——还有三个主机必须在**任何节点就绪之前**就能解析，否则冷启动永远无法完成引导：
+geo 数据镜像站、健康检查主机 `www.gstatic.com`（延迟探测与空组降级出的 `COMPATIBLE`
+占位符都会**直连**拨它），以及机场面板本身（其主机名在渲染时从 `subscription.txt` 推
+导）。三者都被钉进 `nameserver-policy`，指向 `DNS_NAMESERVER`（国内、直连），镜像与
+面板还从 fake-ip 中排除——在**每种**模式下都生效（传统与分域解析一视同仁，无开关）。
+没有这层钉扎，这些主机的解析会依赖一条尚不存在的隧道，订阅便永远拉不下来
+（2026-07-12 故障）。订阅主机若是 IP 字面量则无需 DNS，面板钉扎自动跳过；此外订阅节点
+列表固定缓存在 `config/proxies/my-airport.yaml`，当实时拉取不可行时可由
+`scripts/seed_provider.sh` 直接（重）写入（见故障排查"机场节点全部消失"一节）。
 
-`.env.example` 的出厂默认值与 `REGISTRY_MODE=acr` 的中国大陆定位一致（分域解析开启、
-全程加密、境外路径走隧道）；在无过滤的网络上，三项全用 `1.1.1.1,8.8.8.8`——并让分域
-解析对保持未设——也可以。这些设置只作用于**网关**——NAS 自己的解析器（DSM 控制面板 →
-网络）也必须可达，`doctor` 会逐一探测（`host_dns` 检查）。部署时还会通过 CDN 镜像预下载
-geo 数据库（`GEODATA_MIRRORS` 可覆盖镜像列表），首次启动不再依赖跨境下载——分域解析
-开启后，`nameserver-policy` 里的 `geosite:` 列表让这份预下载对 DNS 本身也成为关键依赖。
+`.env.example` 的出厂默认值与 `REGISTRY_MODE=acr` 的中国大陆定位一致（分域解析 v2 开
+启、全程加密、境外与长尾路径走隧道）；在无过滤的网络上，三项全用 `1.1.1.1,8.8.8.8`——
+并让分域解析对保持未设——也可以。这些设置只作用于**网关**——NAS 自己的解析器（DSM
+控制面板 → 网络）也必须可达，`doctor` 会逐一探测（`host_dns` 检查）并报告渲染出的配置
+档（`dns_privacy` 检查）。部署时还会通过 CDN 镜像预下载 geo 数据库（`GEODATA_MIRRORS`
+可覆盖镜像列表），首次启动不再依赖跨境下载——`nameserver-policy` 里的 `geosite:` 列表
+与路由规则让这份预下载对 DNS 与路由都成为关键依赖。
 
 ### 容器镜像
 
@@ -227,6 +231,8 @@ dry-run 标志、updated/unchanged/failed/rolled-back 计数与名称——由 `
 | `{{AIRPORT_URL}}` | `../syno-mihomo-gateway-data/config/subscription.txt` 的第一行（去除标签后） |
 | `{{CONTROLLER_PORT}}` / `{{CONTROLLER_SECRET}}` | `.env` |
 | `{{DNS_DEFAULT_NAMESERVER}}` / `{{DNS_NAMESERVER}}` / `{{DNS_FALLBACK}}` | `.env` |
+| `{{DNS_CN_NAMESERVER}}` / `{{DNS_FOREIGN_NAMESERVER}}` | `.env`（分域解析对；同时决定渲染哪套围栏 DNS 核心——设置时为 v2 境外优先，未设时为传统 `nameserver`+`fallback`） |
+| `{{GEOIP_NO_RESOLVE}}` | `.env` 的 `DNS_GEOIP_NO_RESOLVE`（为 `true` 时在 GEOIP 规则上渲染 `,no-resolve`） |
 | `{{TUN_AUTO_REDIRECT}}` | `.env`（缺省时为 `false`） |
 
 代理**规则**、`proxy-groups` / `proxy-providers` 块、端口等请直接在模板中编辑（它们
@@ -238,11 +244,16 @@ docker compose --env-file ../syno-mihomo-gateway-data/.env up -d --force-recreat
 
 （或 `sudo sh scripts/gateway.sh redeploy --yes`）。当镜像与 compose 模型未变化时，
 普通的 `up -d mihomo` 是**空操作**——入口脚本只在重建容器时才重新渲染，因此仅改模板
-的编辑会被静默忽略。如需自定义路由，请编辑 `rules:` 列表——默认值
-为 `GEOSITE,CN,DIRECT` / `GEOIP,CN,DIRECT` / `MATCH,PROXY`（国内流量直连，其余
-全部走 `PROXY` 组）。`PROXY` 是一个可选择的代理组，默认指向 `auto`（订阅中延迟最低的
-节点），同时提供 `DIRECT` / `REJECT`；规则只能指向**代理组**（如 `PROXY`），不能直接
-指向 `proxy-provider`。
+的编辑会被静默忽略。如需自定义路由，请编辑 `rules:` 列表——默认值为
+`GEOSITE,NETFLIX,STREAMING` / `GEOSITE,CN,DIRECT` / `GEOSITE,GEOLOCATION-!CN,PROXY` /
+`GEOIP,CN,DIRECT` / `MATCH,PROXY`：流媒体走自己的可固定分组，国内流量直连，境外列表
+域名**不经任何本地 DNS 解析**直接走代理，GEOIP 兜底其余流量。`PROXY` 是一个可选择的
+代理组，默认指向 `auto`（订阅中延迟最低的节点），同时提供 `DIRECT` / `REJECT`；
+`STREAMING` 是第二个选择器，默认指向 `PROXY`——在 MetaCubeXD 里把它固定到支持流媒体
+解锁的节点，就能只切换流媒体流量（`auto` 按延迟选节点，而低延迟节点很少具备解锁能
+力）。规则只能指向**代理组**，不能直接指向 `proxy-provider`；geosite 分类
+（`netflix`、`cn`、`geolocation-!cn`）来自预下载 `geosite.dat` 中社区维护的开源列表——
+无需任何额外下载。
 
 模板还带有 `geo-auto-update` / `geox-url` 块，把地理数据库下载（`GEOSITE`/`GEOIP`
 规则所需）指向 jsdelivr CDN 镜像——mihomo 的默认下载源在中国大陆被屏蔽，而卡住的

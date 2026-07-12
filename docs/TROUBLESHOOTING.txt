@@ -260,10 +260,44 @@ Niche domestic site slow or unreachable after enabling no-resolve
          Usually it still works, just slower; it only breaks when the
          site rejects out-of-country visitors.
   Fix:   set DNS_GEOIP_NO_RESOLVE=false in .env and redeploy (install.sh
-         > modify an existing deployment). That restores the direct route,
-         at the cost of the gateway resolving unlisted names through the
-         domestic resolvers again (see CONFIGURE.txt, "Who can see your
-         DNS queries").
+         > modify an existing deployment). With the current defaults that
+         rule resolves names through the tunnel (private), so false costs
+         no privacy (see CONFIGURE.txt, "Who can see your DNS queries").
+
+--------------------------------------------------------------------------
+Netflix (or another streaming service) says "not available in your region"
+--------------------------------------------------------------------------
+  Cause: streaming services blacklist most datacenter exit addresses. The
+         auto group picks nodes by LATENCY, and the fastest node is rarely
+         a streaming-unlock node - the tunnel works, but Netflix refuses
+         its exit. This is a node property, not a rule fault: Netflix is
+         routed deterministically into its own STREAMING selector
+         (default: PROXY, i.e. unchanged behavior until you pin a node).
+  Fix:   open the dashboard > Proxies > STREAMING and pin a node your
+         airport marks as streaming/Netflix-capable (often named NF,
+         "streaming", "unlock"...), then reload the title. Only streaming
+         traffic moves; everything else stays on PROXY/auto.
+         Still failing on an unlock node? Some devices (smart TVs,
+         Android Private DNS) bypass the gateway's DNS and connect by raw
+         IP - those flows miss the domain rule and ride PROXY instead,
+         mixing exit addresses, which Netflix also rejects. Turn the
+         device's private/custom DNS off so the gateway answers it.
+
+--------------------------------------------------------------------------
+Unlisted-domain lookups fail while the airport is down
+--------------------------------------------------------------------------
+  Cause: by design, with the shipped privacy defaults. Names not on the
+         built-in China list resolve ONLY through the tunnel; when the
+         subscription has no working node, those lookups fail instead of
+         quietly falling back to a domestic resolver (that fallback was
+         exactly what leaked your browsing history to it). Chinese sites
+         keep working throughout.
+  Fix:   restore the airport (renew / replace the subscription). The DNS
+         detour rides the auto group, so pinning PROXY to DIRECT in the
+         dashboard does NOT break lookups - only a dead subscription
+         does. Also, the FIRST lookup of a new site adds one tunneled
+         round-trip and the DNS cache resets on restart - brief slowness
+         right after a restart is normal.
 
 --------------------------------------------------------------------------
 Upgrading from an old flat installation (everything in one folder)

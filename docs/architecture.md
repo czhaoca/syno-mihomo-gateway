@@ -184,8 +184,12 @@ config/config.template.yaml ──(scripts/render_config.sh)──► ../syno-mi
 `scripts/render_config.sh` substitutes the subscription URL (from
 `../syno-mihomo-gateway-data/config/subscription.txt`) and the `.env`-provided tokens
 (`CONTROLLER_*`, `DNS_*`, `TUN_*`) into the template: `TUN_ENABLE` keeps or deletes the
-`{{TUN_BEGIN}}`/`{{TUN_END}}`-fenced `tun:` block and `{{TUN_AUTO_REDIRECT}}` is a substituted
-token (both validated as strict `true`/`false`). The **same script** is what CI runs
+`{{TUN_BEGIN}}`/`{{TUN_END}}`-fenced `tun:` block, `{{TUN_AUTO_REDIRECT}}` is a substituted
+token (both validated as strict `true`/`false`), and the split-horizon pair selects which
+fenced DNS core renders — foreign-by-default v2 when set, the legacy `nameserver`+`fallback`
+core when unset (see [Configuration](configuration.md)). Routing is the static `rules:` list
+(streaming → the pinnable `STREAMING` selector, CN direct, listed-foreign → `PROXY`, GEOIP
+fallthrough). The **same script** is what CI runs
 (`scripts/ci/render_check.py`), so the rendering path is actually tested. Because rendering
 happens in the container entrypoint, applying a template or subscription edit requires
 recreating the container:

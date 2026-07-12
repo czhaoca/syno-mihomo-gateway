@@ -492,9 +492,49 @@ missing from `geosite:cn` no longer short-circuits to DIRECT — it falls throug
 rides the proxy. That is the knob's documented trade-off, not a fault: the site usually still
 works (tunneled), and only breaks when it rejects out-of-country visitors.
 
-**Fix:** set `DNS_GEOIP_NO_RESOLVE=false` in `.env` and redeploy — the rule resolves unlisted
-domains via the domestic resolvers again, which is the privacy residual documented in the
-[configuration DNS matrix](configuration.md#dns-injected-into-the-config-template).
+**Fix:** set `DNS_GEOIP_NO_RESOLVE=false` in `.env` and redeploy. Under split-horizon v2 the
+rule's lookups ride the tunneled foreign resolvers, so leaving the knob `false` costs no
+privacy — see the [configuration DNS matrix](configuration.md#dns-injected-into-the-config-template).
+
+## Netflix (or another streaming service) says "not available in your region"
+
+**Symptom:** general foreign browsing works through the gateway, but Netflix shows a region /
+"you seem to be using an unblocker or proxy" error, or another streaming service refuses to
+play.
+
+**Cause:** streaming services blacklist most datacenter exit IPs. The `auto` group picks nodes
+by **latency**, and the lowest-latency node is rarely a streaming-unlock node — so Netflix
+rides a working tunnel whose exit is refused by Netflix. This is a node property, not a rule
+fault: since v1.3.10 the `GEOSITE,NETFLIX,STREAMING` rule routes Netflix deterministically
+into its own `STREAMING` selector (default: `PROXY`, i.e. today's behavior).
+
+**Fix:** open MetaCubeXD → Proxies → `STREAMING` and pin a node your airport marks as
+streaming/Netflix-capable (often named `NF`, `流媒体`, `解锁`…), then reload the title. Only
+streaming traffic moves; everything else keeps riding `PROXY`/`auto`. If it still fails on an
+unlock node: some devices (smart TVs, Android **Private DNS**) bypass the gateway's DNS and
+connect by raw IP — those flows miss the domain rule and ride `PROXY` instead of `STREAMING`,
+mixing exit IPs, which Netflix also rejects. Disable the device's private/hardcoded DNS so the
+gateway answers its lookups (a future `sniffer` option is the structural fix; not shipped yet).
+
+## Unlisted-domain lookups fail while the airport is down
+
+**Symptom:** with the airport expired/unreachable, Chinese sites keep working but *everything
+else* — including small foreign sites — fails at the DNS step (SERVFAIL / no answer), even
+though under v1.3.9 those lookups still returned answers.
+
+**Cause:** by design. Split-horizon v2 resolves every non-CN-listed domain **only** through
+the tunneled foreign resolvers and removed the legacy fallback dual-query — a dead tunnel now
+fails **closed** instead of silently answering from a domestic resolver (which is exactly the
+leak dnsleaktest used to show). The flows those lookups would feed are unreachable without the
+tunnel anyway.
+
+**Fix:** restore the airport (or temporarily unset the split-horizon pair and redeploy to run
+the legacy profile while you migrate subscriptions — accepting that the domestic operators see
+every hostname again; `doctor`'s `dns_privacy` check reports which profile is live). Note the
+DNS detour rides the `auto` group, so pinning `PROXY=DIRECT` in the dashboard does **not**
+break resolution — only a genuinely dead provider does. Also expect the **first** lookup of a
+new domain to add one tunneled round-trip (~hundreds of ms); mihomo's DNS cache is in-memory,
+so caches start cold after every restart.
 
 ## Upgrading from a legacy flat install
 

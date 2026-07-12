@@ -132,6 +132,41 @@ than minting a directory for one file; revisit at postmortem #2.
   rejected (blunt global instrument; per-server `#PROXY` is surgical); setup_network.sh
   SOURCE_ONLY seam (logic lives in already-tested libs; shellcheck-only acceptable).
 
+## v2 addendum — foreign-by-default (recorded 2026-07-12, ships in v1.3.10)
+
+Owner re-opened DEC-2's accepted residual after a dnsleaktest.com extended test still showed
+AliDNS: the long-tail leak (GEOIP-forced lookups + the `nameserver`/`fallback` dual-query)
+is **no longer acceptable**, and netflix.com was additionally not usable via the proxy
+(single-group design: `auto` picks by latency, rarely a streaming-unlock node). Both fixed
+in one release; production `.env` was also still on the pre-1.3.8 legacy profile because
+release validations end `--revert` (upgrades never migrate by design).
+
+- **DEC-A (owner, supersedes the DEC-2 stance): split-horizon v2, foreign-by-default.**
+  With the split pair set, `DNS_FOREIGN_NAMESERVER` renders as the DEFAULT `nameserver` and
+  the `fallback`/`fallback-filter` dual-query is removed — domestic resolvers see only
+  CN-listed domains + bootstrap pins; a dead tunnel fails closed (source-verified:
+  nameserver-policy replaces the server list; `default-nameserver` is never a general
+  retry). Legacy render byte-identity preserved via a second fence pair
+  (`DNSSPLIT`/`DNSLEGACY`). `DNS_GEOIP_NO_RESOLVE` stays default-`false` — under v2 the
+  GEOIP lookup rides the tunnel, so the knob's privacy rationale is gone and unlisted-CN
+  keeps DIRECT.
+- **DEC-B (owner): STREAMING group + geosite rules.** `GEOSITE,NETFLIX,STREAMING` (new
+  select group, first member PROXY = day-one no-op) + `GEOSITE,GEOLOCATION-!CN,PROXY`
+  ahead of the GEOIP fallthrough, from the already-shipped geosite.dat. Rule-providers
+  (runtime-fetched community lists) deliberately deferred — same cold-start fetch class as
+  the 2026-07-10/12 outages.
+- Agent-verified + resolved in review: DNS detour fragments switched `#PROXY` → **`#auto`**
+  (survives a dashboard `PROXY=DIRECT` pin; DNS wants "any live tunnel", which url-test is
+  by construction); `www.gstatic.com` joins the always-on domestic policy pins (delay
+  probes + the COMPATIBLE placeholder dial it DIRECT) but NOT fake-ip-filter; the
+  `geosite:geolocation-!cn` policy line stays (redundant under the flip, smallest diff);
+  legacy `.env` migration = interactive default-No offer in the redeploy/pi wizards
+  (`offer_dns_privacy_upgrade`, values via `example_default()`, custom `://` values never
+  clobbered); doctor gains `dns_privacy` (v2|v1|legacy|unknown, 17→18 checks); validation
+  gains the fails-closed `/dns/query` pair + STREAMING/rule probes + a dnsleaktest/netflix
+  owner spot-check block. Known residual (documented, deferred): clients with hardcoded
+  DNS bypass fake-ip and miss the STREAMING rule — `sniffer:` is the structural fix.
+
 ## Work breakdown
 
 **Enacted this session (no issues; committed directly):**
