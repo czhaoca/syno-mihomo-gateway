@@ -1,13 +1,18 @@
 #!/bin/sh
 # validate_release.sh - on-NAS release validation for a staged bundle.
 # Proves, on the real network, what CI can only prove structurally:
-#   A. the staged bundle deploys and doctor is healthy;
+#   A. the staged bundle deploys and doctor is healthy (incl. the STREAMING
+#      group + netflix rule of v1.3.10);
 #   B. an UNCHANGED pre-split-horizon .env still renders the legacy config
 #      (upgrade compatibility), then split-horizon is enabled from the
-#      shipped .env.example defaults and renders the policy;
+#      shipped .env.example defaults and renders the policy AND the v2
+#      foreign-by-default core (no fallback dual-query);
 #   C. COLD START: with the node cache and provider cache parked and every
 #      tunnel-dependent resolver black-holed, nodes still come up - the
-#      2026-07 chicken-and-egg, disproven on the wire;
+#      2026-07 chicken-and-egg, disproven on the wire - and long-tail DNS
+#      FAILS CLOSED (never silently answered by a domestic resolver) while
+#      the policy-pinned hosts keep resolving; then an owner LAN spot-check
+#      (dnsleaktest extended + netflix via the STREAMING group);
 #   D. the DNS_GEOIP_NO_RESOLVE flip renders, routes, and reverts.
 #
 # Run on the NAS, in a real terminal (sudo needs a TTY):
@@ -49,7 +54,7 @@ STAGE="${SMG_STAGE:-/volume1/docker/smg-staging}"
 REL="${SMG_RELEASE_DIR:-/volume1/docker/syno-mihomo-gateway}"
 SELF_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
 LOG="$STAGE/validate-results.log"
-BLACKHOLE="https://192.0.2.1/dns-query#PROXY"  # RFC 5737 TEST-NET-1: never routes
+BLACKHOLE="https://192.0.2.1/dns-query#auto"  # RFC 5737 TEST-NET-1: never routes
 
 SELF_TEST=0; SKIP_KNOB=0; NO_EXTRACT=0; FINAL=""
 for _a in "$@"; do
@@ -83,6 +88,23 @@ rendered_knob_off() { grep -q "^  - 'GEOIP,CN,DIRECT'$" "$1"; }
 # fragment (the cold-start invariant).
 rendered_psn_untunneled() {
   grep '^  proxy-server-nameserver:' "$1" | grep -vq '#'
+}
+
+# rendered_split_core_on FILE - the v2 foreign-by-default core is rendered:
+# the DEFAULT nameserver rides a '#group' detour AND the fallback dual-query
+# line is gone (long-tail hostnames can no longer reach a domestic resolver).
+# Anchored to the real YAML lines: '^  nameserver:' cannot match
+# 'nameserver-policy:' and '^  fallback:' cannot match 'fallback-filter:'
+# (the colon anchors both), and comment prose never matches either.
+rendered_split_core_on() {
+  grep '^  nameserver:' "$1" | grep -q '#' \
+    && ! grep -q '^  fallback:' "$1"
+}
+# rendered_split_core_off FILE - the legacy core: untunneled default
+# nameserver AND the fallback dual-query still present.
+rendered_split_core_off() {
+  grep '^  nameserver:' "$1" | grep -vq '#' \
+    && grep -q '^  fallback:' "$1"
 }
 
 # members_of - group JSON on stdin -> member names, one per line.
@@ -177,7 +199,10 @@ dns:
     'testingcf.jsdelivr.net': [ https://192.0.2.53/dns-query ]
     'panel.example.com': [ https://192.0.2.53/dns-query ]
   nameserver: [ 192.0.2.53 ]
+  fallback: [ https://192.0.2.99/dns-query#auto ]
   proxy-server-nameserver: [ 192.0.2.53 ]
+  fallback-filter:
+    geoip: true
 rules:
   # Setting DNS_GEOIP_NO_RESOLVE=true in .env renders a `,no-resolve` suffix
   - 'GEOSITE,CN,DIRECT'
@@ -188,18 +213,25 @@ EOF
   if rendered_knob_off "$TMP/legacy.yaml"; then st_ok; else st_bad "knob_off missed the bare rule"; fi
   if rendered_policy_on "$TMP/legacy.yaml"; then st_bad "policy_on read the bootstrap pins as split-horizon"; else st_ok; fi
   if rendered_psn_untunneled "$TMP/legacy.yaml"; then st_ok; else st_bad "psn check false negative"; fi
+  if rendered_split_core_off "$TMP/legacy.yaml"; then st_ok; else st_bad "split_core_off missed the legacy core"; fi
+  if rendered_split_core_on "$TMP/legacy.yaml"; then st_bad "split_core_on misread the legacy core as v2"; else st_ok; fi
   cat > "$TMP/policy.yaml" <<'EOF'
 dns:
+  # the v2 core removes the fallback: dual-query - this comment mentioning
+  # fallback: and nameserver: must not fool the line-anchored greps
   nameserver-policy:
     'geosite:cn': [ https://192.0.2.53/dns-query ]
-    'geosite:geolocation-!cn': [ https://192.0.2.54/dns-query#PROXY ]
+    'geosite:geolocation-!cn': [ https://192.0.2.54/dns-query#auto ]
   proxy-server-nameserver: [ https://192.0.2.53/dns-query#PROXY ]
+  nameserver: [ https://192.0.2.54/dns-query#auto ]
 rules:
   - 'GEOIP,CN,DIRECT,no-resolve'
 EOF
   if rendered_policy_on "$TMP/policy.yaml"; then st_ok; else st_bad "policy_on missed a real policy"; fi
   if rendered_knob_on "$TMP/policy.yaml"; then st_ok; else st_bad "knob_on missed the real rule"; fi
   if rendered_psn_untunneled "$TMP/policy.yaml"; then st_bad "psn check missed a #PROXY fragment"; else st_ok; fi
+  if rendered_split_core_on "$TMP/policy.yaml"; then st_ok; else st_bad "split_core_on missed the v2 core"; fi
+  if rendered_split_core_off "$TMP/policy.yaml"; then st_bad "split_core_off misread the v2 core as legacy"; else st_ok; fi
 
   # 3) provider-node counting: the COMPATIBLE placeholder of an EMPTY group is
   #    never a node (run 3.5: "alive=9" was built-ins while the provider had
@@ -274,7 +306,7 @@ EOF
 
   echo "validate_release self-test: $_stp passed, $_stf failed"
   [ "$_stf" -eq 0 ] || exit 1
-  echo "OK: measurement helpers (policy/knob/psn rule anchoring incl. bootstrap-pin immunity, provider-node counting + real-member egress gate, quoted-.env parsing, .env.example key coverage, scrubbed child env, doctor rc gate, summary accumulator, cache unpark)"
+  echo "OK: measurement helpers (policy/knob/psn/split-core rule anchoring incl. bootstrap-pin + comment-prose immunity, provider-node counting + real-member egress gate, quoted-.env parsing, .env.example key coverage, scrubbed child env, doctor rc gate, summary accumulator, cache unpark)"
   exit 0
 }
 [ "$SELF_TEST" = 1 ] && self_test
@@ -410,6 +442,22 @@ else
   bad "controller probe failed - every later count would be meaningless; aborting"
   exit 3
 fi
+# v1.3.10 routing surface: the STREAMING selector and the deterministic
+# domain rules are static template content - present in EVERY DNS profile.
+case "$(ctl_get /proxies/STREAMING)" in
+  *'"STREAMING"'*) ok "STREAMING group present (dashboard-pinnable)" ;;
+  *) bad "STREAMING group missing from the controller" ;;
+esac
+if grep -q "^  - 'GEOSITE,NETFLIX,STREAMING'" "$CFG"; then
+  ok "netflix rule rendered at the head of the chain"
+else
+  bad "GEOSITE,NETFLIX,STREAMING rule missing from the render"
+fi
+if grep -q "^  - 'GEOSITE,GEOLOCATION-!CN,PROXY'" "$CFG"; then
+  ok "listed-foreign PROXY rule rendered (skips GEOIP lookups)"
+else
+  bad "GEOSITE,GEOLOCATION-!CN,PROXY rule missing from the render"
+fi
 
 say "A3: upgrade compatibility - the UNCHANGED .env must render the legacy config"
 if rendered_policy_on "$CFG"; then
@@ -448,6 +496,11 @@ recreate || bad "compose recreate (enable split-horizon)"
 load_env || true
 if rendered_policy_on "$CFG"; then ok "nameserver-policy rendered"; else bad "nameserver-policy did NOT render"; fi
 if rendered_psn_untunneled "$CFG"; then ok "proxy-server-nameserver untunneled (cold-start invariant)"; else bad "proxy-server-nameserver carries a #fragment"; fi
+if rendered_split_core_on "$CFG"; then
+  ok "v2 core rendered (foreign-by-default nameserver, fallback dual-query gone)"
+else
+  bad "v2 core did NOT render (nameserver untunneled, or a fallback: line survives)"
+fi
 
 say "B: cold start - parked caches + black-holed tunnel resolvers"
 CACHES=""
@@ -484,6 +537,21 @@ else
   "$DOCKER_BIN" logs "$MIHOMO_CONTAINER" 2>&1 | tail -40 | sed 's/^/    /'
 fi
 [ "$EGRESS" = 1 ] || diag_egress
+# Fail-closed proof (v2, while the tunnel resolvers are STILL black-holed):
+# a long-tail lookup must DIE - nothing may silently answer it from a
+# domestic resolver (the whole point of removing the fallback dual-query) -
+# while a policy-pinned host keeps resolving via the domestic list. The
+# controller /dns/query endpoint exercises the real upstream chain,
+# bypassing the fake-ip middleware that answers LAN clients.
+_LT="failclosed-$$-$(date +%s).example.com"
+case "$(ctl_get "/dns/query?name=$_LT&type=A")" in
+  *'"Answer"'*) bad "FAIL-CLOSED: long-tail $_LT got an ANSWER with dead tunnel resolvers - a domestic leak path survives" ;;
+  *) ok "fail-closed: long-tail lookup dies while the tunnel resolvers are dead" ;;
+esac
+case "$(ctl_get "/dns/query?name=www.gstatic.com&type=A")" in
+  *'"Answer"'*) ok "policy-pinned host still resolves via the domestic list" ;;
+  *) bad "pinned-host lookup failed - the bootstrap pins are broken" ;;
+esac
 # Put the owner's caches back regardless of outcome: cache.db carries the
 # dashboard-selected node (run 3 dropped it on pass, reset the selection to
 # the group default, and measured THAT for the rest of the run), and the
@@ -501,6 +569,18 @@ load_env || true
 run_scrubbed sh "$REL/scripts/doctor.sh" --egress; RC=$?
 if doctor_rc_ok "$RC"; then ok "doctor --egress rc $RC (0 healthy | 2 degraded-optional)"
 else bad "doctor --egress rc $RC (crash or broken)"; fi
+
+say "B3: LAN privacy + streaming spot-check (owner, from any LAN client)"
+echo ">>> 1) DNS leak: run the EXTENDED test at dnsleaktest.com. The servers"
+echo ">>>    listed must be your tunnel exit / foreign DoH operators ONLY -"
+echo ">>>    AliDNS (Alibaba) or DNSPod (Tencent) appearing means the"
+echo ">>>    long-tail leak is back."
+echo ">>> 2) Netflix: open any title. If it says 'not available in your"
+echo ">>>    region', open MetaCubeXD -> Proxies -> STREAMING and pin an"
+echo ">>>    unlock-capable node (auto picks by latency, not by unlock),"
+echo ">>>    then reload the title."
+printf ">>> Press Enter when both are checked : "
+read -r _ans </dev/tty || true
 
 if [ "$SKIP_KNOB" = 0 ]; then
   say "C: DNS_GEOIP_NO_RESOLVE flip (renders, routes, reverts)"
