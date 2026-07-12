@@ -22,6 +22,8 @@ Modes:
 Live assertions (bare mode):
   * the spec's exit-code table matches the EXIT_* table in scripts/lib/common.sh;
   * the spec's verb set matches gateway.sh's dispatch list;
+  * every _gw_check_add name in gateway.sh is named in the spec's json_output
+    notes, en AND zh (the --json check vocabulary is a frozen contract, #29);
   * `gateway.sh --help` and `gateway.sh <verb> --help` output is byte-identical
     to the spec-generated help text (the runtime really serves the contract).
 """
@@ -325,6 +327,32 @@ def check_verbs(spec: dict):
         )
 
 
+def check_json_check_names(spec: dict):
+    """Every _gw_check_add name in gateway.sh must be named in the spec's
+    json_output notes, en AND zh - the --json check vocabulary is a frozen
+    monitoring contract (#29), and these prose notes are its registry."""
+    text = GATEWAY.read_text(encoding="utf-8")
+    names = set(re.findall(r"_gw_check_add ([a-z_][a-z0-9_]*)", text))
+    if not names:
+        fail("could not locate any _gw_check_add call in gateway.sh")
+    for lang in ("en", "zh"):
+        note = t(spec["json_output"], lang)
+        missing = sorted(
+            n for n in names
+            if not re.search(rf"(?<![a-z0-9_]){re.escape(n)}(?![a-z0-9_])", note)
+        )
+        if missing:
+            fail(
+                f"spec.yaml json_output ({lang}) does not name check(s): "
+                f"{', '.join(missing)}\n"
+                "  every _gw_check_add name is frozen --json vocabulary: an added\n"
+                "  check must be named in scripts/cli/spec.yaml json_output (en AND\n"
+                "  zh) in the same commit, then regenerate via --write if the note\n"
+                "  text changed; a RENAME is a breaking monitoring-contract change\n"
+                "  and needs explicit owner sign-off (issue #29)"
+            )
+
+
 def run_help(args, data_dir: Path) -> str:
     r = subprocess.run(
         ["sh", str(GATEWAY), *args],
@@ -383,11 +411,13 @@ def main():
         )
 
     check_verbs(spec)
+    check_json_check_names(spec)
     check_runtime_help(spec)
     print(
-        "OK: CLI contract is fresh - spec.yaml matches common.sh exit codes and "
-        "gateway.sh verbs; help.sh/cli.md(en+zh)/CLI.txt(en+zh) regenerate "
-        "byte-identical; runtime --help serves the spec text verbatim."
+        "OK: CLI contract is fresh - spec.yaml matches common.sh exit codes, "
+        "gateway.sh verbs, and the --json check-name vocabulary; "
+        "help.sh/cli.md(en+zh)/CLI.txt(en+zh) regenerate byte-identical; "
+        "runtime --help serves the spec text verbatim."
     )
 
 

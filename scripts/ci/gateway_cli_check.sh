@@ -45,12 +45,15 @@ cat > "$STUB/docker" <<'EOF'
 #!/bin/sh
 printf '%s\n' "$*" >> "$CALLS"
 case "$1" in
-  info|login|pull|tag|logs|rm) exit 0 ;;
+  info) exit "${FAKE_INFO_RC:-0}" ;;
+  logs) [ -n "${FAKE_CF_LOG:-}" ] && printf '%s\n' "$FAKE_CF_LOG"; exit 0 ;;
+  login|pull|tag|rm) exit 0 ;;
   compose)
     shift
     case "$*" in
       version) exit 0 ;;
       *'up --help'*) printf -- '--pull never\n'; exit 0 ;;
+      *' config'*) exit "${FAKE_COMPOSE_CFG_RC:-0}" ;;
       *) exit 0 ;;
     esac ;;
   image)
@@ -62,7 +65,9 @@ case "$1" in
   run) exit 0 ;;
   exec)
     case "$*" in
-      *ip_forward*) echo 1 ;;
+      *ip_forward*) echo "${FAKE_IP_FORWARD:-1}" ;;
+      *sys/class/net*) exit "${FAKE_TUN_IF_RC:-0}" ;;
+      *'/version'*) exit "${FAKE_CTL_RC:-0}" ;;
     esac
     exit 0 ;;
   network)
@@ -75,13 +80,18 @@ case "$1" in
     esac ;;
   inspect)
     case "$*" in
+      *'{{.State.Running}}'*cloudflared*) echo "${FAKE_CF_RUNNING:-false}"; exit 0 ;;
       *'{{.State.Running}}'*mihomo-ui*) echo "${FAKE_UI_RUNNING:-false}"; exit 0 ;;
       *'{{.State.Running}}'*) echo "${FAKE_MIHOMO_RUNNING:-false}"; exit 0 ;;
+      *'.State.Health'*) echo "${FAKE_CF_HEALTH:-none}"; exit 0 ;;
+      *'{{.State.StartedAt}}'*) echo '2026-01-01T00:00:00Z'; exit 0 ;;
+      *'{{.State.Status}}'*) echo "${FAKE_MIHOMO_STATE:-missing}"; exit 0 ;;
       *'{{.RestartCount}}'*) echo 0; exit 0 ;;
       *'{{.Image}}'*) echo sha256:fakerunning; exit 0 ;;
       *compose.service*mihomo-ui*) echo metacubexd; exit 0 ;;
       *compose.service*) echo mihomo; exit 0 ;;
       *compose.project*) echo "${FAKE_COMPOSE_PROJECT:-syno-mihomo-gateway}"; exit 0 ;;
+      *cloudflared*) exit "${FAKE_CF_RC:-1}" ;;
       *mihomo-ui*) exit "${FAKE_UI_RC:-1}" ;;
       *mihomo*) exit "${FAKE_MIHOMO_RC:-1}" ;;
     esac
@@ -340,6 +350,258 @@ FAKE_UID=0 PATH="$STUB:$PATH" sh "$ROOT/scripts/doctor.sh" </dev/null >"$TMP/dou
 grep -q 'WARN.*geo databases' "$TMP/derr" || fail "doctor.sh did not warn about uncached geodata"
 mv "$DATA/config/GeoSite.dat.keep" "$DATA/config/GeoSite.dat"
 ok
+
+# --- doctor FULL parity (#29): every check, human vs --json classification -------
+# The three cases above cover the UNGATED checks; the deep set is gated on the
+# basics including a raw [ -c /dev/net/tun ] with no test seam - the reason
+# parity stopped at 3 checks. Create the node inside THIS container only
+# (guarded by the /.dockerenv marker; the suite's canonical home is alpine
+# docker per docs/development.md) and skip loudly elsewhere - never mknod on a
+# bare host. Idiom: one healthy baseline pass asserts every ok-side value in
+# both modes, then each check flips to its failing state one knob at a time
+# and both modes must agree on value/text AND classification (exit code) -
+# the flip runs double as the red-direction proof for every new case.
+djson() { FAKE_UID=1000 PATH="$STUB:$PATH" sh "$GW" doctor --json </dev/null >"$TMP/out" 2>"$TMP/err"; }
+dhum()  { FAKE_UID=0 PATH="$STUB:$PATH" sh "$ROOT/scripts/doctor.sh" </dev/null >"$TMP/dout" 2>"$TMP/derr"; }
+jval()  { grep -q "\"name\":\"$1\",\"value\":\"$2\"" "$TMP/out"; }
+dpar() { # NAME - run both modes, capture rcs into _jrc/_hrc
+  _jrc=0; djson || _jrc=$?
+  _hrc=0; dhum || _hrc=$?
+}
+cat > "$STUB/crontab" <<'EOF'
+#!/bin/sh
+exit 1
+EOF
+chmod +x "$STUB/crontab"   # scheduler_task_deployed's last resort stays deterministic
+# Container-only block: the mknod AND the /usr/local/bin stub copies below
+# mutate the environment, which is fine for the suite's own throwaway
+# container and never acceptable on a real host. doctor.sh PREPENDS
+# /usr/local/bin:/usr/bin:... to PATH (line 5), so the BusyBox nslookup and
+# crontab would shadow $STUB's fakes - park copies in /usr/local/bin, which
+# wins that prepend (docker resolves to $STUB anyway: alpine has no real one).
+_fp_run=0
+if [ -f /.dockerenv ]; then
+  if [ ! -c /dev/net/tun ]; then
+    mkdir -p /dev/net 2>/dev/null || :
+    mknod /dev/net/tun c 10 200 2>/dev/null || :
+  fi
+  if [ -c /dev/net/tun ] && mkdir -p /usr/local/bin 2>/dev/null \
+     && cp "$STUB/nslookup" "$STUB/crontab" /usr/local/bin/ 2>/dev/null; then
+    _fp_run=1
+  fi
+fi
+if [ "$_fp_run" = 1 ]; then
+  cp "$ENV_FILE" "$TMP/env.keep"
+  # the fixture ships TUN_ENABLE=false; the deep gateway probe needs true
+  sed 's/^TUN_ENABLE=false$/TUN_ENABLE=true/' "$TMP/env.keep" > "$ENV_FILE"
+  FAKE_MIHOMO_RC=0 FAKE_UI_RC=0 FAKE_MIHOMO_RUNNING=true FAKE_UI_RUNNING=true
+  FAKE_MIHOMO_STATE=running FAKE_NETWORK_RC=0
+  FAKE_NET_SPEC='macvlan|eth0|192.168.1.0/24|192.168.1.1'
+  FAKE_CF_RC=0 FAKE_CF_RUNNING=true FAKE_CF_HEALTH=healthy
+  SMG_SCHED_TASK_DIR="$TMP/no-taskdir" SMG_SCHED_EVENT_DB="$TMP/no-db"
+  SMG_SCHED_CRONTAB="$TMP/sched.crontab"
+  printf '0 2 * * *\troot\tsh /x/scripts/auto_update.sh\n@boot\troot\tsh /x/scripts/setup_network.sh\n' > "$TMP/sched.crontab"
+  export FAKE_MIHOMO_RC FAKE_UI_RC FAKE_MIHOMO_RUNNING FAKE_UI_RUNNING \
+         FAKE_MIHOMO_STATE FAKE_NETWORK_RC FAKE_NET_SPEC FAKE_CF_RC \
+         FAKE_CF_RUNNING FAKE_CF_HEALTH SMG_SCHED_TASK_DIR SMG_SCHED_EVENT_DB \
+         SMG_SCHED_CRONTAB
+
+  # healthy baseline: all 17 checks ok-side in --json, HEALTHY rc 0 in both
+  dpar
+  [ "$_jrc" = 0 ] && [ "$_hrc" = 0 ] \
+    && ok || fail "full-parity baseline rc: json=$_jrc human=$_hrc (want 0/0; derr: $(tail -n2 "$TMP/derr" | tr '\n' ' '))"
+  for _pc in 'env ok' 'docker ok' 'arch ok' 'tun_device ok' 'network ok' \
+             'compose ok' 'mihomo running' 'tun_gateway ok' 'controller ok' \
+             'image_arch ok' 'dashboard running' 'update_task ok' 'boot_task ok' \
+             'cloudflared ok' 'subscription ok' 'host_dns ok' 'geodata cached'; do
+    # shellcheck disable=SC2086 # deliberate: NAME VALUE split
+    jval $_pc && ok || fail "healthy doctor --json lacks ${_pc%% *}:${_pc##* }"
+  done
+  grep -q 'Result: HEALTHY' "$TMP/dout" && ok || fail "healthy doctor.sh not HEALTHY"
+
+  # env (missing .env): both broken/ERROR, rc 3; --json gates the deep set
+  mv "$ENV_FILE" "$ENV_FILE.keep"
+  dpar
+  jval env broken && jval mihomo unknown && [ "$_jrc" = 3 ] && [ "$_hrc" = 3 ] \
+    && grep -q '\.env is missing' "$TMP/derr" \
+    && ok || fail "env-missing parity (json=$_jrc human=$_hrc)"
+  mv "$ENV_FILE.keep" "$ENV_FILE"
+
+  # docker daemon down: both broken, rc 3
+  FAKE_INFO_RC=1; export FAKE_INFO_RC
+  dpar
+  jval docker broken && [ "$_jrc" = 3 ] && [ "$_hrc" = 3 ] \
+    && grep -q 'Docker daemon is unavailable' "$TMP/derr" \
+    && ok || fail "docker-down parity (json=$_jrc human=$_hrc)"
+  unset FAKE_INFO_RC
+
+  # arch mismatch: both broken, rc 3
+  sed 's/^EXPECTED_ARCH=.*/EXPECTED_ARCH=zzz9/' "$ENV_FILE" > "$ENV_FILE.tmp" \
+    && mv "$ENV_FILE.tmp" "$ENV_FILE"
+  dpar
+  jval arch mismatch && [ "$_jrc" = 3 ] && [ "$_hrc" = 3 ] \
+    && grep -q 'EXPECTED_ARCH=zzz9' "$TMP/derr" \
+    && ok || fail "arch-mismatch parity (json=$_jrc human=$_hrc)"
+  sed 's/^TUN_ENABLE=false$/TUN_ENABLE=true/' "$TMP/env.keep" > "$ENV_FILE"
+
+  # tun_device missing: remove the node, both broken rc 3, deep set gated
+  rm -f /dev/net/tun
+  dpar
+  jval tun_device missing && jval mihomo unknown && [ "$_jrc" = 3 ] && [ "$_hrc" = 3 ] \
+    && grep -q 'host /dev/net/tun is missing' "$TMP/derr" \
+    && ok || fail "tun_device-missing parity (json=$_jrc human=$_hrc)"
+  mknod /dev/net/tun c 10 200 2>/dev/null || :
+  [ -c /dev/net/tun ] || fail "could not restore /dev/net/tun after the missing-direction case"
+
+  # network broken: both rc 3
+  FAKE_NETWORK_RC=1; export FAKE_NETWORK_RC
+  dpar
+  jval network broken && [ "$_jrc" = 3 ] && [ "$_hrc" = 3 ] \
+    && grep -q 'macvlan network is missing or inconsistent' "$TMP/derr" \
+    && ok || fail "network-broken parity (json=$_jrc human=$_hrc)"
+  FAKE_NETWORK_RC=0; export FAKE_NETWORK_RC
+
+  # compose config invalid: both broken, rc 3
+  FAKE_COMPOSE_CFG_RC=1; export FAKE_COMPOSE_CFG_RC
+  dpar
+  jval compose broken && [ "$_jrc" = 3 ] && [ "$_hrc" = 3 ] \
+    && grep -q 'Compose configuration is invalid' "$TMP/derr" \
+    && ok || fail "compose-invalid parity (json=$_jrc human=$_hrc)"
+  unset FAKE_COMPOSE_CFG_RC
+
+  # mihomo not running: both broken rc 3; the nested probes are skipped in BOTH
+  FAKE_MIHOMO_RUNNING=false FAKE_MIHOMO_STATE=exited
+  export FAKE_MIHOMO_RUNNING FAKE_MIHOMO_STATE
+  dpar
+  jval mihomo not-running && [ "$_jrc" = 3 ] && [ "$_hrc" = 3 ] \
+    && grep -q 'mihomo container state=exited' "$TMP/derr" \
+    && ok || fail "mihomo-down parity (json=$_jrc human=$_hrc)"
+  if grep -q '"name":"tun_gateway"' "$TMP/out"; then
+    fail "mihomo-down: --json still probed tun_gateway (human mode skips nested probes)"
+  else ok; fi
+  FAKE_MIHOMO_RUNNING=true FAKE_MIHOMO_STATE=running
+  export FAKE_MIHOMO_RUNNING FAKE_MIHOMO_STATE
+
+  # tun_gateway broken (TUN iface missing in-container): both rc 3
+  FAKE_TUN_IF_RC=1; export FAKE_TUN_IF_RC
+  dpar
+  jval tun_gateway broken && [ "$_jrc" = 3 ] && [ "$_hrc" = 3 ] \
+    && grep -q 'in-container TUN gateway is not ready' "$TMP/derr" \
+    && ok || fail "tun_gateway-broken parity (json=$_jrc human=$_hrc)"
+  unset FAKE_TUN_IF_RC
+
+  # tun_gateway disabled (TUN_ENABLE=false): no severity in either mode
+  cp "$TMP/env.keep" "$ENV_FILE"   # fixture ships TUN_ENABLE=false
+  dpar
+  jval tun_gateway disabled && [ "$_jrc" = 0 ] && [ "$_hrc" = 0 ] \
+    && grep -q 'TUN transparent gateway disabled' "$TMP/dout" \
+    && ok || fail "tun_gateway-disabled parity (json=$_jrc human=$_hrc)"
+  sed 's/^TUN_ENABLE=false$/TUN_ENABLE=true/' "$TMP/env.keep" > "$ENV_FILE"
+
+  # controller not answering: both broken rc 3
+  FAKE_CTL_RC=1; export FAKE_CTL_RC
+  dpar
+  jval controller broken && [ "$_jrc" = 3 ] && [ "$_hrc" = 3 ] \
+    && grep -q 'controller API does not respond' "$TMP/derr" \
+    && ok || fail "controller-broken parity (json=$_jrc human=$_hrc)"
+  unset FAKE_CTL_RC
+
+  # image_arch mismatch: both broken rc 3
+  FAKE_IMG_ARCH=bogusarch; export FAKE_IMG_ARCH
+  dpar
+  jval image_arch mismatch && [ "$_jrc" = 3 ] && [ "$_hrc" = 3 ] \
+    && grep -q 'image architecture does not match' "$TMP/derr" \
+    && ok || fail "image_arch-mismatch parity (json=$_jrc human=$_hrc)"
+  unset FAKE_IMG_ARCH
+
+  # dashboard not running: DEGRADED (warn) on both sides, rc 2
+  FAKE_UI_RUNNING=false; export FAKE_UI_RUNNING
+  dpar
+  jval dashboard not-running && [ "$_jrc" = 2 ] && [ "$_hrc" = 2 ] \
+    && grep -q 'WARN.*dashboard container is not running' "$TMP/derr" \
+    && grep -q 'Result: DEGRADED' "$TMP/derr" \
+    && ok || fail "dashboard-down parity (json=$_jrc human=$_hrc)"
+  FAKE_UI_RUNNING=true; export FAKE_UI_RUNNING
+
+  # update_task missing: degraded/WARN on both, rc 2
+  printf '@boot\troot\tsh /x/scripts/setup_network.sh\n' > "$TMP/sched.crontab"
+  dpar
+  jval update_task missing && [ "$_jrc" = 2 ] && [ "$_hrc" = 2 ] \
+    && grep -q 'no scheduled task runs scripts/auto_update.sh' "$TMP/derr" \
+    && ok || fail "update_task-missing parity (json=$_jrc human=$_hrc)"
+
+  # boot_task missing: degraded/WARN on both, rc 2
+  printf '0 2 * * *\troot\tsh /x/scripts/auto_update.sh\n' > "$TMP/sched.crontab"
+  dpar
+  jval boot_task missing && [ "$_jrc" = 2 ] && [ "$_hrc" = 2 ] \
+    && grep -q 'no Boot-up task runs scripts/setup_network.sh' "$TMP/derr" \
+    && ok || fail "boot_task-missing parity (json=$_jrc human=$_hrc)"
+
+  # scheduler unknown (nothing searchable): NO severity in either mode
+  SMG_SCHED_CRONTAB="$TMP/absent.crontab"; export SMG_SCHED_CRONTAB
+  dpar
+  jval update_task unknown && jval boot_task unknown && [ "$_jrc" = 0 ] && [ "$_hrc" = 0 ] \
+    && ok || fail "scheduler-unknown parity (json=$_jrc human=$_hrc)"
+  if grep -q 'scheduled' "$TMP/dout" "$TMP/derr"; then
+    fail "scheduler-unknown: doctor.sh mentioned scheduler tasks on a box with no searchable scheduler"
+  else ok; fi
+  SMG_SCHED_CRONTAB="$TMP/sched.crontab"; export SMG_SCHED_CRONTAB
+  printf '0 2 * * *\troot\tsh /x/scripts/auto_update.sh\n@boot\troot\tsh /x/scripts/setup_network.sh\n' > "$TMP/sched.crontab"
+
+  # update_task disabled: named in --json, silent in human mode, rc 0
+  sed 's/^TUN_ENABLE=false$/TUN_ENABLE=true/' "$TMP/env.keep" > "$ENV_FILE"
+  printf 'UPDATE_ENABLED=false\n' >> "$ENV_FILE"
+  dpar
+  jval update_task disabled && [ "$_jrc" = 0 ] && [ "$_hrc" = 0 ] \
+    && ok || fail "update_task-disabled parity (json=$_jrc human=$_hrc)"
+  if grep -q 'auto-update task' "$TMP/dout"; then
+    fail "update_task-disabled: doctor.sh checked a disabled updater's task"
+  else ok; fi
+  sed 's/^TUN_ENABLE=false$/TUN_ENABLE=true/' "$TMP/env.keep" > "$ENV_FILE"
+
+  # cloudflared absent: named in --json, silent in human mode, rc 0
+  FAKE_CF_RC=1; export FAKE_CF_RC
+  dpar
+  jval cloudflared absent && [ "$_jrc" = 0 ] && [ "$_hrc" = 0 ] \
+    && ok || fail "cloudflared-absent parity (json=$_jrc human=$_hrc)"
+  if grep -q 'cloudflared' "$TMP/dout" "$TMP/derr"; then
+    fail "cloudflared-absent: doctor.sh mentioned an absent optional container"
+  else ok; fi
+  FAKE_CF_RC=0; export FAKE_CF_RC
+
+  # cloudflared down: degraded/WARN on both, rc 2
+  FAKE_CF_HEALTH=none; export FAKE_CF_HEALTH
+  dpar
+  jval cloudflared down && [ "$_jrc" = 2 ] && [ "$_hrc" = 2 ] \
+    && grep -q 'WARN.*cloudflared tunnel is not connected' "$TMP/derr" \
+    && ok || fail "cloudflared-down parity (json=$_jrc human=$_hrc)"
+
+  # cloudflared ok via the log-registration signal (no native health)
+  FAKE_CF_LOG='Registered tunnel connection abc123'; export FAKE_CF_LOG
+  dpar
+  jval cloudflared ok && [ "$_jrc" = 0 ] && [ "$_hrc" = 0 ] \
+    && grep -q 'cloudflared tunnel is connected' "$TMP/dout" \
+    && ok || fail "cloudflared-signal parity (json=$_jrc human=$_hrc)"
+  unset FAKE_CF_LOG
+  FAKE_CF_HEALTH=healthy; export FAKE_CF_HEALTH
+
+  # restore the outer suite's world exactly as the earlier sections left it
+  cp "$TMP/env.keep" "$ENV_FILE"
+  FAKE_MIHOMO_RC=1 FAKE_UI_RC=1
+  export FAKE_MIHOMO_RC FAKE_UI_RC
+  unset FAKE_MIHOMO_RUNNING FAKE_UI_RUNNING FAKE_MIHOMO_STATE FAKE_NETWORK_RC \
+        FAKE_NET_SPEC FAKE_CF_RC FAKE_CF_RUNNING FAKE_CF_HEALTH \
+        SMG_SCHED_TASK_DIR SMG_SCHED_EVENT_DB SMG_SCHED_CRONTAB
+else
+  echo "SKIP: doctor full-parity runs container-only (needs /dev/net/tun + PATH stubs; adjudicate in docker - docs/development.md)" >&2
+  if [ ! -c /dev/net/tun ]; then
+    # the missing-device direction is still a real parity case out here:
+    dpar
+    jval tun_device missing && jval mihomo unknown && [ "$_jrc" = 3 ] && [ "$_hrc" = 3 ] \
+      && grep -q 'host /dev/net/tun is missing' "$TMP/derr" \
+      && ok || fail "tun_device missing-direction parity (json=$_jrc human=$_hrc)"
+  fi
+fi
 
 # --- hermetic env -i smoke: no harness exports reach the scripts under test ------
 # The LOCK_DIR incident survived CI because the harness exported the very
