@@ -87,41 +87,60 @@ dns:
   default-nameserver: [ {{DNS_DEFAULT_NAMESERVER}} ]
   # Bootstrap DNS pins: BEFORE any node is up, mihomo must fetch the node list
   # (the airport panel, derived from subscription.txt) and geodata (the CDN
-  # mirror in geox-url below). Both usually sit on non-CN IPs, so the
-  # fallback-filter below would divert them to the fallback resolvers - dead at
-  # cold start (dialed direct on a filtered network, or tunneled through a
-  # proxy group that has no nodes yet). A nameserver-policy match bypasses
+  # mirror in geox-url below), and the health probes must reach the 204
+  # endpoint. These usually sit on non-CN IPs, so the split-horizon / fallback
+  # machinery below would otherwise route their resolution through a tunnel
+  # that does not exist yet at cold start. A nameserver-policy match bypasses
   # nameserver/fallback/fallback-filter entirely: these hosts resolve via the
   # domestic list, dialed direct, always (2026-07-12 provider outage).
+  # www.gstatic.com: the delay probes (doctor --egress, validate_release) and
+  # the COMPATIBLE placeholder an EMPTY group degrades to dial the 204 URL
+  # DIRECT, so its lookup must never depend on the tunnel either.
   nameserver-policy:
     'testingcf.jsdelivr.net': [ {{DNS_NAMESERVER}} ]
+    'www.gstatic.com': [ {{DNS_NAMESERVER}} ]
     {{AIRPORT_DNS_PIN}}
 # {{DNSPOLICY_BEGIN}}
     # Split-horizon resolution (DNS privacy): a domain matching a key below is
-    # resolved ONLY by that key's servers, bypassing nameserver/fallback and
-    # the fallback-filter entirely. CN domains resolve via the domestic list,
-    # dialed DIRECT; the listed foreign categories resolve via overseas servers
-    # TUNNELED through the proxy - a '#PROXY' suffix on a server is mihomo's
-    # route-via-proxy-group syntax, and PROXY is the LITERAL group name defined
-    # under proxy-groups below (rename both together). The renderer keeps these
-    # two entries only when BOTH lists are set in .env; with neither set the
-    # render carries only the bootstrap pins above, so existing .env files
-    # keep working unchanged.
+    # resolved ONLY by that key's servers. CN domains resolve via the domestic
+    # list, dialed DIRECT; the listed foreign categories resolve via overseas
+    # servers TUNNELED through a proxy group - a '#auto' suffix on a server is
+    # mihomo's route-via-group syntax, and auto is the LITERAL url-test group
+    # defined under proxy-groups below (rename both together; CI enforces the
+    # reference). Detouring via auto instead of the PROXY selector keeps
+    # resolution alive even when an operator pins PROXY to DIRECT in the
+    # dashboard. The renderer keeps these two entries - and swaps in the
+    # foreign-by-default core below - only when BOTH lists are set in .env;
+    # with neither set the render carries only the bootstrap pins above, so
+    # existing .env files keep working unchanged.
     'geosite:cn': [ {{DNS_CN_NAMESERVER}} ]
     'geosite:geolocation-!cn': [ {{DNS_FOREIGN_NAMESERVER}} ]
 # {{DNSPOLICY_END}}
+  # Proxy-server (airport node) hostnames resolve via the domestic list
+  # DIRECTLY: node IPs are usually non-CN, so tunneled or filter-diverted
+  # resolution dead-ends with "dns resolve failed" on every node BEFORE any
+  # node is up (observed in production) - the same cold-start invariant as
+  # the bootstrap pins above.
+  proxy-server-nameserver: [ {{DNS_NAMESERVER}} ]
+# {{DNSSPLIT_BEGIN}}
+  # Split-horizon v2 (foreign-by-default): the DEFAULT resolver for every
+  # domain NOT matched by nameserver-policy above is the tunneled foreign
+  # list - the domestic operators never see long-tail hostnames at all (the
+  # dnsleaktest.com finding: the old GEOIP lookups leaked them). There is
+  # deliberately NO fallback here: a dead tunnel fails CLOSED (SERVFAIL)
+  # instead of silently answering from a domestic resolver.
+  nameserver: [ {{DNS_FOREIGN_NAMESERVER}} ]
+# {{DNSSPLIT_END}}
+# {{DNSLEGACY_BEGIN}}
+  # Legacy core (split-horizon lists unset, e.g. a pre-1.3.8 .env): domestic
+  # default resolver plus the anti-pollution fallback dual-query. NOTE: with
+  # this profile the domestic operators see every hostname mihomo resolves -
+  # the redeploy wizard offers the split-horizon upgrade.
   nameserver: [ {{DNS_NAMESERVER}} ]
   fallback: [ {{DNS_FALLBACK}} ]
-  # Proxy-server (airport node) hostnames resolve via the domestic list
-  # DIRECTLY, bypassing the fallback-filter below: node IPs are usually
-  # non-CN, so the geoip filter would discard the domestic answer and wait
-  # for the fallback resolvers - which are dialed direct and often
-  # unreachable on a filtered network BEFORE any node is up. Without this,
-  # a fresh start (or an expired node cache) dead-ends with "dns resolve
-  # failed" on every node - observed in production.
-  proxy-server-nameserver: [ {{DNS_NAMESERVER}} ]
   fallback-filter:
     geoip: true
+# {{DNSLEGACY_END}}
 
 log-level: info
 
@@ -183,15 +202,38 @@ proxy-groups:
     use:
       - my-airport
 
-# Basic rules - adjust as needed
+  # STREAMING: per-service selector for unlock-sensitive sites (the GEOSITE
+  # rules below send netflix here). First member PROXY = day-one behavior is
+  # identical to a single-group config; pin a streaming-unlock node from
+  # MetaCubeXD to move ONLY streaming traffic - `auto` picks nodes by latency,
+  # which is rarely an unlock node (the "Netflix says not available" class).
+  - name: STREAMING
+    type: select
+    proxies:
+      - PROXY
+      - auto
+      - DIRECT
+    use:
+      - my-airport
+
+# Rules - deterministic domain routing first, IP fallthrough last.
 rules:
+  # Streaming rides its own dashboard-pinnable group, ahead of everything so
+  # neither DNS games nor the latency-optimal node choice can misroute it.
+  # (netflix is a subset of geolocation-!cn - this rule must come first.)
+  - 'GEOSITE,NETFLIX,STREAMING'
   - 'GEOSITE,CN,DIRECT'
+  # Listed-foreign domains ride the proxy WITHOUT any local DNS resolution:
+  # the GEOIP rule below never sees them - a privacy and a latency win.
+  - 'GEOSITE,GEOLOCATION-!CN,PROXY'
   # GEOIP needs a destination IP, so by default mihomo RESOLVES every remaining
-  # domain via the local upstreams just to evaluate this rule - that is how the
-  # domestic resolvers get to see foreign hostnames too. Setting
-  # DNS_GEOIP_NO_RESOLVE=true in .env renders a `,no-resolve` suffix here: the
-  # rule then matches only connections that already carry an IP and never
-  # forces a lookup. Trade-off: CN domains MISSED by geosite:cn above lose
-  # their direct short-circuit and ride the proxy via MATCH instead.
+  # domain via the DNS chain above just to evaluate this rule. Under
+  # split-horizon v2 that lookup rides the tunneled foreign list (private);
+  # under the legacy profile it is exactly how the domestic resolvers got to
+  # see long-tail foreign hostnames. Setting DNS_GEOIP_NO_RESOLVE=true in .env
+  # renders a `,no-resolve` suffix here: the rule then matches only
+  # connections that already carry an IP and never forces a lookup.
+  # Trade-off: CN domains MISSED by geosite:cn above lose their direct
+  # short-circuit and ride the proxy via MATCH instead.
   - 'GEOIP,CN,DIRECT{{GEOIP_NO_RESOLVE}}'
   - 'MATCH,PROXY'

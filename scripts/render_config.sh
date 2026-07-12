@@ -37,10 +37,14 @@ esac
 # the DSM compose path) removes the fenced external-ui block entirely, so the
 # render stays byte-identical to the pre-fence template output.
 : "${EXTERNAL_UI_DIR:=}"
-# Split-horizon DNS policy (privacy hardening): BOTH lists set keeps the fenced
-# nameserver-policy block; BOTH empty/unset removes it, rendering byte-identical
-# to the pre-split-horizon output so existing .env files keep working untouched.
-# Exactly ONE set is a half-configuration - fail loud, write nothing.
+# Split-horizon DNS (privacy hardening, v2 foreign-by-default): BOTH lists set
+# keeps the fenced nameserver-policy entries AND swaps the dns core - the
+# default resolver becomes the tunneled foreign list with NO fallback
+# dual-query (a dead tunnel fails closed instead of leaking long-tail
+# hostnames to the domestic resolvers). BOTH empty/unset keeps the legacy
+# core, rendering byte-identical to the pre-split-horizon output so existing
+# .env files keep working untouched. Exactly ONE set is a half-configuration
+# - fail loud, write nothing.
 : "${DNS_CN_NAMESERVER:=}"
 : "${DNS_FOREIGN_NAMESERVER:=}"
 if [ -n "$DNS_CN_NAMESERVER" ] && [ -z "$DNS_FOREIGN_NAMESERVER" ]; then
@@ -128,8 +132,14 @@ yaml_dq() { printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'; }
 # delete only the two marker lines and keep the block (its tokens fill below).
 #   TUN block       - kept when TUN_ENABLE=true (the transparent-gateway default).
 #   EXTUI block     - kept when EXTERNAL_UI_DIR is non-empty (Pi bare-metal mode).
-#   DNSPOLICY block - kept when the split-horizon lists are set (validated
-#                     above: both or neither, so testing one suffices).
+#   DNS fences      - three blocks switch TOGETHER on the split-horizon
+#                     condition (validated above: both or neither, so testing
+#                     one suffices). ON: keep the DNSPOLICY entries + the
+#                     DNSSPLIT core (foreign-by-default nameserver, no
+#                     fallback), delete the DNSLEGACY core. OFF: delete
+#                     DNSPOLICY + DNSSPLIT, keep the DNSLEGACY core (domestic
+#                     nameserver + fallback + fallback-filter) so a pre-1.3.8
+#                     .env renders byte-identical to its old output.
 if [ "$TUN_ENABLE" = true ]; then
   sed -e '/{{TUN_BEGIN}}/d' -e '/{{TUN_END}}/d' "$TEMPLATE" > "$PRE"
 else
@@ -141,9 +151,13 @@ else
   sed -e '/{{EXTUI_BEGIN}}/,/{{EXTUI_END}}/d' "$PRE" > "$PRE2"
 fi
 if [ -n "$DNS_CN_NAMESERVER" ]; then
-  sed -e '/{{DNSPOLICY_BEGIN}}/d' -e '/{{DNSPOLICY_END}}/d' "$PRE2" > "$PRE3"
+  sed -e '/{{DNSPOLICY_BEGIN}}/d' -e '/{{DNSPOLICY_END}}/d' \
+      -e '/{{DNSSPLIT_BEGIN}}/d' -e '/{{DNSSPLIT_END}}/d' \
+      -e '/{{DNSLEGACY_BEGIN}}/,/{{DNSLEGACY_END}}/d' "$PRE2" > "$PRE3"
 else
-  sed -e '/{{DNSPOLICY_BEGIN}}/,/{{DNSPOLICY_END}}/d' "$PRE2" > "$PRE3"
+  sed -e '/{{DNSPOLICY_BEGIN}}/,/{{DNSPOLICY_END}}/d' \
+      -e '/{{DNSSPLIT_BEGIN}}/,/{{DNSSPLIT_END}}/d' \
+      -e '/{{DNSLEGACY_BEGIN}}/d' -e '/{{DNSLEGACY_END}}/d' "$PRE2" > "$PRE3"
 fi
 
 # Pass 2 - token substitution (a disabled fence simply leaves no token behind;
