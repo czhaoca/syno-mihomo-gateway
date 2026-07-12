@@ -299,6 +299,20 @@ printf 'nameserver 192.0.2.53\n' > "$TMP/resolv.conf"
 export SMG_RESOLV_CONF="$TMP/resolv.conf"
 printf 'fixture' > "$DATA/config/GeoSite.dat"
 printf 'fixture' > "$DATA/config/geoip.metadb"
+# dns_privacy reads the rendered config: seed the v2 (split-horizon
+# foreign-by-default) shape so existing severities stay all-ok, keeping a
+# pristine copy for the flip cases below (RFC 5737 addresses only).
+cat > "$TMP/config.v2.yaml" <<'EOF'
+dns:
+  nameserver-policy:
+    'testingcf.jsdelivr.net': [ https://192.0.2.53/dns-query ]
+    'www.gstatic.com': [ https://192.0.2.53/dns-query ]
+    'geosite:cn': [ https://192.0.2.53/dns-query ]
+    'geosite:geolocation-!cn': [ https://192.0.2.54/dns-query#auto ]
+  proxy-server-nameserver: [ https://192.0.2.53/dns-query ]
+  nameserver: [ https://192.0.2.54/dns-query#auto ]
+EOF
+cp "$TMP/config.v2.yaml" "$DATA/config/config.yaml"
 
 # --- doctor --json: one JSON object on stdout, doctor exit semantics (0/2/3) -----
 _rc=0; FAKE_UID=1000 PATH="$STUB:$PATH" sh "$GW" doctor --json </dev/null >"$TMP/out" 2>"$TMP/err" || _rc=$?
@@ -349,6 +363,41 @@ grep -q '"name":"geodata","value":"missing"' "$TMP/out" || fail "doctor --json l
 FAKE_UID=0 PATH="$STUB:$PATH" sh "$ROOT/scripts/doctor.sh" </dev/null >"$TMP/dout" 2>"$TMP/derr" || :
 grep -q 'WARN.*geo databases' "$TMP/derr" || fail "doctor.sh did not warn about uncached geodata"
 mv "$DATA/config/GeoSite.dat.keep" "$DATA/config/GeoSite.dat"
+ok
+
+# --- doctor dns_privacy parity: v2 ok / v1 + legacy warn / no config silent ------
+# The v2 fixture config seeded above -> ok in --json, no WARN in human.
+FAKE_UID=1000 PATH="$STUB:$PATH" sh "$GW" doctor --json </dev/null >"$TMP/out" 2>"$TMP/err" || :
+grep -q '"name":"dns_privacy","value":"v2"' "$TMP/out" \
+  || fail "doctor --json lacks dns_privacy:v2 with the v2 config"
+# a surviving fallback line (pre-v1.3.10 render) degrades BOTH modes.
+cp "$TMP/config.v2.yaml" "$DATA/config/config.yaml"
+printf '  fallback: [ https://192.0.2.99/dns-query ]\n' >> "$DATA/config/config.yaml"
+FAKE_UID=1000 PATH="$STUB:$PATH" sh "$GW" doctor --json </dev/null >"$TMP/out" 2>"$TMP/err" || :
+grep -q '"name":"dns_privacy","value":"v1"' "$TMP/out" \
+  || fail "doctor --json lacks dns_privacy:v1 with a surviving fallback line"
+FAKE_UID=0 PATH="$STUB:$PATH" sh "$ROOT/scripts/doctor.sh" </dev/null >"$TMP/dout" 2>"$TMP/derr" || :
+grep -q 'WARN.*v1 residual' "$TMP/derr" || fail "doctor.sh did not warn about the v1 residual"
+# no geosite policy entries at all = the legacy profile; WARN + upgrade hint.
+printf 'dns:\n  nameserver: [ 192.0.2.53 ]\n  fallback: [ https://192.0.2.99/dns-query ]\n' \
+  > "$DATA/config/config.yaml"
+FAKE_UID=1000 PATH="$STUB:$PATH" sh "$GW" doctor --json </dev/null >"$TMP/out" 2>"$TMP/err" || :
+grep -q '"name":"dns_privacy","value":"legacy"' "$TMP/out" \
+  || fail "doctor --json lacks dns_privacy:legacy without policy entries"
+FAKE_UID=0 PATH="$STUB:$PATH" sh "$ROOT/scripts/doctor.sh" </dev/null >"$TMP/dout" 2>"$TMP/derr" || :
+grep -q 'WARN.*legacy DNS profile' "$TMP/derr" || fail "doctor.sh did not warn about the legacy profile"
+grep -q 'split-horizon upgrade' "$TMP/derr" || fail "doctor.sh legacy warn lacks the upgrade hint"
+# unreadable/missing config -> unknown in --json, SILENT in human (no line).
+rm -f "$DATA/config/config.yaml"
+FAKE_UID=1000 PATH="$STUB:$PATH" sh "$GW" doctor --json </dev/null >"$TMP/out" 2>"$TMP/err" || :
+grep -q '"name":"dns_privacy","value":"unknown"' "$TMP/out" \
+  || fail "doctor --json lacks dns_privacy:unknown without a rendered config"
+FAKE_UID=0 PATH="$STUB:$PATH" sh "$ROOT/scripts/doctor.sh" </dev/null >"$TMP/dout" 2>"$TMP/derr" || :
+if grep -q 'DNS privacy\|DNS profile\|v1 residual' "$TMP/dout" "$TMP/derr"; then
+  fail "doctor.sh rendered a dns_privacy line for a missing config (must be silent)"
+fi
+# restore the pristine v2 fixture for everything downstream.
+cp "$TMP/config.v2.yaml" "$DATA/config/config.yaml"
 ok
 
 # --- doctor FULL parity (#29): every check, human vs --json classification -------
@@ -406,14 +455,15 @@ if [ "$_fp_run" = 1 ]; then
          FAKE_CF_RUNNING FAKE_CF_HEALTH SMG_SCHED_TASK_DIR SMG_SCHED_EVENT_DB \
          SMG_SCHED_CRONTAB
 
-  # healthy baseline: all 17 checks ok-side in --json, HEALTHY rc 0 in both
+  # healthy baseline: all 18 checks ok-side in --json, HEALTHY rc 0 in both
   dpar
   [ "$_jrc" = 0 ] && [ "$_hrc" = 0 ] \
     && ok || fail "full-parity baseline rc: json=$_jrc human=$_hrc (want 0/0; derr: $(tail -n2 "$TMP/derr" | tr '\n' ' '))"
   for _pc in 'env ok' 'docker ok' 'arch ok' 'tun_device ok' 'network ok' \
              'compose ok' 'mihomo running' 'tun_gateway ok' 'controller ok' \
              'image_arch ok' 'dashboard running' 'update_task ok' 'boot_task ok' \
-             'cloudflared ok' 'subscription ok' 'host_dns ok' 'geodata cached'; do
+             'cloudflared ok' 'subscription ok' 'host_dns ok' 'geodata cached' \
+             'dns_privacy v2'; do
     # shellcheck disable=SC2086 # deliberate: NAME VALUE split
     jval $_pc && ok || fail "healthy doctor --json lacks ${_pc%% *}:${_pc##* }"
   done

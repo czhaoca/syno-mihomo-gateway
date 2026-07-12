@@ -206,6 +206,36 @@ chk_geodata() {
   fi
 }
 
+# dns_privacy - which DNS profile the RENDERED config carries. v2 = split-
+# horizon foreign-by-default (policy entries, no fallback dual-query): the
+# domestic resolvers see only CN-listed domains. v1 = policy entries but the
+# fallback line survives (a pre-v1.3.10 render; long-tail lookups still get
+# copied to the domestic resolvers). legacy = no policy entries at all.
+# The greps anchor on the rendered YAML lines exactly like
+# validate_release.sh's helpers: '^  fallback:' cannot match fallback-filter
+# (the colon) and comment prose never matches either.
+chk_dns_privacy() {
+  _cdp="$CONFIG_STATE_DIR/config.yaml"
+  if [ ! -r "$_cdp" ]; then
+    CHECK_VALUE=unknown CHECK_SEV=silent CHECK_DETAIL=''
+    return 0
+  fi
+  if grep -q "^    'geosite:cn':" "$_cdp" 2>/dev/null; then
+    if grep -q '^  fallback:' "$_cdp" 2>/dev/null; then
+      CHECK_VALUE=v1 CHECK_SEV=warn
+      CHECK_DETAIL="DNS split-horizon v1 residual - the fallback dual-query still copies long-tail lookups to the domestic resolvers"
+      CHECK_HINT="      re-render onto the v2 core: sudo sh ./install.sh (Redeploy)"
+    else
+      CHECK_VALUE=v2 CHECK_SEV=ok
+      CHECK_DETAIL="DNS privacy: split-horizon v2 (foreign-by-default) - domestic resolvers see only CN-listed domains"
+    fi
+  else
+    CHECK_VALUE=legacy CHECK_SEV=warn
+    CHECK_DETAIL="legacy DNS profile - the domestic resolvers see every hostname mihomo resolves"
+    CHECK_HINT="      the redeploy wizard offers the split-horizon upgrade: sudo sh ./install.sh (Redeploy)"
+  fi
+}
+
 # _c_emit NAME - run chk_NAME and print its record (plus any hint lines).
 # Leaves CHECK_VALUE/CHECK_SEV set for the caller's gate logic.
 _c_emit() {
@@ -248,4 +278,5 @@ checks_run() {
   _c_emit subscription
   _c_emit host_dns
   _c_emit geodata
+  _c_emit dns_privacy
 }

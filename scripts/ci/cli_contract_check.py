@@ -22,8 +22,10 @@ Modes:
 Live assertions (bare mode):
   * the spec's exit-code table matches the EXIT_* table in scripts/lib/common.sh;
   * the spec's verb set matches gateway.sh's dispatch list;
-  * every _gw_check_add name in gateway.sh is named in the spec's json_output
-    notes, en AND zh (the --json check vocabulary is a frozen contract, #29);
+  * every _gw_check_add name in gateway.sh AND every literal _c_emit name in
+    scripts/lib/checks.sh (the doctor check table) is named in the spec's
+    json_output notes, en AND zh (the --json check vocabulary is a frozen
+    contract, #29);
   * `gateway.sh --help` and `gateway.sh <verb> --help` output is byte-identical
     to the spec-generated help text (the runtime really serves the contract).
 """
@@ -38,6 +40,7 @@ import yaml
 REPO = Path(__file__).resolve().parents[2]
 SPEC = REPO / "scripts" / "cli" / "spec.yaml"
 GATEWAY = REPO / "scripts" / "gateway.sh"
+CHECKS = REPO / "scripts" / "lib" / "checks.sh"
 COMMON = REPO / "scripts" / "lib" / "common.sh"
 
 ARTIFACTS = {
@@ -328,13 +331,21 @@ def check_verbs(spec: dict):
 
 
 def check_json_check_names(spec: dict):
-    """Every _gw_check_add name in gateway.sh must be named in the spec's
+    """Every _gw_check_add name in gateway.sh AND every literal _c_emit name
+    in checks.sh (the doctor check table, #30) must be named in the spec's
     json_output notes, en AND zh - the --json check vocabulary is a frozen
-    monitoring contract (#29), and these prose notes are its registry."""
+    monitoring contract (#29), and these prose notes are its registry.
+    (The five basics emitted via checks_run's for-loop are not literal
+    _c_emit args; they are long-frozen and covered by the parity suite.)"""
     text = GATEWAY.read_text(encoding="utf-8")
     names = set(re.findall(r"_gw_check_add ([a-z_][a-z0-9_]*)", text))
     if not names:
         fail("could not locate any _gw_check_add call in gateway.sh")
+    table = set(re.findall(r"^\s*_c_emit ([a-z_][a-z0-9_]*)",
+                           CHECKS.read_text(encoding="utf-8"), re.M))
+    if not table:
+        fail("could not locate any literal _c_emit call in scripts/lib/checks.sh")
+    names |= table
     for lang in ("en", "zh"):
         note = t(spec["json_output"], lang)
         missing = sorted(
