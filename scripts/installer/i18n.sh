@@ -169,7 +169,7 @@ _msg_en() {
     warn_secret_pipe) printf '%s' "the secret must not contain a '|' character" ;;
     q_dns_bootstrap)  printf '%s' 'Bootstrap DNS (comma-separated)' ;;
     q_dns_domestic)   printf '%s' 'Domestic DNS (comma-separated)' ;;
-    q_dns_fallback)   printf '%s' 'Overseas / fallback DNS (comma-separated)' ;;
+    q_dns_fallback)   printf '%s' 'Overseas / fallback DNS (comma-separated; legacy profile only - unused once split-horizon is set)' ;;
     q_tz)             printf '%s' 'Timezone' ;;
     ok_env_saved)     printf '%s' 'saved network & DNS settings to .env' ;;
     step_images)      printf '%s' 'Container image source' ;;
@@ -390,6 +390,13 @@ _msg_en() {
     redeploy_change_ip) printf '%s' "Change mihomo's LAN IP, then deploy" ;;
     redeploy_repick)  printf '%s' 'Re-pick the network interface, then deploy' ;;
     q_new_mihomo_ip)  printf '%s' 'New static LAN IP for mihomo (must be unused)' ;;
+    dnsup_head)       printf '%s' 'DNS privacy upgrade available: split-horizon v2 keeps foreign lookups off the domestic resolvers entirely. Applying writes:' ;;
+    dnsup_cn)         printf '%s' '  CN-listed domains  -> DNS_CN_NAMESERVER=%s (domestic, direct)' ;;
+    dnsup_foreign)    printf '%s' '  everything else    -> DNS_FOREIGN_NAMESERVER=%s (through the tunnel)' ;;
+    dnsup_ns)         printf '%s' '  and refresh DNS_NAMESERVER from plain-UDP %s to encrypted %s' ;;
+    dnsup_ask)        printf '%s' 'apply the split-horizon v2 DNS profile now' ;;
+    dnsup_done)       printf '%s' 'DNS profile upgraded - the next render uses the v2 config' ;;
+    dnsup_skipped)    printf '%s' 'keeping the current DNS profile (the offer returns on the next redeploy)' ;;
 
     *)                printf '%s' "$1" ;;
   esac
@@ -544,7 +551,7 @@ _msg_zh() {
     warn_secret_pipe) printf '%s' "密钥不能包含 '|' 字符" ;;
     q_dns_bootstrap)  printf '%s' '引导 DNS（逗号分隔）' ;;
     q_dns_domestic)   printf '%s' '国内 DNS（逗号分隔）' ;;
-    q_dns_fallback)   printf '%s' '海外 / 回退 DNS（逗号分隔）' ;;
+    q_dns_fallback)   printf '%s' '海外 / 回退 DNS（逗号分隔；仅传统配置档使用——启用分域后不生效）' ;;
     q_tz)             printf '%s' '时区' ;;
     ok_env_saved)     printf '%s' '已将网络与 DNS 设置保存到 .env' ;;
     step_images)      printf '%s' '容器镜像来源' ;;
@@ -765,6 +772,13 @@ _msg_zh() {
     redeploy_change_ip) printf '%s' '更改 mihomo 的 LAN IP，然后部署' ;;
     redeploy_repick)  printf '%s' '重新选择网络接口，然后部署' ;;
     q_new_mihomo_ip)  printf '%s' 'mihomo 的新静态 LAN IP（必须未被占用）' ;;
+    dnsup_head)       printf '%s' '可升级 DNS 隐私：分域 v2 让境外域名查询完全不经过国内解析器。应用后将写入：' ;;
+    dnsup_cn)         printf '%s' '  国内清单域名   -> DNS_CN_NAMESERVER=%s（国内、直连）' ;;
+    dnsup_foreign)    printf '%s' '  其余全部       -> DNS_FOREIGN_NAMESERVER=%s（经隧道）' ;;
+    dnsup_ns)         printf '%s' '  并将 DNS_NAMESERVER 从明文 %s 刷新为加密 %s' ;;
+    dnsup_ask)        printf '%s' '现在应用分域 v2 DNS 配置档' ;;
+    dnsup_done)       printf '%s' 'DNS 配置档已升级——下次渲染即使用 v2 配置' ;;
+    dnsup_skipped)    printf '%s' '保留当前 DNS 配置档（下次重新部署时会再次询问）' ;;
 
     *)                printf '%s' "$1" ;;
   esac

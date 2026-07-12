@@ -30,6 +30,12 @@ flow_redeploy() {
   _rd_sub="$(grep -v '^#' "$SUBSCRIPTION_FILE" 2>/dev/null | grep -v '^[[:space:]]*$' | head -n1)"
   ui_say "$(msgf redeploy_sub "${_rd_sub:-$(msg redeploy_sub_none)}")"
 
+  # A pre-split-horizon .env keeps rendering the legacy (leaky) DNS profile
+  # forever unless migrated - offer the v2 upgrade here, where the saved .env
+  # is loaded and the redeploy is about to re-render (never silent, default No).
+  offer_dns_privacy_upgrade
+  load_env
+
   ui_menu_select _r "$(msg redeploy_what)" \
     "$(msg redeploy_asis)" \
     "$(msg redeploy_edit)" \

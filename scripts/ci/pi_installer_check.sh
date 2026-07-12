@@ -843,6 +843,18 @@ grep -q 'pi_flow_cron' "$ROOT/install-pi.sh" \
   done ) \
   && ok || fail "pi_lite_wizard defaults diverge from .env.example"
 
+# v1.3.10: the lite wizard must offer the DNS privacy upgrade BEFORE the DNS
+# prompts, so the prompts pre-fill from the migrated values. The helper is
+# shared from scripts/installer/wizards.sh and behaviorally covered in
+# dsm_installer_check.sh; this pins the pi-side call and its ordering.
+_dnsup_ord="$(grep -n 'offer_dns_privacy_upgrade\|q_dns_bootstrap' "$ROOT/scripts/pi/flow_lite.sh" | head -2)"
+case "$_dnsup_ord" in
+  *offer_dns_privacy_upgrade*q_dns_bootstrap*)
+    ok ;;
+  *)
+    fail "flow_lite.sh must call offer_dns_privacy_upgrade before the DNS prompts (got: $_dnsup_ord)" ;;
+esac
+
 # Default literals belong in .env.example ONLY (#27).
 grep -n '223\.5\.5\.5\|119\.29\.29\.29\|1\.1\.1\.1\|8\.8\.8\.8\|8080\|9090\|192\.168\.\|Asia/Shanghai' \
   "$ROOT/scripts/pi/flow_lite.sh" >/dev/null \

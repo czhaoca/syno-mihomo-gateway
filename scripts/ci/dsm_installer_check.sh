@@ -794,6 +794,82 @@ done
   exit 0
 ) || exit 1
 
+# --- dns privacy upgrade offer (v1.3.10): fires, migrates, preserves, declines ---
+# offer_dns_privacy_upgrade migrates a pre-split .env to the v2 profile: the
+# split pair comes from .env.example (never literals, #27), a plain-IP
+# (pre-1.3.8 shape) DNS_NAMESERVER is refreshed to the encrypted default, a
+# custom '://' value is never clobbered, declining writes nothing, and an
+# already-migrated .env is never re-asked.
+(
+  set -eu
+  fail() { echo "FAIL: $*" >&2; exit 1; }
+  REPO_ROOT="$ROOT"
+  ENV_FILE="$TD/dnsup.env"; : > "$ENV_FILE"
+  ui_error() { echo "ERROR: $*" >&2; }
+  # shellcheck source=scripts/installer/envedit.sh
+  . "$ROOT/scripts/installer/envedit.sh"
+  # shellcheck source=scripts/lib/resolve.sh
+  . "$ROOT/scripts/lib/resolve.sh"
+  # shellcheck source=scripts/installer/wizards.sh
+  . "$ROOT/scripts/installer/wizards.sh"
+  msg() { echo "$1"; }
+  msgf() { _mk="$1"; shift; echo "$_mk $*"; }
+  ui_step() { :; }; ui_info() { :; }
+  ui_ok() { printf '%s\n' "$*"; }
+  ui_say() { printf '%s\n' "$*"; }
+  ui_warn() { :; }
+  _example_ref() { ( ENV_FILE="$ROOT/.env.example"; dotenv_get "$1" ); }
+
+  # legacy .env (plain-IP nameserver, no split pair) + YES -> the pair lands
+  # from the example defaults AND the stale nameserver is refreshed.
+  env_set DNS_NAMESERVER 192.0.2.53,192.0.2.54
+  ui_yesno() { return 0; }
+  _out="$(offer_dns_privacy_upgrade 2>&1)" || fail "offer (yes) failed"
+  case "$_out" in
+    *dnsup_ns*) : ;;
+    *) fail "offer did not display the stale-nameserver refresh line" ;;
+  esac
+  [ "$(dotenv_get DNS_CN_NAMESERVER)" = "$(_example_ref DNS_CN_NAMESERVER)" ] \
+    || fail "offer did not write DNS_CN_NAMESERVER from .env.example"
+  [ "$(dotenv_get DNS_FOREIGN_NAMESERVER)" = "$(_example_ref DNS_FOREIGN_NAMESERVER)" ] \
+    || fail "offer did not write DNS_FOREIGN_NAMESERVER from .env.example"
+  [ "$(dotenv_get DNS_NAMESERVER)" = "$(_example_ref DNS_NAMESERVER)" ] \
+    || fail "offer did not refresh the plain-IP DNS_NAMESERVER"
+
+  # already migrated -> silent no-op (never re-asked on later redeploys).
+  ui_yesno() { fail "offer re-asked on an already-migrated .env"; }
+  offer_dns_privacy_upgrade >/dev/null 2>&1 || fail "offer no-op failed"
+
+  # legacy .env + NO -> nothing written, the skip is said out loud.
+  ENV_FILE="$TD/dnsup2.env"; : > "$ENV_FILE"
+  env_set DNS_NAMESERVER 192.0.2.53
+  ui_yesno() { return 1; }
+  _out="$(offer_dns_privacy_upgrade 2>&1)" || fail "offer (no) failed"
+  case "$_out" in
+    *dnsup_skipped*) : ;;
+    *) fail "declined offer did not say it kept the profile" ;;
+  esac
+  [ -z "$(dotenv_get DNS_CN_NAMESERVER 2>/dev/null || echo '')" ] \
+    || fail "declined offer still wrote the split pair"
+  [ "$(dotenv_get DNS_NAMESERVER)" = 192.0.2.53 ] \
+    || fail "declined offer touched DNS_NAMESERVER"
+
+  # custom encrypted DNS_NAMESERVER ('://') + YES -> pair written, value kept.
+  ENV_FILE="$TD/dnsup3.env"; : > "$ENV_FILE"
+  env_set DNS_NAMESERVER https://192.0.2.53/dns-query
+  ui_yesno() { return 0; }
+  _out="$(offer_dns_privacy_upgrade 2>&1)" || fail "offer (custom ns) failed"
+  case "$_out" in
+    *dnsup_ns*) fail "offer proposed refreshing a custom '://' DNS_NAMESERVER" ;;
+    *) : ;;
+  esac
+  [ "$(dotenv_get DNS_CN_NAMESERVER)" = "$(_example_ref DNS_CN_NAMESERVER)" ] \
+    || fail "offer (custom ns) did not write the split pair"
+  [ "$(dotenv_get DNS_NAMESERVER)" = "https://192.0.2.53/dns-query" ] \
+    || fail "offer clobbered a custom DNS_NAMESERVER"
+  exit 0
+) || exit 1
+
 # --- default-value parity: wizard defaults single-source from .env.example ------
 # (#27) The pre-fills used to duplicate .env.example values as literals; the
 # split-horizon release proved the drift mode (both DNS defaults changed in

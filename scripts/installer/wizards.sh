@@ -22,6 +22,49 @@ example_default() {
   dotenv_decode "$_ed_raw" || :
 }
 
+# offer_dns_privacy_upgrade - one-shot .env migration to the split-horizon v2
+# DNS profile (interactive, default No, never silent). Fires only when the
+# saved .env predates the split pair (DNS_CN_NAMESERVER empty): writes both
+# split lists from the .env.example defaults, and - only when the current
+# DNS_NAMESERVER is a plain-IP list (the pre-1.3.8 default shape; any value
+# carrying '://' is a deliberate custom choice) - refreshes it to the
+# encrypted DoH-on-IP default. Declining changes nothing; the offer returns
+# on the next redeploy (stateless). Values come from example_default(),
+# never from literals in this file (#27).
+offer_dns_privacy_upgrade() {
+  _odp_cn="$(env_get DNS_CN_NAMESERVER 2>/dev/null || echo '')"
+  [ -z "$_odp_cn" ] || return 0
+  _odp_cn_new="$(example_default DNS_CN_NAMESERVER)"
+  _odp_fo_new="$(example_default DNS_FOREIGN_NAMESERVER)"
+  { [ -n "$_odp_cn_new" ] && [ -n "$_odp_fo_new" ]; } || return 0
+  ui_say ""
+  ui_say "$(msg dnsup_head)"
+  ui_say "$(msgf dnsup_cn "$_odp_cn_new")"
+  ui_say "$(msgf dnsup_foreign "$_odp_fo_new")"
+  _odp_ns="$(env_get DNS_NAMESERVER 2>/dev/null || echo '')"
+  _odp_ns_new="$(example_default DNS_NAMESERVER)"
+  _odp_refresh=0
+  case "$_odp_ns" in
+    *://*) : ;;  # custom encrypted resolver list - never clobbered
+    *)
+      if [ -n "$_odp_ns" ] && [ -n "$_odp_ns_new" ] && [ "$_odp_ns" != "$_odp_ns_new" ]; then
+        _odp_refresh=1
+        ui_say "$(msgf dnsup_ns "$_odp_ns" "$_odp_ns_new")"
+      fi ;;
+  esac
+  if ui_yesno "$(msg dnsup_ask)" n; then
+    env_set DNS_CN_NAMESERVER "$_odp_cn_new"
+    env_set DNS_FOREIGN_NAMESERVER "$_odp_fo_new"
+    if [ "$_odp_refresh" = 1 ]; then
+      env_set DNS_NAMESERVER "$_odp_ns_new"
+    fi
+    ui_ok "$(msg dnsup_done)"
+  else
+    ui_say "$(msg dnsup_skipped)"
+  fi
+  return 0
+}
+
 # seed_config - create .env + config/subscription.txt from the shipped examples
 # if absent (never clobber a configured file), and restore +x on scripts. Folds
 # bootstrap.sh's behavior so the operator only ever runs install.sh.
