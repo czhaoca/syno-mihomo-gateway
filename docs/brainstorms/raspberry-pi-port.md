@@ -27,7 +27,7 @@ suites under BusyBox ash; a repo-wide bashism scan found zero hits):
 | Update orchestrator (lock, kill-switch, dry-run, exit codes, log rotation) | `scripts/auto_update.sh`, `scripts/lib/common.sh` | Compose mode unchanged; lite updater mirrors the semantics |
 | Notifications degrade off-DSM | `scripts/lib/notify.sh:44-49` (`command -v synodsmnotify` gate) | Webhook path works on Pi as-is |
 | Installer menu/wizard/i18n system | `scripts/installer/*.sh` | Sourced by the new entry; bilingual overlay adds Pi strings |
-| Release bundle + leak gate | `scripts/package.sh:47,90-100` (`git archive`, OS-agnostic) | Pi ships in the same enduser zip; no new profile |
+| Release bundle + leak gate | `scripts/package.sh:47,90-100` (`git archive`, OS-agnostic) | Pi ships in the same enduser zip; no new profile *(superseded — see Re-scope 2026-07-12)* |
 
 DSM-specific remainder (the entire porting surface): the volume-probe location gate, the
 DSM-only crond reload (`scheduler_reload_crond()`, `scripts/lib/scheduler.sh:119-139`), DSM
@@ -145,7 +145,8 @@ Pre-decided defaults carried from the research (not re-decidable in tickets):
 `docker-compose.yml` is reused unchanged (no second compose file — `compose_policy_check.py`
 hardcodes the single path); dashboard = container (compose) / external-ui (lite); lite
 updater ships in v1 with full health-gate + rollback parity; the Pi rides the same enduser
-bundle (no new package profile); wired eth0 required for compose macvlan.
+bundle (no new package profile) *(superseded by Re-scope 2026-07-12: dedicated
+`--profile pi`)*; wired eth0 required for compose macvlan.
 
 ## Work breakdown
 
@@ -174,7 +175,8 @@ Seven tickets, TDD-ordered so each lands with its tests (Sequence 10–70):
    touch-points (en+zh); canonical hardware matrix lands here.
 7. **chore(release): pi release verification + risk log closure** — enduser bundle proof
    (zip ships `install-pi.sh` + `scripts/pi/` + INSTALL-PI.txt pair, no `.md`); full local
-   CI set green; hardware-risk evidence recorded back into this brief.
+   CI set green; hardware-risk evidence recorded back into this brief. *(superseded —
+   re-scoped 2026-07-12: exclusion-proof + pi-bundle proof; see the Re-scope section.)*
 
 ## Risk log (verify early in the tickets)
 
@@ -206,3 +208,60 @@ Seven tickets, TDD-ordered so each lands with its tests (Sequence 10–70):
 - Verification gate per ticket: the relevant `scripts/ci/*_check` subset + shellcheck +
   render/compose/package/privacy checks — the full `.woodpecker.yml` step set locally
   before commit (docs/development.md "Local checks before pushing").
+
+## Re-scope 2026-07-12 — dedicated pi bundle profile (`/brainstorm --issue 23`)
+
+Trigger: `/issue-resolver` hard-stopped #23 (2026-07-11) on issue-vs-repo drift — commit
+`d12eb7d` (v1.3.7 series) deliberately prunes the Pi port from the enduser bundle because
+`scripts/pi/` carries functional GitHub URLs the identity leak gate forbids, while #23's
+body (and this brief's "Pi ships in the same enduser zip" rows, now marked superseded)
+demanded inclusion. `package_check.py` pins the exclusion in `ENDUSER_MUST_EXCLUDE`, so
+the old acceptance criterion had become CI-contradictory.
+
+Grounding facts that shaped the decisions:
+
+- `GH_MIRROR` cannot make pi files gate-clean: `pi_gh_url` (`scripts/pi/lite.sh:22-24`)
+  *prefixes* a still-literal `https://github.com/...` URL, so the `github` substring
+  survives any mirror choice.
+- `docs/INSTALL-PI.txt` + `docs/INSTALL-PI.zh.txt` are leak-clean (zero forbidden
+  strings) — their enduser exclusion is policy, not necessity.
+- `scripts/pi/i18n_pi.sh:32` mentions `docker-china-sync` — a genuine identity string
+  that must not ship in ANY bundle.
+- The AGENTS.md suite-count drift flagged in the hard-stop comment was already fixed
+  (f8315d5, "nine BusyBox-sh suites") — no action needed.
+
+Decisions (owner, one at a time, 2026-07-12):
+
+| # | Decision | Answer |
+|---|---|---|
+| DEC-R1 | Pi bundle strategy | **Exclusion-proof #23 + a new dedicated `--profile pi` ticket** — matches package.sh's declared design; #23 stays a pure verification chore |
+| DEC-R2 | Chain position | **Sequence 65, same epic, before #23** (`Next -> #23`) — the tail then verifies BOTH artifacts |
+| DEC-R3 | Leak-gate posture | **Identity/forge split**: the identity set (the personal/infra identifiers `leak_scan` already enumerates at `scripts/package.sh:95-99` — kept pointed-at rather than copied here, and the deliberately concatenation-obfuscated private-site token stays obfuscated wherever the list moves — plus the email regex) stays forbidden in every gated profile; the forge set (github, gitlab, bitbucket, gitea, git@) stays forbidden in enduser but is allowed in pi; `i18n_pi.sh` hint reworded |
+| DEC-R4 | Pi bundle content | **Superset of enduser**: `PI_EXCLUDES = ENDUSER_EXCLUDES` minus the four pi entries; no other divergence |
+| DEC-R5 | INSTALL-PI txt pair | **Pi-bundle-only** — the DSM enduser zip stays a coherent DSM-only artifact |
+| DEC-R6 | VERSION bump in #23 | **Dropped** — VERSION moves in the owner-driven `chore(release)` commit at ship time (v1.3.8 pattern, commit 33b1183) |
+| DEC-R7 | Cross-flavor crontab residue (carried #20 -> #21 -> #22) | **Fixed in the Sequence-65 ticket** — the cron flow removes the other flavor's managed entry on an install-mode switch; the #18 `pi_sudo_rerun_hint` cosmetic nit rides along |
+
+Defaults applied without a dedicated ask: #23's verification list re-synced to the
+current 12-step local gate (it was missing `migrate_legacy_check`,
+`seed_provider_check`, `validate_release.sh --self-test`, the `sh -n` loop, shellcheck,
+and compose-config); risk outcomes to be recorded by #23 as G1/G2/G5/G6/G7
+closed-with-evidence (#18/#19/#21 close comments), G4 "retired by design" (minimal v1
+unit, no CI guard — the hardening deferral stays deliberate), G3 "open — needs hardware
+validation"; txt-pair naming corrected to `docs/INSTALL-PI.zh.txt`.
+
+Work breakdown delta (staged 2026-07-12):
+
+- **#31 (Sequence 65, Next -> #23)** — `feat(release): dedicated pi bundle profile with
+  split leak gate`: package.sh `pi` profile + `PI_EXCLUDES` + split `leak_scan`;
+  package_check.py pi fixture + split FORBIDDEN sets + gate-fires/gate-passes proofs;
+  `i18n_pi.sh` reword; DEC-R7 crontab cleanup + `pi_installer_check` case;
+  `release-packaging.md` (en+zh) pi section.
+- **#23 (Sequence 70, tail; re-scoped)** — release verification: both bundles proven by
+  unpacking (enduser excludes / pi includes), ash source-checks from the unpacked trees,
+  G1-G7 outcomes recorded back into this brief, full 12-step gate. The body edit was
+  classifier-blocked, so the authoritative re-scoped body lives in the 2026-07-12 issue
+  comment (comments override body per `/issue-resolver` precedence).
+
+Risk-log note: outcomes are deliberately NOT recorded in this section — stamping G1-G7
+with evidence is #23's job at drain time.
