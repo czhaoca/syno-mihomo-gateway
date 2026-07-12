@@ -193,6 +193,37 @@ Seven tickets, TDD-ordered so each lands with its tests (Sequence 10–70):
 - **G7** port-53 conflicts with resolvers on Pi OS variants (lite doctor check + docs,
   Seq 50/60).
 
+### Outcomes (recorded 2026-07-12 by #23, the epic's release-verification tail)
+
+Closed-issue map for the evidence links: Seq10=#17, 20=#18, 30=#19, 40=#20, 50=#21, 60=#22.
+
+- **G1 — closed with evidence** (#18 close comment): live ghcr manifest probe 2026-07-10
+  found the dashboard image publishes linux/amd64 + linux/arm64 only, no arm/v7 → the
+  planned fallback shipped (compose = arm64-only, armv7 → lite redirect); hardware matrix
+  updated in #22.
+- **G2 — closed with evidence** (#19 close comment, DEC-C): upstream mihomo releases
+  publish no checksum assets at all → the fail-closed verify ladder (gzip -t → exec smoke
+  → version match) with the optional `MIHOMO_SHA256` pin is the shipped design;
+  CI-asserted in `pi_installer_check`.
+- **G3 — OPEN: needs hardware validation.** No measurement of real mihomo RSS on a 512 MB
+  board under load with `.mrs` tuning exists anywhere; the docs' sizing guidance is
+  estimate-based. The sole risk not closable from CI — revisit when a physical low-RAM Pi
+  is available.
+- **G4 — retired by design.** The v1 unit is deliberately minimal:
+  `scripts/pi/lite.sh:212` ("minimal v1 unit (hardening deferred - risk G4)"); the
+  rendered unit carries no hardening directives. No CI guard added on purpose — asserting
+  their absence would freeze a deferral that a later ticket may deliberately reverse.
+- **G5 — closed with evidence** (#19 close comment; reinforced by #20 DEC-D):
+  `releases/latest` tag resolution proven to route through the `GH_MIRROR` prefix, with
+  classified failure on mangled redirects and the `MIHOMO_VERSION` pin as the fallback;
+  CI-asserted.
+- **G6 — closed with evidence** (#19 close comment, DEC-B): the dashboard ships
+  `compressed-dist.tgz` (confirmed on v1.267.0); the layout-agnostic extract fails loudly
+  on an unrecognized layout and unpacks with BusyBox tar.
+- **G7 — closed with evidence** (#21 close comment; install-time warn #19; docs #22): the
+  lite doctor's port-53 check names the occupying resolver parsed from `ss` (fake-dnsmasq
+  CI case); "no ss = silent" documented; troubleshooting guidance shipped.
+
 ## Constraints carried into every ticket
 
 - POSIX `/bin/sh` (BusyBox-compatible) only; no `set -e` in runtime scripts; explicit
