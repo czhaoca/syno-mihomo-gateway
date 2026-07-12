@@ -508,3 +508,29 @@ domains via the domestic resolvers again, which is the privacy residual document
 `cache.db` into the data dir and prints `.env` hints, never touching the legacy install.
 Then `sudo sh ./install.sh` → deploy, choosing **automatic cleanup** when the planner flags
 the legacy containers, so the new stack takes over the container names.
+
+## Provider has no nodes (foreign sites dead, node list empty)
+
+**Symptom:** the dashboard's Proxies view shows only `auto` / `DIRECT` / `REJECT` — no airport
+nodes — foreign sites time out while domestic sites stay fine, and the mihomo log repeats
+`[Provider] my-airport pull error: …`.
+
+**Cause:** mihomo cannot fetch the subscription from inside the container **and** has no usable
+on-disk provider cache (`config/proxies/my-airport.yaml`) to load at startup. Since v1.3.8 the
+airport panel's hostname is pinned to the domestic resolvers and excluded from fake-ip precisely
+so a cold start can fetch the node list before any node exists; a network-side block, a carrier
+IP flap, or an expired subscription can still leave the provider empty (the 2026-07-12 outage).
+
+**Fix:**
+
+```bash
+sudo sh scripts/seed_provider.sh
+```
+
+It fetches the subscription **on the NAS host** (a different network path than the container),
+validates it, writes the provider cache under the data dir (both the stable name and the legacy
+md5 name), restarts mihomo, and verifies **real** nodes appear — built-ins and the `COMPATIBLE`
+placeholder of an empty group are never counted. mihomo keeps loaded nodes when a background
+pull fails, so the seed survives restarts until the fetch path heals. If the host fetch itself
+fails with a `4xx`, re-copy the subscription URL from the airport panel (token rotated / plan
+expired); on a timeout, the panel is unreachable from your network at that moment.

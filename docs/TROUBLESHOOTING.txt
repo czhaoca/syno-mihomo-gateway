@@ -283,6 +283,23 @@ Upgrading from an old flat installation (everything in one folder)
          takes over the names.
 
 --------------------------------------------------------------------------
+Provider has no nodes (foreign sites dead, node list empty)
+--------------------------------------------------------------------------
+  Symptom: the dashboard shows only auto/DIRECT/REJECT - no airport nodes -
+           foreign sites time out while domestic sites work, and the mihomo
+           log repeats "[Provider] my-airport pull error".
+  Cause:   mihomo cannot fetch the subscription from inside the container
+           and has no saved node list (config/proxies/my-airport.yaml) to
+           load at startup.
+  Fix:     sudo sh scripts/seed_provider.sh
+           It fetches the subscription on the NAS itself (a different
+           network path than the container), saves it as the provider
+           cache, restarts mihomo and verifies real nodes appear. If that
+           fetch fails with a 4xx code, re-copy the subscription URL from
+           your airport's panel (token rotated / plan expired); on a
+           timeout the panel is unreachable from your network right now.
+
+--------------------------------------------------------------------------
 Where to look
 --------------------------------------------------------------------------
   * Logs:      ../syno-mihomo-gateway-data/logs/ - install.log (installer),

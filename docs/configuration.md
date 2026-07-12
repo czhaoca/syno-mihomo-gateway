@@ -90,6 +90,18 @@ this, a fresh start or an expired node cache dead-ends with `dns resolve failed`
 observed in production (2026-07-10). This is why `DNS_NAMESERVER` must stay domestic and must
 never carry a `#PROXY` fragment; CI asserts both properties on every rendered variant.
 
+**Bootstrap DNS pins (v1.3.8).** `proxy-server-nameserver` covers node hostnames only — two more
+hosts must resolve **before any node is up** or a cold start can never bootstrap: the geodata
+mirror and your airport panel itself (its hostname is derived from `subscription.txt` at render
+time). Both are pinned in `nameserver-policy` to `DNS_NAMESERVER` (domestic, dialed direct) and
+excluded from fake-ip, in **every** mode — legacy and split-horizon alike, no knob. Without the
+pin both hosts usually sit on non-CN IPs, so the `fallback-filter` diverts them to the fallback
+resolvers — dead at cold start — and the provider can never fetch its node list (the 2026-07-12
+outage). An IP-literal subscription host needs no DNS, so the panel pin is skipped automatically;
+the provider also caches its node list at the stable path `config/proxies/my-airport.yaml`, which
+`scripts/seed_provider.sh` can (re)write when a live fetch is impossible (see
+[troubleshooting](troubleshooting.md#provider-has-no-nodes-foreign-sites-dead-node-list-empty)).
+
 The shipped `.env.example` defaults match the mainland-China posture of `REGISTRY_MODE=acr`
 (split-horizon on, everything encrypted, foreign path tunneled); on an unfiltered network
 `1.1.1.1,8.8.8.8` everywhere — with the split-horizon pair left unset — is fine. These settings

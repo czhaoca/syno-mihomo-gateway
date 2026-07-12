@@ -147,6 +147,8 @@ sh scripts/ci/cloudflared_check.sh
 sh scripts/ci/generic_update_check.sh
 sh scripts/ci/gateway_cli_check.sh
 sh scripts/ci/migrate_legacy_check.sh
+sh scripts/ci/seed_provider_check.sh
+sh scripts/ci/pi_installer_check.sh
 sh scripts/validate_release.sh --self-test
 docker compose --env-file .env.example config --quiet
 ```
