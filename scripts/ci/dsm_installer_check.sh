@@ -649,6 +649,7 @@ done
 (
   set -eu
   fail() { echo "FAIL: $*" >&2; exit 1; }
+  REPO_ROOT="$ROOT"   # wizard defaults resolve from .env.example (#27)
   ENV_FILE="$TD/express.env"; : > "$ENV_FILE"
   ui_error() { echo "ERROR: $*" >&2; }
   # shellcheck source=scripts/installer/envedit.sh
@@ -798,6 +799,75 @@ done
   esac
   exit 0
 ) || exit 1
+
+# --- default-value parity: wizard defaults single-source from .env.example ------
+# (#27) The pre-fills used to duplicate .env.example values as literals; the
+# split-horizon release proved the drift mode (both DNS defaults changed in
+# .env.example while the wizard literals kept the old values). Run wizard_env +
+# precheck_env against an EMPTY .env with accept-the-default stubs and require
+# every persisted default to equal the .env.example assignment, parsed by the
+# same never-eval loader the installer uses.
+(
+  set -eu
+  fail() { echo "FAIL: $*" >&2; exit 1; }
+  REPO_ROOT="$ROOT"
+  ENV_FILE="$TD/parity.env"; : > "$ENV_FILE"
+  ui_error() { echo "ERROR: $*" >&2; }
+  # shellcheck source=scripts/installer/envedit.sh
+  . "$ROOT/scripts/installer/envedit.sh"
+  # shellcheck source=scripts/lib/resolve.sh
+  . "$ROOT/scripts/lib/resolve.sh"
+  # shellcheck source=scripts/installer/wizards.sh
+  . "$ROOT/scripts/installer/wizards.sh"
+  # shellcheck source=scripts/lib/network.sh
+  . "$ROOT/scripts/lib/network.sh"   # real is_ipv4/ipv4_in_cidr for the precheck run
+  msg() { echo "$1"; }
+  msgf() { _mk="$1"; shift; echo "$_mk $*"; }
+  ui_step() { :; }; ui_info() { :; }; ui_ok() { :; }
+  ui_say() { :; }; ui_warn() { :; }
+  diagnose() { :; }
+  # Reference values via the same never-eval loader, independent of the code
+  # under test (subshell: a prefix assignment on a FUNCTION would persist).
+  _example_ref() { ( ENV_FILE="$ROOT/.env.example"; dotenv_get "$1" ); }
+
+  ui_ask_validated() { eval "$1=\"\$3\""; }   # Enter: accept the offered default
+  ui_ask() { eval "$1=\"\$3\""; }
+  ui_ask_secret() { eval "$1=''"; }
+  ui_yesno() { return 1; }                    # decline secret generation
+  pf_port_free() { return 0; }
+  check_ip_conflict() { return 0; }
+  mihomo_owns_ip() { return 1; }
+  ip_in_use() { return 1; }
+  IFACE_MANUAL=1                              # no scan: MIHOMO_IP falls to its default
+  wizard_env >/dev/null 2>&1 || fail "wizard_env (parity run) failed"
+  for _k in ROUTER_IP SUBNET_CIDR MIHOMO_IP WEB_UI_PORT CONTROLLER_PORT \
+            DNS_DEFAULT_NAMESERVER DNS_NAMESERVER DNS_FALLBACK TZ; do
+    _want="$(_example_ref "$_k")" || fail "$_k has no .env.example assignment"
+    [ -n "$_want" ] || fail "$_k has an empty .env.example assignment"
+    _got="$(dotenv_get "$_k" 2>/dev/null || echo '')"
+    [ "$_got" = "$_want" ] \
+      || fail "wizard_env default for $_k diverged from .env.example: got '$_got' want '$_want'"
+  done
+
+  # precheck: the re-ask defaults on an empty .env come from .env.example too
+  ENV_FILE="$TD/parity2.env"; : > "$ENV_FILE"
+  env_set MIHOMO_IMAGE img1; env_set METACUBEXD_IMAGE img2   # skip wizard_images
+  precheck_env >/dev/null 2>&1 || fail "precheck_env (parity run) failed"
+  for _k in ROUTER_IP SUBNET_CIDR MIHOMO_IP WEB_UI_PORT CONTROLLER_PORT \
+            DNS_DEFAULT_NAMESERVER DNS_NAMESERVER DNS_FALLBACK; do
+    _want="$(_example_ref "$_k")"
+    _got="$(dotenv_get "$_k" 2>/dev/null || echo '')"
+    [ "$_got" = "$_want" ] \
+      || fail "precheck_env default for $_k diverged from .env.example: got '$_got' want '$_want'"
+  done
+  exit 0
+) || exit 1
+
+# Default literals belong in .env.example ONLY (#27): a reintroduced copy is
+# exactly the drift CI could not see until it bit an operator.
+grep -n '223\.5\.5\.5\|119\.29\.29\.29\|1\.1\.1\.1\|8\.8\.8\.8\|8080\|9090\|192\.168\.\|Asia/Shanghai' \
+  "$ROOT/scripts/installer/wizards.sh" \
+  && fail "wizards.sh carries default literals (single-source them in .env.example)"
 
 # --- state banner + Status/Diagnose menu item -----------------------------------
 # install.sh is sourceable (INSTALL_SOURCE_ONLY=1 + SMG_INSTALL_ROOT) so the

@@ -784,6 +784,34 @@ grep -q 'pi_flow_cron' "$ROOT/install-pi.sh" \
   && grep -q 'msg menu_cron' "$ROOT/install-pi.sh" \
   && ok || fail "install-pi.sh menu wires the cron item to pi_flow_cron"
 
+# --- #27 default-value parity: lite wizard defaults single-source from .env.example
+# Same drift mode the DSM wizards had: flow_lite duplicated the .env.example
+# defaults as literals. Accept-the-default run against an empty .env; every
+# persisted value must equal the .env.example assignment (never-eval parse;
+# the reference read runs in a subshell so pointing ENV_FILE at the example
+# cannot leak into the suite).
+( REPO_ROOT="$ROOT"; ENV_FILE="$TD/parity.env"; : > "$ENV_FILE"
+  GATEWAY_DATA_DIR="$TD/parity-data"
+  ui_step() { :; }; ui_say() { :; }; ui_ok() { :; }; ui_warn() { :; }; ui_info() { :; }
+  ui_ask_validated() { eval "$1=\"\$3\""; }
+  ui_ask() { eval "$1=\"\$3\""; }
+  ui_ask_secret() { eval "$1=''"; }
+  ui_yesno() { return 1; }
+  pi_lite_wizard >/dev/null 2>&1 || { echo "parity: pi_lite_wizard failed" >&2; exit 1; }
+  for _k in CONTROLLER_PORT DNS_DEFAULT_NAMESERVER DNS_NAMESERVER DNS_FALLBACK TZ; do
+    _want="$( (ENV_FILE="$ROOT/.env.example"; dotenv_get "$_k") )"
+    [ -n "$_want" ] || { echo "parity: $_k missing from .env.example" >&2; exit 1; }
+    _got="$(dotenv_get "$_k" 2>/dev/null || echo '')"
+    [ "$_got" = "$_want" ] \
+      || { echo "parity: $_k got '$_got' want '$_want'" >&2; exit 1; }
+  done ) \
+  && ok || fail "pi_lite_wizard defaults diverge from .env.example"
+
+# Default literals belong in .env.example ONLY (#27).
+grep -n '223\.5\.5\.5\|119\.29\.29\.29\|1\.1\.1\.1\|8\.8\.8\.8\|8080\|9090\|192\.168\.\|Asia/Shanghai' \
+  "$ROOT/scripts/pi/flow_lite.sh" >/dev/null \
+  && fail "flow_lite.sh carries default literals (single-source them in .env.example)" || ok
+
 # =============================================================================
 # Ticket #21 - lite_ctl status/doctor + scheduler coverage
 # =============================================================================

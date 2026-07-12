@@ -6,6 +6,22 @@
 #
 # Requires ui.sh, envedit.sh, preflight.sh sourced first. POSIX /bin/sh.
 
+# example_default KEY - print KEY's shipped default from the tracked
+# .env.example, the single sanctioned home for documented defaults (CLAUDE.md:
+# no duplicated DNS/network literals in code; #27). Same never-eval discipline
+# and last-assignment-wins semantics as dotenv_get, but against the example
+# file: the line scan is duplicated here rather than repointing ENV_FILE in a
+# subshell, which would trip SC2031 at every later ENV_FILE use. Values go
+# through the shared dotenv_decode; prints nothing when the key is absent.
+example_default() {
+  _ed_file="${REPO_ROOT:-}/.env.example"
+  [ -f "$_ed_file" ] || return 0
+  _ed_raw="$(awk -v k="$1" 'index($0, k"=") == 1 { v = substr($0, length(k) + 2) }
+                            END { printf "%s", v }' "$_ed_file")"
+  [ -n "$_ed_raw" ] || return 0
+  dotenv_decode "$_ed_raw" || :
+}
+
 # seed_config - create .env + config/subscription.txt from the shipped examples
 # if absent (never clobber a configured file), and restore +x on scripts. Folds
 # bootstrap.sh's behavior so the operator only ever runs install.sh.
@@ -84,12 +100,12 @@ wizard_express() {
   _we_cur="$(env_get MIHOMO_IP 2>/dev/null || echo '')"
   _we_ip="$(resolve_mihomo_ip "$_we_cur" "$_we_cidr" "$_we_router" "$_we_iface")"
   [ -n "$_we_ip" ] || return 1
-  _we_web="$(env_get WEB_UI_PORT 2>/dev/null || echo 8080)"
-  _we_ctl="$(env_get CONTROLLER_PORT 2>/dev/null || echo 9090)"
-  _we_dns_b="$(env_get DNS_DEFAULT_NAMESERVER 2>/dev/null || echo 223.5.5.5,119.29.29.29)"
-  _we_dns_d="$(env_get DNS_NAMESERVER 2>/dev/null || echo 223.5.5.5,119.29.29.29)"
-  _we_dns_f="$(env_get DNS_FALLBACK 2>/dev/null || echo 'https://1.1.1.1/dns-query,tls://8.8.8.8:853')"
-  _we_tz="$(env_get TZ 2>/dev/null || echo Asia/Shanghai)"
+  _we_web="$(env_get WEB_UI_PORT 2>/dev/null || example_default WEB_UI_PORT)"
+  _we_ctl="$(env_get CONTROLLER_PORT 2>/dev/null || example_default CONTROLLER_PORT)"
+  _we_dns_b="$(env_get DNS_DEFAULT_NAMESERVER 2>/dev/null || example_default DNS_DEFAULT_NAMESERVER)"
+  _we_dns_d="$(env_get DNS_NAMESERVER 2>/dev/null || example_default DNS_NAMESERVER)"
+  _we_dns_f="$(env_get DNS_FALLBACK 2>/dev/null || example_default DNS_FALLBACK)"
+  _we_tz="$(env_get TZ 2>/dev/null || example_default TZ)"
 
   ui_step "$(msg step_express)"
   ui_say "$(msgf express_iface "${_we_iface:-${PARENT_INTERFACE:-?}}")"
@@ -127,9 +143,9 @@ wizard_express() {
 # wizard_env - prompt + persist the network / DNS / port / secret settings.
 wizard_env() {
   ui_step "$(msg step_env)"
-  ui_ask_validated ROUTER_IP "$(msg q_router)" "$(env_get ROUTER_IP || echo 192.168.1.1)" is_ipv4
+  ui_ask_validated ROUTER_IP "$(msg q_router)" "$(env_get ROUTER_IP || example_default ROUTER_IP)" is_ipv4
   env_set ROUTER_IP "$ROUTER_IP"
-  ui_ask_validated SUBNET_CIDR "$(msg q_subnet)" "$(env_get SUBNET_CIDR || echo 192.168.1.0/24)" is_cidr
+  ui_ask_validated SUBNET_CIDR "$(msg q_subnet)" "$(env_get SUBNET_CIDR || example_default SUBNET_CIDR)" is_cidr
   env_set SUBNET_CIDR "$SUBNET_CIDR"
   # Suggest a free static IP near the NAS instead of the stale placeholder:
   # resolve_mihomo_ip (lib/resolve.sh) keeps a saved value that is still a
@@ -141,19 +157,19 @@ wizard_env() {
   [ "${IFACE_MANUAL:-0}" = 1 ] || _scan_iface="${PARENT_INTERFACE:-${CHOSEN_IFACE:-}}"
   resolve_notify_scan() { ui_info "$(msg info_ip_suggest_scan)"; }
   _mihomo_def="$(resolve_mihomo_ip "$_mihomo_cur" "$SUBNET_CIDR" "$ROUTER_IP" "$_scan_iface")"
-  [ -n "$_mihomo_def" ] || _mihomo_def="${_mihomo_cur:-192.168.1.100}"
+  [ -n "$_mihomo_def" ] || _mihomo_def="${_mihomo_cur:-$(example_default MIHOMO_IP)}"
   while :; do
     ui_ask_validated MIHOMO_IP "$(msg q_mihomo_ip)" "$_mihomo_def" is_ipv4
     check_ip_conflict "$MIHOMO_IP" && break
   done
   env_set MIHOMO_IP "$MIHOMO_IP"
 
-  ui_ask_validated WEB_UI_PORT "$(msg q_web_port)" "$(env_get WEB_UI_PORT || echo 8080)" is_port
+  ui_ask_validated WEB_UI_PORT "$(msg q_web_port)" "$(env_get WEB_UI_PORT || example_default WEB_UI_PORT)" is_port
   env_set WEB_UI_PORT "$WEB_UI_PORT"
   if [ "$(pf_port_free "$WEB_UI_PORT"; echo $?)" = "1" ]; then
     ui_warn "$(msgf warn_port_in_use "$WEB_UI_PORT")"
   fi
-  ui_ask_validated CONTROLLER_PORT "$(msg q_controller_port)" "$(env_get CONTROLLER_PORT || echo 9090)" is_port
+  ui_ask_validated CONTROLLER_PORT "$(msg q_controller_port)" "$(env_get CONTROLLER_PORT || example_default CONTROLLER_PORT)" is_port
   env_set CONTROLLER_PORT "$CONTROLLER_PORT"
 
   # Pressing Enter on a re-run must keep the saved secret (idempotent
@@ -185,14 +201,14 @@ wizard_env() {
     _secret_guard   # empty -> offer to generate (explicit opt-out preserved)
   fi
 
-  ui_ask_validated DNS_DEFAULT_NAMESERVER "$(msg q_dns_bootstrap)" "$(env_get DNS_DEFAULT_NAMESERVER || echo 223.5.5.5,119.29.29.29)" is_dns_list
+  ui_ask_validated DNS_DEFAULT_NAMESERVER "$(msg q_dns_bootstrap)" "$(env_get DNS_DEFAULT_NAMESERVER || example_default DNS_DEFAULT_NAMESERVER)" is_dns_list
   env_set DNS_DEFAULT_NAMESERVER "$DNS_DEFAULT_NAMESERVER"
-  ui_ask_validated DNS_NAMESERVER "$(msg q_dns_domestic)" "$(env_get DNS_NAMESERVER || echo 223.5.5.5,119.29.29.29)" is_dns_list
+  ui_ask_validated DNS_NAMESERVER "$(msg q_dns_domestic)" "$(env_get DNS_NAMESERVER || example_default DNS_NAMESERVER)" is_dns_list
   env_set DNS_NAMESERVER "$DNS_NAMESERVER"
-  ui_ask_validated DNS_FALLBACK "$(msg q_dns_fallback)" "$(env_get DNS_FALLBACK || echo 'https://1.1.1.1/dns-query,tls://8.8.8.8:853')" is_dns_list
+  ui_ask_validated DNS_FALLBACK "$(msg q_dns_fallback)" "$(env_get DNS_FALLBACK || example_default DNS_FALLBACK)" is_dns_list
   env_set DNS_FALLBACK "$DNS_FALLBACK"
 
-  ui_ask TZ "$(msg q_tz)" "$(env_get TZ || echo Asia/Shanghai)"
+  ui_ask TZ "$(msg q_tz)" "$(env_get TZ || example_default TZ)"
   env_set TZ "$TZ"
   ui_ok "$(msg ok_env_saved)"
   return 0
@@ -354,21 +370,21 @@ ensure_subscription() {
 # BOUNCE BACK to re-enter only the fields that are missing/invalid (rather than
 # letting create_network / render_config.sh / compose fail mid-deploy). Each
 # fix is persisted. Returns non-zero only if the operator quits / declines.
-_pc_need() {  # KEY VALIDATOR PROMPT_MSG_KEY DEFAULT
-  _pc_k="$1"; _pc_ck="$2"; _pc_qk="$3"; _pc_df="$4"
+_pc_need() {  # KEY VALIDATOR PROMPT_MSG_KEY (the re-ask default comes from .env.example)
+  _pc_k="$1"; _pc_ck="$2"; _pc_qk="$3"
   _pc_cur="$(env_get "$_pc_k" 2>/dev/null || echo '')"
   if "$_pc_ck" "$_pc_cur"; then return 0; fi
   _pc_fixed=1
   ui_warn "$(msgf precheck_bad "$_pc_k" "$_pc_cur")"
-  ui_ask_validated _pc_nv "$(msg "$_pc_qk")" "${_pc_cur:-$_pc_df}" "$_pc_ck"
+  ui_ask_validated _pc_nv "$(msg "$_pc_qk")" "${_pc_cur:-$(example_default "$_pc_k")}" "$_pc_ck"
   env_set "$_pc_k" "$_pc_nv"
 }
 
 precheck_env() {
   ui_step "$(msg precheck_step)"
   _pc_fixed=0
-  _pc_need ROUTER_IP   is_ipv4 q_router 192.168.1.1
-  _pc_need SUBNET_CIDR is_cidr q_subnet 192.168.1.0/24
+  _pc_need ROUTER_IP   is_ipv4 q_router
+  _pc_need SUBNET_CIDR is_cidr q_subnet
   # MIHOMO_IP: validate AND conflict-check on re-entry (DHCP collision guard).
   # Also require membership in the (just-validated) SUBNET_CIDR: after an
   # interface re-pick onto a new subnet, a saved IP from the OLD subnet would
@@ -380,7 +396,7 @@ precheck_env() {
     _pc_fixed=1
     ui_warn "$(msgf precheck_bad MIHOMO_IP "$_pc_cur")"
     while :; do
-      ui_ask_validated MIHOMO_IP "$(msg q_mihomo_ip)" "${_pc_cur:-192.168.1.100}" is_ipv4
+      ui_ask_validated MIHOMO_IP "$(msg q_mihomo_ip)" "${_pc_cur:-$(example_default MIHOMO_IP)}" is_ipv4
       if [ -n "$_pc_cidr" ] && ! ipv4_in_cidr "$MIHOMO_IP" "$_pc_cidr"; then
         ui_warn "$(msgf precheck_bad MIHOMO_IP "$MIHOMO_IP")"
         continue
@@ -389,11 +405,11 @@ precheck_env() {
     done
     env_set MIHOMO_IP "$MIHOMO_IP"
   fi
-  _pc_need WEB_UI_PORT     is_port     q_web_port        8080
-  _pc_need CONTROLLER_PORT is_port     q_controller_port 9090
-  _pc_need DNS_DEFAULT_NAMESERVER is_dns_list q_dns_bootstrap 223.5.5.5,119.29.29.29
-  _pc_need DNS_NAMESERVER         is_dns_list q_dns_domestic  223.5.5.5,119.29.29.29
-  _pc_need DNS_FALLBACK           is_dns_list q_dns_fallback  'https://1.1.1.1/dns-query,tls://8.8.8.8:853'
+  _pc_need WEB_UI_PORT     is_port     q_web_port
+  _pc_need CONTROLLER_PORT is_port     q_controller_port
+  _pc_need DNS_DEFAULT_NAMESERVER is_dns_list q_dns_bootstrap
+  _pc_need DNS_NAMESERVER         is_dns_list q_dns_domestic
+  _pc_need DNS_FALLBACK           is_dns_list q_dns_fallback
   # Image refs must resolve or compose fails closed (${MIHOMO_IMAGE:?}).
   if [ -z "$(env_get MIHOMO_IMAGE 2>/dev/null || echo '')" ] \
      || [ -z "$(env_get METACUBEXD_IMAGE 2>/dev/null || echo '')" ]; then

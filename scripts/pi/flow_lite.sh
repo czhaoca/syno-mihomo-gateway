@@ -14,7 +14,7 @@
 pi_lite_wizard() {
   ui_step "$(msg pi_step_lite_wizard)"
 
-  ui_ask_validated CONTROLLER_PORT "$(msg q_controller_port)" "$(env_get CONTROLLER_PORT || echo 9090)" is_port
+  ui_ask_validated CONTROLLER_PORT "$(msg q_controller_port)" "$(env_get CONTROLLER_PORT || example_default CONTROLLER_PORT)" is_port
   env_set CONTROLLER_PORT "$CONTROLLER_PORT"
 
   _plw_secret_cur="$(env_get CONTROLLER_SECRET 2>/dev/null || echo '')"
@@ -42,14 +42,14 @@ pi_lite_wizard() {
     _secret_guard
   fi
 
-  ui_ask_validated DNS_DEFAULT_NAMESERVER "$(msg q_dns_bootstrap)" "$(env_get DNS_DEFAULT_NAMESERVER || echo 223.5.5.5,119.29.29.29)" is_dns_list
+  ui_ask_validated DNS_DEFAULT_NAMESERVER "$(msg q_dns_bootstrap)" "$(env_get DNS_DEFAULT_NAMESERVER || example_default DNS_DEFAULT_NAMESERVER)" is_dns_list
   env_set DNS_DEFAULT_NAMESERVER "$DNS_DEFAULT_NAMESERVER"
-  ui_ask_validated DNS_NAMESERVER "$(msg q_dns_domestic)" "$(env_get DNS_NAMESERVER || echo 223.5.5.5,119.29.29.29)" is_dns_list
+  ui_ask_validated DNS_NAMESERVER "$(msg q_dns_domestic)" "$(env_get DNS_NAMESERVER || example_default DNS_NAMESERVER)" is_dns_list
   env_set DNS_NAMESERVER "$DNS_NAMESERVER"
-  ui_ask_validated DNS_FALLBACK "$(msg q_dns_fallback)" "$(env_get DNS_FALLBACK || echo 'https://1.1.1.1/dns-query,tls://8.8.8.8:853')" is_dns_list
+  ui_ask_validated DNS_FALLBACK "$(msg q_dns_fallback)" "$(env_get DNS_FALLBACK || example_default DNS_FALLBACK)" is_dns_list
   env_set DNS_FALLBACK "$DNS_FALLBACK"
 
-  ui_ask TZ "$(msg q_tz)" "$(env_get TZ || echo Asia/Shanghai)"
+  ui_ask TZ "$(msg q_tz)" "$(env_get TZ || example_default TZ)"
   env_set TZ "$TZ"
 
   # Lite-only artifact settings (DEC-4 / DEC-C): mirror prefix, optional
@@ -81,7 +81,7 @@ pi_lite_wizard() {
 pi_lite_render_config() {
   MIHOMO_CONFIG_DIR="$CONFIG_STATE_DIR" \
   MIHOMO_TEMPLATE="$REPO_ROOT/config/config.template.yaml" \
-  CONTROLLER_PORT="${CONTROLLER_PORT:-9090}" \
+  CONTROLLER_PORT="${CONTROLLER_PORT:-$(example_default CONTROLLER_PORT)}" \
   CONTROLLER_SECRET="${CONTROLLER_SECRET:-}" \
   DNS_DEFAULT_NAMESERVER="${DNS_DEFAULT_NAMESERVER:-}" \
   DNS_NAMESERVER="${DNS_NAMESERVER:-}" \
@@ -161,7 +161,7 @@ pi_flow_lite() {
   _pfl_ip="$(_iface_ipv4 "$(detect_parent_interface '')" 2>/dev/null)"
   [ -n "$_pfl_ip" ] || _pfl_ip='<Pi-IP>'
   ui_step "$(msg step_deploy_done)"
-  ui_say "$(msgf pi_lite_rep_dashboard "$_pfl_ip" "${CONTROLLER_PORT:-9090}")"
+  ui_say "$(msgf pi_lite_rep_dashboard "$_pfl_ip" "${CONTROLLER_PORT:-$(example_default CONTROLLER_PORT)}")"
   ui_say "$(msgf pi_lite_rep_client "$_pfl_ip")"
   return 0
 }
@@ -202,7 +202,10 @@ pi_flow_cron() {
   UPDATE_SCHEDULE="$_pfc_mm $_pfc_hh * * *"
   env_set UPDATE_SCHEDULE "$UPDATE_SCHEDULE"
 
-  ui_ask UPDATE_TZ "$(msg q_tz_freeform)" "$(env_get UPDATE_TZ 2>/dev/null || echo Asia/Shanghai)"
+  # Pre-fill from .env.example (#27). The DSM cron twin (installer/flow_cron.sh)
+  # still carries its timezone literal - outside #27's file surface; tracked on
+  # the issue alongside the UPDATE_SCHEDULE fallback for a later hygiene pass.
+  ui_ask UPDATE_TZ "$(msg q_tz_freeform)" "$(env_get UPDATE_TZ 2>/dev/null || example_default UPDATE_TZ)"
   env_set UPDATE_TZ "$UPDATE_TZ"
 
   if ui_yesno "$(msg ask_enable_updates)" y; then
