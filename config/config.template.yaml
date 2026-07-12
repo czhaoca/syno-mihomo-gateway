@@ -75,20 +75,38 @@ dns:
   # fixed mihomo constant, not a DNS server or your LAN.
   enhanced-mode: fake-ip
   fake-ip-range: 198.18.0.1/16
+  # Hosts that must NEVER receive fake-ip answers: in-container diagnostics and
+  # the host-side recovery fetch (see docs - "provider has no nodes") need the
+  # REAL addresses of the geodata mirror and the airport panel. The panel entry
+  # is derived from subscription.txt at render time; an IP-literal subscription
+  # host renders it as a comment instead.
+  fake-ip-filter:
+    - 'testingcf.jsdelivr.net'
+    {{AIRPORT_FAKEIP_PIN}}
   # DNS servers are injected from .env as comma-separated lists -> YAML flow sequences.
   default-nameserver: [ {{DNS_DEFAULT_NAMESERVER}} ]
-# {{DNSPOLICY_BEGIN}}
-  # Split-horizon resolution (DNS privacy): a domain matching a key below is
-  # resolved ONLY by that key's servers, bypassing nameserver/fallback and the
-  # fallback-filter entirely. CN domains resolve via the domestic list, dialed
-  # DIRECT; the listed foreign categories resolve via overseas servers TUNNELED
-  # through the proxy - a '#PROXY' suffix on a server is mihomo's
-  # route-via-proxy-group syntax, and PROXY is the LITERAL group name defined
-  # under proxy-groups below (rename both together). The renderer keeps this
-  # block only when BOTH lists are set in .env; with neither set the render is
-  # byte-identical to the pre-split-horizon output, so existing .env files
-  # keep working unchanged.
+  # Bootstrap DNS pins: BEFORE any node is up, mihomo must fetch the node list
+  # (the airport panel, derived from subscription.txt) and geodata (the CDN
+  # mirror in geox-url below). Both usually sit on non-CN IPs, so the
+  # fallback-filter below would divert them to the fallback resolvers - dead at
+  # cold start (dialed direct on a filtered network, or tunneled through a
+  # proxy group that has no nodes yet). A nameserver-policy match bypasses
+  # nameserver/fallback/fallback-filter entirely: these hosts resolve via the
+  # domestic list, dialed direct, always (2026-07-12 provider outage).
   nameserver-policy:
+    'testingcf.jsdelivr.net': [ {{DNS_NAMESERVER}} ]
+    {{AIRPORT_DNS_PIN}}
+# {{DNSPOLICY_BEGIN}}
+    # Split-horizon resolution (DNS privacy): a domain matching a key below is
+    # resolved ONLY by that key's servers, bypassing nameserver/fallback and
+    # the fallback-filter entirely. CN domains resolve via the domestic list,
+    # dialed DIRECT; the listed foreign categories resolve via overseas servers
+    # TUNNELED through the proxy - a '#PROXY' suffix on a server is mihomo's
+    # route-via-proxy-group syntax, and PROXY is the LITERAL group name defined
+    # under proxy-groups below (rename both together). The renderer keeps these
+    # two entries only when BOTH lists are set in .env; with neither set the
+    # render carries only the bootstrap pins above, so existing .env files
+    # keep working unchanged.
     'geosite:cn': [ {{DNS_CN_NAMESERVER}} ]
     'geosite:geolocation-!cn': [ {{DNS_FOREIGN_NAMESERVER}} ]
 # {{DNSPOLICY_END}}
@@ -124,6 +142,13 @@ proxy-providers:
   my-airport:
     type: http
     url: "{{AIRPORT_URL}}"
+    # Cache the fetched node list at a STABLE name (mihomo's default is an
+    # opaque md5-of-URL filename). This file is what lets a restart come up
+    # with nodes when a live fetch is impossible at that moment; it can also
+    # be written directly by scripts/seed_provider.sh (see docs -
+    # "provider has no nodes"). The renderer adopts a pre-existing md5-named
+    # cache into this path on upgrade.
+    path: ./proxies/my-airport.yaml
     interval: 3600
     health-check:
       enable: true

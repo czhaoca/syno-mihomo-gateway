@@ -23,6 +23,12 @@ Enforces:
     UNPROXIED plain lists (the cold-start invariant from the 2026-07 incident),
     exactly-one-set fails loud naming the missing var, and DNS_GEOIP_NO_RESOLVE
     renders ',no-resolve' / bare / fails closed on garbage;
+  * the bootstrap DNS pins (2026-07-12 provider outage): EVERY variant pins the
+    geodata mirror AND the airport-panel host (derived from subscription.txt)
+    to the domestic nameserver list via nameserver-policy, lists both in
+    fake-ip-filter, and gives the provider the stable cache path
+    ./proxies/my-airport.yaml; an IP-literal subscription host renders the
+    panel pins as comments (no DNS needed) while the mirror pins remain;
   * geox-url mirrors point at hosts reachable from mainland China — never the
     blocked upstream Git host or the flaky primary jsDelivr domain;
   * TUN is ON by default (transparent gateway): the DEFAULT render INCLUDES the tun block
@@ -81,6 +87,19 @@ DNS_FB = ["https://1.1.1.1/dns-query#PROXY", "tls://8.8.8.8:853#PROXY"]
 DNS_CN = ["https://223.4.4.4/dns-query", "https://120.53.53.102/dns-query"]
 DNS_FOREIGN = ["https://1.0.0.1/dns-query#PROXY", "https://8.8.4.4/dns-query#PROXY"]
 
+# Bootstrap DNS pins (2026-07-12 provider outage): mihomo must be able to
+# resolve the geodata mirror and the airport panel BEFORE any node is up, so
+# the template pins both to the domestic list via nameserver-policy and lists
+# both in fake-ip-filter. The panel host derives from the SUB_URL fixture.
+PIN_MIRROR = "testingcf.jsdelivr.net"
+PANEL_HOST = "h.example.com"
+BOOTSTRAP_PINS = {PIN_MIRROR: DNS_NS, PANEL_HOST: DNS_NS}
+FAKEIP_FILTER = [PIN_MIRROR, PANEL_HOST]
+PROVIDER_PATH = "./proxies/my-airport.yaml"
+# An IP-literal subscription host needs no DNS pin at all - the renderer must
+# degrade both panel pin lines to comments and keep the mirror pins.
+SUB_LINE_IP = "Default=https://192.0.2.10:8443/api/v1/subscribe?token=a"
+
 # geox-url mirror hosts that are unreachable (or too flaky to ship) from
 # mainland China: the upstream Git host pair mihomo defaults to, and the
 # primary jsDelivr domain (ICP-revoked; the *.jsdelivr.net CDN alternates the
@@ -105,12 +124,13 @@ def render(raw: str, tun_auto_redirect: str | None = None,
            external_ui_dir: str | None = None,
            dns_cn: str | None = None,
            dns_foreign: str | None = None,
-           geoip_no_resolve: str | None = None):
+           geoip_no_resolve: str | None = None,
+           sub_line: str | None = None):
     """Run the real renderer in an isolated config directory."""
     with tempfile.TemporaryDirectory() as td:
         tdp = Path(td)
         (tdp / "config.template.yaml").write_text(raw)
-        (tdp / "subscription.txt").write_text(SUB_LINE + "\n")
+        (tdp / "subscription.txt").write_text((sub_line or SUB_LINE) + "\n")
         # Minimal env, NOT **os.environ: the checker itself must not inherit
         # dev/CI shell variables (a stray MIHOMO_TEMPLATE or TUN_ENABLE would
         # silently redirect or skew the render under test) — the same
@@ -284,9 +304,15 @@ def main() -> None:
     doc = yaml.safe_load(rendered)
 
     # 3) Subscription URL must round-trip EXACTLY (the critical regression).
-    url = (((doc.get("proxy-providers") or {}).get("my-airport")) or {}).get("url")
+    provider = ((doc.get("proxy-providers") or {}).get("my-airport")) or {}
+    url = provider.get("url")
     if url != SUB_URL:
         fail(f"subscription URL mangled: got {url!r}, expected {SUB_URL!r}")
+
+    # 3b) The provider must cache at the STABLE path (seedable, upgrade-adopted);
+    # mihomo's md5-of-URL default made the cache undiscoverable for recovery.
+    if provider.get("path") != PROVIDER_PATH:
+        fail(f"provider path must be {PROVIDER_PATH!r}: got {provider.get('path')!r}")
 
     # 4) Controller + secret (secret tests &/| escaping).
     ec = doc.get("external-controller")
@@ -317,6 +343,17 @@ def main() -> None:
         servers = dns.get(field)
         if servers != expected:
             fail(f"dns.{field} did not round-trip: got {servers!r}, expected {expected!r}")
+
+    # 5a) Bootstrap DNS pins: the geodata mirror and the airport-panel host must
+    # resolve via the domestic list (bypassing fallback/fallback-filter) and be
+    # excluded from fake-ip, in EVERY render - a cold start has no node to
+    # tunnel a resolver or a fetch through (2026-07-12 provider outage).
+    if dns.get("nameserver-policy") != BOOTSTRAP_PINS:
+        fail(f"default render nameserver-policy must be exactly the bootstrap "
+             f"pins {BOOTSTRAP_PINS!r}: got {dns.get('nameserver-policy')!r}")
+    if dns.get("fake-ip-filter") != FAKEIP_FILTER:
+        fail(f"dns.fake-ip-filter must be {FAKEIP_FILTER!r}: "
+             f"got {dns.get('fake-ip-filter')!r}")
 
     # 5b) Rule / group / provider reference integrity (the MATCH,my-airport
     # crash-loop class) on the fully rendered document.
@@ -445,8 +482,12 @@ def main() -> None:
         fail("template must carry the {{DNSPOLICY_BEGIN}}/{{DNSPOLICY_END}} fence")
     if "{{GEOIP_NO_RESOLVE}}" not in raw:
         fail("template must carry the {{GEOIP_NO_RESOLVE}} token on the GEOIP,CN rule")
-    if "nameserver-policy" in (doc.get("dns") or {}):
-        fail("default render must NOT contain nameserver-policy (knobs unset)")
+    # Knobs unset: nameserver-policy carries ONLY the bootstrap pins (asserted
+    # exactly in 5a) - i.e. no geosite entries leak out of the fence.
+    for leaked in ("geosite:cn", "geosite:geolocation-!cn"):
+        if leaked in (doc.get("dns") or {}).get("nameserver-policy", {}):
+            fail(f"default render must NOT carry the {leaked!r} policy entry "
+                 f"(knobs unset)")
     if doc.get("rules") != ["GEOSITE,CN,DIRECT", "GEOIP,CN,DIRECT", "MATCH,PROXY"]:
         fail(f"default rules must be the bare legacy triple in order: {doc.get('rules')!r}")
     legacy_raw = strip_fence(raw, "DNSPOLICY").replace("{{GEOIP_NO_RESOLVE}}", "")
@@ -479,10 +520,14 @@ def main() -> None:
              "sit flush against its neighbors")
     pdoc = yaml.safe_load(pol)
     policy = (pdoc.get("dns") or {}).get("nameserver-policy")
-    expected_policy = {"geosite:cn": DNS_CN, "geosite:geolocation-!cn": DNS_FOREIGN}
+    expected_policy = {**BOOTSTRAP_PINS,
+                       "geosite:cn": DNS_CN, "geosite:geolocation-!cn": DNS_FOREIGN}
     if policy != expected_policy:
         fail(f"nameserver-policy did not round-trip: got {policy!r}, "
              f"expected {expected_policy!r}")
+    if (pdoc.get("dns") or {}).get("fake-ip-filter") != FAKEIP_FILTER:
+        fail(f"[DNSPOLICY] dns.fake-ip-filter must be {FAKEIP_FILTER!r}: "
+             f"got {(pdoc.get('dns') or {}).get('fake-ip-filter')!r}")
     for field, expected in (("default-nameserver", DNS_DEFAULT),
                             ("nameserver", DNS_NS),
                             ("proxy-server-nameserver", DNS_NS),
@@ -529,13 +574,36 @@ def main() -> None:
     if proc_nb.returncode == 0 or nb is not None:
         fail("invalid DNS_GEOIP_NO_RESOLVE was accepted or wrote config.yaml")
 
+    # 12) IP-literal subscription host: no DNS pin is possible or needed - the
+    # panel entries in nameserver-policy and fake-ip-filter must degrade to
+    # comments (never a bogus policy key), the mirror pins stay, and the render
+    # remains valid placeholder-free YAML with the URL still exact.
+    proc_ip, ip_rendered = render(raw, sub_line=SUB_LINE_IP)
+    if proc_ip.returncode != 0 or ip_rendered is None:
+        fail(f"IP-literal subscription render failed: {proc_ip.stderr.strip()}")
+    assert_resolved("IP-literal-sub", ip_rendered)
+    ipdoc = yaml.safe_load(ip_rendered)
+    ipdns = ipdoc.get("dns") or {}
+    if ipdns.get("nameserver-policy") != {PIN_MIRROR: DNS_NS}:
+        fail(f"[IP-literal] nameserver-policy must carry ONLY the mirror pin: "
+             f"got {ipdns.get('nameserver-policy')!r}")
+    if ipdns.get("fake-ip-filter") != [PIN_MIRROR]:
+        fail(f"[IP-literal] fake-ip-filter must carry ONLY the mirror: "
+             f"got {ipdns.get('fake-ip-filter')!r}")
+    ip_url = (((ipdoc.get("proxy-providers") or {}).get("my-airport")) or {}).get("url")
+    if ip_url != SUB_LINE_IP.split("=", 1)[1]:
+        fail(f"[IP-literal] subscription URL mangled: got {ip_url!r}")
+
     print("OK: renderer preserves URL/secrets; controller, DNS, CORS valid; TUN is ON by "
           "default (stack: system keeps the controller reachable, allow-lan + fake-ip set; "
           "TUN_ENABLE=false omits the block); auto-redirect/enable opt-ins are strict; "
           "external-ui + split-horizon DNSPOLICY fences inert when unset (byte-identical "
           "legacy render); policy-on round-trips nameserver-policy with #PROXY fragments "
           "while default/proxy-server-nameserver stay unproxied; half-config fails loud; "
-          "GEOIP no-resolve knob strict; geox-url hosts China-reachable; no hardcoded "
+          "GEOIP no-resolve knob strict; bootstrap pins (geodata mirror + panel host) in "
+          "nameserver-policy + fake-ip-filter on every variant with the stable provider "
+          "cache path, degrading to mirror-only on an IP-literal subscription host; "
+          "geox-url hosts China-reachable; no hardcoded "
           "literals; fences pair, tokens map bidirectionally, rule/group targets resolve "
           "(never a provider), and every variant renders placeholder-free.")
 

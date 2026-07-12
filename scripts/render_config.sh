@@ -79,6 +79,33 @@ SUB_URL=$(grep -v '^#' "$SUB_FILE" | grep -v '^[[:space:]]*$' | head -n1 \
   | sed -e 's/^[A-Za-z0-9_.-]*=//' -e 's/[[:space:]]*$//')
 [ -n "$SUB_URL" ] || { echo "ERROR: subscription.txt has no usable URL" >&2; exit 1; }
 
+# Bootstrap DNS pin for the airport panel (nameserver-policy + fake-ip-filter
+# entries in the template): the ONE domain mihomo must resolve BEFORE any node
+# exists is the panel itself - the fallback-filter would otherwise divert it to
+# fallback resolvers that are dead at cold start, and the provider could never
+# bootstrap (the 2026-07-12 outage). Userinfo and a :port are stripped from the
+# URL host. An IP-literal host (IPv4 digits-and-dots, or bracketed IPv6) needs
+# no DNS at all - both pin lines render as comments instead; the mirror pin
+# above them keeps the nameserver-policy mapping non-empty either way.
+AIRPORT_HOST=$(printf '%s' "$SUB_URL" \
+  | sed -n 's|^[A-Za-z][A-Za-z0-9+.-]*://\([^/?#]*\).*|\1|p' \
+  | sed -e 's/^.*@//' -e 's/:[0-9]*$//')
+AIRPORT_PIN_ON=1
+case "$AIRPORT_HOST" in
+  '') AIRPORT_PIN_ON=0 ;;        # unparseable URL - degrade, never fail the render
+  \[*) AIRPORT_PIN_ON=0 ;;       # bracketed IPv6 literal
+  *[!0-9.]*) : ;;                # has a letter/dash -> a real domain
+  *) AIRPORT_PIN_ON=0 ;;         # digits-and-dots only -> IPv4 literal
+esac
+if [ "$AIRPORT_PIN_ON" = 1 ]; then
+  AIRPORT_DNS_PIN="'$AIRPORT_HOST': [ $DNS_NAMESERVER ]"
+  AIRPORT_FAKEIP_PIN="- '$AIRPORT_HOST'"
+else
+  echo "NOTE: no panel DNS pin (subscription host '${AIRPORT_HOST:-}' is an IP literal or unparseable)" >&2
+  AIRPORT_DNS_PIN="# (panel DNS pin skipped: subscription host is an IP literal or unparseable)"
+  AIRPORT_FAKEIP_PIN="# (panel fake-ip pin skipped: subscription host is an IP literal or unparseable)"
+fi
+
 # Two escaping layers, applied in order for values that land inside a YAML
 # double-quoted scalar; only the sed layer for bare/flow-sequence values.
 #
@@ -123,6 +150,8 @@ fi
 # EXTERNAL_UI_DIR renders inside a YAML double-quoted scalar like the secret).
 sed \
   -e "s|{{AIRPORT_URL}}|$(esc "$(yaml_dq "$SUB_URL")")|g" \
+  -e "s|{{AIRPORT_DNS_PIN}}|$(esc "$AIRPORT_DNS_PIN")|g" \
+  -e "s|{{AIRPORT_FAKEIP_PIN}}|$(esc "$AIRPORT_FAKEIP_PIN")|g" \
   -e "s|{{CONTROLLER_PORT}}|$(esc "$CONTROLLER_PORT")|g" \
   -e "s|{{CONTROLLER_SECRET}}|$(esc "$(yaml_dq "$CONTROLLER_SECRET")")|g" \
   -e "s|{{DNS_DEFAULT_NAMESERVER}}|$(esc "$DNS_DEFAULT_NAMESERVER")|g" \
@@ -137,3 +166,21 @@ sed \
 rm -f "$PRE" "$PRE2" "$PRE3"
 mv "$TMP" "$OUT"
 echo "Rendered $OUT"
+
+# One-time provider-cache adoption: pre-1.3.8 renders had no provider `path:`,
+# so mihomo cached the fetched node list under its md5-of-URL default filename
+# (also where the documented seed recovery used to write it). The stable
+# `path: ./proxies/my-airport.yaml` in the template reads the named file only -
+# adopt an existing hash-named cache so an upgrade never cold-starts node-less
+# when a live fetch happens to be impossible at that moment.
+PROV_NAMED="$CFG_DIR/proxies/my-airport.yaml"
+if [ ! -f "$PROV_NAMED" ] && command -v md5sum >/dev/null 2>&1; then
+  _hash=$(printf '%s' "$SUB_URL" | md5sum | awk '{print $1}')
+  if [ -f "$CFG_DIR/proxies/$_hash" ]; then
+    if cp "$CFG_DIR/proxies/$_hash" "$PROV_NAMED" 2>/dev/null; then
+      echo "Adopted provider cache proxies/$_hash -> proxies/my-airport.yaml"
+    else
+      echo "WARN: failed to adopt provider cache proxies/$_hash" >&2
+    fi
+  fi
+fi
