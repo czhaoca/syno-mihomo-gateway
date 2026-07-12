@@ -37,6 +37,12 @@ pi_sudo_rerun_hint() {
   fi
 }
 
+# Under the Pi entry every rerun hint must name install-pi.sh - including the
+# ones inside captured/stock bodies (create_network below, stock preflight),
+# which call sudo_rerun_hint by name at runtime. Overlay it here, after the
+# stock modules are sourced (#31 drive-by, carried from #18).
+sudo_rerun_hint() { pi_sudo_rerun_hint; }
+
 # pi_acr_arch_notice - DEC-3 (#18): acr stays the Pi default, but the default
 # mirror pipeline publishes amd64 only, so a non-amd64 host must mirror its
 # arch BEFORE the first pull. Fires only for acr + non-amd64; informational

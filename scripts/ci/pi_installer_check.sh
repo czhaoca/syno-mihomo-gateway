@@ -279,6 +279,12 @@ _out="$( ( host_arch() { echo arm64; }; REGISTRY_MODE=docker; pi_acr_arch_notice
 _out="$( ( CHOSEN_IFACE=eth0; is_root() { return 1; }; create_network ) 2>&1 )" || true
 assert_contains "captured stock body runs netscan.sh's not-root branch" \
   "$_out" "$( (INSTALLER_LANG=en; msg warn_net_need_root) )"
+# #31 drive-by (carried from #18): the stock body's not-root rerun hint must
+# name the Pi entry - the pi overlay redefines sudo_rerun_hint accordingly.
+case "$_out" in
+  *install-pi.sh*) ok ;;
+  *) fail "captured stock body's not-root hint names the stock installer, not install-pi.sh" ;;
+esac
 
 # --- pi preflight: ARMv6 acknowledgment gate (DEC-5) -----------------------------
 ( ui_yesno() { return 1; }; pi_armv6_ack >/dev/null 2>&1 ) && fail "declined ack proceeded" || ok
@@ -778,6 +784,36 @@ mk_flow_cron_env "$TD/fc-root" pi-lite
   pfc_stubs; is_root() { return 1; }
   pi_flow_cron ) >/dev/null 2>&1 && fail "pi_flow_cron proceeded without root" || ok
 [ ! -s "$TD/fc-root/ct" ] && ok || fail "pi_flow_cron wrote a crontab entry without root"
+
+# --- #31 DEC-R7: an install-mode switch retires the other flavor's entry ---------
+# Carried from #20/#21: after a pi-lite <-> pi-compose switch the retired
+# flavor's managed entry lingered and notified on every run. The flow now
+# removes it when scheduling the new flavor; foreign lines stay untouched.
+mk_flow_cron_env "$TD/fc-switch" pi-lite
+printf '%s\n' '15 3 * * * root /usr/bin/other-job' >> "$TD/fc-switch/ct"
+( GATEWAY_DATA_DIR="$TD/fc-switch"; ENV_FILE="$TD/fc-switch/.env"; CRONTAB_FILE="$TD/fc-switch/ct"
+  pfc_stubs; is_root() { return 0; }
+  pi_flow_cron ) >/dev/null 2>&1 \
+  && grep -q 'scripts/pi/auto_update_lite.sh' "$TD/fc-switch/ct" \
+  && ok || fail "flavor switch: pi-lite entry scheduled before the switch"
+printf '%s\n' pi-compose > "$TD/fc-switch/state/install-mode"
+( GATEWAY_DATA_DIR="$TD/fc-switch"; ENV_FILE="$TD/fc-switch/.env"; CRONTAB_FILE="$TD/fc-switch/ct"
+  pfc_stubs; is_root() { return 0; }
+  pi_flow_cron ) >/dev/null 2>&1 \
+  && grep -q 'scripts/auto_update.sh' "$TD/fc-switch/ct" \
+  && ok || fail "flavor switch: compose entry scheduled after pi-lite -> pi-compose"
+grep -q 'auto_update_lite' "$TD/fc-switch/ct" \
+  && fail "flavor switch: stale lite entry lingers after pi-lite -> pi-compose (DEC-R7)" || ok
+grep -q '/usr/bin/other-job' "$TD/fc-switch/ct" \
+  && ok || fail "flavor switch: foreign crontab line preserved across the cleanup"
+printf '%s\n' pi-lite > "$TD/fc-switch/state/install-mode"
+( GATEWAY_DATA_DIR="$TD/fc-switch"; ENV_FILE="$TD/fc-switch/.env"; CRONTAB_FILE="$TD/fc-switch/ct"
+  pfc_stubs; is_root() { return 0; }
+  pi_flow_cron ) >/dev/null 2>&1 \
+  && grep -q 'scripts/pi/auto_update_lite.sh' "$TD/fc-switch/ct" \
+  && ok || fail "flavor switch: lite entry re-scheduled after switching back"
+grep -Fq 'scripts/auto_update.sh' "$TD/fc-switch/ct" \
+  && fail "flavor switch: stale compose entry lingers after pi-compose -> pi-lite (DEC-R7)" || ok
 
 # --- menu wiring: the Pi menu now carries the cron item -----------------------
 grep -q 'pi_flow_cron' "$ROOT/install-pi.sh" \

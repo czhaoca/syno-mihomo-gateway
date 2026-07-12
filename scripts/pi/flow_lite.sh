@@ -218,14 +218,20 @@ pi_flow_cron() {
   ui_ok "$(msgf pi_ok_schedule "$_pfc_time" "$UPDATE_TZ")"
 
   # --- the managed crontab entry, per install flavor ---
+  # The retired flavor's entry is removed after a successful install (#31,
+  # DEC-R7): an install-mode switch would otherwise leave it lingering, and
+  # its preflight aborts loudly on every scheduled run. The two match strings
+  # are substring-disjoint, so removal can never touch the fresh entry.
   _pfc_mode="$(cat "$GATEWAY_DATA_DIR/state/install-mode" 2>/dev/null)"
   case "$_pfc_mode" in
     pi-lite)
       _pfc_match='scripts/pi/auto_update_lite.sh'
+      _pfc_stale='scripts/auto_update.sh'
       _pfc_cmd="$(pi_lite_update_command)" || return 1
       _pfc_dry="$REPO_ROOT/scripts/pi/auto_update_lite.sh" ;;
     *)
       _pfc_match='scripts/auto_update.sh'
+      _pfc_stale='scripts/pi/auto_update_lite.sh'
       _pfc_cmd="$(scheduler_update_command)" || return 1
       _pfc_dry="$REPO_ROOT/scripts/auto_update.sh" ;;
   esac
@@ -233,6 +239,9 @@ pi_flow_cron() {
     ui_warn "$(msg pi_warn_cron_not_installed)"
     return 1
   fi
+  # Removal failure is non-fatal by design (the helper logs it): the fresh
+  # entry is installed and correct; a lingering stale line only notifies.
+  pi_remove_crontab_entry "$_pfc_stale" || :
   ui_ok "$(msg pi_ok_cron_installed)"
   ui_warn "$(msg pi_warn_cron_tz)"
 

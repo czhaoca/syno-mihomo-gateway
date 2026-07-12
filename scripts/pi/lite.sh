@@ -378,6 +378,26 @@ pi_install_crontab_entry() {
   return 0
 }
 
+# pi_remove_crontab_entry MATCH - drop OUR managed entry (any line containing
+# MATCH) from the crontab, preserving every foreign line; an absent entry or
+# absent file is a clean no-op. Cross-flavor hygiene for pi_flow_cron (#31,
+# DEC-R7): an install-mode switch re-targets the schedule, and the retired
+# flavor's entry would otherwise linger and notify on every scheduled run.
+# Same cat-overwrite discipline as pi_install_crontab_entry (inode + perms).
+pi_remove_crontab_entry() {
+  _prc_match="$1"
+  _prc_ct="${CRONTAB_FILE:-/etc/crontab}"
+  [ -f "$_prc_ct" ] || return 0
+  grep -Fq "$_prc_match" "$_prc_ct" 2>/dev/null || return 0
+  grep -Fv "$_prc_match" "$_prc_ct" >"$_prc_ct.next" 2>/dev/null || : >>"$_prc_ct.next"
+  cat "$_prc_ct.next" >"$_prc_ct" \
+    || { rm -f "$_prc_ct.next"; log_error "cannot write $_prc_ct"; return 1; }
+  rm -f "$_prc_ct.next"
+  scheduler_reload_crond || log_warn "crond was not reloaded - the removal applies after the next crond restart"
+  log_info "stale crontab entry ($_prc_match) removed from $_prc_ct"
+  return 0
+}
+
 # pi_install_lite_crontab - schedule scripts/pi/auto_update_lite.sh (#20).
 pi_install_lite_crontab() {
   _pil_cmd="$(pi_lite_update_command)" || return 1
