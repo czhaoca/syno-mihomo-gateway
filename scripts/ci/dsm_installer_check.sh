@@ -625,19 +625,13 @@ case "$_out" in
   *) fail "modify apply failure did not print the change-not-applied summary" ;;
 esac
 
-# 4) Ctrl-C notice: install.sh must trap INT/TERM with the partial-state notice,
-#    and every new closed-loop message must exist in BOTH language catalogs.
+# 4) Ctrl-C notice: install.sh must trap INT/TERM with the partial-state notice.
+#    (The 21-key both-catalogs spot-check that lived here was replaced by the
+#    full-catalog i18n integrity sweeps below (#28) - count-based presence
+#    could not even tell WHICH catalog a definition landed in; set equality
+#    plus the used-key sweep can.)
 grep -q '_on_int' "$ROOT/install.sh" || fail "install.sh lacks the INT/TERM notice handler"
 grep -Eq 'trap +_on_int +INT +TERM' "$ROOT/install.sh" || fail "install.sh does not trap INT/TERM to _on_int"
-for _k in warn_prev_removed warn_prev_removed_fix warn_apply_failed warn_cron_none \
-          ask_disable_updates ok_cron_partial warn_cron_manual_pending warn_interrupted \
-          warn_rollback_attempt warn_rollback_ok err_rollback_failed info_cfg_validate \
-          diag_cfg_tmp diag_cfg_tmp_fix diag_cfg_stage diag_cfg_stage_fix \
-          diag_cfg_render diag_cfg_render_fix diag_cfg_reject diag_cfg_reject_fix \
-          q_controller_secret_keep; do
-  _n="$(grep -c "^[[:space:]]*${_k})" "$ROOT/scripts/installer/i18n.sh" || true)"
-  [ "$_n" -ge 2 ] || fail "i18n key '$_k' is not present in both language catalogs (found $_n)"
-done
 for _f in flow_deploy.sh; do
   grep -n 'ui_warn "deployment failed\|ui_warn "previous images\|ui_error "automatic rollback' \
     "$ROOT/scripts/installer/$_f" >/dev/null \
@@ -869,6 +863,55 @@ grep -n '223\.5\.5\.5\|119\.29\.29\.29\|1\.1\.1\.1\|8\.8\.8\.8\|8080\|9090\|192\
   "$ROOT/scripts/installer/wizards.sh" \
   && fail "wizards.sh carries default literals (single-source them in .env.example)"
 
+# --- i18n integrity: full-catalog parity + used-key sweep (#28) -----------------
+# Replaces BOTH hardcoded spot-check key lists (the 21-key both-catalogs count
+# loop and the 44-key functional render loop): a `msg new_key` call site
+# missing from the catalog prints the bare key in production while CI stays
+# green. Three static sweeps, BusyBox-portable (sed/grep/sort/uniq only; set
+# difference A-B spelled `A B B | sort | uniq -u`):
+#   1. en/zh key-set equality over the full main catalog;
+#   2. every literal `msg KEY`/`msgf KEY` call site in install.sh +
+#      install-pi.sh + scripts/installer/*.sh + scripts/pi/*.sh resolves in
+#      the main catalog or the Pi overlay (scripts/lib/*.sh is msg-free by
+#      design - see the resolve.sh UI-free check above);
+#   3. dead keys (catalog arms with zero swept call sites) are REPORTED as a
+#      warning, not failed (#28 DEC-A: warn-only until the orphan list is
+#      zeroed, then promote to fail).
+# Comment lines are stripped before extraction; keys referenced only through a
+# variable (e.g. _pc_need's prompt-key parameter) are invisible to the sweep,
+# which is safe: they can only under-count "used", never hide a bogus literal.
+_i18n_en="$(sed -n '/^_msg_en()/,/^}/p' "$ROOT/scripts/installer/i18n.sh" \
+  | sed -n 's/^    \([a-z0-9_][a-z0-9_]*\)).*/\1/p' | sort -u)"
+_i18n_zh="$(sed -n '/^_msg_zh()/,/^}/p' "$ROOT/scripts/installer/i18n.sh" \
+  | sed -n 's/^    \([a-z0-9_][a-z0-9_]*\)).*/\1/p' | sort -u)"
+[ -n "$_i18n_en" ] || fail "i18n sweep extracted zero en keys (catalog shape changed?)"
+[ -n "$_i18n_zh" ] || fail "i18n sweep extracted zero zh keys (catalog shape changed?)"
+if [ "$_i18n_en" != "$_i18n_zh" ]; then
+  echo "en/zh symmetric difference:" >&2
+  printf '%s\n%s\n' "$_i18n_en" "$_i18n_zh" | sort | uniq -u >&2
+  fail "i18n en/zh key sets differ"
+fi
+_i18n_pi="$(sed -n '/^_msg_en_pi()/,/^}/p' "$ROOT/scripts/pi/i18n_pi.sh" \
+  | sed -n 's/^    \([a-z0-9_][a-z0-9_]*\)).*/\1/p' | sort -u)"
+[ -n "$_i18n_pi" ] || fail "i18n sweep extracted zero Pi overlay keys (overlay shape changed?)"
+_i18n_used="$(cat "$ROOT/install.sh" "$ROOT/install-pi.sh" "$ROOT"/scripts/installer/*.sh "$ROOT"/scripts/pi/*.sh \
+  | grep -v '^[[:space:]]*#' \
+  | grep -o 'msgf\{0,1\} [a-z0-9_][a-z0-9_]*' \
+  | sed 's/^msgf\{0,1\} //' | sort -u)"
+[ -n "$_i18n_used" ] || fail "i18n sweep extracted zero call sites (call-site shape changed?)"
+_i18n_all="$(printf '%s\n%s\n' "$_i18n_en" "$_i18n_pi" | sort -u)"
+_i18n_unres="$(printf '%s\n%s\n%s\n' "$_i18n_used" "$_i18n_all" "$_i18n_all" | sort | uniq -u)"
+if [ -n "$_i18n_unres" ]; then
+  echo "unresolvable msg/msgf keys (no catalog or overlay entry):" >&2
+  printf '%s\n' "$_i18n_unres" >&2
+  fail "msg/msgf call sites reference keys missing from catalog+overlay"
+fi
+_i18n_dead="$(printf '%s\n%s\n%s\n' "$_i18n_en" "$_i18n_used" "$_i18n_used" | sort | uniq -u)"
+if [ -n "$_i18n_dead" ]; then
+  echo "WARN: $(printf '%s\n' "$_i18n_dead" | grep -c .) dead main-catalog keys (defined, zero swept call sites):" >&2
+  printf '  %s\n' $_i18n_dead >&2
+fi
+
 # --- state banner + Status/Diagnose menu item -----------------------------------
 # install.sh is sourceable (INSTALL_SOURCE_ONLY=1 + SMG_INSTALL_ROOT) so the
 # banner, the adaptive deploy label, and the status flow are testable. This
@@ -948,32 +991,10 @@ grep -n '223\.5\.5\.5\|119\.29\.29\.29\|1\.1\.1\.1\|8\.8\.8\.8\|8080\|9090\|192\
   # the main menu carries the Status item and routes it (static assertions)
   grep -q 'menu_status' "$ROOT/install.sh" || fail "main menu lacks the Status/Diagnose item"
 
-  # FUNCTIONAL bilingual check: msg falls through to the raw key when a catalog
-  # lacks it, so assert every new key renders as real text in BOTH languages
-  # (a grep count cannot tell which catalog a definition landed in).
-  for _lang in en zh; do
-    INSTALLER_LANG="$_lang"
-    for _k in menu_status menu_deploy_saved_hint st_fresh st_partial st_deployed \
-              step_targets ask_manage_targets targets_no_acr targets_no_docker \
-              targets_none_found targets_excluded targets_reason_compose \
-              targets_reason_ambiguous q_target_optin warn_target_db \
-              q_target_db_confirm ok_target_enrolled ok_target_removed \
-              warn_target_enroll_failed ok_targets_done \
-              status_title status_state status_mihomo status_ui status_dashboard \
-              status_tun ask_run_doctor ok_doctor_done warn_doctor_rc \
-              step_express ask_express express_edit_hint express_images_wizard \
-              express_iface express_net express_ip express_ports express_dns \
-              express_tz express_images warn_gen_secret_failed \
-              warn_secret_empty ask_gen_secret ok_secret_generated warn_secret_none \
-              verify_title verify_ok verify_failed verify_skip verify_controller \
-              verify_tun verify_tun_off verify_ui rep_secret_loc warn_dashboard_open \
-              info_geodata ok_geodata warn_geodata prep_foreign_project; do
-      [ "$(msg "$_k")" != "$_k" ] \
-        || fail "the $_lang catalog lacks '$_k' (msg falls through to the raw key)"
-    done
-  done
-  INSTALLER_LANG=en
+  # (The old hardcoded bilingual spot-check key list lived here; #28 replaced
+  # it with the full-catalog i18n integrity sweeps in the top-level section
+  # above - set equality catches a key landing in only one catalog.)
   exit 0
 ) || exit 1
 
-echo "OK: BusyBox dotenv/network/arch/TUN/cloudflared/report checks, decision-first fail-before-mutation deployment order, closed-loop regressions (teardown notice, cron false-success, modify apply summary, INT trap, bilingual keys), and the state banner + Status menu"
+echo "OK: BusyBox dotenv/network/arch/TUN/cloudflared/report checks, decision-first fail-before-mutation deployment order, closed-loop regressions (teardown notice, cron false-success, modify apply summary, INT trap), default-value parity, i18n catalog parity + used-key sweep, and the state banner + Status menu"
