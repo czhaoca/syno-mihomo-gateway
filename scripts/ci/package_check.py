@@ -78,6 +78,7 @@ ENDUSER_MUST_INCLUDE = [
     PREFIX + "scripts/migrate_legacy.sh",
     PREFIX + "scripts/seed_provider.sh",
     PREFIX + "scripts/lib/geodata.sh",
+    PREFIX + "scripts/lib/checks.sh",
     PREFIX + "docs/README.txt",
     PREFIX + ".env.example",
     PREFIX + "docker-compose.yml",
@@ -307,6 +308,7 @@ def build_enduser_fixture(root: Path):
               "migrate_legacy.sh", "validate_release.sh", "seed_provider.sh"):
         (root / "scripts" / s).write_text("#!/bin/sh\n:\n")
     (root / "scripts" / "lib" / "geodata.sh").write_text("#!/bin/sh\n:\n")
+    (root / "scripts" / "lib" / "checks.sh").write_text("#!/bin/sh\n:\n")
     (root / "scripts" / "doctor.sh").write_text("#!/bin/sh\n:\n")
     (root / "docs" / "README.txt").write_text("Mihomo Gateway - start here.\nRun: sh ./install.sh\n")
     (root / "docs" / "INSTALL.txt").write_text("Move this folder into the Docker shared folder.\n")

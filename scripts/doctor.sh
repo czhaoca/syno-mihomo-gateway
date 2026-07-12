@@ -22,6 +22,8 @@ SELF_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
 . "$SELF_DIR/lib/resolve.sh"
 # shellcheck source=scripts/lib/scheduler.sh
 . "$SELF_DIR/lib/scheduler.sh"
+# shellcheck source=scripts/lib/checks.sh
+. "$SELF_DIR/lib/checks.sh"
 
 CHECK_EGRESS=0
 NO_LOG_INIT=1
@@ -32,165 +34,77 @@ case "${1:-}" in
   *) echo "Usage: sh scripts/doctor.sh [--egress]" >&2; exit "$EXIT_CONFIG" ;;
 esac
 
-broken=0
-degraded=0
-ok()   { printf 'ok    %s\n' "$*"; }
-bad()  { printf 'ERROR %s\n' "$*" >&2; broken=1; }
-warn() { printf 'WARN  %s\n' "$*" >&2; degraded=1; }
+# The checks themselves live in lib/checks.sh (#30) - one table, two
+# renderers. This renderer maps each record's severity to the human
+# vocabulary: ok -> 'ok    <detail>' on stdout, bad -> 'ERROR' on stderr
+# (BROKEN/EXIT_CONFIG), warn -> 'WARN ' on stderr (DEGRADED/EXIT_PARTIAL),
+# silent -> nothing (unknown/disabled/absent stay --json-only). '#hint'
+# records are the extra remediation lines. Runs as the last stage of the
+# checks_run pipe, so it owns the exit code (every pipeline stage is a
+# subshell under BusyBox ash - counters cannot cross back).
+render_human() {
+  _rh_broken=0; _rh_degraded=0
+  while IFS='|' read -r _rh_n _rh_v _rh_s _rh_d; do
+    if [ "$_rh_n" = '#hint' ]; then
+      printf '%s\n' "$_rh_v" >&2
+      continue
+    fi
+    case "$_rh_s" in
+      bad)  printf 'ERROR %s\n' "$_rh_d" >&2; _rh_broken=1 ;;
+      warn) printf 'WARN  %s\n' "$_rh_d" >&2; _rh_degraded=1 ;;
+      ok)   [ -z "$_rh_d" ] || printf 'ok    %s\n' "$_rh_d" ;;
+      *)    : ;;   # silent
+    esac
+  done
+
+  # Optional egress probe (human mode only; --egress). The bearer token must
+  # not ride the host-visible docker exec argv (the project's no-secrets-on-
+  # argv rule): hand it over on stdin.
+  if [ "$CHECK_EGRESS" -eq 1 ] && [ "$_rh_broken" -eq 0 ]; then
+    _rh_url="http://127.0.0.1:${CONTROLLER_PORT:-9090}/proxies/PROXY/delay?timeout=5000&url=http://www.gstatic.com/generate_204"
+    _rh_header=""
+    [ -n "${CONTROLLER_SECRET:-}" ] && _rh_header="Authorization: Bearer ${CONTROLLER_SECRET}"
+    if "$DOCKER_BIN" exec "$MIHOMO_CONTAINER" sh -c 'command -v wget >/dev/null 2>&1' 2>/dev/null; then
+      if [ -n "$_rh_header" ]; then
+        # shellcheck disable=SC2016 # $SMG_AUTH expands in the container shell
+        _rh_out="$(printf '%s\n' "$_rh_header" | "$DOCKER_BIN" exec -i "$MIHOMO_CONTAINER" \
+          sh -c 'IFS= read -r SMG_AUTH; exec wget -q -T 8 -O - --header "$SMG_AUTH" "$1"' _ "$_rh_url" 2>/dev/null)"
+      else
+        _rh_out="$("$DOCKER_BIN" exec "$MIHOMO_CONTAINER" wget -q -T 8 -O - "$_rh_url" 2>/dev/null)"
+      fi
+    else
+      _rh_out=""
+    fi
+    case "$_rh_out" in *'"delay"'*) printf 'ok    %s\n' "proxy egress probe succeeded" ;;
+      *) printf 'WARN  %s\n' "proxy egress probe failed or no downloader is available" >&2; _rh_degraded=1 ;;
+    esac
+  fi
+
+  if [ "$_rh_broken" -ne 0 ]; then
+    printf '%s\n' "Result: BROKEN. See logs/install.log and: docker logs $MIHOMO_CONTAINER" >&2
+    return "$EXIT_CONFIG"
+  fi
+  if [ "$_rh_degraded" -ne 0 ]; then
+    printf '%s\n' 'Result: DEGRADED.' >&2
+    return "$EXIT_PARTIAL"
+  fi
+  printf '%s\n' 'Result: HEALTHY.'
+  return "$EXIT_OK"
+}
 
 printf '%s\n' 'Mihomo Gateway diagnostics (read-only)'
 
-if [ ! -f "$ENV_FILE" ]; then
-  bad ".env is missing: $ENV_FILE"
-  printf '%s\n' "      the release tree is unpacked but not configured - run: sudo sh ./install.sh" >&2
-  if _legacy_dir="$(legacy_install_detect 2>/dev/null)"; then
-    printf '%s\n' "      a legacy flat install exists at $_legacy_dir - import its state first: sudo sh scripts/migrate_legacy.sh --from $_legacy_dir --yes" >&2
-  fi
-else
+# load_env only when the file exists (a malformed .env exits 3 here, exactly
+# as before); a missing one is chk_env's bad record, hints included.
+if [ -f "$ENV_FILE" ]; then
   load_env
-  ok ".env parsed safely"
 fi
 
-if ! detect_compose >/dev/null 2>&1; then
-  bad "Docker or Compose is unavailable"
-elif ! "$DOCKER_BIN" info >/dev/null 2>&1; then
-  bad "Docker daemon is unavailable or permission was denied"
-else
-  ok "Docker daemon and Compose are available"
-fi
+# Populate DOCKER_BIN in THIS shell before the pipe forks: both pipeline
+# stages are sibling subshells, so chk_docker's own detect_compose call can
+# never reach render_human's egress block (it would probe with an empty
+# command name and false-warn). Idempotent with chk_docker's call.
+detect_compose >/dev/null 2>&1 || :
 
-if [ "$broken" -eq 0 ]; then
-  _host_arch="$(host_arch)"
-  if [ "$_host_arch" != "${EXPECTED_ARCH:-amd64}" ]; then
-    bad "EXPECTED_ARCH=${EXPECTED_ARCH:-amd64}, host=$_host_arch"
-  else
-    ok "host architecture=$_host_arch"
-  fi
-
-  if check_tun >/dev/null 2>&1; then ok "host /dev/net/tun exists"; else bad "host /dev/net/tun is missing"; fi
-  if check_network >/dev/null 2>&1; then
-    ok "macvlan network is present and consistent"
-  else
-    bad "macvlan network is missing or inconsistent"
-  fi
-
-  # shellcheck disable=SC2086 # COMPOSE_CMD may be two words
-  if ( cd "$REPO_ROOT" && $COMPOSE_CMD --env-file "$ENV_FILE" config >/dev/null ) 2>/dev/null; then
-    ok "Compose configuration is valid"
-  else
-    bad "Compose configuration is invalid"
-  fi
-
-  _state="$("$DOCKER_BIN" inspect -f '{{.State.Status}}' "$MIHOMO_CONTAINER" 2>/dev/null)"
-  _restarts="$("$DOCKER_BIN" inspect -f '{{.RestartCount}}' "$MIHOMO_CONTAINER" 2>/dev/null)"
-  if [ "$_state" != running ]; then
-    bad "mihomo container state=${_state:-missing}"
-  else
-    ok "mihomo is running (restarts=${_restarts:-0})"
-    if [ "${TUN_ENABLE:-true}" != true ]; then
-      ok "TUN transparent gateway disabled (TUN_ENABLE=false) - reachable proxy + controller mode"
-    elif mihomo_gateway_probe >/dev/null 2>&1; then
-      ok "in-container TUN gateway is ready"
-    else
-      bad "in-container TUN gateway is not ready"
-    fi
-    if mihomo_controller_probe >/dev/null 2>&1; then ok "controller API responds"; else bad "controller API does not respond"; fi
-    _img="${MIHOMO_IMAGE:-}"
-    if [ -n "$_img" ]; then
-      if arch_ok "$_img" >/dev/null 2>&1; then
-        ok "mihomo image architecture matches the host"
-      else
-        bad "mihomo image architecture does not match the host"
-      fi
-    fi
-  fi
-
-  _ui="$("$DOCKER_BIN" inspect -f '{{.State.Running}}' "$METACUBEXD_CONTAINER" 2>/dev/null)"
-  if [ "$_ui" = true ]; then ok "dashboard container is running"; else warn "dashboard container is not running"; fi
-
-  # Scheduler deployment: the code only updates/self-heals if the DSM tasks
-  # actually exist. A missing boot task leaves TUN dead after a reboot (see
-  # docs/troubleshooting.md); rc 2 means nothing searchable here (not DSM) -
-  # stay silent rather than warn about a surface this box does not have.
-  if [ "${UPDATE_ENABLED:-true}" = true ]; then
-    scheduler_task_deployed "scripts/auto_update.sh"
-    case "$?" in
-      0) ok "auto-update task is scheduled" ;;
-      1) warn "no scheduled task runs scripts/auto_update.sh - see: sh scripts/install_scheduler.sh" ;;
-    esac
-  fi
-  scheduler_task_deployed "scripts/setup_network.sh"
-  case "$?" in
-    0) ok "boot self-heal task is scheduled (setup_network.sh)" ;;
-    1) warn "no Boot-up task runs scripts/setup_network.sh - TUN/macvlan will not self-heal after a reboot" ;;
-  esac
-
-  # cloudflared (optional external tunnel): checked only when the container
-  # exists; a down tunnel degrades but never breaks the gateway itself.
-  if "$DOCKER_BIN" inspect "${CF_CONTAINER_NAME:-cloudflared}" >/dev/null 2>&1; then
-    if cloudflared_probe_connected "${CF_CONTAINER_NAME:-cloudflared}" >/dev/null 2>&1; then
-      ok "cloudflared tunnel is connected"
-    else
-      warn "cloudflared tunnel is not connected - if the host resolvers are unreliable, set CF_DNS in .env and run: sudo sh scripts/gateway.sh update --yes"
-    fi
-  fi
-fi
-
-# Subscription parity with gateway.sh doctor --json (which reports this
-# unconditionally): a missing or still-placeholder subscription means mihomo
-# runs with no proxy providers - degraded, not broken.
-if [ -n "$(subscription_current 2>/dev/null)" ]; then
-  ok "subscription URL is stored"
-else
-  warn "no subscription URL is stored - set one: sudo sh scripts/gateway.sh modify --subscription <URL> --yes"
-fi
-
-# Host resolver health: a dead resolver in /etc/resolv.conf starves every name
-# lookup on the box AND every bridge container inheriting it (the gateway
-# keeps forwarding LAN clients, so this degrades rather than breaks).
-_hd_out="$(resolv_conf_probe 2>/dev/null)"
-case "$?" in
-  0) ok "host DNS resolvers answer" ;;
-  1) warn "host DNS resolver(s) not answering: ${_hd_out##* } - set reachable resolvers in DSM Control Panel > Network (domestic ones on a filtered network)" ;;
-esac
-
-# Geo databases: the GEOSITE/GEOIP rules need them; when uncached, mihomo's
-# first start must fetch them across a filtered CDN and can stall.
-if geodata_cached "$CONFIG_STATE_DIR"; then
-  ok "geo databases are cached"
-else
-  warn "geo databases are not cached - a deploy pre-seeds them via CDN mirrors; the first start may stall without them"
-fi
-
-if [ "$CHECK_EGRESS" -eq 1 ] && [ "$broken" -eq 0 ]; then
-  _url="http://127.0.0.1:${CONTROLLER_PORT:-9090}/proxies/PROXY/delay?timeout=5000&url=http://www.gstatic.com/generate_204"
-  _header=""
-  [ -n "${CONTROLLER_SECRET:-}" ] && _header="Authorization: Bearer ${CONTROLLER_SECRET}"
-  if "$DOCKER_BIN" exec "$MIHOMO_CONTAINER" sh -c 'command -v wget >/dev/null 2>&1' 2>/dev/null; then
-    if [ -n "$_header" ]; then
-      # The bearer token must not ride the host-visible docker exec argv
-      # (the project's no-secrets-on-argv rule): hand it over on stdin.
-      # shellcheck disable=SC2016 # $SMG_AUTH expands in the container shell
-      _out="$(printf '%s\n' "$_header" | "$DOCKER_BIN" exec -i "$MIHOMO_CONTAINER" \
-        sh -c 'IFS= read -r SMG_AUTH; exec wget -q -T 8 -O - --header "$SMG_AUTH" "$1"' _ "$_url" 2>/dev/null)"
-    else
-      _out="$("$DOCKER_BIN" exec "$MIHOMO_CONTAINER" wget -q -T 8 -O - "$_url" 2>/dev/null)"
-    fi
-  else
-    _out=""
-  fi
-  case "$_out" in *'"delay"'*) ok "proxy egress probe succeeded" ;;
-    *) warn "proxy egress probe failed or no downloader is available" ;;
-  esac
-fi
-
-if [ "$broken" -ne 0 ]; then
-  printf '%s\n' "Result: BROKEN. See logs/install.log and: docker logs $MIHOMO_CONTAINER" >&2
-  exit "$EXIT_CONFIG"
-fi
-if [ "$degraded" -ne 0 ]; then
-  printf '%s\n' 'Result: DEGRADED.' >&2
-  exit "$EXIT_PARTIAL"
-fi
-printf '%s\n' 'Result: HEALTHY.'
-exit "$EXIT_OK"
+checks_run | render_human
+exit "$?"

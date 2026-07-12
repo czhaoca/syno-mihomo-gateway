@@ -63,6 +63,8 @@ SELF_DIR="${GATEWAY_SELF_DIR:-$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)}"
 . "$SELF_DIR/lib/scheduler.sh"
 # shellcheck source=scripts/lib/resolve.sh
 . "$SELF_DIR/lib/resolve.sh"
+# shellcheck source=scripts/lib/checks.sh
+. "$SELF_DIR/lib/checks.sh"
 # shellcheck source=scripts/lib/targets.sh
 . "$SELF_DIR/lib/targets.sh"
 # help.sh is GENERATED from scripts/cli/spec.yaml (usage + gw_help) - the CLI
@@ -476,123 +478,35 @@ gateway_doctor() {
     exec sh "$SELF_DIR/doctor.sh"
   fi
   [ "$GW_EGRESS" = 0 ] || log_warn "--egress is only probed in human mode (doctor.sh); ignored under --json"
-  _gwd_broken=0; _gwd_degraded=0
-  GW_CHECKS=''
-  if [ -f "$ENV_FILE" ] && dotenv_load "$ENV_FILE" >/dev/null 2>&1; then
-    _gw_check_add env ok
-  else
-    _gw_check_add env broken; _gwd_broken=1
-  fi
-  if detect_compose >/dev/null 2>&1 && "$DOCKER_BIN" info >/dev/null 2>&1; then
-    _gw_check_add docker ok
-  else
-    _gw_check_add docker broken; _gwd_broken=1
-  fi
-  if [ "$(host_arch)" = "$EXPECTED_ARCH" ]; then
-    _gw_check_add arch ok
-  else
-    _gw_check_add arch mismatch; _gwd_broken=1
-  fi
-  if [ -c /dev/net/tun ]; then _gw_check_add tun_device ok; else _gw_check_add tun_device missing; _gwd_broken=1; fi
-  if check_network >/dev/null 2>&1; then _gw_check_add network ok; else _gw_check_add network broken; _gwd_broken=1; fi
-  # Check parity with the human doctor (scripts/doctor.sh): --json must never
-  # report ok=true for a state the human report calls BROKEN. The deep checks
-  # mirror doctor.sh's set and severities, gated the same way on the basics.
-  if [ "$_gwd_broken" = 0 ]; then
-    if compose_config_check >/dev/null 2>&1; then
-      _gw_check_add compose ok
-    else
-      _gw_check_add compose broken; _gwd_broken=1
-    fi
-    _gwd_mihomo_up=0
-    if [ "$("$(_net_docker)" inspect -f '{{.State.Running}}' "$MIHOMO_CONTAINER" 2>/dev/null)" = "true" ]; then
-      _gw_check_add mihomo running; _gwd_mihomo_up=1
-    else
-      _gw_check_add mihomo not-running; _gwd_broken=1
-    fi
-    if [ "$_gwd_mihomo_up" = 1 ]; then
-      if [ "${TUN_ENABLE:-true}" != true ]; then
-        _gw_check_add tun_gateway disabled
-      elif mihomo_gateway_probe >/dev/null 2>&1; then
-        _gw_check_add tun_gateway ok
-      else
-        _gw_check_add tun_gateway broken; _gwd_broken=1
-      fi
-      if mihomo_controller_probe >/dev/null 2>&1; then
-        _gw_check_add controller ok
-      else
-        _gw_check_add controller broken; _gwd_broken=1
-      fi
-      if [ -n "${MIHOMO_IMAGE:-}" ]; then
-        if arch_ok "$MIHOMO_IMAGE" >/dev/null 2>&1; then
-          _gw_check_add image_arch ok
-        else
-          _gw_check_add image_arch mismatch; _gwd_broken=1
-        fi
-      fi
-    fi
-    if [ "$("$(_net_docker)" inspect -f '{{.State.Running}}' "$METACUBEXD_CONTAINER" 2>/dev/null)" = "true" ]; then
-      _gw_check_add dashboard running
-    else
-      _gw_check_add dashboard not-running; _gwd_degraded=1
-    fi
-    # Scheduler-deployment parity with doctor.sh: missing tasks degrade;
-    # rc 2 (nothing searchable - not a DSM box) reports unknown, no severity.
-    if [ "${UPDATE_ENABLED:-true}" = true ]; then
-      scheduler_task_deployed "scripts/auto_update.sh"
-      case "$?" in
-        0) _gw_check_add update_task ok ;;
-        1) _gw_check_add update_task missing; _gwd_degraded=1 ;;
-        *) _gw_check_add update_task unknown ;;
-      esac
-    else
-      _gw_check_add update_task disabled
-    fi
-    scheduler_task_deployed "scripts/setup_network.sh"
-    case "$?" in
-      0) _gw_check_add boot_task ok ;;
-      1) _gw_check_add boot_task missing; _gwd_degraded=1 ;;
-      *) _gw_check_add boot_task unknown ;;
-    esac
-    # cloudflared parity with doctor.sh: only when the container exists
-    # (absent carries no severity); a down tunnel degrades, never breaks.
-    if "$(_net_docker)" inspect "${CF_CONTAINER_NAME:-cloudflared}" >/dev/null 2>&1; then
-      if cloudflared_probe_connected "${CF_CONTAINER_NAME:-cloudflared}" >/dev/null 2>&1; then
-        _gw_check_add cloudflared ok
-      else
-        _gw_check_add cloudflared down; _gwd_degraded=1
-      fi
-    else
-      _gw_check_add cloudflared absent
-    fi
-  else
-    _gw_check_add mihomo unknown
-  fi
-  if [ -n "$(subscription_current 2>/dev/null)" ]; then
-    _gw_check_add subscription ok
-  else
-    _gw_check_add subscription missing; _gwd_degraded=1
-  fi
-  # Host-resolver + geodata parity with doctor.sh (ungated there too);
-  # rc 2 -> unknown, no severity (not every box has a probeable resolver).
-  resolv_conf_probe >/dev/null 2>&1
-  case "$?" in
-    0) _gw_check_add host_dns ok ;;
-    1) _gw_check_add host_dns degraded; _gwd_degraded=1 ;;
-    *) _gw_check_add host_dns unknown ;;
-  esac
-  if geodata_cached "$CONFIG_STATE_DIR"; then
-    _gw_check_add geodata cached
-  else
-    _gw_check_add geodata missing; _gwd_degraded=1
-  fi
+  # The checks live in lib/checks.sh (#30) - one table, two renderers; the
+  # human twin is doctor.sh's render_human. --json must never report ok=true
+  # for a state the human report calls BROKEN: both renderers derive their
+  # exit code from the same per-record severity (bad -> EXIT_CONFIG, warn ->
+  # EXIT_PARTIAL, silent -> none), so the classification cannot drift.
+  checks_run | render_json
+}
 
-  if [ "$_gwd_broken" = 1 ]; then _gwd_rc="$EXIT_CONFIG"
-  elif [ "$_gwd_degraded" = 1 ]; then _gwd_rc="$EXIT_PARTIAL"
-  else _gwd_rc=0; fi
-  _gwd_ok=false; [ "$_gwd_rc" = 0 ] && _gwd_ok=true
-  printf '{"verb":"doctor","ok":%s,"exit_code":%s,"checks":[%s]}\n' "$_gwd_ok" "$_gwd_rc" "$GW_CHECKS"
-  return "$_gwd_rc"
+# render_json - the --json renderer for checks_run's records: emits the one
+# {"verb":"doctor",...} object and returns the doctor exit code. Runs as the
+# last pipeline stage (a subshell under BusyBox ash), so it owns both.
+render_json() {
+  GW_CHECKS=''
+  _rj_broken=0; _rj_degraded=0
+  while IFS='|' read -r _rj_n _rj_v _rj_s _rj_d; do
+    case "$_rj_n" in '#hint') continue ;; esac
+    _gw_check_add "$_rj_n" "$_rj_v"
+    case "$_rj_s" in
+      bad)  _rj_broken=1 ;;
+      warn) _rj_degraded=1 ;;
+    esac
+  done
+  if [ "$_rj_broken" = 1 ]; then _rj_rc="$EXIT_CONFIG"
+  elif [ "$_rj_degraded" = 1 ]; then _rj_rc="$EXIT_PARTIAL"
+  else _rj_rc=0; fi
+  _rj_ok=false
+  if [ "$_rj_rc" = 0 ]; then _rj_ok=true; fi
+  printf '{"verb":"doctor","ok":%s,"exit_code":%s,"checks":[%s]}\n' "$_rj_ok" "$_rj_rc" "$GW_CHECKS"
+  return "$_rj_rc"
 }
 
 _gw_apply_crontab() {
