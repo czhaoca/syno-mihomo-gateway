@@ -47,6 +47,14 @@ Enforces:
     parse-pure-ip + override-destination (restores domain routing for
     LAN clients that resolve DNS outside the gateway — the v1.3.10
     raw-IP-flows incident); garbage fails closed;
+  * the AUTOX fences (country-groups epic): a non-empty AUTO_EXCLUDE_FILTER
+    renders the auto-x sibling url-test group (exclude-filter, empty-fallback
+    REJECT, NO own url:/interval:) listed FIRST in PROXY, with `auto`
+    untouched (full pool — the DNS '#auto' detour rides it); unset/empty
+    renders WITHOUT the group byte-identically; a backtick-bearing or
+    whitespace-only pattern fails closed at render time (an invalid pattern
+    PANICS mihomo at startup; a backtick is mihomo's multi-pattern separator);
+    the .env.example default must itself render auto-x as the routing default;
   * geox-url mirrors point at hosts reachable from mainland China — never the
     blocked upstream Git host or the flaky primary jsDelivr domain;
   * TUN is ON by default (transparent gateway): the DEFAULT render INCLUDES the tun block
@@ -173,6 +181,7 @@ def render(raw: str, tun_auto_redirect: str | None = None,
            dns_foreign: str | None = None,
            geoip_no_resolve: str | None = None,
            sniffer_enable: str | None = None,
+           auto_exclude_filter: str | None = None,
            sub_line: str | None = None):
     """Run the real renderer in an isolated config directory."""
     with tempfile.TemporaryDirectory() as td:
@@ -213,6 +222,11 @@ def render(raw: str, tun_auto_redirect: str | None = None,
         # .env.example ships true for new installs.
         if sniffer_enable is not None:
             env["SNIFFER_ENABLE"] = sniffer_enable
+        # Exclude knob stays ABSENT unless a case opts in: unset must render
+        # byte-identical to the pre-feature output (upgrade compat), while
+        # .env.example ships an HK default for new installs.
+        if auto_exclude_filter is not None:
+            env["AUTO_EXCLUDE_FILTER"] = auto_exclude_filter
         proc = subprocess.run(["sh", str(RENDERER)], env=env,
                               capture_output=True, text=True)
         out = tdp / "config.yaml"
@@ -593,7 +607,8 @@ def main() -> None:
     # DNSPOLICY + DNSSPLIT fences stripped, the DNSLEGACY markers unwrapped,
     # and the {{GEOIP_NO_RESOLVE}} token removed. That is the mechanical
     # proof a pre-1.3.8 .env renders exactly as before.
-    for fence in ("DNSPOLICY", "DNSSPLIT", "DNSLEGACY", "SNIFFER"):
+    for fence in ("DNSPOLICY", "DNSSPLIT", "DNSLEGACY", "SNIFFER",
+                  "AUTOX", "AUTOXMEMBER"):
         if (f"{{{{{fence}_BEGIN}}}}" not in raw
                 or f"{{{{{fence}_END}}}}" not in raw):
             fail(f"template must carry the {fence}_BEGIN/{fence}_END fence pair")
@@ -609,8 +624,9 @@ def main() -> None:
         fail(f"default rules must be the v1.3.10 chain in order "
              f"{RULES_BASE!r}: got {doc.get('rules')!r}")
     legacy_raw = unwrap_fence(
-        strip_fence(strip_fence(strip_fence(raw, "DNSPOLICY"), "DNSSPLIT"),
-                    "SNIFFER"),
+        strip_fence(strip_fence(strip_fence(strip_fence(strip_fence(
+            raw, "DNSPOLICY"), "DNSSPLIT"), "SNIFFER"), "AUTOX"),
+            "AUTOXMEMBER"),
         "DNSLEGACY").replace("{{GEOIP_NO_RESOLVE}}", "")
     proc_l, legacy = render(legacy_raw)
     if proc_l.returncode != 0 or legacy is None:
@@ -745,6 +761,119 @@ def main() -> None:
     if proc_sb.returncode == 0 or sb is not None:
         fail("invalid SNIFFER_ENABLE was accepted or wrote config.yaml")
 
+    # 11c) AUTO_EXCLUDE_FILTER fences (country-groups epic, #32): a non-empty
+    # regexp2 pattern renders the auto-x sibling url-test group - matching
+    # provider nodes removed, empty-fallback REJECT (fail closed: an emptied
+    # group must never degrade to the Direct-typed COMPATIBLE placeholder,
+    # which routes LAN traffic out the uplink unproxied), NO own
+    # url:/interval: (inherits the provider health check - zero extra probe
+    # traffic) - listed FIRST in PROXY (the routing default) while `auto`
+    # keeps the full pool (the DNS '#auto' detour rides auto, so LAN-wide
+    # resolution never depends on the filtered pool). Unset/empty renders
+    # WITHOUT the group byte-identically (composed strip proven in 10 + the
+    # empty==unset case here); a backtick (mihomo's multi-pattern separator,
+    # never valid inside one pattern - an invalid pattern PANICS mihomo at
+    # startup) or a whitespace-only pattern fails closed at render time.
+    # The fixture carries `|`, `\` and `?`: `|` exercises the esc() sed layer,
+    # `\` the yaml_dq() layer (exclude-filter renders inside a YAML
+    # double-quoted scalar where a bare \d is an invalid escape).
+    EXCL = '香港|HK\\d+|(?i)hong ?kong'
+    proc_x, xr = render(raw, auto_exclude_filter=EXCL)
+    if proc_x.returncode != 0 or xr is None:
+        fail(f"AUTO_EXCLUDE_FILTER render failed: {proc_x.stderr.strip()}")
+    assert_resolved("auto-x", xr)
+    if "\n\n\n" in xr:
+        fail("auto-x render contains doubled blank lines - the fences must "
+             "sit flush against their neighbors")
+    xdoc = yaml.safe_load(xr)
+    xnames = [g.get("name") for g in xdoc.get("proxy-groups") or []]
+    if xnames != ["auto", "auto-x", "PROXY", "STREAMING"]:
+        fail(f"knob-on proxy-groups must be exactly "
+             f"['auto', 'auto-x', 'PROXY', 'STREAMING'] in order: got {xnames!r}")
+    xgroups = {g.get("name"): g for g in xdoc.get("proxy-groups")}
+    autox = xgroups["auto-x"]
+    if autox.get("type") != "url-test":
+        fail(f"auto-x must be a url-test group: got {autox.get('type')!r}")
+    if autox.get("exclude-filter") != EXCL:
+        fail(f"exclude-filter did not round-trip: got "
+             f"{autox.get('exclude-filter')!r}, expected {EXCL!r}")
+    if autox.get("empty-fallback") != "REJECT":
+        fail(f"auto-x must fail closed via empty-fallback: REJECT (verified "
+             f"supported in the deployed image, issue #32 DEC-B): got "
+             f"{autox.get('empty-fallback')!r}")
+    if autox.get("use") != ["my-airport"]:
+        fail(f"auto-x must surface provider nodes via use: [my-airport]: "
+             f"got {autox.get('use')!r}")
+    for absent in ("url", "interval", "tolerance"):
+        if absent in autox:
+            fail(f"auto-x must carry NO own {absent!r} - it inherits the "
+                 f"provider health check (no probe amplification): "
+                 f"got {autox.get(absent)!r}")
+    if xgroups["PROXY"].get("proxies") != ["auto-x", "auto", "DIRECT", "REJECT"]:
+        fail(f"PROXY members with the knob on must be "
+             f"['auto-x', 'auto', 'DIRECT', 'REJECT'] (auto-x FIRST = the "
+             f"routing default, auto one click away): "
+             f"got {xgroups['PROXY'].get('proxies')!r}")
+    dauto = next(g for g in doc.get("proxy-groups") if g.get("name") == "auto")
+    if xgroups["auto"] != dauto:
+        fail(f"auto must be UNTOUCHED by the exclude knob (full pool - the "
+             f"split-horizon DNS detour rides it): {xgroups['auto']!r} != {dauto!r}")
+    if (xgroups["STREAMING"].get("proxies") or [None])[0] != "PROXY":
+        fail(f"[auto-x] STREAMING's first member must stay PROXY: "
+             f"got {xgroups['STREAMING'].get('proxies')!r}")
+    if xdoc.get("rules") != RULES_BASE:
+        fail(f"[auto-x] rules must be unchanged by the exclude fences: "
+             f"got {xdoc.get('rules')!r}")
+    check_rule_targets(xdoc)
+    check_dns_detour_targets(xdoc)
+
+    # The SHIPPED .env.example default must itself render (seed-only rollout:
+    # new installs get HK-exclusion out of the box) with auto-x as PROXY's
+    # first member and the pattern round-tripping exactly.
+    env_example = (REPO / ".env.example").read_text()
+    m = re.search(r"^AUTO_EXCLUDE_FILTER=(.+)$", env_example, re.M)
+    if not m or not m.group(1).strip():
+        fail(".env.example must ship a non-empty AUTO_EXCLUDE_FILTER default "
+             "(seed-only rollout, issue #32 DEC-4)")
+    default_excl = m.group(1).strip()
+    proc_xd, xd = render(raw, auto_exclude_filter=default_excl)
+    if proc_xd.returncode != 0 or xd is None:
+        fail(f".env.example AUTO_EXCLUDE_FILTER default failed to render: "
+             f"{proc_xd.stderr.strip()}")
+    xddoc = yaml.safe_load(xd)
+    xdgroups = {g.get("name"): g for g in xddoc.get("proxy-groups") or []}
+    if (xdgroups.get("PROXY", {}).get("proxies") or [None])[0] != "auto-x":
+        fail(f".env.example default must render auto-x FIRST in PROXY: "
+             f"got {xdgroups.get('PROXY', {}).get('proxies')!r}")
+    if xdgroups.get("auto-x", {}).get("exclude-filter") != default_excl:
+        fail(f".env.example AUTO_EXCLUDE_FILTER default did not round-trip: "
+             f"got {xdgroups.get('auto-x', {}).get('exclude-filter')!r}, "
+             f"expected {default_excl!r}")
+
+    # Fail-closed inputs: a backtick or an all-whitespace pattern must refuse
+    # to render (named error, no config.yaml); the empty string must equal
+    # unset (the compose ':-' pass-through contract).
+    proc_bt, bt = render(raw, auto_exclude_filter="香港|`REJECT`")
+    if proc_bt.returncode == 0 or bt is not None:
+        fail("backtick-bearing AUTO_EXCLUDE_FILTER was accepted or wrote "
+             "config.yaml (backtick separates patterns in mihomo - never "
+             "valid inside one; an invalid pattern panics mihomo at startup)")
+    if "AUTO_EXCLUDE_FILTER" not in proc_bt.stderr:
+        fail(f"backtick error must name AUTO_EXCLUDE_FILTER: "
+             f"{proc_bt.stderr.strip()!r}")
+    proc_ws, ws = render(raw, auto_exclude_filter=" \t ")
+    if proc_ws.returncode == 0 or ws is not None:
+        fail("whitespace-only AUTO_EXCLUDE_FILTER was accepted or wrote "
+             "config.yaml (an effectively-empty pattern would match - and "
+             "exclude - every node)")
+    if "AUTO_EXCLUDE_FILTER" not in proc_ws.stderr:
+        fail(f"whitespace-only error must name AUTO_EXCLUDE_FILTER: "
+             f"{proc_ws.stderr.strip()!r}")
+    proc_xe, xe = render(raw, auto_exclude_filter="")
+    if proc_xe.returncode != 0 or xe != rendered:
+        fail("empty-string AUTO_EXCLUDE_FILTER must render byte-identical to "
+             "unset (the compose ':-' pass-through contract)")
+
     # 12) IP-literal subscription host: no DNS pin is possible or needed - the
     # panel entries in nameserver-policy and fake-ip-filter must degrade to
     # comments (never a bogus policy key), the mirror pins stay, and the render
@@ -779,7 +908,11 @@ def main() -> None:
           "are the exact v1.3.10 sextuple (LAN-direct no-resolve first) with STREAMING "
           "defaulting to PROXY; the SNIFFER fence is inert when unset/false and "
           "renders SNI/HTTP/QUIC sniffing with parse-pure-ip + override-destination "
-          "when true; DNS detour fragments name real groups; geox-url hosts "
+          "when true; the AUTOX fences render auto-x (exclude-filter, empty-fallback "
+          "REJECT, no own probe) FIRST in PROXY when the exclude knob is set - inert "
+          "when unset/empty, failing closed on backtick/blank patterns, with the "
+          ".env.example default rendering as the routing default; DNS detour "
+          "fragments name real groups; geox-url hosts "
           "China-reachable; no hardcoded literals; fences pair, tokens map "
           "bidirectionally, rule/group targets resolve (never a provider), and every "
           "variant renders placeholder-free.")

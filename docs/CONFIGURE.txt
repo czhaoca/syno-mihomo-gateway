@@ -154,6 +154,18 @@ DNS settings
       TROUBLESHOOTING.txt, "LAN clients bypass the gateway's DNS").
       false renders without the sniffer (pre-1.3.10 behavior).
 
+  AUTO_EXCLUDE_FILTER
+      Airport nodes matching this pattern are removed from the auto-x
+      group, which is the default route (the first entry in the
+      dashboard's PROXY selector). The shipped default excludes Hong
+      Kong nodes - many sites block Hong Kong addresses, and with an
+      HK-heavy plan the latency picker lands on one almost every time.
+      The full, unfiltered "auto" group stays one dashboard click away.
+      If the pattern matches EVERY node, auto-x blocks traffic instead
+      of silently bypassing the proxy. Leave empty to render without
+      the auto-x group at all (your existing config, byte for byte).
+      A backtick is refused.
+
       These settings are for the GATEWAY only. The NAS's OWN DNS lives in
       DSM Control Panel > Network > General and must also point at
       resolvers reachable from your network - a NAS whose only resolver is

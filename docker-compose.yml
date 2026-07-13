@@ -41,6 +41,10 @@ services:
       - DNS_FOREIGN_NAMESERVER=${DNS_FOREIGN_NAMESERVER:-}
       - DNS_GEOIP_NO_RESOLVE=${DNS_GEOIP_NO_RESOLVE:-false}
       - SNIFFER_ENABLE=${SNIFFER_ENABLE:-false}
+      # Automatic-selection exclusion: non-empty renders the auto-x group
+      # (nodes matching the regex removed) as PROXY's first member. The ':-'
+      # default keeps a pre-feature .env warning-free and renders identically.
+      - AUTO_EXCLUDE_FILTER=${AUTO_EXCLUDE_FILTER:-}
       # Transparent-gateway TUN is ON by default (stack: system keeps the controller
       # reachable - mihomo #1493). LAN devices set their gateway + DNS to MIHOMO_IP and
       # route through mihomo. Set TUN_ENABLE=false in .env to run as a plain proxy.

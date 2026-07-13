@@ -73,6 +73,7 @@ Compose 兼容的引号，因此包含空格、`&`、`#`、`$`、引号或反斜
 | `DNS_FOREIGN_NAMESERVER` | | **分域解析对 (b)，v2 境外优先：** 渲染为**默认** `nameserver`——所有未被策略条目命中的域名（geosite 境外列表**以及**未列出的长尾）只在这里解析——境外、经 `#auto` 走隧道。这些域名完全不会到达任何国内运营方；隧道全灭时解析**失败关闭**（SERVFAIL），绝不悄悄泄漏。 | `https://1.1.1.1/dns-query#auto,https://8.8.8.8/dns-query#auto` |
 | `DNS_GEOIP_NO_RESOLVE` | | `true` 会在 `GEOIP,CN,DIRECT` 规则上渲染出 `no-resolve`，使其完全不再强制任何解析。在 v2 下这次强制解析本就走隧道境外列表（私密），所以默认保持 `false`，未列出的国内域名保住直连捷径。`true` 的代价：`geosite:cn` 漏收的国内域名经 `MATCH` 走代理（见[故障排查](troubleshooting.md#开启-no-resolve-后小众国内网站变慢或打不开)）。仅接受小写 `true`/`false`。 | `false` |
 | `SNIFFER_ENABLE` | | 渲染**流量嗅探**（TLS SNI / HTTP Host / QUIC，`parse-pure-ip` + `override-destination`）：在网关**之外**解析 DNS 的局域网客户端发出的裸 IP 连接会恢复出域名，域名规则（含 `STREAMING`）照常路由它们，被污染的客户端解析结果也会在节点侧按域名重拨。未设/`false` 时不渲染该块，与 v1.3.10 之前逐字节一致（升级兼容）；`.env.example` 出厂为 `true`。路由自愈，但绕过网关的客户端要修复**隐私**仍须把设备 DNS 指向网关——见[故障排查](troubleshooting.md#局域网客户端绕过网关-dnsdnsleaktest-仍显示国内解析器)。 | `true` |
+| `AUTO_EXCLUDE_FILTER` | | 渲染 **`auto-x`** url-test 分组——剔除匹配该正则的机场节点——并作为 **`PROXY` 的第一项**（即默认线路）。出厂默认剔除香港：很多网站封锁香港出口 IP，而香港节点居多的套餐会让按延迟优选的 `auto` 几乎总是落在香港节点上。`auto` 本身保留**全部**节点（分域解析 DNS 的 `#auto` 通道走它），面板里一键即可切回。语法：regexp2（.NET 风格）——默认区分大小写（可用 `(?i)`），**无锚点子串**匹配（`香港` 匹配 `香港01`），`\|` 表示或；**反引号会拒绝渲染**（非法正则会让 mihomo 启动即崩溃）。若正则匹配了*所有*节点，`auto-x` 会 **REJECT**（失败关闭——绝不悄悄绕过代理直连）。留空/未设则完全不渲染该分组，与此功能之前的配置逐字节一致（既有 `.env` 不受影响）。 | `香港\|HK\|(?i)hong ?kong` |
 
 **谁能看到你的 DNS 查询**（在出厂的分域解析 v2 默认值下）：
 

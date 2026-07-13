@@ -185,7 +185,8 @@ self_test() {
   # 1) the shipped .env.example carries every key this script reads from it
   REL="$ROOT"
   for _k in DNS_NAMESERVER DNS_FALLBACK DNS_CN_NAMESERVER \
-            DNS_FOREIGN_NAMESERVER DNS_GEOIP_NO_RESOLVE SNIFFER_ENABLE; do
+            DNS_FOREIGN_NAMESERVER DNS_GEOIP_NO_RESOLVE SNIFFER_ENABLE \
+            AUTO_EXCLUDE_FILTER; do
     if [ -n "$(example_dns "$_k")" ]; then st_ok; else st_bad ".env.example lacks $_k"; fi
   done
 
@@ -489,10 +490,10 @@ case "$PH" in
   *) echo "note: no panel pin expected (IP-literal subscription host $PH)" ;;
 esac
 
-say "A4: enable split-horizon + sniffer from the shipped .env.example defaults"
+say "A4: enable split-horizon + sniffer + exclude filter from the shipped .env.example defaults"
 cp -p "$ENV_FILE" "$ORIG"
 for _k in DNS_NAMESERVER DNS_FALLBACK DNS_CN_NAMESERVER DNS_FOREIGN_NAMESERVER \
-          SNIFFER_ENABLE; do
+          SNIFFER_ENABLE AUTO_EXCLUDE_FILTER; do
   _v="$(example_dns "$_k")"
   [ -n "$_v" ] || { bad "no $_k in $REL/.env.example"; exit 3; }
   env_set "$_k" "$_v"

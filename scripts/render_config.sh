@@ -17,6 +17,7 @@ PRE="$CFG_DIR/.config.yaml.pre"
 PRE2="$CFG_DIR/.config.yaml.pre2"
 PRE3="$CFG_DIR/.config.yaml.pre3"
 PRE4="$CFG_DIR/.config.yaml.pre4"
+PRE5="$CFG_DIR/.config.yaml.pre5"
 
 # Port/secret may default; DNS must come from .env (CLAUDE.md: no hardcoded DNS).
 : "${CONTROLLER_PORT:=9090}"
@@ -71,6 +72,29 @@ case "$SNIFFER_ENABLE" in
   true|false) : ;;
   *) echo "ERROR: SNIFFER_ENABLE must be true or false" >&2; exit 1 ;;
 esac
+# Automatic-selection exclusion: a non-empty regexp2 pattern renders the
+# auto-x sibling group (nodes matching the pattern removed) as PROXY's first
+# member. Empty/unset renders WITHOUT the group, byte-identical to the
+# pre-feature output (upgrade compat; .env.example ships an HK default for
+# new installs). An INVALID pattern panics mihomo at startup, so the two
+# statically-detectable poison classes fail the render here: a backtick
+# (mihomo's multi-pattern separator - never valid inside one pattern) and a
+# whitespace-only value (an effectively-empty pattern matches - and would
+# exclude - every node).
+: "${AUTO_EXCLUDE_FILTER:=}"
+if [ -n "$AUTO_EXCLUDE_FILTER" ]; then
+  case "$AUTO_EXCLUDE_FILTER" in
+    *\`*)
+      echo "ERROR: AUTO_EXCLUDE_FILTER must not contain a backtick (mihomo's multi-pattern separator; an invalid pattern crashes mihomo at startup)" >&2
+      exit 1 ;;
+  esac
+  case "$AUTO_EXCLUDE_FILTER" in
+    *[![:space:]]*) : ;;
+    *)
+      echo "ERROR: AUTO_EXCLUDE_FILTER is whitespace-only - set a real pattern, or leave it empty/unset to disable the auto-x group" >&2
+      exit 1 ;;
+  esac
+fi
 if [ "$DNS_GEOIP_NO_RESOLVE" = true ]; then
   GEOIP_NO_RESOLVE=",no-resolve"
 else
@@ -175,6 +199,16 @@ if [ "$SNIFFER_ENABLE" = true ]; then
 else
   sed -e '/{{SNIFFER_BEGIN}}/,/{{SNIFFER_END}}/d' "$PRE3" > "$PRE4"
 fi
+#   AUTOX blocks    - the auto-x group and its PROXY member line switch
+#                     TOGETHER on AUTO_EXCLUDE_FILTER being non-empty
+#                     (validated above), mirroring the DNS fence trio.
+if [ -n "$AUTO_EXCLUDE_FILTER" ]; then
+  sed -e '/{{AUTOX_BEGIN}}/d' -e '/{{AUTOX_END}}/d' \
+      -e '/{{AUTOXMEMBER_BEGIN}}/d' -e '/{{AUTOXMEMBER_END}}/d' "$PRE4" > "$PRE5"
+else
+  sed -e '/{{AUTOX_BEGIN}}/,/{{AUTOX_END}}/d' \
+      -e '/{{AUTOXMEMBER_BEGIN}}/,/{{AUTOXMEMBER_END}}/d' "$PRE4" > "$PRE5"
+fi
 
 # Pass 2 - token substitution (a disabled fence simply leaves no token behind;
 # EXTERNAL_UI_DIR renders inside a YAML double-quoted scalar like the secret).
@@ -192,8 +226,9 @@ sed \
   -e "s|{{GEOIP_NO_RESOLVE}}|$(esc "$GEOIP_NO_RESOLVE")|g" \
   -e "s|{{TUN_AUTO_REDIRECT}}|$(esc "$TUN_AUTO_REDIRECT")|g" \
   -e "s|{{EXTERNAL_UI_DIR}}|$(esc "$(yaml_dq "$EXTERNAL_UI_DIR")")|g" \
-  "$PRE4" > "$TMP"
-rm -f "$PRE" "$PRE2" "$PRE3" "$PRE4"
+  -e "s|{{AUTO_EXCLUDE_FILTER}}|$(esc "$(yaml_dq "$AUTO_EXCLUDE_FILTER")")|g" \
+  "$PRE5" > "$TMP"
+rm -f "$PRE" "$PRE2" "$PRE3" "$PRE4" "$PRE5"
 mv "$TMP" "$OUT"
 echo "Rendered $OUT"
 

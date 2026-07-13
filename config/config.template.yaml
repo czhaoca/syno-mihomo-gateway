@@ -218,12 +218,34 @@ proxy-groups:
     interval: 300
     tolerance: 50
 
+# {{AUTOX_BEGIN}}
+  # auto-x: `auto` minus the provider nodes matching AUTO_EXCLUDE_FILTER
+  # (regexp2, unanchored substring; the shipped default excludes Hong Kong -
+  # many sites block HK egress while the airport pool is HK-heavy). Listed
+  # FIRST in PROXY below, so this is the routing default; picking `auto` in
+  # the dashboard restores the full pool with one click. No url:/interval: -
+  # the group inherits the provider health check (zero extra probe traffic),
+  # and the DNS '#auto' detour stays on `auto`, so LAN-wide resolution never
+  # depends on the filtered pool. empty-fallback REJECT fails CLOSED when the
+  # filter matches every node: traffic is blocked, never silently handed to
+  # the Direct-typed COMPATIBLE placeholder (an unproxied-uplink leak).
+  - name: auto-x
+    type: url-test
+    use:
+      - my-airport
+    exclude-filter: "{{AUTO_EXCLUDE_FILTER}}"
+    empty-fallback: REJECT
+
+# {{AUTOX_END}}
   # PROXY: dashboard-facing selector and the rule target. Defaults to `auto`; an
   # operator can pin a specific provider node (surfaced via use:), force DIRECT
   # (bypass), or REJECT (block) from MetaCubeXD.
   - name: PROXY
     type: select
     proxies:
+# {{AUTOXMEMBER_BEGIN}}
+      - auto-x
+# {{AUTOXMEMBER_END}}
       - auto
       - DIRECT
       - REJECT
