@@ -176,8 +176,15 @@ LAN IP. Do these checks from a DIFFERENT LAN device:
         Host   = <MIHOMO_IP>
         Port   = <CONTROLLER_PORT>     (default 9090)
         Secret = <CONTROLLER_SECRET>   (if you set one)
-  3. To route a client, set that client's gateway and DNS to <MIHOMO_IP>,
-     then browse the internet from it to confirm traffic flows.
+  3. To route a client, set that client's gateway AND DNS to <MIHOMO_IP> -
+     BOTH, with <MIHOMO_IP> as the ONLY DNS server. For the whole home,
+     hand out gateway + DNS via the router's DHCP. Gateway-only is the
+     classic half-deployment: traffic flows, but names still resolve at
+     the router, so domain rules cannot match, dnsleaktest keeps showing
+     domestic resolvers, and blocked sites break (see TROUBLESHOOTING.txt,
+     "LAN clients bypass the gateway's DNS"). Verify on the client:
+     nslookup facebook.com must answer 198.18.x.x. Then browse the
+     internet from it to confirm traffic flows.
 
 Run the structural diagnostic at any time with:
 

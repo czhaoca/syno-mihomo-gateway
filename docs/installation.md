@@ -217,8 +217,17 @@ From a **LAN device that is not the NAS** (see the macvlan caveat in
 
 ## 7. Point devices at the gateway
 
-- **Single device:** set its Router/Gateway and DNS to `MIHOMO_IP`.
-- **Whole home:** announce `MIHOMO_IP` as the gateway via your router's DHCP. ⚠️ If the
+- **Single device:** set its Router/Gateway **and DNS** to `MIHOMO_IP`.
+- **Whole home:** announce `MIHOMO_IP` as **both the gateway AND the DNS server** via your
+  router's DHCP — and make it the **only** DNS server (a router/ISP secondary silently takes
+  over on any hiccup and re-leaks every lookup). Gateway-only DHCP is the classic
+  half-deployment: traffic routes through mihomo but clients keep resolving at the router
+  (same-subnet traffic the gateway never sees), so domain rules can't match, dnsleaktest
+  still shows the domestic resolvers, and blocked sites break — see
+  [Troubleshooting](troubleshooting.md#lan-clients-bypass-the-gateways-dns-dnsleaktest-still-shows-domestic-resolvers).
+  Verify from a client after renewing its DHCP lease: `nslookup facebook.com` must return a
+  `198.18.x.x` answer. Also disable IPv6 DNS announcements (RA/RDNSS) on the router — the
+  gateway is IPv4-only, and an IPv6 resolver path bypasses it entirely. ⚠️ If the
   container stops, those devices lose internet — keep `restart: always` (default) and consider
   the boot-up network task below.
 

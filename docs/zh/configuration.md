@@ -72,6 +72,7 @@ Compose 兼容的引号，因此包含空格、`&`、`#`、`$`、引号或反斜
 | `DNS_CN_NAMESERVER` | | **分域解析对 (a)：** 命中 mihomo `geosite:cn` 列表的域名只在这里解析——国内、直连。与 `DNS_FOREIGN_NAMESERVER` 同设或同不设：只设一个会拒绝渲染；**都不设**时渲染传统配置档，与 1.3.8 之前逐字节一致（现有 `.env` 原样可用——重新部署向导会主动提议升级）。 | `https://223.5.5.5/dns-query,https://120.53.53.53/dns-query` |
 | `DNS_FOREIGN_NAMESERVER` | | **分域解析对 (b)，v2 境外优先：** 渲染为**默认** `nameserver`——所有未被策略条目命中的域名（geosite 境外列表**以及**未列出的长尾）只在这里解析——境外、经 `#auto` 走隧道。这些域名完全不会到达任何国内运营方；隧道全灭时解析**失败关闭**（SERVFAIL），绝不悄悄泄漏。 | `https://1.1.1.1/dns-query#auto,https://8.8.8.8/dns-query#auto` |
 | `DNS_GEOIP_NO_RESOLVE` | | `true` 会在 `GEOIP,CN,DIRECT` 规则上渲染出 `no-resolve`，使其完全不再强制任何解析。在 v2 下这次强制解析本就走隧道境外列表（私密），所以默认保持 `false`，未列出的国内域名保住直连捷径。`true` 的代价：`geosite:cn` 漏收的国内域名经 `MATCH` 走代理（见[故障排查](troubleshooting.md#开启-no-resolve-后小众国内网站变慢或打不开)）。仅接受小写 `true`/`false`。 | `false` |
+| `SNIFFER_ENABLE` | | 渲染**流量嗅探**（TLS SNI / HTTP Host / QUIC，`parse-pure-ip` + `override-destination`）：在网关**之外**解析 DNS 的局域网客户端发出的裸 IP 连接会恢复出域名，域名规则（含 `STREAMING`）照常路由它们，被污染的客户端解析结果也会在节点侧按域名重拨。未设/`false` 时不渲染该块，与 v1.3.10 之前逐字节一致（升级兼容）；`.env.example` 出厂为 `true`。路由自愈，但绕过网关的客户端要修复**隐私**仍须把设备 DNS 指向网关——见[故障排查](troubleshooting.md#局域网客户端绕过网关-dnsdnsleaktest-仍显示国内解析器)。 | `true` |
 
 **谁能看到你的 DNS 查询**（在出厂的分域解析 v2 默认值下）：
 
@@ -245,9 +246,10 @@ docker compose --env-file ../syno-mihomo-gateway-data/.env up -d --force-recreat
 （或 `sudo sh scripts/gateway.sh redeploy --yes`）。当镜像与 compose 模型未变化时，
 普通的 `up -d mihomo` 是**空操作**——入口脚本只在重建容器时才重新渲染，因此仅改模板
 的编辑会被静默忽略。如需自定义路由，请编辑 `rules:` 列表——默认值为
-`GEOSITE,NETFLIX,STREAMING` / `GEOSITE,CN,DIRECT` / `GEOSITE,GEOLOCATION-!CN,PROXY` /
-`GEOIP,CN,DIRECT` / `MATCH,PROXY`：流媒体走自己的可固定分组，国内流量直连，境外列表
-域名**不经任何本地 DNS 解析**直接走代理，GEOIP 兜底其余流量。`PROXY` 是一个可选择的
+`GEOIP,LAN,DIRECT,no-resolve` / `GEOSITE,NETFLIX,STREAMING` / `GEOSITE,CN,DIRECT` /
+`GEOSITE,GEOLOCATION-!CN,PROXY` / `GEOIP,CN,DIRECT` / `MATCH,PROXY`：私网/链路本地目标
+绝不走隧道（`LAN` 是 mihomo 内建类别，无需 geo 数据库），流媒体走自己的可固定分组，
+国内流量直连，境外列表域名**不经任何本地 DNS 解析**直接走代理，GEOIP 兜底其余流量。`PROXY` 是一个可选择的
 代理组，默认指向 `auto`（订阅中延迟最低的节点），同时提供 `DIRECT` / `REJECT`；
 `STREAMING` 是第二个选择器，默认指向 `PROXY`——在 MetaCubeXD 里把它固定到支持流媒体
 解锁的节点，就能只切换流媒体流量（`auto` 按延迟选节点，而低延迟节点很少具备解锁能

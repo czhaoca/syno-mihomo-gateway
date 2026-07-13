@@ -496,6 +496,41 @@ works (tunneled), and only breaks when it rejects out-of-country visitors.
 rule's lookups ride the tunneled foreign resolvers, so leaving the knob `false` costs no
 privacy — see the [configuration DNS matrix](configuration.md#dns-injected-into-the-config-template).
 
+## LAN clients bypass the gateway's DNS (dnsleaktest still shows domestic resolvers)
+
+**Symptom:** with the privacy profile live and `doctor` reporting `dns_privacy: v2`, a LAN
+device's dnsleaktest.com extended test STILL lists AliDNS/DNSPod; facebook/netflix and many
+blocked sites fail while youtube may work; `docker logs mihomo` shows almost only raw-IP flows
+(`--> 1.2.3.4:443 match Match`) and nearly no hostname-tagged flows.
+
+**Cause:** the device never sends its DNS to the gateway, so nothing the gateway does can help
+it. Two structural bypasses: **(1)** DHCP hands out the **router** (or ISP resolver) as DNS —
+client→router:53 is same-subnet traffic that never crosses the gateway, so the `any:53` hijack
+cannot see it; **(2)** client-side **encrypted DNS** — browser "secure DNS" (Chrome silently
+upgrades a domestic system resolver to that provider's DoH), Android Private DNS, or a
+Cloudflare WARP/1.1.1.1-type app — rides port 443/853 and cannot be hijacked. Without
+hostnames the domain rules cannot match: streaming never reaches the `STREAMING` group, and
+the device dials whatever (often GFW-poisoned) addresses its own resolver returned. In fake-ip
+mode every gateway-resolved flow logs WITH a hostname, so a hostname-free log is proof of
+bypass, not a gateway fault.
+
+**Diagnosis:** on the device run `nslookup facebook.com` — a `198.18.x.x` answer means it uses
+the gateway; a real/public address means bypass.
+
+**Fix:** make the router's DHCP hand out `MIHOMO_IP` as **both gateway and the only DNS**
+(see [Installation §7](installation.md#7-point-devices-at-the-gateway)), renew the client's
+lease, disable browser secure-DNS / Android Private DNS, uninstall or disable WARP/1.1.1.1
+apps, and turn off router IPv6 RA/RDNSS (an IPv6 resolver path bypasses the IPv4-only gateway).
+Since v1.3.10 the **sniffer** (`SNIFFER_ENABLE=true`) recovers hostnames from raw-IP flows via
+SNI, so *routing* self-heals even for bypassing clients — streaming reaches its group and
+poisoned client answers are re-dialed by hostname at the node — but such clients' queries
+still leak to whatever resolver they use: only pointing their DNS at the gateway fixes
+*privacy*. Optional hardening against plain DoT: add `DST-PORT,853,REJECT` to the template
+rules (Android *strict* Private DNS then fails closed — set devices to automatic). If many
+sites stall through the tunnel in bursts, also check the airport's entry relay:
+`docker logs mihomo | grep 'connect error'` — repeated `i/o timeout` on the provider's entry
+host is airport-side flakiness, not a gateway rule problem.
+
 ## Netflix (or another streaming service) says "not available in your region"
 
 **Symptom:** general foreign browsing works through the gateway, but Netflix shows a region /
@@ -512,9 +547,10 @@ into its own `STREAMING` selector (default: `PROXY`, i.e. today's behavior).
 streaming/Netflix-capable (often named `NF`, `流媒体`, `解锁`…), then reload the title. Only
 streaming traffic moves; everything else keeps riding `PROXY`/`auto`. If it still fails on an
 unlock node: some devices (smart TVs, Android **Private DNS**) bypass the gateway's DNS and
-connect by raw IP — those flows miss the domain rule and ride `PROXY` instead of `STREAMING`,
-mixing exit IPs, which Netflix also rejects. Disable the device's private/hardcoded DNS so the
-gateway answers its lookups (a future `sniffer` option is the structural fix; not shipped yet).
+connect by raw IP — since v1.3.10 the sniffer recovers those flows' hostnames from SNI so they
+still reach `STREAMING`, but a device whose own resolver returns poisoned garbage may still
+misbehave; disable its private/hardcoded DNS so the gateway answers its lookups (see the
+"LAN clients bypass the gateway's DNS" entry above).
 
 ## Unlisted-domain lookups fail while the airport is down
 

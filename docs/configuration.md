@@ -74,6 +74,7 @@ hostname first — no bootstrap chicken-and-egg on a cold start.
 | `DNS_CN_NAMESERVER` | | **Split-horizon pair (a):** domains on mihomo's `geosite:cn` list resolve ONLY here — domestic, dialed direct. Set together with `DNS_FOREIGN_NAMESERVER` or not at all: exactly one set refuses to render; **neither** set renders the legacy profile byte-identical to the pre-1.3.8 config (existing `.env` files keep working unchanged — the redeploy wizard offers the upgrade). | `https://223.5.5.5/dns-query,https://120.53.53.53/dns-query` |
 | `DNS_FOREIGN_NAMESERVER` | | **Split-horizon pair (b), v2 foreign-by-default:** rendered as the **default** `nameserver` — every domain *not* matched by a policy entry (geosite-listed foreign **and** the unlisted long tail) resolves ONLY here — overseas, tunneled via `#auto`. Those names never reach a domestic operator; a dead tunnel fails **closed** (SERVFAIL) instead of silently leaking. | `https://1.1.1.1/dns-query#auto,https://8.8.8.8/dns-query#auto` |
 | `DNS_GEOIP_NO_RESOLVE` | | `true` renders `no-resolve` onto the `GEOIP,CN,DIRECT` rule so it never forces a lookup at all. Under v2 the forced lookup already rides the tunneled foreign list (private), so the default stays `false` and unlisted CN domains keep their DIRECT short-circuit. Trade-off of `true`: CN domains missing from `geosite:cn` ride the proxy via `MATCH` (see [troubleshooting](troubleshooting.md#niche-domestic-site-slow-or-unreachable-after-enabling-no-resolve)). Only lowercase `true`/`false`. | `false` |
+| `SNIFFER_ENABLE` | | Renders the traffic **sniffer** (TLS SNI / HTTP Host / QUIC, `parse-pure-ip` + `override-destination`): raw-IP flows from LAN clients that resolve DNS **outside** the gateway recover their hostname, so domain rules (incl. `STREAMING`) still route them and poisoned client-side answers are re-dialed by hostname at the node. Unset/`false` renders without the block, byte-identical to pre-v1.3.10 (upgrade compat); `.env.example` ships `true`. Routing self-heals, but bypassing clients' *privacy* still requires pointing their DNS at the gateway — see [troubleshooting](troubleshooting.md#lan-clients-bypass-the-gateways-dns-dnsleaktest-still-shows-domestic-resolvers). | `true` |
 
 **Who can observe your DNS queries** (with the shipped split-horizon v2 defaults):
 
@@ -254,10 +255,11 @@ docker compose --env-file ../syno-mihomo-gateway-data/.env up -d --force-recreat
 (or `sudo sh scripts/gateway.sh redeploy --yes`). A plain `up -d mihomo` is a **no-op** when
 the image and compose model are unchanged — the entrypoint only re-renders on recreate, so a
 template-only edit is silently ignored. To customize routing, edit the `rules:` list — the
-defaults are `GEOSITE,NETFLIX,STREAMING` / `GEOSITE,CN,DIRECT` /
-`GEOSITE,GEOLOCATION-!CN,PROXY` / `GEOIP,CN,DIRECT` / `MATCH,PROXY`: streaming rides its own
-pinnable group, CN traffic goes direct, listed-foreign domains ride the proxy **without** any
-local DNS lookup, and the GEOIP fallthrough catches the rest. `PROXY` is a selectable group
+defaults are `GEOIP,LAN,DIRECT,no-resolve` / `GEOSITE,NETFLIX,STREAMING` / `GEOSITE,CN,DIRECT` /
+`GEOSITE,GEOLOCATION-!CN,PROXY` / `GEOIP,CN,DIRECT` / `MATCH,PROXY`: private/link-local
+destinations never ride the tunnel (`LAN` is hardcoded in mihomo — no geo database needed),
+streaming rides its own pinnable group, CN traffic goes direct, listed-foreign domains ride
+the proxy **without** any local DNS lookup, and the GEOIP fallthrough catches the rest. `PROXY` is a selectable group
 that defaults to `auto` (the fastest node from your subscription) and also offers `DIRECT` /
 `REJECT`; `STREAMING` is a second selector that defaults to `PROXY` — pin a
 streaming-unlock-capable node there from MetaCubeXD to move **only** streaming traffic

@@ -265,6 +265,30 @@ Niche domestic site slow or unreachable after enabling no-resolve
          no privacy (see CONFIGURE.txt, "Who can see your DNS queries").
 
 --------------------------------------------------------------------------
+LAN clients bypass the gateway's DNS (dnsleaktest still shows domestic)
+--------------------------------------------------------------------------
+  Cause: the device never sends DNS to the gateway, so nothing gateway-
+         side can help it. Either DHCP hands out the ROUTER (or ISP) as
+         resolver - that traffic stays on the local subnet and never
+         crosses the gateway - or the device uses encrypted DNS (browser
+         "secure DNS", Android Private DNS, a WARP/1.1.1.1-type app),
+         which cannot be intercepted. Without hostnames the domain rules
+         cannot match: streaming misses its group and the device dials
+         whatever (often poisoned) addresses its own resolver returned -
+         blocked sites break while youtube may survive.
+  Check: on the device, run: nslookup facebook.com
+         198.18.x.x  = it uses the gateway (good)
+         a real/public address = it bypasses the gateway (this entry)
+  Fix:   in the router's DHCP hand out the gateway IP as BOTH gateway and
+         the ONLY DNS server; renew the device's lease; disable browser
+         secure-DNS / Android Private DNS; remove WARP/1.1.1.1 apps;
+         disable the router's IPv6 DNS announcements. The sniffer
+         (SNIFFER_ENABLE=true, default on) repairs ROUTING for such
+         devices by reading the hostname from the connection itself -
+         but their lookups still leak to whatever resolver they use;
+         only pointing their DNS at the gateway fixes privacy.
+
+--------------------------------------------------------------------------
 Netflix (or another streaming service) says "not available in your region"
 --------------------------------------------------------------------------
   Cause: streaming services blacklist most datacenter exit addresses. The

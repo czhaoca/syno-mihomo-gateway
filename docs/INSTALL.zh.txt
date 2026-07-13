@@ -154,8 +154,13 @@ IP 冲突检查（设置 mihomo 的 IP 时）
         主机（Host）   = <MIHOMO_IP>
         端口（Port）   = <CONTROLLER_PORT>     （默认 9090）
         密钥（Secret） = <CONTROLLER_SECRET>   （如已设置）
-  3. 要让某客户端走代理，把它的网关和 DNS 设为 <MIHOMO_IP>，然后在该设备上
-     上网，确认流量正常转发。
+  3. 要让某客户端走代理，把它的网关和 DNS 都设为 <MIHOMO_IP>——两者缺一
+     不可，且 <MIHOMO_IP> 必须是唯一的 DNS。整个家庭则在路由器 DHCP 里
+     同时下发网关 + DNS。只设网关不设 DNS 是最经典的半套部署：流量在走、
+     域名却仍在路由器上解析，域名规则无法命中、dnsleaktest 依旧显示国内
+     解析器、被墙网站打不开（见 TROUBLESHOOTING.zh.txt"局域网客户端绕过
+     网关 DNS"）。在该设备上验证：nslookup facebook.com 必须返回
+     198.18.x.x，然后正常上网确认流量转发。
 
 随时可以运行只读结构诊断：
 

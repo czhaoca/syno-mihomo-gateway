@@ -143,6 +143,17 @@ DNS settings
       directly instead of riding the proxy (see TROUBLESHOOTING.txt).
       Only true or false.
 
+  SNIFFER_ENABLE
+      true (the default) turns on traffic sniffing: connections that
+      arrive as bare IPs - from devices that resolve DNS outside the
+      gateway - get their real hostname read from the connection
+      itself, so the routing rules still apply to them (streaming
+      reaches its group, poisoned lookups get corrected at the node).
+      This repairs ROUTING for such devices; their DNS privacy still
+      requires pointing the device's DNS at the gateway (see
+      TROUBLESHOOTING.txt, "LAN clients bypass the gateway's DNS").
+      false renders without the sniffer (pre-1.3.10 behavior).
+
       These settings are for the GATEWAY only. The NAS's OWN DNS lives in
       DSM Control Panel > Network > General and must also point at
       resolvers reachable from your network - a NAS whose only resolver is

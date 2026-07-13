@@ -166,6 +166,18 @@ release validations end `--revert` (upgrades never migrate by design).
   gains the fails-closed `/dns/query` pair + STREAMING/rule probes + a dnsleaktest/netflix
   owner spot-check block. Known residual (documented, deferred): clients with hardcoded
   DNS bypass fake-ip and miss the STREAMING rule — `sniffer:` is the structural fix.
+- **Post-release incident addendum (same day):** owner's LAN devices turned out to bypass
+  the gateway's DNS entirely (DHCP hands the router out as resolver — same-subnet traffic
+  the `any:53` hijack can't see — plus a WARP app and browser DoH), which reproduced the
+  AliDNS leak and broke facebook/netflix via poisoned raw-IP dials while the gateway's own
+  v2 chain measured healthy end-to-end. The "deferred" sniffer shipped immediately as
+  `SNIFFER_ENABLE` (default on for new installs, `parse-pure-ip` + `override-destination`;
+  unset renders byte-identical), the rule chain gained `GEOIP,LAN,DIRECT,no-resolve` first
+  (Windows Delivery Optimization peers at foreign RFC1918 addresses were riding the tunnel),
+  and installation §7 now mandates DHCP announcing the gateway as gateway AND sole DNS —
+  the gateway-only wording was the root doc bug. Follow-ups recorded: node UDP support
+  (QUIC silently falls to DIRECT when the selected node lacks UDP), opt-in DoT/DoH-blocking
+  rule tiers, a doctor client-adoption check.
 
 ## Work breakdown
 

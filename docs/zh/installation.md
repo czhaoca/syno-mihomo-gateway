@@ -198,10 +198,17 @@ sudo sh scripts/doctor.sh          # needs root; add --egress for a real GET thr
 
 ## 7. 将设备指向网关
 
-- **单台设备：** 将其路由器/网关和 DNS 设置为 `MIHOMO_IP`。
-- **整个家庭：** 通过路由器的 DHCP 将 `MIHOMO_IP` 作为网关下发。⚠️ 如果
-  容器停止，这些设备会失去网络连接 —— 请保持 `restart: always`（默认），并考虑
-  下文的开机网络任务。
+- **单台设备：** 将其路由器/网关**和 DNS** 都设置为 `MIHOMO_IP`。
+- **整个家庭：** 通过路由器的 DHCP 将 `MIHOMO_IP` 同时作为**网关和 DNS 服务器**下发——
+  并且是**唯一**的 DNS 服务器（一旦配了路由器/运营商作备用 DNS，任何抖动都会让备用
+  静默接管、重新泄漏全部查询）。只下发网关、不下发 DNS 是最经典的半套部署：流量经过
+  mihomo，但客户端仍在路由器上解析（同网段直达流量，网关根本看不到），于是域名规则
+  无法命中、dnsleaktest 依旧显示国内解析器、被墙网站打不开——见
+  [故障排查](troubleshooting.md#局域网客户端绕过网关-dnsdnsleaktest-仍显示国内解析器)。
+  在客户端更新 DHCP 租约后验证：`nslookup facebook.com` 必须返回 `198.18.x.x`。
+  同时在路由器上关闭 IPv6 DNS 通告（RA/RDNSS）——网关只处理 IPv4，IPv6 解析路径会
+  完全绕过它。⚠️ 如果容器停止，这些设备会失去网络连接 —— 请保持
+  `restart: always`（默认），并考虑下文的开机网络任务。
 
 ## 8. 启用自动更新（推荐）
 
