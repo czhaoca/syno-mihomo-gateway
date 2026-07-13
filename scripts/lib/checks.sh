@@ -236,6 +236,32 @@ chk_dns_privacy() {
   fi
 }
 
+# ipv6_bypass - whether the LAN carries a live global-IPv6 path AROUND the
+# gateway. The gateway is IPv4-only (v4 macvlan, dns ipv6:false), so router
+# advertisements that hand LAN clients a global IPv6 address + resolver give
+# every dual-stack device a route that never crosses the gateway: its DNS
+# leaks to the ISP resolvers and IPv6-preferring sites (streaming) go direct.
+# PARENT_INTERFACE is the witness: it sits on the same L2 segment as the
+# clients, so a global inet6 there proves the RAs reach everyone. RA
+# addresses outlive the router setting (valid-lifetime), so the warn can
+# persist until leases expire or the interface bounces.
+chk_ipv6_bypass() {
+  command -v ip >/dev/null 2>&1 || { CHECK_VALUE=unknown CHECK_SEV=silent; return 0; }
+  [ -n "${PARENT_INTERFACE:-}" ] || { CHECK_VALUE=unknown CHECK_SEV=silent; return 0; }
+  if ! _ci6="$(ip -6 addr show dev "$PARENT_INTERFACE" 2>/dev/null)"; then
+    CHECK_VALUE=unknown CHECK_SEV=silent
+    return 0
+  fi
+  if printf '%s\n' "$_ci6" | grep -q 'inet6 .*scope global'; then
+    CHECK_VALUE=exposed CHECK_SEV=warn
+    CHECK_DETAIL="global IPv6 is live on $PARENT_INTERFACE - dual-stack clients resolve and route over IPv6 around the IPv4-only gateway (DNS leaks; IPv6-preferring sites go direct)"
+    CHECK_HINT="      disable IPv6 (or its RA/RDNSS announcements) on the router's LAN, then renew client leases - see docs/troubleshooting.md"
+  else
+    CHECK_VALUE=ok CHECK_SEV=ok
+    CHECK_DETAIL="no global IPv6 on $PARENT_INTERFACE - no IPv6 path around the gateway"
+  fi
+}
+
 # _c_emit NAME - run chk_NAME and print its record (plus any hint lines).
 # Leaves CHECK_VALUE/CHECK_SEV set for the caller's gate logic.
 _c_emit() {
@@ -279,4 +305,5 @@ checks_run() {
   _c_emit host_dns
   _c_emit geodata
   _c_emit dns_privacy
+  _c_emit ipv6_bypass
 }

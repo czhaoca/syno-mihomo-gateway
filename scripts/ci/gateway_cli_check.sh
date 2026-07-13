@@ -112,9 +112,18 @@ chmod +x "$STUB/id"
 # ifconfig). Stub `ip` so PARENT_INTERFACE=eth0 "exists" on every dev/CI
 # platform (macOS has ifconfig but no eth0; CI containers vary) and every
 # address query returns empty = the code's own "cannot verify, don't block"
-# path. Deterministic on both platforms, no real network I/O.
+# path. Deterministic on both platforms, no real network I/O. The `-6 addr`
+# form feeds chk_ipv6_bypass: FAKE_IP6_RC flips it unprobeable, FAKE_IP6_GLOBAL
+# emits one global inet6 line (RFC 3849 documentation prefix, fixture-only).
 cat > "$STUB/ip" <<'EOF'
 #!/bin/sh
+case "$*" in
+  -6\ addr*)
+    [ "${FAKE_IP6_RC:-0}" = 0 ] || exit "$FAKE_IP6_RC"
+    [ "${FAKE_IP6_GLOBAL:-0}" = 1 ] \
+      && printf '    inet6 2001:db8::1/64 scope global dynamic\n'
+    exit 0 ;;
+esac
 exit 0
 EOF
 chmod +x "$STUB/ip"
@@ -435,7 +444,7 @@ if [ -f /.dockerenv ]; then
     mknod /dev/net/tun c 10 200 2>/dev/null || :
   fi
   if [ -c /dev/net/tun ] && mkdir -p /usr/local/bin 2>/dev/null \
-     && cp "$STUB/nslookup" "$STUB/crontab" /usr/local/bin/ 2>/dev/null; then
+     && cp "$STUB/nslookup" "$STUB/crontab" "$STUB/ip" /usr/local/bin/ 2>/dev/null; then
     _fp_run=1
   fi
 fi
@@ -455,7 +464,7 @@ if [ "$_fp_run" = 1 ]; then
          FAKE_CF_RUNNING FAKE_CF_HEALTH SMG_SCHED_TASK_DIR SMG_SCHED_EVENT_DB \
          SMG_SCHED_CRONTAB
 
-  # healthy baseline: all 18 checks ok-side in --json, HEALTHY rc 0 in both
+  # healthy baseline: all 19 checks ok-side in --json, HEALTHY rc 0 in both
   dpar
   [ "$_jrc" = 0 ] && [ "$_hrc" = 0 ] \
     && ok || fail "full-parity baseline rc: json=$_jrc human=$_hrc (want 0/0; derr: $(tail -n2 "$TMP/derr" | tr '\n' ' '))"
@@ -463,7 +472,7 @@ if [ "$_fp_run" = 1 ]; then
              'compose ok' 'mihomo running' 'tun_gateway ok' 'controller ok' \
              'image_arch ok' 'dashboard running' 'update_task ok' 'boot_task ok' \
              'cloudflared ok' 'subscription ok' 'host_dns ok' 'geodata cached' \
-             'dns_privacy v2'; do
+             'dns_privacy v2' 'ipv6_bypass ok'; do
     # shellcheck disable=SC2086 # deliberate: NAME VALUE split
     jval $_pc && ok || fail "healthy doctor --json lacks ${_pc%% *}:${_pc##* }"
   done
@@ -634,6 +643,25 @@ if [ "$_fp_run" = 1 ]; then
     && ok || fail "cloudflared-signal parity (json=$_jrc human=$_hrc)"
   unset FAKE_CF_LOG
   FAKE_CF_HEALTH=healthy; export FAKE_CF_HEALTH
+
+  # ipv6_bypass exposed (global v6 on the LAN parent): degraded/WARN both, rc 2
+  FAKE_IP6_GLOBAL=1; export FAKE_IP6_GLOBAL
+  dpar
+  jval ipv6_bypass exposed && [ "$_jrc" = 2 ] && [ "$_hrc" = 2 ] \
+    && grep -q 'WARN.*global IPv6 is live on eth0' "$TMP/derr" \
+    && grep -q 'disable IPv6' "$TMP/derr" \
+    && ok || fail "ipv6_bypass-exposed parity (json=$_jrc human=$_hrc)"
+  unset FAKE_IP6_GLOBAL
+
+  # ipv6_bypass unprobeable (ip errors): unknown in --json, silent in human, rc 0
+  FAKE_IP6_RC=1; export FAKE_IP6_RC
+  dpar
+  jval ipv6_bypass unknown && [ "$_jrc" = 0 ] && [ "$_hrc" = 0 ] \
+    && ok || fail "ipv6_bypass-unknown parity (json=$_jrc human=$_hrc)"
+  if grep -q 'IPv6' "$TMP/dout" "$TMP/derr"; then
+    fail "ipv6_bypass-unknown: doctor.sh mentioned IPv6 on an unprobeable box"
+  else ok; fi
+  unset FAKE_IP6_RC
 
   # restore the outer suite's world exactly as the earlier sections left it
   cp "$TMP/env.keep" "$ENV_FILE"

@@ -313,15 +313,17 @@ json_output:
     doctor --json emits {"verb","ok","exit_code","checks":[...]} with
     check names env, docker, arch, tun_device, network, compose, mihomo,
     tun_gateway, controller, image_arch, dashboard, update_task, boot_task,
-    cloudflared, subscription, host_dns, geodata, dns_privacy
+    cloudflared, subscription, host_dns, geodata, dns_privacy, ipv6_bypass
     (update_task/boot_task verify the DSM Task Scheduler deployment;
     cloudflared is ok|down|absent for the optional tunnel container;
     host_dns probes every host resolver; geodata is cached|missing;
     dns_privacy is v2|v1|legacy for the rendered DNS profile - v2 =
     split-horizon foreign-by-default, v1 = a pre-v1.3.10 render whose
     fallback dual-query still copies long-tail lookups to the domestic
-    resolvers, legacy = the domestic resolvers see every lookup; "unknown"
-    means the surface is not probeable on this box).
+    resolvers, legacy = the domestic resolvers see every lookup;
+    ipv6_bypass is ok|exposed - exposed means global IPv6 is live on the
+    LAN interface, a path dual-stack clients use around the IPv4-only
+    gateway; "unknown" means the surface is not probeable on this box).
     Exactly one object on stdout; logs never interleave.
   zh: >-
     status --json 输出一个扁平对象：
@@ -335,11 +337,14 @@ json_output:
     doctor --json 输出 {"verb","ok","exit_code","checks":[...]}，检查名为
     env、docker、arch、tun_device、network、compose、mihomo、tun_gateway、
     controller、image_arch、dashboard、update_task、boot_task、cloudflared、
-    subscription、host_dns、geodata、dns_privacy（update_task/boot_task
+    subscription、host_dns、geodata、dns_privacy、
+    ipv6_bypass（update_task/boot_task
     校验 DSM 任务计划的部署情况；cloudflared 对可选的隧道容器报告
     ok|down|absent；host_dns 逐一探测主机解析器；geodata 为
     cached|missing；dns_privacy 反映渲染出的 DNS 配置档，取值
     v2|v1|legacy —— v2 = 分域（境外优先）隐私模式，v1 = v1.3.10 之前的
     渲染残留（fallback 双查询仍会把长尾查询抄送国内解析器），legacy =
-    国内解析器可见全部查询；"unknown" 表示此机器上该项不可探测）。
+    国内解析器可见全部查询；ipv6_bypass 取值 ok|exposed —— exposed
+    表示 LAN 接口上存在全局 IPv6，双栈客户端会经 IPv6 绕过纯 IPv4
+    网关；"unknown" 表示此机器上该项不可探测）。
     标准输出只有这一个对象，日志绝不混入。
