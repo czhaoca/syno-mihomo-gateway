@@ -18,6 +18,12 @@ What it DOES enforce on the committed files:
     (their value is an illustrative default; the installer rewrites it from
     REGISTRY_MODE), and REGISTRY_MODE must be present and SHIP as `acr` so a fresh
     copy defaults to the safe China path (operators opt into `docker` explicitly).
+  * container names — a frozen operator contract (owner mandate 2026-07-13): every
+    compose service pins `container_name:` (compose's default <project>-<service>-1
+    naming broke every `docker logs mihomo` runbook once already), the two core
+    services pin EXACTLY `mihomo` / `mihomo-ui`, and scripts/lib/compose.sh's
+    MIHOMO_CONTAINER / METACUBEXD_CONTAINER defaults mirror the same literals so
+    the script side can never drift from what compose actually creates.
 
 Mirrors scripts/ci/render_check.py: fail() -> exit 1, print OK: on pass. Needs PyYAML.
 """
@@ -30,6 +36,13 @@ import yaml
 REPO = Path(__file__).resolve().parents[2]
 COMPOSE = REPO / "docker-compose.yml"
 ENV_EXAMPLE = REPO / ".env.example"
+COMPOSE_SH = REPO / "scripts" / "lib" / "compose.sh"
+
+# The frozen container-name contract: compose service -> container_name literal,
+# plus the compose.sh shell default that must mirror it. A rename here is a
+# breaking operator-contract change and needs explicit owner sign-off.
+FROZEN_NAMES = {"mihomo": "mihomo", "metacubexd": "mihomo-ui"}
+FROZEN_SH_DEFAULTS = (("MIHOMO_CONTAINER", "mihomo"), ("METACUBEXD_CONTAINER", "mihomo-ui"))
 
 # The ONLY accepted compose image forms: a single env ref, optionally with a `:?`
 # required-guard (which fails closed). Defaults (:- / :=) and hardcoded refs are
@@ -64,6 +77,34 @@ def check_compose():
     return seen
 
 
+def check_container_names():
+    doc = yaml.safe_load(COMPOSE.read_text()) or {}
+    services = doc.get("services") or {}
+    for svc in FROZEN_NAMES:
+        if svc not in services:
+            fail(f"{COMPOSE.name}: core service '{svc}' is missing")
+    for name, spec in services.items():
+        cn = (spec or {}).get("container_name")
+        if not cn:
+            fail(f"{COMPOSE.name}: service '{name}' has no container_name: - compose would "
+                 f"assign a project-prefixed random name and break every script and runbook "
+                 f"that addresses the container by name")
+        if name in FROZEN_NAMES and cn != FROZEN_NAMES[name]:
+            fail(f"{COMPOSE.name}: service '{name}' pins container_name {cn!r}; the frozen "
+                 f"operator contract requires {FROZEN_NAMES[name]!r} (a rename needs explicit "
+                 f"owner sign-off)")
+    sh = COMPOSE_SH.read_text()
+    for var, frozen in FROZEN_SH_DEFAULTS:
+        m = re.search(rf'^{var}="([^"]*)"', sh, re.MULTILINE)
+        if not m:
+            fail(f"{COMPOSE_SH.name}: {var} default assignment not found (expected "
+                 f'{var}="{frozen}" at the top of the file)')
+        if m.group(1) != frozen:
+            fail(f"{COMPOSE_SH.name}: {var} defaults to {m.group(1)!r} but the frozen "
+                 f"container-name contract requires {frozen!r} - compose and the scripts "
+                 f"must always agree")
+
+
 def env_values():
     """Parse KEY=VALUE assignments from .env.example (one layer of quotes stripped)."""
     found = {}
@@ -89,10 +130,12 @@ def check_env_example():
 
 def main():
     imgs = check_compose()
+    check_container_names()
     check_env_example()
     print("OK: docker-compose images are fail-closed env refs "
-          f"({', '.join(imgs)}); .env.example defines MIHOMO_IMAGE/METACUBEXD_IMAGE "
-          "and REGISTRY_MODE ships as 'acr'.")
+          f"({', '.join(imgs)}); container names frozen (mihomo / mihomo-ui, every "
+          "service pinned, compose.sh mirrors them); .env.example defines "
+          "MIHOMO_IMAGE/METACUBEXD_IMAGE and REGISTRY_MODE ships as 'acr'.")
 
 
 if __name__ == "__main__":
