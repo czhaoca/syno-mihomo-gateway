@@ -189,6 +189,9 @@ bundle):
 - [ ] `sudo ./scripts/setup_network.sh` succeeded (macvlan + TUN created).
 - [ ] The guided installer reports the containers healthy.
 - [ ] The dashboard opens from a **non-NAS** LAN device at `http://<NAS_IP>:<WEB_UI_PORT>`.
+- [ ] The staged validator (`sudo sh scripts/validate_release.sh`) passes — its A4.5 gate
+      discovers the url-test groups live from the controller and **fails the release** if any
+      filtered group (`auto-x` / a `COUNTRY_GROUPS` entry) matches zero provider nodes.
 
 ## Updating an offline install
 

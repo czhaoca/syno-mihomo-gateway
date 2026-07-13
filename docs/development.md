@@ -258,7 +258,7 @@ docker compose --env-file .env.example config --quiet
 # release packaging safeguard (hermetic; builds both bundles in temp repos, needs git)
 python3 scripts/ci/package_check.py
 
-# the nine fake-Docker/PATH-stub TDD suites CI runs, plus the
+# the ten fake-Docker/PATH-stub TDD suites CI runs, plus the
 # release-validation helper's self-test (no NAS mutation)
 sh scripts/ci/dsm_installer_check.sh
 sh scripts/ci/lifecycle_check.sh

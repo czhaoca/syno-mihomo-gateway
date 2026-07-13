@@ -131,6 +131,32 @@ now_is_real() {
   esac
 }
 
+# urltest_groups - controller /group JSON on stdin -> the url-test pool
+# names, one per line. Every "name" key in /group is a group (member nodes
+# appear only as bare strings inside all[]); dropping the fixed selector and
+# builtin names leaves auto + the epic's filtered groups (auto-x + the
+# .env-driven country set) - DYNAMIC discovery, never a hardcoded list.
+# Mirrors the doctor's chk_proxy_groups enumeration (scripts/lib/checks.sh).
+urltest_groups() {
+  awk -F'"name":"' '{ for (i = 2; i <= NF; i++) { n = $i; sub(/".*/, "", n); print n } }' \
+    | grep -v -e '^PROXY$' -e '^STREAMING$' -e '^GLOBAL$' -e '^DIRECT$' \
+              -e '^REJECT$' -e '^REJECT-DROP$' -e '^PASS$' -e '^COMPATIBLE$'
+}
+
+# url_encode NAME - %XX-encode EVERY byte (over-encoding is legal per RFC
+# 3986) so the CJK country-group names survive as controller URL path
+# segments (mirrors the doctor's _pg_enc).
+url_encode() {
+  printf '%s' "$1" | od -An -v -tx1 | tr ' ' '\n' | grep -v '^$' \
+    | while IFS= read -r _ue_b; do printf '%%%s' "$_ue_b"; done
+}
+
+# filtered_real_count - real_node_count for the epic's FILTERED groups,
+# which render `empty-fallback: REJECT`: an emptied group reports
+# all:["REJECT"], so BOTH placeholder adapters are excluded (issue #35;
+# same rule as the doctor's _pg_real).
+filtered_real_count() { members_of | grep -v '^COMPATIBLE$' | grep -c -v '^REJECT$'; }
+
 # example_dns KEY - read a shipped default from the release .env.example
 # (the committed script itself must not hardcode DNS servers - CLAUDE.md).
 example_dns() { grep "^$1=" "$REL/.env.example" | head -n1 | cut -d= -f2-; }
@@ -244,6 +270,27 @@ EOF
   if [ "$_n" = 2 ]; then st_ok; else st_bad "real_node_count miscounted a live provider group: $_n"; fi
   _n=$(printf '{"name":"auto","type":"URLTest"}' | real_node_count)
   if [ "$_n" = 0 ]; then st_ok; else st_bad "real_node_count invented members with no all[]: $_n"; fi
+
+  # 3b) filtered-group release gate helpers (#35): group discovery from a
+  #     canned /group payload (CJK names kept, selectors/builtins dropped),
+  #     the %XX byte encoder against a HARDCODED expected string (verifies
+  #     the encoder independently), and placeholder exclusion counting BOTH
+  #     adapters - a live emptied filtered group reports all:["REJECT"]
+  #     (the epic's empty-fallback), not COMPATIBLE.
+  _gj='{"proxies":[{"name":"auto","type":"URLTest","all":["n1"]},{"name":"auto-x","type":"URLTest","all":["n1"]},{"name":"日本","type":"URLTest","all":["n1"]},{"name":"PROXY","type":"Selector","all":["auto"]},{"name":"STREAMING","type":"Selector","all":["PROXY"]},{"name":"GLOBAL","type":"Selector","all":["auto","PROXY"]}]}'
+  _names=$(printf '%s' "$_gj" | urltest_groups)
+  if [ "$_names" = 'auto
+auto-x
+日本' ]; then st_ok; else st_bad "urltest_groups got: $(printf '%s' "$_names" | tr '\n' ' ')"; fi
+  _e=$(url_encode 日本)
+  if [ "$_e" = '%e6%97%a5%e6%9c%ac' ]; then st_ok; else st_bad "url_encode(日本) got: $_e"; fi
+  _n=$(printf '{"all":["REJECT"],"emptyFallback":"REJECT","now":"REJECT"}' | filtered_real_count)
+  if [ "$_n" = 0 ]; then st_ok; else st_bad "filtered_real_count counted the REJECT placeholder: $_n"; fi
+  _n=$(printf '{"all":["COMPATIBLE"],"now":"COMPATIBLE"}' | filtered_real_count)
+  if [ "$_n" = 0 ]; then st_ok; else st_bad "filtered_real_count counted the COMPATIBLE placeholder: $_n"; fi
+  _n=$(printf '{"all":["HK01","REJECT","COMPATIBLE","JP02"],"now":"HK01"}' | filtered_real_count)
+  if [ "$_n" = 2 ]; then st_ok; else st_bad "filtered_real_count miscounted a mixed group: $_n"; fi
+
   _now=$(printf '{"all":["A","B"],"now":"HK09","type":"Selector"}' | effective_now)
   if [ "$_now" = "HK09" ]; then st_ok; else st_bad "effective_now got '$_now'"; fi
   for _m in COMPATIBLE DIRECT REJECT ""; do
@@ -307,7 +354,7 @@ EOF
 
   echo "validate_release self-test: $_stp passed, $_stf failed"
   [ "$_stf" -eq 0 ] || exit 1
-  echo "OK: measurement helpers (policy/knob/psn/split-core rule anchoring incl. bootstrap-pin + comment-prose immunity, provider-node counting + real-member egress gate, quoted-.env parsing, .env.example key coverage, scrubbed child env, doctor rc gate, summary accumulator, cache unpark)"
+  echo "OK: measurement helpers (policy/knob/psn/split-core rule anchoring incl. bootstrap-pin + comment-prose immunity, provider-node counting + real-member egress gate, filtered-group discovery + %XX name encoding + COMPATIBLE/REJECT placeholder exclusion, quoted-.env parsing, .env.example key coverage, scrubbed child env, doctor rc gate, summary accumulator, cache unpark)"
   exit 0
 }
 [ "$SELF_TEST" = 1 ] && self_test
@@ -512,6 +559,46 @@ if grep -q '^sniffer:' "$CFG" && grep -q '^  parse-pure-ip: true' "$CFG"; then
   ok "sniffer rendered (raw-IP flows recover hostnames - DNS-bypassing clients route correctly)"
 else
   bad "sniffer block missing from the render (SNIFFER_ENABLE sync failed?)"
+fi
+
+say "A4.5: filtered proxy groups carry real nodes (release gate - fails on empty)"
+# The A4 env just enabled the SHIPPED exclude + country-group defaults, so
+# the groups now rendered are exactly what a new install gets. A filtered
+# group matching ZERO provider nodes means the release's regexes do not fit
+# the validation airport's node names: selecting it REJECTs (fail closed by
+# design), and shipping that as a default is the false-PASS class this
+# script exists to kill - so staging FAILS here (issue #35 DEC-A; the
+# doctor's runtime posture stays warn for country groups). Discovery is
+# live from the controller; the retry absorbs the post-recreate window
+# while the provider cache loads.
+_FG_LIST=$(ctl_get /group | urltest_groups)
+if [ -z "$_FG_LIST" ]; then
+  bad "no url-test groups discoverable from the controller (/group)"
+else
+  _FG_N=0
+  while IFS= read -r _fg; do
+    [ -n "$_fg" ] || continue
+    [ "$_fg" = auto ] && continue  # full pool - counted by the cold-start leg
+    _FG_N=$((_FG_N+1))
+    _fn=0
+    for _i in 1 2 3; do
+      _fn=$(ctl_get "/proxies/$(url_encode "$_fg")" | filtered_real_count); _fn=${_fn:-0}
+      [ "$_fn" -gt 0 ] && break
+      sleep 5
+    done
+    if [ "$_fn" -gt 0 ]; then
+      ok "filtered group '$_fg': $_fn real node(s)"
+    else
+      bad "filtered group '$_fg' matches ZERO provider nodes - the shipped regex does not fit this airport's naming (selection REJECTs; fix AUTO_EXCLUDE_FILTER/COUNTRY_GROUPS in .env.example before release)"
+    fi
+  done <<FGEOF
+$_FG_LIST
+FGEOF
+  if [ "$_FG_N" -gt 0 ]; then
+    ok "filtered-group gate covered $_FG_N group(s), discovered live (no hardcoded list)"
+  else
+    echo "note: no filtered groups rendered (exclude/country knobs empty in this env)"
+  fi
 fi
 
 say "B: cold start - parked caches + black-holed tunnel resolvers"
