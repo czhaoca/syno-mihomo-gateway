@@ -40,6 +40,7 @@ services:
       - DNS_CN_NAMESERVER=${DNS_CN_NAMESERVER:-}
       - DNS_FOREIGN_NAMESERVER=${DNS_FOREIGN_NAMESERVER:-}
       - DNS_GEOIP_NO_RESOLVE=${DNS_GEOIP_NO_RESOLVE:-false}
+      - SNIFFER_ENABLE=${SNIFFER_ENABLE:-false}
       # Transparent-gateway TUN is ON by default (stack: system keeps the controller
       # reachable - mihomo #1493). LAN devices set their gateway + DNS to MIHOMO_IP and
       # route through mihomo. Set TUN_ENABLE=false in .env to run as a plain proxy.

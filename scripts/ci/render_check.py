@@ -36,11 +36,17 @@ Enforces:
     fake-ip-filter, and gives the provider the stable cache path
     ./proxies/my-airport.yaml; an IP-literal subscription host renders the
     panel pins as comments (no DNS needed) while the mirror+gstatic pins remain;
-  * the rule chain is the exact v1.3.10 quintuple (NETFLIX->STREAMING before
-    CN-direct before GEOLOCATION-!CN->PROXY before GEOIP fallthrough), the
-    STREAMING select group defaults to PROXY (day-one behavior unchanged
-    until an unlock node is pinned), and every '#group' detour fragment on a
-    DNS server entry names a real proxy-group;
+  * the rule chain is the exact v1.3.10 sextuple (LAN-direct with no-resolve
+    first — private/link-local destinations never ride the tunnel — then
+    NETFLIX->STREAMING before CN-direct before GEOLOCATION-!CN->PROXY before
+    the GEOIP fallthrough), the STREAMING select group defaults to PROXY
+    (day-one behavior unchanged until an unlock node is pinned), and every
+    '#group' detour fragment on a DNS server entry names a real proxy-group;
+  * the SNIFFER fence: unset/false renders WITHOUT the block byte-identically
+    (upgrade compat); true renders SNI/HTTP/QUIC sniffing with
+    parse-pure-ip + override-destination (restores domain routing for
+    LAN clients that resolve DNS outside the gateway — the v1.3.10
+    raw-IP-flows incident); garbage fails closed;
   * geox-url mirrors point at hosts reachable from mainland China — never the
     blocked upstream Git host or the flaky primary jsDelivr domain;
   * TUN is ON by default (transparent gateway): the DEFAULT render INCLUDES the tun block
@@ -101,18 +107,24 @@ DNS_FB = ["https://1.1.1.1/dns-query#auto", "tls://8.8.8.8:853#auto"]
 DNS_CN = ["https://223.4.4.4/dns-query", "https://120.53.53.102/dns-query"]
 DNS_FOREIGN = ["https://1.0.0.1/dns-query#auto", "https://8.8.4.4/dns-query#auto"]
 
-# The full rule chain (v1.3.10). Order is semantic: NETFLIX must precede
-# GEOLOCATION-!CN (netflix is a subset of it — a later rule would never
-# match), and both GEOSITE foreign rules must precede the GEOIP fallthrough
-# so listed domains never force a local lookup just for routing.
+# The full rule chain (v1.3.10). Order is semantic: LAN first (raw-IP flows
+# to private/link-local destinations go DIRECT before anything else — the
+# production incident where Windows Delivery Optimization peers at foreign
+# RFC1918 addresses rode the tunnel; 'lan' is HARDCODED in mihomo and needs
+# no geo database, and no-resolve is mandatory so the top-of-chain GEOIP
+# never forces a lookup of domain flows), NETFLIX before GEOLOCATION-!CN
+# (netflix is a subset — a later rule would never match), and both GEOSITE
+# foreign rules before the GEOIP,CN fallthrough so listed domains never
+# force a local lookup just for routing.
 RULES_BASE = [
+    "GEOIP,LAN,DIRECT,no-resolve",
     "GEOSITE,NETFLIX,STREAMING",
     "GEOSITE,CN,DIRECT",
     "GEOSITE,GEOLOCATION-!CN,PROXY",
     "GEOIP,CN,DIRECT",
     "MATCH,PROXY",
 ]
-RULES_NO_RESOLVE = [r + ",no-resolve" if r.startswith("GEOIP,") else r
+RULES_NO_RESOLVE = [r + ",no-resolve" if r == "GEOIP,CN,DIRECT" else r
                     for r in RULES_BASE]
 
 # Bootstrap DNS pins (2026-07-12 provider outage): mihomo must be able to
@@ -160,6 +172,7 @@ def render(raw: str, tun_auto_redirect: str | None = None,
            dns_cn: str | None = None,
            dns_foreign: str | None = None,
            geoip_no_resolve: str | None = None,
+           sniffer_enable: str | None = None,
            sub_line: str | None = None):
     """Run the real renderer in an isolated config directory."""
     with tempfile.TemporaryDirectory() as td:
@@ -195,6 +208,11 @@ def render(raw: str, tun_auto_redirect: str | None = None,
             env["DNS_FOREIGN_NAMESERVER"] = dns_foreign
         if geoip_no_resolve is not None:
             env["DNS_GEOIP_NO_RESOLVE"] = geoip_no_resolve
+        # Sniffer stays ABSENT unless a case opts in: unset must render
+        # byte-identical to the pre-sniffer output (upgrade compat), while
+        # .env.example ships true for new installs.
+        if sniffer_enable is not None:
+            env["SNIFFER_ENABLE"] = sniffer_enable
         proc = subprocess.run(["sh", str(RENDERER)], env=env,
                               capture_output=True, text=True)
         out = tdp / "config.yaml"
@@ -575,7 +593,7 @@ def main() -> None:
     # DNSPOLICY + DNSSPLIT fences stripped, the DNSLEGACY markers unwrapped,
     # and the {{GEOIP_NO_RESOLVE}} token removed. That is the mechanical
     # proof a pre-1.3.8 .env renders exactly as before.
-    for fence in ("DNSPOLICY", "DNSSPLIT", "DNSLEGACY"):
+    for fence in ("DNSPOLICY", "DNSSPLIT", "DNSLEGACY", "SNIFFER"):
         if (f"{{{{{fence}_BEGIN}}}}" not in raw
                 or f"{{{{{fence}_END}}}}" not in raw):
             fail(f"template must carry the {fence}_BEGIN/{fence}_END fence pair")
@@ -591,7 +609,8 @@ def main() -> None:
         fail(f"default rules must be the v1.3.10 chain in order "
              f"{RULES_BASE!r}: got {doc.get('rules')!r}")
     legacy_raw = unwrap_fence(
-        strip_fence(strip_fence(raw, "DNSPOLICY"), "DNSSPLIT"),
+        strip_fence(strip_fence(strip_fence(raw, "DNSPOLICY"), "DNSSPLIT"),
+                    "SNIFFER"),
         "DNSLEGACY").replace("{{GEOIP_NO_RESOLVE}}", "")
     proc_l, legacy = render(legacy_raw)
     if proc_l.returncode != 0 or legacy is None:
@@ -688,6 +707,44 @@ def main() -> None:
     if proc_nb.returncode == 0 or nb is not None:
         fail("invalid DNS_GEOIP_NO_RESOLVE was accepted or wrote config.yaml")
 
+    # 11b) Sniffer fence (v1.3.10 incident fix): LAN clients that resolve DNS
+    # outside the gateway produce raw-IP flows the GEOSITE rules cannot see;
+    # sniffing SNI/HTTP-host and OVERRIDING the destination restores
+    # domain routing (and defeats poisoned client-side answers - the node
+    # re-dials by hostname remotely). Unset/false renders WITHOUT the block,
+    # byte-identical (upgrade compat, proven via the composed strip in 10);
+    # true renders the full block; garbage fails closed.
+    if "sniffer" in (yaml.safe_load(rendered) or {}):
+        fail("default render must NOT contain a sniffer block (SNIFFER_ENABLE unset)")
+    proc_sn, sn = render(raw, sniffer_enable="true")
+    if proc_sn.returncode != 0 or sn is None:
+        fail(f"SNIFFER_ENABLE=true render failed: {proc_sn.stderr.strip()}")
+    assert_resolved("sniffer", sn)
+    if "\n\n\n" in sn:
+        fail("sniffer render contains doubled blank lines - the fence must sit "
+             "flush against its neighbors")
+    sndoc = yaml.safe_load(sn)
+    sniffer = sndoc.get("sniffer") or {}
+    for field, expected in (("enable", True),
+                            ("parse-pure-ip", True),
+                            ("override-destination", True),
+                            ("force-dns-mapping", True)):
+        if sniffer.get(field) is not expected:
+            fail(f"sniffer.{field} must be {expected!r}: got {sniffer.get(field)!r}")
+    for proto in ("TLS", "HTTP", "QUIC"):
+        if proto not in (sniffer.get("sniff") or {}):
+            fail(f"sniffer.sniff must cover {proto}: got {sniffer.get('sniff')!r}")
+    if sndoc.get("rules") != RULES_BASE:
+        fail(f"[sniffer] rules must be unchanged by the sniffer fence: "
+             f"got {sndoc.get('rules')!r}")
+    check_rule_targets(sndoc)
+    proc_sf, sf = render(raw, sniffer_enable="false")
+    if proc_sf.returncode != 0 or sf != rendered:
+        fail("SNIFFER_ENABLE=false must render byte-identical to unset")
+    proc_sb, sb = render(raw, sniffer_enable="on")
+    if proc_sb.returncode == 0 or sb is not None:
+        fail("invalid SNIFFER_ENABLE was accepted or wrote config.yaml")
+
     # 12) IP-literal subscription host: no DNS pin is possible or needed - the
     # panel entries in nameserver-policy and fake-ip-filter must degrade to
     # comments (never a bogus policy key), the mirror pins stay, and the render
@@ -719,11 +776,13 @@ def main() -> None:
           "pins (geodata mirror + gstatic + panel host) in nameserver-policy — mirror + "
           "panel in fake-ip-filter — on every variant with the stable provider cache "
           "path, degrading to mirror+gstatic on an IP-literal subscription host; rules "
-          "are the exact v1.3.10 quintuple with STREAMING defaulting to PROXY; DNS "
-          "detour fragments name real groups; geox-url hosts China-reachable; no "
-          "hardcoded literals; fences pair, tokens map bidirectionally, rule/group "
-          "targets resolve (never a provider), and every variant renders "
-          "placeholder-free.")
+          "are the exact v1.3.10 sextuple (LAN-direct no-resolve first) with STREAMING "
+          "defaulting to PROXY; the SNIFFER fence is inert when unset/false and "
+          "renders SNI/HTTP/QUIC sniffing with parse-pure-ip + override-destination "
+          "when true; DNS detour fragments name real groups; geox-url hosts "
+          "China-reachable; no hardcoded literals; fences pair, tokens map "
+          "bidirectionally, rule/group targets resolve (never a provider), and every "
+          "variant renders placeholder-free.")
 
 
 if __name__ == "__main__":

@@ -16,6 +16,7 @@ TMP="$CFG_DIR/.config.yaml.tmp"
 PRE="$CFG_DIR/.config.yaml.pre"
 PRE2="$CFG_DIR/.config.yaml.pre2"
 PRE3="$CFG_DIR/.config.yaml.pre3"
+PRE4="$CFG_DIR/.config.yaml.pre4"
 
 # Port/secret may default; DNS must come from .env (CLAUDE.md: no hardcoded DNS).
 : "${CONTROLLER_PORT:=9090}"
@@ -61,6 +62,14 @@ fi
 case "$DNS_GEOIP_NO_RESOLVE" in
   true|false) : ;;
   *) echo "ERROR: DNS_GEOIP_NO_RESOLVE must be true or false" >&2; exit 1 ;;
+esac
+# Sniffer (SNI/HTTP/QUIC hostname recovery for raw-IP flows). Default OFF
+# when unset so a pre-v1.3.10 .env renders byte-identical; .env.example
+# ships true, so new installs (and .envs synced from it) sniff by default.
+: "${SNIFFER_ENABLE:=false}"
+case "$SNIFFER_ENABLE" in
+  true|false) : ;;
+  *) echo "ERROR: SNIFFER_ENABLE must be true or false" >&2; exit 1 ;;
 esac
 if [ "$DNS_GEOIP_NO_RESOLVE" = true ]; then
   GEOIP_NO_RESOLVE=",no-resolve"
@@ -159,6 +168,13 @@ else
       -e '/{{DNSSPLIT_BEGIN}}/,/{{DNSSPLIT_END}}/d' \
       -e '/{{DNSLEGACY_BEGIN}}/d' -e '/{{DNSLEGACY_END}}/d' "$PRE2" > "$PRE3"
 fi
+#   SNIFFER block   - kept when SNIFFER_ENABLE=true (hostname recovery for
+#                     raw-IP flows from DNS-bypassing LAN clients).
+if [ "$SNIFFER_ENABLE" = true ]; then
+  sed -e '/{{SNIFFER_BEGIN}}/d' -e '/{{SNIFFER_END}}/d' "$PRE3" > "$PRE4"
+else
+  sed -e '/{{SNIFFER_BEGIN}}/,/{{SNIFFER_END}}/d' "$PRE3" > "$PRE4"
+fi
 
 # Pass 2 - token substitution (a disabled fence simply leaves no token behind;
 # EXTERNAL_UI_DIR renders inside a YAML double-quoted scalar like the secret).
@@ -176,8 +192,8 @@ sed \
   -e "s|{{GEOIP_NO_RESOLVE}}|$(esc "$GEOIP_NO_RESOLVE")|g" \
   -e "s|{{TUN_AUTO_REDIRECT}}|$(esc "$TUN_AUTO_REDIRECT")|g" \
   -e "s|{{EXTERNAL_UI_DIR}}|$(esc "$(yaml_dq "$EXTERNAL_UI_DIR")")|g" \
-  "$PRE3" > "$TMP"
-rm -f "$PRE" "$PRE2" "$PRE3"
+  "$PRE4" > "$TMP"
+rm -f "$PRE" "$PRE2" "$PRE3" "$PRE4"
 mv "$TMP" "$OUT"
 echo "Rendered $OUT"
 

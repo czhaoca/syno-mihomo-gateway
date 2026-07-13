@@ -185,7 +185,7 @@ self_test() {
   # 1) the shipped .env.example carries every key this script reads from it
   REL="$ROOT"
   for _k in DNS_NAMESERVER DNS_FALLBACK DNS_CN_NAMESERVER \
-            DNS_FOREIGN_NAMESERVER DNS_GEOIP_NO_RESOLVE; do
+            DNS_FOREIGN_NAMESERVER DNS_GEOIP_NO_RESOLVE SNIFFER_ENABLE; do
     if [ -n "$(example_dns "$_k")" ]; then st_ok; else st_bad ".env.example lacks $_k"; fi
   done
 
@@ -458,6 +458,11 @@ if grep -q "^  - 'GEOSITE,GEOLOCATION-!CN,PROXY'" "$CFG"; then
 else
   bad "GEOSITE,GEOLOCATION-!CN,PROXY rule missing from the render"
 fi
+if grep -q "^  - 'GEOIP,LAN,DIRECT,no-resolve'" "$CFG"; then
+  ok "LAN-direct rule rendered (private destinations never ride the tunnel)"
+else
+  bad "GEOIP,LAN,DIRECT,no-resolve rule missing from the render"
+fi
 
 say "A3: upgrade compatibility - the UNCHANGED .env must render the legacy config"
 if rendered_policy_on "$CFG"; then
@@ -484,9 +489,10 @@ case "$PH" in
   *) echo "note: no panel pin expected (IP-literal subscription host $PH)" ;;
 esac
 
-say "A4: enable split-horizon from the shipped .env.example defaults"
+say "A4: enable split-horizon + sniffer from the shipped .env.example defaults"
 cp -p "$ENV_FILE" "$ORIG"
-for _k in DNS_NAMESERVER DNS_FALLBACK DNS_CN_NAMESERVER DNS_FOREIGN_NAMESERVER; do
+for _k in DNS_NAMESERVER DNS_FALLBACK DNS_CN_NAMESERVER DNS_FOREIGN_NAMESERVER \
+          SNIFFER_ENABLE; do
   _v="$(example_dns "$_k")"
   [ -n "$_v" ] || { bad "no $_k in $REL/.env.example"; exit 3; }
   env_set "$_k" "$_v"
@@ -500,6 +506,11 @@ if rendered_split_core_on "$CFG"; then
   ok "v2 core rendered (foreign-by-default nameserver, fallback dual-query gone)"
 else
   bad "v2 core did NOT render (nameserver untunneled, or a fallback: line survives)"
+fi
+if grep -q '^sniffer:' "$CFG" && grep -q '^  parse-pure-ip: true' "$CFG"; then
+  ok "sniffer rendered (raw-IP flows recover hostnames - DNS-bypassing clients route correctly)"
+else
+  bad "sniffer block missing from the render (SNIFFER_ENABLE sync failed?)"
 fi
 
 say "B: cold start - parked caches + black-holed tunnel resolvers"

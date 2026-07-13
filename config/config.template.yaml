@@ -141,6 +141,34 @@ dns:
   fallback-filter:
     geoip: true
 # {{DNSLEGACY_END}}
+# {{SNIFFER_BEGIN}}
+# Sniffer (SNIFFER_ENABLE, default ON for new installs): recovers the REAL
+# hostname from raw-IP flows via TLS SNI / HTTP Host / QUIC. LAN clients that
+# resolve DNS outside the gateway (router-as-DNS via DHCP, browser DoH,
+# Android Private DNS) produce hostname-less flows the GEOSITE rules cannot
+# see - observed in production as facebook/netflix breaking while youtube
+# survived. parse-pure-ip sniffs exactly those flows; override-destination
+# replaces the client-resolved (possibly GFW-poisoned) address so the node
+# re-dials by hostname remotely, which both restores domain routing (incl.
+# the STREAMING group) and neutralizes poisoned client-side answers.
+# skip-domain carries the community-standard exclusions that break under
+# SNI override (Xiaomi IoT keep-alive, Apple push).
+sniffer:
+  enable: true
+  force-dns-mapping: true
+  parse-pure-ip: true
+  override-destination: true
+  sniff:
+    HTTP:
+      ports: [80, 8080-8880]
+    TLS:
+      ports: [443, 8443]
+    QUIC:
+      ports: [443, 8443]
+  skip-domain:
+    - 'Mijia Cloud'
+    - '+.push.apple.com'
+# {{SNIFFER_END}}
 
 log-level: info
 
@@ -218,6 +246,14 @@ proxy-groups:
 
 # Rules - deterministic domain routing first, IP fallthrough last.
 rules:
+  # Private/link-local destinations NEVER ride the tunnel. 'LAN' is hardcoded
+  # in mihomo (RFC 1918 + loopback + link-local + multicast) and needs no geo
+  # database, so this rule survives a failed geodata fetch; no-resolve is
+  # mandatory - without it this top-of-chain GEOIP would force a lookup of
+  # every domain flow before the GEOSITE rules run. Observed in production:
+  # Windows Delivery Optimization peers at foreign RFC1918 addresses were
+  # falling through to MATCH and riding the proxy.
+  - 'GEOIP,LAN,DIRECT,no-resolve'
   # Streaming rides its own dashboard-pinnable group, ahead of everything so
   # neither DNS games nor the latency-optimal node choice can misroute it.
   # (netflix is a subset of geolocation-!cn - this rule must come first.)
