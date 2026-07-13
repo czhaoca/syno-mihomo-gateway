@@ -282,11 +282,30 @@ LAN clients bypass the gateway's DNS (dnsleaktest still shows domestic)
   Fix:   in the router's DHCP hand out the gateway IP as BOTH gateway and
          the ONLY DNS server; renew the device's lease; disable browser
          secure-DNS / Android Private DNS; remove WARP/1.1.1.1 apps;
-         disable the router's IPv6 DNS announcements. The sniffer
+         turn off router IPv6 (see the next entry). The sniffer
          (SNIFFER_ENABLE=true, default on) repairs ROUTING for such
          devices by reading the hostname from the connection itself -
          but their lookups still leak to whatever resolver they use;
          only pointing their DNS at the gateway fixes privacy.
+
+--------------------------------------------------------------------------
+IPv6 carries traffic around the gateway (leaks persist, Netflix fails)
+--------------------------------------------------------------------------
+  Cause: the gateway handles IPv4 only. If the router announces IPv6 on
+         the LAN, every modern device gets an IPv6 address, route and
+         resolver - a complete path that never touches the gateway.
+         Lookups leak over IPv6, and services that prefer IPv6 (Netflix
+         does) connect directly through the ISP - blocked or region-
+         wrong - even though everything through the gateway is healthy.
+  Check: the doctor warns "ipv6_bypass: exposed" when the NAS itself has
+         a global IPv6 address (it sits on the same LAN, so the router's
+         announcements demonstrably reach every device).
+  Fix:   disable IPv6 on the router. UniFi: Settings > Internet > your
+         WAN > IPv6 Connection = Disabled, and Settings > Networks >
+         your LAN > IPv6 = Off. Other routers: turn off LAN IPv6 (at
+         minimum its RA/RDNSS and DHCPv6 announcements). Then renew
+         device leases or reboot devices - old IPv6 addresses live on
+         until they expire, so the doctor may keep warning for a while.
 
 --------------------------------------------------------------------------
 Netflix (or another streaming service) says "not available in your region"
@@ -306,6 +325,9 @@ Netflix (or another streaming service) says "not available in your region"
          IP - those flows miss the domain rule and ride PROXY instead,
          mixing exit addresses, which Netflix also rejects. Turn the
          device's private/custom DNS off so the gateway answers it.
+         And if the doctor warns "ipv6_bypass: exposed", fix that first:
+         the device streams over the ISP's IPv6 and never reaches the
+         gateway at all (see the IPv6 entry above).
 
 --------------------------------------------------------------------------
 Unlisted-domain lookups fail while the airport is down

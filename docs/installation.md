@@ -226,8 +226,11 @@ From a **LAN device that is not the NAS** (see the macvlan caveat in
   still shows the domestic resolvers, and blocked sites break — see
   [Troubleshooting](troubleshooting.md#lan-clients-bypass-the-gateways-dns-dnsleaktest-still-shows-domestic-resolvers).
   Verify from a client after renewing its DHCP lease: `nslookup facebook.com` must return a
-  `198.18.x.x` answer. Also disable IPv6 DNS announcements (RA/RDNSS) on the router — the
-  gateway is IPv4-only, and an IPv6 resolver path bypasses it entirely. ⚠️ If the
+  `198.18.x.x` answer. Also disable IPv6 on the router's LAN — not just its DNS
+  announcements — because the gateway is IPv4-only: a device holding a global IPv6 address
+  resolves *and routes* around the gateway entirely (see
+  [Troubleshooting](troubleshooting.md#dual-stack-ipv6-carries-traffic-around-the-gateway-leaks-persist-netflix-keeps-failing);
+  `doctor` warns `ipv6_bypass: exposed` while the path exists). ⚠️ If the
   container stops, those devices lose internet — keep `restart: always` (default) and consider
   the boot-up network task below.
 

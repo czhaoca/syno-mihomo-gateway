@@ -206,8 +206,10 @@ sudo sh scripts/doctor.sh          # needs root; add --egress for a real GET thr
   无法命中、dnsleaktest 依旧显示国内解析器、被墙网站打不开——见
   [故障排查](troubleshooting.md#局域网客户端绕过网关-dnsdnsleaktest-仍显示国内解析器)。
   在客户端更新 DHCP 租约后验证：`nslookup facebook.com` 必须返回 `198.18.x.x`。
-  同时在路由器上关闭 IPv6 DNS 通告（RA/RDNSS）——网关只处理 IPv4，IPv6 解析路径会
-  完全绕过它。⚠️ 如果容器停止，这些设备会失去网络连接 —— 请保持
+  同时在路由器上关闭整个 LAN 的 IPv6——不只是它的 DNS 通告——因为网关只处理 IPv4：
+  拿到全局 IPv6 地址的设备会在解析*和路由*两个层面完全绕过网关（见
+  [故障排查](troubleshooting.md#双栈-ipv6-让流量整体绕过网关泄漏时有时无netflix-一直打不开)；
+  通路存在期间 `doctor` 会告警 `ipv6_bypass: exposed`）。⚠️ 如果容器停止，这些设备会失去网络连接 —— 请保持
   `restart: always`（默认），并考虑下文的开机网络任务。
 
 ## 8. 启用自动更新（推荐）

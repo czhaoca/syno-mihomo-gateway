@@ -178,6 +178,20 @@ release validations end `--revert` (upgrades never migrate by design).
   the gateway-only wording was the root doc bug. Follow-ups recorded: node UDP support
   (QUIC silently falls to DIRECT when the selected node lacks UDP), opt-in DoT/DoH-blocking
   rule tiers, a doctor client-adoption check.
+- **Second residual (same day, post-sniffer):** leak became intermittent and Netflix stayed
+  broken. Cause found on the owner's LAN: the upstream router announces **IPv6**
+  (RA/RDNSS), so dual-stack clients hold a global v6 address + default route + resolver — a
+  complete path that never crosses the IPv4-only gateway (the NAS's own LAN interface
+  carrying a global v6 address is the on-box witness). Lookups leak over v6 and
+  IPv6-preferring services (Netflix) dial the ISP's v6 directly, failing on a filtered
+  network while the v4 path stays healthy; the sniffer can't help since those packets never
+  arrive. Shipped: doctor `ipv6_bypass` check (ok|exposed|unknown, 18→19 checks, warn while
+  a global v6 sits on `PARENT_INTERFACE`), troubleshooting + installation §7 now mandate
+  disabling LAN IPv6 at the router (not merely RDNSS). The router-side change itself is the
+  fix; native v6 proxying (dual-stack fake-ip + v6 macvlan) recorded as a possible future
+  feature, not planned. The NAS's DSM interface keeping domestic DNS is deliberate
+  (boot-safety, v1.3.8 decision) and unrelated — DSM's own lookups never traverse the
+  gateway.
 
 ## Work breakdown
 

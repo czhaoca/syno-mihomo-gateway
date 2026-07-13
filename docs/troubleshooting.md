@@ -520,7 +520,8 @@ the gateway; a real/public address means bypass.
 **Fix:** make the router's DHCP hand out `MIHOMO_IP` as **both gateway and the only DNS**
 (see [Installation §7](installation.md#7-point-devices-at-the-gateway)), renew the client's
 lease, disable browser secure-DNS / Android Private DNS, uninstall or disable WARP/1.1.1.1
-apps, and turn off router IPv6 RA/RDNSS (an IPv6 resolver path bypasses the IPv4-only gateway).
+apps, and turn off router IPv6 (see the next entry — an IPv6 path skips the whole gateway,
+not just its DNS).
 Since v1.3.10 the **sniffer** (`SNIFFER_ENABLE=true`) recovers hostnames from raw-IP flows via
 SNI, so *routing* self-heals even for bypassing clients — streaming reaches its group and
 poisoned client answers are re-dialed by hostname at the node — but such clients' queries
@@ -530,6 +531,35 @@ rules (Android *strict* Private DNS then fails closed — set devices to automat
 sites stall through the tunnel in bursts, also check the airport's entry relay:
 `docker logs mihomo | grep 'connect error'` — repeated `i/o timeout` on the provider's entry
 host is airport-side flakiness, not a gateway rule problem.
+
+## Dual-stack IPv6 carries traffic around the gateway (leaks persist, Netflix keeps failing)
+
+**Symptom:** DNS still leaks "sometimes" and IPv6-capable services — Netflix first among
+them — stay broken even though `doctor` is otherwise green, the sniffer is on, and the
+client's IPv4 DNS points at the gateway; `doctor` warns `ipv6_bypass: exposed`.
+
+**Cause:** the gateway is IPv4-only — a v4 macvlan joined to the LAN, `ipv6: false` in its
+DNS. When the router announces IPv6 on the LAN (RA/RDNSS/DHCPv6), every dual-stack client
+gets a global IPv6 address, an IPv6 default route, and usually an IPv6 resolver — a complete
+path that **never crosses the gateway**. Lookups leak to the ISP resolvers over v6, and
+services that prefer IPv6 (Netflix does) connect directly over the ISP's v6 — blocked or
+geo-wrong on a filtered network — so they fail even though the v4 path through the gateway
+is healthy. The sniffer cannot help here: these packets never arrive at the gateway.
+
+**Diagnosis:** `doctor` warns `ipv6_bypass: exposed` when the NAS's LAN interface carries a
+global IPv6 address — the NAS sits on the same L2 segment as the clients, so a global
+address there proves the router's announcements reach everyone. On a client, any global
+(non-`fe80::`) address in `ipconfig` / `ip -6 addr` means that client has the bypass path.
+
+**Fix:** turn IPv6 off at the router, so no client is handed a path around the gateway. On
+UniFi: Settings → Internet → your WAN → **IPv6 Connection = Disabled**, and Settings →
+Networks → your LAN → **IPv6 = Off** (this stops the RA/RDNSS announcements). On other
+routers, disable LAN IPv6 or at minimum its RA/RDNSS + DHCPv6 announcements. Then renew
+client leases or reboot clients — RA-assigned addresses live until their advertised lifetime
+expires, so `doctor` may keep warning for a while after the router change. Disabling IPv6
+per-device also works but does not scale. Proxying IPv6 natively (dual-stack fake-ip plus a
+v6 macvlan) is a much larger feature; on a filtered network the correct posture today is
+v4-only, with everything steered through the gateway.
 
 ## Netflix (or another streaming service) says "not available in your region"
 
@@ -550,7 +580,9 @@ unlock node: some devices (smart TVs, Android **Private DNS**) bypass the gatewa
 connect by raw IP — since v1.3.10 the sniffer recovers those flows' hostnames from SNI so they
 still reach `STREAMING`, but a device whose own resolver returns poisoned garbage may still
 misbehave; disable its private/hardcoded DNS so the gateway answers its lookups (see the
-"LAN clients bypass the gateway's DNS" entry above).
+"LAN clients bypass the gateway's DNS" entry above). And if `doctor` warns
+`ipv6_bypass: exposed`, fix that first: a dual-stack device streams over the ISP's IPv6 and
+never reaches the gateway at all (see the IPv6 entry above).
 
 ## Unlisted-domain lookups fail while the airport is down
 

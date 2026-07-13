@@ -184,7 +184,10 @@ LAN IP. Do these checks from a DIFFERENT LAN device:
      domestic resolvers, and blocked sites break (see TROUBLESHOOTING.txt,
      "LAN clients bypass the gateway's DNS"). Verify on the client:
      nslookup facebook.com must answer 198.18.x.x. Then browse the
-     internet from it to confirm traffic flows.
+     internet from it to confirm traffic flows. Also disable IPv6 on
+     the router's LAN - the gateway is IPv4-only, and a device with an
+     IPv6 address routes around it entirely (see TROUBLESHOOTING.txt,
+     the IPv6 entry; the doctor warns "ipv6_bypass: exposed").
 
 Run the structural diagnostic at any time with:
 
