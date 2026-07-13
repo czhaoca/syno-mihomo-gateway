@@ -699,3 +699,10 @@ Correct the named `.env` key (or subscription line), then **Redeploy**
 A green render activates the new config and removes the marker automatically. On a **first
 boot** (no previous config) the container fails hard instead of falling back — fix the config
 and recreate.
+
+The **doctor** reports this state on every pass while the marker exists: the
+`config_rejected` check shows `render-failed`/`config-test-failed` (result BROKEN, also in
+`gateway.sh doctor --json`), returning to ok after the next green redeploy. Note that the
+scheduled auto-update's health gate does **not** read the marker — a gateway running on its
+last-good config looks healthy to it — so an on-demand doctor run (installer menu 5, or
+`gateway.sh doctor`) is what surfaces a rejected edit.

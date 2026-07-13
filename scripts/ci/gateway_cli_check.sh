@@ -489,7 +489,7 @@ if [ "$_fp_run" = 1 ]; then
          FAKE_CF_RUNNING FAKE_CF_HEALTH SMG_SCHED_TASK_DIR SMG_SCHED_EVENT_DB \
          SMG_SCHED_CRONTAB
 
-  # healthy baseline: all 20 checks ok-side in --json, HEALTHY rc 0 in both
+  # healthy baseline: all 21 checks ok-side in --json, HEALTHY rc 0 in both
   dpar
   [ "$_jrc" = 0 ] && [ "$_hrc" = 0 ] \
     && ok || fail "full-parity baseline rc: json=$_jrc human=$_hrc (want 0/0; derr: $(tail -n2 "$TMP/derr" | tr '\n' ' '))"
@@ -498,7 +498,7 @@ if [ "$_fp_run" = 1 ]; then
              'image_arch ok' 'proxy_groups ok' 'dashboard running' \
              'update_task ok' 'boot_task ok' \
              'cloudflared ok' 'subscription ok' 'host_dns ok' 'geodata cached' \
-             'dns_privacy v2' 'ipv6_bypass ok'; do
+             'dns_privacy v2' 'config_rejected ok' 'ipv6_bypass ok'; do
     # shellcheck disable=SC2086 # deliberate: NAME VALUE split
     jval $_pc && ok || fail "healthy doctor --json lacks ${_pc%% *}:${_pc##* }"
   done
@@ -726,6 +726,21 @@ if [ "$_fp_run" = 1 ]; then
     && grep -q 'no filtered proxy groups' "$TMP/dout" \
     && ok || fail "proxy_groups-preepic parity (json=$_jrc human=$_hrc)"
   unset FAKE_PG_MODE
+
+  # config_rejected (the entrypoint gate's marker exists, #38): the last
+  # render was rejected and mihomo runs on the PREVIOUS config - BROKEN in
+  # both modes, rc 3, and the human line says the edit is NOT applied;
+  # removing the marker (what a green swap does) restores ok/HEALTHY.
+  printf 'reason: config-test-failed\ntime: 2026-07-13T00:00:00Z\nscrubbed output\n' \
+    > "$DATA/config/.config.yaml.rejected"
+  dpar
+  jval config_rejected config-test-failed && [ "$_jrc" = 3 ] && [ "$_hrc" = 3 ] \
+    && grep -q 'ERROR.*NOT applied' "$TMP/derr" \
+    && ok || fail "config_rejected flip parity (json=$_jrc human=$_hrc)"
+  rm -f "$DATA/config/.config.yaml.rejected"
+  dpar
+  jval config_rejected ok && [ "$_jrc" = 0 ] && [ "$_hrc" = 0 ] \
+    && ok || fail "config_rejected clear: want ok rc 0 (json=$_jrc human=$_hrc)"
 
   # restore the outer suite's world exactly as the earlier sections left it
   cp "$TMP/env.keep" "$ENV_FILE"

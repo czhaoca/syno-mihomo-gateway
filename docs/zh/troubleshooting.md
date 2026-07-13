@@ -608,3 +608,9 @@ cat ../syno-mihomo-gateway-data/config/.config.yaml.rejected
 `docker compose --env-file ../syno-mihomo-gateway-data/.env up -d --force-recreate mihomo`。
 渲染通过后新配置即刻生效，标记文件会被自动清除。**首次启动**（没有旧配置可回退）时容器
 会直接报错退出而不是回退——修好配置后重建容器即可。
+
+标记文件存在期间，**doctor** 每次体检都会报告这一状态：`config_rejected` 检查显示
+`render-failed`/`config-test-failed`（结果 BROKEN，`gateway.sh doctor --json` 同样输出），
+下一次渲染通过并重新部署后自动恢复 ok。注意：计划任务的自动更新健康门并**不**读取该
+标记——回退到上一份配置运行的网关在它看来是健康的——所以需要主动运行 doctor
+（安装器菜单 5，或 `gateway.sh doctor`）才能发现被拒绝的修改。

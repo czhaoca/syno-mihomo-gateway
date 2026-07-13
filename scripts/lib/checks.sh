@@ -372,6 +372,40 @@ PGEOF
   CHECK_DETAIL="filtered proxy groups all have real nodes (auto-x${_pg_country_n:+ + $_pg_country_n country group(s)})"
 }
 
+# config_rejected - consumer of the entrypoint gate's rejection marker (#38,
+# the #36 loudness rider). scripts/mihomo_entrypoint.sh keeps the last-good
+# config running when a render or `mihomo -t` fails and records the rejection
+# in $CONFIG_STATE_DIR/.config.yaml.rejected (0600, secrets scrubbed, removed
+# again on the next green swap). A present marker means the operator's LAST
+# EDIT IS SILENTLY NOT LIVE while everything else reports green - an
+# operator-must-act state (bad), mirroring proxy_groups default-empty. The
+# value mirrors the marker's own frozen reason token (render-failed |
+# config-test-failed), degrading to 'rejected' when the first line is
+# unparseable; absence (or no config dir yet) is health. Host-side file read
+# only - no docker exec, no controller call - so it also fires when mihomo
+# itself is crash-looping (first-boot hard fail), which is why it lives in
+# checks_run's UNGATED tail, not behind the mihomo-running gate.
+chk_config_rejected() {
+  _crj_f="${CONFIG_STATE_DIR:-}/.config.yaml.rejected"
+  if [ -z "${CONFIG_STATE_DIR:-}" ] || [ ! -f "$_crj_f" ]; then
+    CHECK_VALUE=ok CHECK_SEV=ok
+    CHECK_DETAIL="no rejected render - the live config.yaml is the last one that passed the config test"
+    return 0
+  fi
+  # first two lines only; sanitize '|' so a crafted marker can never break
+  # the record framing (the same rule proxy_groups applies to group names)
+  _crj_reason="$(sed -n '1s/^reason: //p' "$_crj_f" 2>/dev/null | tr '|' '/')"
+  _crj_time="$(sed -n '2s/^time: //p' "$_crj_f" 2>/dev/null | tr '|' '/')"
+  case "$_crj_reason" in
+    render-failed|config-test-failed) CHECK_VALUE="$_crj_reason" ;;
+    *) CHECK_VALUE=rejected ;;
+  esac
+  CHECK_SEV=bad
+  CHECK_DETAIL="the last config render was REJECTED (${_crj_reason:-unreadable reason}${_crj_time:+, $_crj_time}) - mihomo is running on the PREVIOUS config and the latest .env/subscription edit is NOT applied"
+  CHECK_HINT="      read the scrubbed marker: cat <data-dir>/config/.config.yaml.rejected - fix the named value in .env, then redeploy: sudo sh ./install.sh (Redeploy); a green render clears this automatically"
+  return 0
+}
+
 # _c_emit NAME - run chk_NAME and print its record (plus any hint lines).
 # Leaves CHECK_VALUE/CHECK_SEV set for the caller's gate logic.
 _c_emit() {
@@ -416,5 +450,6 @@ checks_run() {
   _c_emit host_dns
   _c_emit geodata
   _c_emit dns_privacy
+  _c_emit config_rejected
   _c_emit ipv6_bypass
 }

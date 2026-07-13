@@ -203,6 +203,49 @@ run_ep "$ST" AUTO_EXCLUDE_FILTER='bad`tick'
 sed -n 1p "$ST/cfg/.config.yaml.rejected" | grep -q '^reason: render-failed$' \
   && ok || fail "first-boot render-reject: marker must say render-failed"
 
+# --- reader side (#38, DEC-B lockstep): the doctor's config_rejected check
+# consumes the EXACT markers the scenarios above just wrote - writer and
+# reader are asserted against the same real output, so the frozen contract
+# cannot drift apart. checks.sh sources standalone (proxy_groups_check.sh
+# precedent); chk_config_rejected is a host-side file read only.
+run_rd() { # CFG_DIR - emit the config_rejected record hermetically
+  env -i PATH="/usr/bin:/bin" CONFIG_STATE_DIR="$1" \
+    sh -c '. "$1/scripts/lib/checks.sh" && _c_emit config_rejected' _ "$TREE" \
+    > "$OUT_F" 2>&1 || true
+}
+
+# 9) green state (marker cleared by the swap) -> ok record
+run_rd "$TMP/state-green/cfg"
+grep -q '^config_rejected|ok|ok|' "$OUT_F" \
+  && ok || fail "reader green: want ok record, got: $(cat "$OUT_F")"
+
+# 10) -t rejection marker -> config-test-failed, severity bad, fix hint
+run_rd "$TMP/state-trej/cfg"
+grep -q '^config_rejected|config-test-failed|bad|' "$OUT_F" \
+  && ok || fail "reader t-reject: want config-test-failed|bad, got: $(cat "$OUT_F")"
+grep -q '^#hint|.*edeploy' "$OUT_F" \
+  && ok || fail "reader t-reject: want a redeploy remediation hint"
+grep -q 'NOT applied' "$OUT_F" \
+  && ok || fail "reader t-reject: detail must say the edit is NOT applied"
+grep -q 'hunter2secret' "$OUT_F" \
+  && fail "reader t-reject: subscription token leaked into the doctor record" || ok
+
+# 11) renderer rejection marker -> cause-distinct render-failed, bad
+run_rd "$TMP/state-rrej/cfg"
+grep -q '^config_rejected|render-failed|bad|' "$OUT_F" \
+  && ok || fail "reader render-reject: want render-failed|bad, got: $(cat "$OUT_F")"
+
+# 12) unparseable-but-present marker -> defensive 'rejected', bad; a crafted
+#     first line can never break the '|' record framing
+_CRD="$TMP/state-corrupt"; mkdir -p "$_CRD/cfg"
+printf 'garbage|first|line\nno time here\n' > "$_CRD/cfg/.config.yaml.rejected"
+run_rd "$_CRD/cfg"
+grep -q '^config_rejected|rejected|bad|' "$OUT_F" \
+  && ok || fail "reader corrupt: want rejected|bad, got: $(cat "$OUT_F")"
+_rec_fields="$(grep '^config_rejected|' "$OUT_F" | head -n1 | awk -F'|' '{print NF}')"
+[ "$_rec_fields" = 4 ] \
+  && ok || fail "reader corrupt: record framing broken ($_rec_fields fields): $(cat "$OUT_F")"
+
 echo "mihomo_entrypoint_check: $pass passed, $failn failed"
 [ "$failn" = 0 ] || exit 1
-echo "OK: entrypoint gate - render-to-temp + mihomo -t, whole-file swap on green only, last-good fallback with cause-distinct 0600 scrubbed marker (render-failed/config-test-failed), first-boot hard fail, secrets never in marker/log/exec'd-mihomo-env, temps never linger"
+echo "OK: entrypoint gate - render-to-temp + mihomo -t, whole-file swap on green only, last-good fallback with cause-distinct 0600 scrubbed marker (render-failed/config-test-failed), first-boot hard fail, secrets never in marker/log/exec'd-mihomo-env, temps never linger; doctor config_rejected reader in lockstep (ok/render-failed/config-test-failed/rejected, '|'-safe framing)"
