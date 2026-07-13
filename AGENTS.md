@@ -48,9 +48,10 @@
 - **Pipeline**: `.woodpecker.yml` — 9 blocking steps: `validate-compose`, `validate-yaml`,
   `render-config` (`scripts/ci/render_check.py`, also enforces the no-hardcoded-DNS rule),
   `cli-contract` (generated CLI docs must regenerate byte-identical), `compose-policy`,
-  `package-check` (bundle + leak gate), `privacy-check`, `dsm-shell-tests` (nine BusyBox-sh
+  `package-check` (bundle + leak gate), `privacy-check`, `dsm-shell-tests` (ten BusyBox-sh
   suites — `dsm_installer_check`, `lifecycle_check`, `auto_update_check`, `cloudflared_check`,
-  `generic_update_check`, `gateway_cli_check`, `migrate_legacy_check`, `seed_provider_check`, `pi_installer_check` —
+  `generic_update_check`, `gateway_cli_check`, `migrate_legacy_check`, `seed_provider_check`,
+  `proxy_groups_check`, `pi_installer_check` —
   plus `validate_release.sh --self-test`), and `shellcheck`. Full step table:
   docs/development.md. Triggers on `main` and `master`.
 

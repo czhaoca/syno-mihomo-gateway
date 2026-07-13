@@ -563,3 +563,21 @@ sudo sh scripts/seed_provider.sh
 空组降级出的 `COMPATIBLE` 占位符一律不计。后台拉取失败不会卸载已加载的节点，所以这份
 种子在拉取路径恢复之前可跨重启存活。若本机拉取也返回 `4xx`，请到机场面板重新复制订阅
 链接（令牌已更换/套餐到期）；若是超时，说明面板此刻从你的网络不可达。
+
+## doctor 报告过滤分组为空（`proxy_groups`：auto-x 拒绝流量 / 某国家分组没有节点）
+
+**现象：** `doctor` 显示 `ERROR default route auto-x has NO nodes …`（结果 BROKEN）或
+`WARN country group(s) match no provider node: …`（DEGRADED）；在面板中选中该分组时所有
+连接都被拒绝而不是被转发。
+
+**原因：** 过滤正则匹配不到任何机场节点。`AUTO_EXCLUDE_FILTER`（默认线路 `auto-x`）或某条
+`COUNTRY_GROUPS` 与机场的节点命名不再吻合——机场会不打招呼地改名（香港01 → HK-01）。
+这些分组按设计**失败关闭**（`empty-fallback: REJECT`）：流量被拦截，绝不悄悄直连出口——
+doctor 就是让你发现*原因*的地方。
+
+**解决：** 对照面板 Proxies 页的实际节点名检查正则，修改 `.env` 中的
+`AUTO_EXCLUDE_FILTER` / 对应的 `COUNTRY_GROUPS` 条目（语法见[配置说明](configuration.md)），
+然后**重新部署**渲染（`sudo sh ./install.sh`）。修复期间的应急做法：在面板 PROXY 选择器里
+选 `auto`（未过滤的完整节点池）。若 doctor 报告的是 `provider-empty`——**所有** url-test
+分组皆空——那是机场节点全部消失（见上一节），先做种子恢复
+（`sudo sh scripts/seed_provider.sh`），与过滤器无关。

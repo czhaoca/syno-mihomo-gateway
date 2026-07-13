@@ -162,9 +162,9 @@ DNS settings
       HK-heavy plan the latency picker lands on one almost every time.
       The full, unfiltered "auto" group stays one dashboard click away.
       If the pattern matches EVERY node, auto-x blocks traffic instead
-      of silently bypassing the proxy. Leave empty to render without
-      the auto-x group at all (your existing config, byte for byte).
-      A backtick is refused.
+      of silently bypassing the proxy (the doctor reports it). Leave
+      empty to render without the auto-x group at all (your existing
+      config, byte for byte). A backtick is refused.
 
   COUNTRY_GROUPS
       One-click "fastest node in country X" from the dashboard:
@@ -175,7 +175,7 @@ DNS settings
       name nodes in Chinese (美国01, 新加坡05...) - edit the entries
       to match YOUR airport's naming. A group that matches no node
       blocks traffic when selected instead of silently bypassing the
-      proxy. Names must not contain spaces or reuse auto / auto-x /
+      proxy (the doctor reports it). Names must not contain spaces or reuse auto / auto-x /
       PROXY / STREAMING / DIRECT / REJECT; backticks and malformed
       entries refuse to render. Leave empty for no generated groups
       (your existing config, byte for byte).

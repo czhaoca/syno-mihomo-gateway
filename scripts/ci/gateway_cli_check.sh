@@ -68,6 +68,27 @@ case "$1" in
       *ip_forward*) echo "${FAKE_IP_FORWARD:-1}" ;;
       *sys/class/net*) exit "${FAKE_TUN_IF_RC:-0}" ;;
       *'/version'*) exit "${FAKE_CTL_RC:-0}" ;;
+      # proxy_groups controller endpoints (chk_proxy_groups): /group lists the
+      # groups; per-group /proxies/<name> URLs arrive %XX-encoded byte by byte
+      # (auto=%61%75%74%6f, auto-x=%61%75%74%6f%2d%78, JPX=%4a%50%58 - the
+      # auto-x pattern must precede auto, whose encoding is its prefix).
+      *'/group'*)
+        case "${FAKE_PG_MODE:-healthy}" in
+          preepic) printf '{"proxies":[{"name":"auto","type":"URLTest","all":["n1","n2"]},{"name":"PROXY","type":"Selector","all":["auto","DIRECT","REJECT"]},{"name":"STREAMING","type":"Selector","all":["PROXY","auto","DIRECT"]},{"name":"GLOBAL","type":"Selector","all":["auto","PROXY"]}]}' ;;
+          *) printf '{"proxies":[{"name":"auto","type":"URLTest","all":["n1","n2"]},{"name":"auto-x","type":"URLTest","all":["n1"]},{"name":"JPX","type":"URLTest","all":["n1"]},{"name":"PROXY","type":"Selector","all":["auto-x","auto","JPX","DIRECT","REJECT"]},{"name":"STREAMING","type":"Selector","all":["PROXY","auto","JPX","DIRECT"]},{"name":"GLOBAL","type":"Selector","all":["auto","PROXY"]}]}' ;;
+        esac ;;
+      *'/proxies/%61%75%74%6f%2d%78'*)
+        if [ "${FAKE_PG_MODE:-healthy}" = default-empty ]; then
+          printf '{"all":["REJECT"],"now":"REJECT"}'
+        else
+          printf '{"all":["n1"],"now":"n1"}'
+        fi ;;
+      *'/proxies/%4a%50%58'*)
+        case "${FAKE_PG_MODE:-healthy}" in
+          country-empty|default-empty) printf '{"all":["REJECT"],"now":"REJECT"}' ;;
+          *) printf '{"all":["n1"],"now":"n1"}' ;;
+        esac ;;
+      *'/proxies/%61%75%74%6f'*) printf '{"all":["n1","n2"],"now":"n1"}' ;;
     esac
     exit 0 ;;
   network)
@@ -468,13 +489,14 @@ if [ "$_fp_run" = 1 ]; then
          FAKE_CF_RUNNING FAKE_CF_HEALTH SMG_SCHED_TASK_DIR SMG_SCHED_EVENT_DB \
          SMG_SCHED_CRONTAB
 
-  # healthy baseline: all 19 checks ok-side in --json, HEALTHY rc 0 in both
+  # healthy baseline: all 20 checks ok-side in --json, HEALTHY rc 0 in both
   dpar
   [ "$_jrc" = 0 ] && [ "$_hrc" = 0 ] \
     && ok || fail "full-parity baseline rc: json=$_jrc human=$_hrc (want 0/0; derr: $(tail -n2 "$TMP/derr" | tr '\n' ' '))"
   for _pc in 'env ok' 'docker ok' 'arch ok' 'tun_device ok' 'network ok' \
              'compose ok' 'mihomo running' 'tun_gateway ok' 'controller ok' \
-             'image_arch ok' 'dashboard running' 'update_task ok' 'boot_task ok' \
+             'image_arch ok' 'proxy_groups ok' 'dashboard running' \
+             'update_task ok' 'boot_task ok' \
              'cloudflared ok' 'subscription ok' 'host_dns ok' 'geodata cached' \
              'dns_privacy v2' 'ipv6_bypass ok'; do
     # shellcheck disable=SC2086 # deliberate: NAME VALUE split
@@ -680,6 +702,30 @@ if [ "$_fp_run" = 1 ]; then
     fail "ipv6_bypass-unknown: doctor.sh mentioned IPv6 on an unprobeable box"
   else ok; fi
   unset FAKE_IP6_RC
+
+  # proxy_groups country-empty (a COUNTRY_GROUPS regex matches nothing):
+  # degraded/WARN in both modes, rc 2, remediation hint names the knob
+  FAKE_PG_MODE=country-empty; export FAKE_PG_MODE
+  dpar
+  jval proxy_groups country-empty && [ "$_jrc" = 2 ] && [ "$_hrc" = 2 ] \
+    && grep -q 'WARN.*country group' "$TMP/derr" \
+    && grep -q 'COUNTRY_GROUPS' "$TMP/derr" \
+    && ok || fail "proxy_groups-country-empty parity (json=$_jrc human=$_hrc)"
+
+  # proxy_groups default-empty (auto-x matches no node): BROKEN both, rc 3
+  FAKE_PG_MODE=default-empty; export FAKE_PG_MODE
+  dpar
+  jval proxy_groups default-empty && [ "$_jrc" = 3 ] && [ "$_hrc" = 3 ] \
+    && grep -q 'ERROR.*auto-x' "$TMP/derr" \
+    && ok || fail "proxy_groups-default-empty parity (json=$_jrc human=$_hrc)"
+
+  # proxy_groups pre-epic config (no filtered groups rendered): ok both, rc 0
+  FAKE_PG_MODE=preepic; export FAKE_PG_MODE
+  dpar
+  jval proxy_groups ok && [ "$_jrc" = 0 ] && [ "$_hrc" = 0 ] \
+    && grep -q 'no filtered proxy groups' "$TMP/dout" \
+    && ok || fail "proxy_groups-preepic parity (json=$_jrc human=$_hrc)"
+  unset FAKE_PG_MODE
 
   # restore the outer suite's world exactly as the earlier sections left it
   cp "$TMP/env.keep" "$ENV_FILE"

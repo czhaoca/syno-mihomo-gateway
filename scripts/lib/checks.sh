@@ -271,6 +271,107 @@ chk_ipv6_bypass() {
   fi
 }
 
+# proxy_groups - zero-node guard for the FILTERED url-test groups (#34).
+# A filter matching zero provider nodes is only observable at runtime: the
+# epic renders every filtered group (auto-x + the COUNTRY_GROUPS set) with
+# empty-fallback REJECT, so an emptied group blackholes its traffic instead
+# of silently leaking DIRECT - either way the operator finds out HERE.
+# Group discovery is DYNAMIC from the controller (/group), never a hardcoded
+# list; counting excludes BOTH placeholder adapters: COMPATIBLE (mihomo's
+# default for an empty group - Direct-typed, the leak class) and REJECT (our
+# empty-fallback). DEC-A cold-start grace: when EVERY url-test group is
+# empty the provider itself has no nodes (cold start or dead subscription) -
+# report that single condition with the seeding runbook instead of blaming
+# the filters. A config with no filtered groups at all (pre-epic .env) is ok.
+#
+# _pg_ctl PATH - controller GET from INSIDE the container (a macvlan child
+# is unreachable from its own host); bearer token over stdin, never argv.
+_pg_ctl() {
+  _pg_url="http://127.0.0.1:${CONTROLLER_PORT:-9090}$1"
+  if [ -n "${CONTROLLER_SECRET:-}" ]; then
+    # shellcheck disable=SC2016 # $SMG_AUTH expands in the container shell
+    printf 'Authorization: Bearer %s\n' "$CONTROLLER_SECRET" | \
+      "$DOCKER_BIN" exec -i "$MIHOMO_CONTAINER" \
+      sh -c 'IFS= read -r SMG_AUTH; exec wget -q -T 10 -O - --header "$SMG_AUTH" "$1"' _ "$_pg_url" 2>/dev/null
+  else
+    "$DOCKER_BIN" exec "$MIHOMO_CONTAINER" wget -q -T 10 -O - "$_pg_url" 2>/dev/null
+  fi
+}
+# _pg_enc NAME - %XX-encode EVERY byte (over-encoding is legal per RFC 3986)
+# so operator-defined CJK group names survive as a URL path segment.
+_pg_enc() {
+  printf '%s' "$1" | od -An -v -tx1 | tr ' ' '\n' | grep -v '^$' \
+    | while IFS= read -r _pe_b; do printf '%%%s' "$_pe_b"; done
+}
+# _pg_real NAME - real member count: all[] minus the placeholder adapters.
+_pg_real() {
+  _pg_ctl "/proxies/$(_pg_enc "$1")" \
+    | sed -n 's/.*"all":\[\([^]]*\)\].*/\1/p' | tr ',' '\n' \
+    | sed -n 's/^"\(.*\)"$/\1/p' | grep -v '^COMPATIBLE$' | grep -c -v '^REJECT$'
+}
+chk_proxy_groups() {
+  _pg_raw="$(_pg_ctl /group)" || _pg_raw=''
+  if [ -z "$_pg_raw" ]; then
+    CHECK_VALUE=unknown CHECK_SEV=silent
+    return 0
+  fi
+  # Every "name" key in /group is a group name (member nodes appear only as
+  # bare strings inside all[]). Country names cannot contain whitespace
+  # (renderer-validated) and cannot shadow the builtins skipped below.
+  _pg_names="$(printf '%s' "$_pg_raw" \
+    | awk -F'"name":"' '{ for (i = 2; i <= NF; i++) { n = $i; sub(/".*/, "", n); print n } }')"
+  _pg_have_autox=0; _pg_autox_empty=0; _pg_country_n=0
+  _pg_empty=''; _pg_any_real=0
+  while IFS= read -r _pg_n; do
+    [ -n "$_pg_n" ] || continue
+    case "$_pg_n" in
+      PROXY|STREAMING|GLOBAL|DIRECT|REJECT|REJECT-DROP|PASS|COMPATIBLE) continue ;;
+    esac
+    _pg_c="$(_pg_real "$_pg_n")"; _pg_c=${_pg_c:-0}
+    [ "$_pg_c" -gt 0 ] && _pg_any_real=1
+    case "$_pg_n" in
+      auto) : ;;  # full pool - its emptiness IS the provider condition below
+      auto-x)
+        _pg_have_autox=1
+        [ "$_pg_c" -eq 0 ] && _pg_autox_empty=1 ;;
+      *)
+        _pg_country_n=$((_pg_country_n + 1))
+        if [ "$_pg_c" -eq 0 ]; then
+          # '|' frames the check record - never let a crafted name break it
+          _pg_sane="$(printf '%s' "$_pg_n" | tr '|' '/')"
+          _pg_empty="${_pg_empty:+$_pg_empty, }$_pg_sane"
+        fi ;;
+    esac
+  done <<PGEOF
+$_pg_names
+PGEOF
+  if [ "$_pg_any_real" -eq 0 ]; then
+    CHECK_VALUE=provider-empty CHECK_SEV=warn
+    CHECK_DETAIL="every url-test group is empty - the provider has no nodes yet (cold start or dead subscription), not a filter problem"
+    CHECK_HINT="      seed the provider from the host: sudo sh scripts/seed_provider.sh - see docs/troubleshooting.md (Provider has no nodes)"
+    return 0
+  fi
+  if [ "$_pg_have_autox" -eq 0 ] && [ "$_pg_country_n" -eq 0 ]; then
+    CHECK_VALUE=ok CHECK_SEV=ok
+    CHECK_DETAIL="no filtered proxy groups rendered (AUTO_EXCLUDE_FILTER/COUNTRY_GROUPS unset)"
+    return 0
+  fi
+  if [ "$_pg_autox_empty" -eq 1 ]; then
+    CHECK_VALUE=default-empty CHECK_SEV=bad
+    CHECK_DETAIL="default route auto-x has NO nodes - AUTO_EXCLUDE_FILTER matches every provider node, so auto-x traffic is REJECTED (fail closed)${_pg_empty:+; empty country group(s): $_pg_empty}"
+    CHECK_HINT="      fix AUTO_EXCLUDE_FILTER in .env and redeploy: sudo sh ./install.sh (Redeploy); stopgap: pick 'auto' in the dashboard PROXY selector"
+    return 0
+  fi
+  if [ -n "$_pg_empty" ]; then
+    CHECK_VALUE=country-empty CHECK_SEV=warn
+    CHECK_DETAIL="country group(s) match no provider node: $_pg_empty - selecting them REJECTs (fail closed)"
+    CHECK_HINT="      tune the COUNTRY_GROUPS regex(es) in .env to your airport's node names, then redeploy - see docs/configuration.md"
+    return 0
+  fi
+  CHECK_VALUE=ok CHECK_SEV=ok
+  CHECK_DETAIL="filtered proxy groups all have real nodes (auto-x${_pg_country_n:+ + $_pg_country_n country group(s)})"
+}
+
 # _c_emit NAME - run chk_NAME and print its record (plus any hint lines).
 # Leaves CHECK_VALUE/CHECK_SEV set for the caller's gate logic.
 _c_emit() {
@@ -302,6 +403,7 @@ checks_run() {
       _c_emit tun_gateway
       _c_emit controller
       _c_emit image_arch
+      _c_emit proxy_groups
     fi
     _c_emit dashboard
     _c_emit update_task

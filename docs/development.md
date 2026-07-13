@@ -61,6 +61,7 @@ scripts/
     dsm_installer_check.sh    # fake-Docker suite for the installer flows
     migrate_legacy_check.sh   # hermetic (env -i) suite for the legacy flat-install importer
     seed_provider_check.sh    # hermetic suite for the provider-cache recovery tool
+    proxy_groups_check.sh     # hermetic suite for the doctor's filtered-group zero-node guard
     lifecycle_check.sh        # fake-Docker inventory/cleanup safety suite
     lib/assert.sh             # shared assertions for the sh suites
 .woodpecker.yml               # CI: 9 blocking steps (see the CI table below)
@@ -148,7 +149,7 @@ Runs on push/PR to `main` and `master`:
 | `compose-policy` | `python scripts/ci/compose_policy_check.py` — asserts **fail-closed** image refs: every compose `image:` is exactly `${VAR}`/`${VAR:?msg}` (no defaults, no hardcoded refs) and `.env.example` defines the image vars and ships `REGISTRY_MODE=acr` (ACR default; `docker` upstream is an explicit opt-in, not forbidden); also freezes the **container-name contract** — every service pins `container_name:`, the core pair is exactly `mihomo`/`mihomo-ui`, and `scripts/lib/compose.sh`'s defaults mirror them (a rename is a breaking operator-contract change) |
 | `package-check` | `python scripts/ci/package_check.py` — builds the dev, enduser, **and pi** bundles in throwaway repos and proves **no secret can ship** (planted `.env`/subscription/`config.yaml` absent from the archives' names *and* bytes), checksums verify, the enduser bundle prunes developer/`.md`/CI files (including the Pi port), ships the installer + `.txt` guides, contains no identity string, and its leak-gate fails closed on an injected leak; the pi bundle ships the Pi port on top of the enduser set, keeps the identity gate fail-closed, and tolerates the upstream forge URLs its runtime needs |
 | `privacy-check` | Scans tracked files and reachable blobs for private operational identifiers, credentials, private keys, and accidentally tracked runtime files (+ the gate's self-test) |
-| `dsm-shell-tests` | Nine BusyBox `sh` suites with fake Docker/Compose/service CLIs: `dsm_installer_check`, `lifecycle_check`, `auto_update_check`, `cloudflared_check`, `generic_update_check`, `gateway_cli_check`, `migrate_legacy_check`, `seed_provider_check`, `pi_installer_check` (the Raspberry Pi port's shared seams) — plus `validate_release.sh --self-test`, the unit checks of the on-NAS release-validation helper's measurement functions |
+| `dsm-shell-tests` | Ten BusyBox `sh` suites with fake Docker/Compose/service CLIs: `dsm_installer_check`, `lifecycle_check`, `auto_update_check`, `cloudflared_check`, `generic_update_check`, `gateway_cli_check`, `migrate_legacy_check`, `seed_provider_check`, `proxy_groups_check` (the doctor's zero-node guard for filtered proxy groups), `pi_installer_check` (the Raspberry Pi port's shared seams) — plus `validate_release.sh --self-test`, the unit checks of the on-NAS release-validation helper's measurement functions |
 | `shellcheck` | `sh -n` parse-checks **every** `*.sh` in the repo, then `shellcheck -x` on 19 targets: `install.sh`, `install-pi.sh`, `gateway.sh`, `auto_update.sh`, `pi/auto_update_lite.sh`, `pi/lite_ctl.sh`, `install_scheduler.sh`, `setup_network.sh`, `render_config.sh`, `package.sh`, `doctor.sh`, `state_diff.sh`, `migrate_legacy.sh`, `seed_provider.sh`, `bootstrap.sh`, `lib/container.sh`, `lib/targets.sh`, `lib/geodata.sh`, `validate_release.sh` (sourced libs followed in-context) |
 
 ## The CLI contract (generated files)
@@ -267,6 +268,7 @@ sh scripts/ci/generic_update_check.sh
 sh scripts/ci/gateway_cli_check.sh
 sh scripts/ci/migrate_legacy_check.sh
 sh scripts/ci/seed_provider_check.sh
+sh scripts/ci/proxy_groups_check.sh
 sh scripts/ci/pi_installer_check.sh
 sh scripts/validate_release.sh --self-test
 

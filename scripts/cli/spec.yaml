@@ -312,9 +312,16 @@ json_output:
     "rolled_back","updated_names","failed_names","rolled_back_names"}.
     doctor --json emits {"verb","ok","exit_code","checks":[...]} with
     check names env, docker, arch, tun_device, network, compose, mihomo,
-    tun_gateway, controller, image_arch, dashboard, update_task, boot_task,
+    tun_gateway, controller, image_arch, proxy_groups, dashboard,
+    update_task, boot_task,
     cloudflared, subscription, host_dns, geodata, dns_privacy, ipv6_bypass
     (update_task/boot_task verify the DSM Task Scheduler deployment;
+    proxy_groups is ok|default-empty|country-empty|provider-empty for the
+    filtered url-test groups - default-empty means the auto-x routing
+    default matches no provider node (its traffic is REJECTED, fail
+    closed), country-empty means some COUNTRY_GROUPS entr(ies) match no
+    node, provider-empty means EVERY url-test group is empty (a cold or
+    dead provider - seed it, not a filter problem);
     cloudflared is ok|down|absent for the optional tunnel container;
     host_dns probes every host resolver; geodata is cached|missing;
     dns_privacy is v2|v1|legacy for the rendered DNS profile - v2 =
@@ -337,10 +344,16 @@ json_output:
     "rolled_back","updated_names","failed_names","rolled_back_names"}。
     doctor --json 输出 {"verb","ok","exit_code","checks":[...]}，检查名为
     env、docker、arch、tun_device、network、compose、mihomo、tun_gateway、
-    controller、image_arch、dashboard、update_task、boot_task、cloudflared、
+    controller、image_arch、proxy_groups、dashboard、update_task、boot_task、
+    cloudflared、
     subscription、host_dns、geodata、dns_privacy、
     ipv6_bypass（update_task/boot_task
-    校验 DSM 任务计划的部署情况；cloudflared 对可选的隧道容器报告
+    校验 DSM 任务计划的部署情况；proxy_groups 针对过滤型 url-test 分组，
+    取值 ok|default-empty|country-empty|provider-empty —— default-empty
+    表示默认线路 auto-x 匹配不到任何节点（其流量被 REJECT，失败关闭），
+    country-empty 表示某些 COUNTRY_GROUPS 条目匹配不到节点，
+    provider-empty 表示所有 url-test 分组皆空（机场节点未就绪——先做
+    种子恢复，不是过滤器的问题）；cloudflared 对可选的隧道容器报告
     ok|down|absent；host_dns 逐一探测主机解析器；geodata 为
     cached|missing；dns_privacy 反映渲染出的 DNS 配置档，取值
     v2|v1|legacy —— v2 = 分域（境外优先）隐私模式，v1 = v1.3.10 之前的

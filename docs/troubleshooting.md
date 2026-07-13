@@ -645,3 +645,23 @@ placeholder of an empty group are never counted. mihomo keeps loaded nodes when 
 pull fails, so the seed survives restarts until the fetch path heals. If the host fetch itself
 fails with a `4xx`, re-copy the subscription URL from the airport panel (token rotated / plan
 expired); on a timeout, the panel is unreachable from your network at that moment.
+
+## Doctor reports an empty filtered group (`proxy_groups`: auto-x REJECTs / a country group has no nodes)
+
+**Symptom:** `doctor` shows `ERROR default route auto-x has NO nodes …` (result BROKEN) or
+`WARN country group(s) match no provider node: …` (DEGRADED); selecting the named group in the
+dashboard rejects every connection instead of routing it.
+
+**Cause:** a filter regex matches zero provider nodes. `AUTO_EXCLUDE_FILTER` (the `auto-x`
+default route) or a `COUNTRY_GROUPS` entry no longer fits the airport's node naming — airports
+rename nodes (香港01 → HK-01) without notice. The groups fail **closed** by design
+(`empty-fallback: REJECT`): traffic is blocked, never silently routed DIRECT out the uplink —
+the doctor is how you find out *why*.
+
+**Fix:** compare the pattern against the live node names (dashboard Proxies view), adjust the
+regex in `.env` (`AUTO_EXCLUDE_FILTER` / the `COUNTRY_GROUPS` entry — syntax notes in
+[configuration](configuration.md)), then re-render with **Redeploy** (`sudo sh ./install.sh`).
+Stopgap while you fix it: pick `auto` (the unfiltered full pool) in the dashboard's PROXY
+selector. If doctor instead reports `provider-empty` — **every** url-test group empty — the
+provider itself has no nodes: that is the [Provider has no nodes](#provider-has-no-nodes-foreign-sites-dead-node-list-empty)
+condition above, not a filter problem (`sudo sh scripts/seed_provider.sh`).
