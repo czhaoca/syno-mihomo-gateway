@@ -794,6 +794,102 @@ done
   exit 0
 ) || exit 1
 
+# --- deploy-time filtered-group surfacing (#37): the verify table carries a
+# filtered-groups row (real chk_proxy_groups, reused never forked) and an empty
+# auto-x lands a correctly-attributed end-of-report diagnosis (names the
+# AUTO_EXCLUDE_FILTER knob, never the subscription) while the deploy still
+# succeeds (DEC-A warn-and-continue). Sourcing flow_deploy WITHOUT checks.sh
+# must keep report_success alive (guarded row -> skip).
+(
+  set -eu
+  fail() { echo "FAIL: $*" >&2; exit 1; }
+  REPO_ROOT="$ROOT"
+  msg() { echo "$1"; }
+  msgf() { _mk="$1"; shift; echo "$_mk $*"; }
+  ui_step() { :; }; ui_info() { :; }; ui_ok() { :; }
+  ui_say() { printf '%s\n' "$*"; }
+  ui_warn() { printf '%s\n' "$*"; }
+  ui_error() { printf '%s\n' "$*"; }
+  diagnose() { printf 'DIAG %s | FIX %s\n' "$1" "${2:-}"; }
+  # shellcheck source=scripts/installer/flow_deploy.sh
+  . "$ROOT/scripts/installer/flow_deploy.sh"
+  mihomo_controller_probe() { return 0; }
+  mihomo_gateway_probe() { return 0; }
+  _ui_running() { echo true; }
+  detect_parent_interface() { echo eth0; }
+  _iface_ipv4() { echo 192.168.1.10; }
+  TUN_ENABLE=true CONTROLLER_SECRET='' WEB_UI_PORT=8080
+  MIHOMO_IP=192.168.1.100 CONTROLLER_PORT=9090
+  MIHOMO_CONTAINER=mihomo METACUBEXD_CONTAINER=mihomo-ui
+  DOCKER_BIN=true
+
+  # 0) checks.sh not sourced (standalone flow use): guarded row -> skip, alive
+  _out="$(report_success 2>&1)" || fail "report_success died without checks.sh"
+  case "$_out" in
+    *'verify_skip verify_groups'*) : ;;
+    *) fail "missing guarded skip row without checks.sh: $_out" ;;
+  esac
+
+  # The real check against a stub controller. Canned %XX answers copied from
+  # gateway_cli_check.sh (auto=%61%75%74%6f, auto-x=%61%75%74%6f%2d%78,
+  # JPX=%4a%50%58 - the auto-x pattern must precede auto, whose encoding is
+  # its prefix). DOCKER_BIN resolves to a shell function: only the URL
+  # (always the last exec arg) matters.
+  # shellcheck source=scripts/lib/checks.sh
+  . "$ROOT/scripts/lib/checks.sh"
+  fake_docker() {
+    _fd_u=''; for _fd_a in "$@"; do _fd_u="$_fd_a"; done
+    case "$_fd_u" in
+      */group)
+        printf '{"proxies":[{"name":"auto","type":"URLTest","all":["n1","n2"]},{"name":"auto-x","type":"URLTest","all":["n1"]},{"name":"JPX","type":"URLTest","all":["n1"]},{"name":"PROXY","type":"Selector","all":["auto-x","auto","JPX","DIRECT","REJECT"]},{"name":"STREAMING","type":"Selector","all":["PROXY","auto","JPX","DIRECT"]},{"name":"GLOBAL","type":"Selector","all":["auto","PROXY"]}]}' ;;
+      */proxies/%61%75%74%6f%2d%78*)
+        if [ "${FAKE_PG_MODE:-healthy}" = default-empty ]; then
+          printf '{"all":["REJECT"],"now":"REJECT"}'
+        else
+          printf '{"all":["n1"],"now":"n1"}'
+        fi ;;
+      */proxies/%4a%50%58*) printf '{"all":["n1"],"now":"n1"}' ;;
+      */proxies/%61%75%74%6f*) printf '{"all":["n1","n2"],"now":"n1"}' ;;
+    esac
+    return 0
+  }
+  DOCKER_BIN=fake_docker
+
+  # 1) healthy: OK row, no filtered-group diagnosis
+  FAKE_PG_MODE=healthy
+  _out="$(report_success 2>&1)" || fail "healthy report_success failed"
+  case "$_out" in
+    *'verify_ok verify_groups'*) : ;;
+    *) fail "healthy: missing groups OK row: $_out" ;;
+  esac
+  case "$_out" in
+    *diag_pg_*) fail "healthy: unexpected filtered-group diagnosis: $_out" ;;
+  esac
+
+  # 2) empty auto-x: FAILED row + end-of-report diagnosis attributing the
+  #    filter knob (after rep_next, the operator's last screen); the report
+  #    itself still succeeds (DEC-A warn-and-continue, deploy exit 0)
+  FAKE_PG_MODE=default-empty
+  _out="$(report_success 2>&1)" || fail "DEC-A violated: report_success failed on empty auto-x"
+  case "$_out" in
+    *'verify_failed verify_groups'*) : ;;
+    *) fail "default-empty: missing FAILED groups row: $_out" ;;
+  esac
+  case "$_out" in
+    *'DIAG diag_pg_default | FIX diag_pg_default_fix'*) : ;;
+    *) fail "default-empty: missing correctly-attributed diagnosis: $_out" ;;
+  esac
+  case "$_out" in
+    *rep_next*'DIAG diag_pg_default'*) : ;;
+    *) fail "default-empty: diagnosis must land AFTER rep_next (end of report): $_out" ;;
+  esac
+  case "$_out" in
+    *AUTO_EXCLUDE_FILTER*) : ;;
+    *) fail "default-empty: detail must name AUTO_EXCLUDE_FILTER: $_out" ;;
+  esac
+  exit 0
+) || exit 1
+
 # --- dns privacy upgrade offer (v1.3.10): fires, migrates, preserves, declines ---
 # offer_dns_privacy_upgrade migrates a pre-split .env to the v2 profile: the
 # split pair comes from .env.example (never literals, #27), a plain-IP

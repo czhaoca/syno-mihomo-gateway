@@ -51,6 +51,11 @@ INST="$REPO_ROOT/scripts/installer"
 . "$LIB/lifecycle.sh"
 # shellcheck source=scripts/lib/resolve.sh
 . "$LIB/resolve.sh"
+# checks.sh last of the libs: its header deps (common/scheduler/registry/
+# compose/geodata/cloudflared/network/resolve) are all sourced above. The
+# deploy report reuses its proxy_groups check (#37) - never forked.
+# shellcheck source=scripts/lib/checks.sh
+. "$LIB/checks.sh"
 # shellcheck source=scripts/installer/envedit.sh
 . "$INST/envedit.sh"
 # shellcheck source=scripts/installer/preflight.sh

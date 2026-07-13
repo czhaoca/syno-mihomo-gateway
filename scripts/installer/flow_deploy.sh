@@ -206,6 +206,21 @@ _ui_running() {
   "$DOCKER_BIN" inspect -f '{{.State.Running}}' "$METACUBEXD_CONTAINER" 2>/dev/null
 }
 
+# _report_pg_probe - post-deploy filtered-group surfacing (#37): run the
+# doctor's proxy_groups check (scripts/lib/checks.sh - reused, never forked)
+# once and stash the record for the verify-table row and the end-of-report
+# block. DEC-A: reporting only - never fails the deploy. Guarded: several CI
+# subshells source this flow without checks.sh; they get the skip row.
+_report_pg_probe() {
+  SMG_PG_VALUE=unknown SMG_PG_DETAIL=''
+  command -v chk_proxy_groups >/dev/null 2>&1 || return 0
+  CHECK_VALUE='' CHECK_SEV=ok CHECK_DETAIL='' CHECK_HINT=''
+  chk_proxy_groups 2>/dev/null || return 0
+  SMG_PG_VALUE="${CHECK_VALUE:-unknown}"
+  SMG_PG_DETAIL="$CHECK_DETAIL"
+  return 0
+}
+
 # _report_verify_table - the post-deploy verification table: re-probe what the
 # health gate proved and show it as explicit rows, so success is demonstrated,
 # not asserted. Informational only - never fails the deploy.
@@ -232,6 +247,14 @@ _report_verify_table() {
   else
     ui_say "$(msgf verify_failed "$(msg verify_ui)")"
   fi
+  _report_pg_probe
+  case "$SMG_PG_VALUE" in
+    ok)            ui_say "$(msgf verify_ok "$(msg verify_groups)")" ;;
+    default-empty) ui_say "$(msgf verify_failed "$(msg verify_groups)")" ;;
+    country-empty|provider-empty)
+                   ui_say "$(msgf verify_warn "$(msg verify_groups)")" ;;
+    *)             ui_say "$(msgf verify_skip "$(msg verify_groups)")" ;;
+  esac
   if [ -n "${CONTROLLER_SECRET:-}" ]; then
     ui_say "$(msg rep_secret_loc)"
   else
@@ -262,6 +285,25 @@ report_success() {
   ui_say "$(msgf rep_reach_test "${MIHOMO_IP:-<mihomo-ip>}" "${CONTROLLER_PORT:-9090}")"
   ui_say ""
   ui_say "$(msg rep_next)"
+  # Filtered-group finding LAST, below the success banner and the dashboard
+  # help, so the operator's FINAL screen carries it (#37 DEC-A placement
+  # rider: a mid-flow line is drowned by the success report). The deploy
+  # still succeeds - empty filtered groups REJECT (fail closed) and recovery
+  # is one dashboard click + a .env fix.
+  case "${SMG_PG_VALUE:-unknown}" in
+    default-empty)
+      ui_say ""
+      diagnose "$(msg diag_pg_default)" "$(msg diag_pg_default_fix)"
+      [ -z "${SMG_PG_DETAIL:-}" ] || ui_say "  $SMG_PG_DETAIL" ;;
+    country-empty)
+      ui_say ""
+      diagnose "$(msg diag_pg_country)" "$(msg diag_pg_country_fix)"
+      [ -z "${SMG_PG_DETAIL:-}" ] || ui_say "  $SMG_PG_DETAIL" ;;
+    provider-empty)
+      ui_say ""
+      diagnose "$(msg diag_pg_provider)" "$(msg diag_pg_provider_fix)"
+      [ -z "${SMG_PG_DETAIL:-}" ] || ui_say "  $SMG_PG_DETAIL" ;;
+  esac
   return 0
 }
 
