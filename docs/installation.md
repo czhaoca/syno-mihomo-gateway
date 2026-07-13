@@ -189,11 +189,14 @@ the reuse/cleanup decisions safely.
 sudo docker compose --env-file ../syno-mihomo-gateway-data/.env up -d
 ```
 
-On start, the mihomo entrypoint renders `config.yaml` into the persistent data directory
-(`../syno-mihomo-gateway-data/config/`, mounted at `/root/.config/mihomo` in the container —
-not the release tree's `config/`) from the template + your subscription + `.env`, then launches
-mihomo. If the subscription URL or DNS values are missing it **fails loudly** (the container
-won't run a poisoned config). Check logs:
+On start, the mihomo entrypoint renders a **candidate** config into the persistent data
+directory (`../syno-mihomo-gateway-data/config/`, mounted at `/root/.config/mihomo` in the
+container — not the release tree's `config/`) from the template + your subscription + `.env`,
+tests it with `mihomo -t`, and only then activates it. If the render or the test fails (missing
+subscription URL/DNS, or an invalid `AUTO_EXCLUDE_FILTER`/`COUNTRY_GROUPS` pattern), the
+**previous** config keeps running and `.config.yaml.rejected` records why — on a first install
+with no previous config it **fails loudly** instead (the container never runs a poisoned
+config). Check logs:
 
 ```bash
 docker logs mihomo

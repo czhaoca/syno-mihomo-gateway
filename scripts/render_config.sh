@@ -11,7 +11,11 @@ set -eu
 CFG_DIR="${MIHOMO_CONFIG_DIR:-/root/.config/mihomo}"
 TEMPLATE="${MIHOMO_TEMPLATE:-$CFG_DIR/config.template.yaml}"
 SUB_FILE="$CFG_DIR/subscription.txt"
-OUT="$CFG_DIR/config.yaml"
+# Output override for the container entrypoint gate (scripts/mihomo_entrypoint.sh):
+# it renders to a temp path and swaps over config.yaml only on a green `mihomo -t`.
+# Unset (every other caller: CI, Pi systemd, installer flows) renders to
+# config.yaml exactly as before - byte-identical behavior.
+OUT="${MIHOMO_RENDER_OUT:-$CFG_DIR/config.yaml}"
 TMP="$CFG_DIR/.config.yaml.tmp"
 PRE="$CFG_DIR/.config.yaml.pre"
 PRE2="$CFG_DIR/.config.yaml.pre2"

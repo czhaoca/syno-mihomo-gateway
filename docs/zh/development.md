@@ -91,7 +91,9 @@ docs/                         # 手册（EN）+ docs/zh 中文镜像 + docs/*.tx
 ## 渲染器（`render_config.sh`）
 
 将模板转换为 `config.yaml` 的唯一可信来源，由 mihomo 入口点（通过 `./scripts:/scripts:ro` 挂载执行
-`sh /scripts/render_config.sh && exec /mihomo`）和 CI **两者**共同调用。它遵循
+`scripts/mihomo_entrypoint.sh` —— 它先用 `MIHOMO_RENDER_OUT` 渲染到临时路径，再用 `mihomo -t`
+测试结果，只有测试通过才整体替换生效中的 `config.yaml`；失败时上一份有效配置继续运行，并写入
+0600、已抹除敏感值的 `.config.yaml.rejected` 标记）和 CI **两者**共同调用。它遵循
 `MIHOMO_CONFIG_DIR`（默认 `/root/.config/mihomo`），以便测试可以将其指向临时目录。关键的正确性要点：
 
 - **订阅解析：** 去除可选的开头 `label=` 和结尾空白，同时*保留* URL 内部的 `=` ——

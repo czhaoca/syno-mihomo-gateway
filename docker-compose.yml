@@ -56,15 +56,17 @@ services:
       - TUN_AUTO_REDIRECT=${TUN_AUTO_REDIRECT:-false}
       - MIHOMO_TEMPLATE=/etc/syno-mihomo/config.template.yaml
 
-    # Entrypoint: render config.yaml from the template (subscription URL + env tokens)
-    # via the shared, CI-tested renderer, then start Mihomo. The renderer fails loudly
-    # on an empty/garbled subscription URL or missing DNS, so a poisoned config never
-    # reaches mihomo (and the updater's health gate catches a bad start). See
-    # scripts/render_config.sh and docs/development.md.
+    # Entrypoint: render to a TEMP config via the shared, CI-tested renderer,
+    # gate it with `mihomo -t`, and swap it over the live config.yaml only on
+    # green. A hand-edited .env that poisons the render (e.g. an invalid
+    # AUTO_EXCLUDE_FILTER/COUNTRY_GROUPS pattern, which panics mihomo at
+    # startup) can no longer crash-loop the gateway or destroy the last-good
+    # config: the previous config keeps running and .config.yaml.rejected
+    # marks the rejection. First boot with a bad config still fails hard. See
+    # scripts/mihomo_entrypoint.sh and docs/development.md.
     entrypoint:
       - /bin/sh
-      - -c
-      - sh /scripts/render_config.sh && exec /mihomo
+      - /scripts/mihomo_entrypoint.sh
 
   metacubexd:
     # Same as mihomo: resolved from .env, fail-closed if unset.

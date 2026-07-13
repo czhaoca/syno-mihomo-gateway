@@ -22,6 +22,7 @@ scripts/
   gateway.sh                  # non-interactive CLI: deploy/redeploy/modify/cron/status/doctor/update
   setup_network.sh            # headless boot self-heal: /dev/net/tun + tproxy_network macvlan
   render_config.sh            # renders config.yaml from the template (entrypoint + CI both call it)
+  mihomo_entrypoint.sh        # container entrypoint gate: render to temp, mihomo -t, swap on green
   auto_update.sh              # the DSM auto-update orchestrator (entry point)
   doctor.sh                   # read-only diagnostics (also backs `gateway.sh doctor`)
   state_diff.sh               # snapshot/compare a container's replayable spec around an update
@@ -62,6 +63,7 @@ scripts/
     migrate_legacy_check.sh   # hermetic (env -i) suite for the legacy flat-install importer
     seed_provider_check.sh    # hermetic suite for the provider-cache recovery tool
     proxy_groups_check.sh     # hermetic suite for the doctor's filtered-group zero-node guard
+    mihomo_entrypoint_check.sh # hermetic suite for the entrypoint's render->test->swap gate
     lifecycle_check.sh        # fake-Docker inventory/cleanup safety suite
     lib/assert.sh             # shared assertions for the sh suites
 .woodpecker.yml               # CI: 9 blocking steps (see the CI table below)
@@ -94,9 +96,11 @@ docs/                         # manual (EN) + docs/zh mirrors (中文) + docs/*.
 ## The renderer (`render_config.sh`)
 
 Single source of truth for turning the template into `config.yaml`, called by **both** the mihomo
-entrypoint (`sh /scripts/render_config.sh && exec /mihomo`, via the `./scripts:/scripts:ro` mount)
-and CI. Honors `MIHOMO_CONFIG_DIR` (default `/root/.config/mihomo`) so tests can point it at a
-temp dir. Key correctness points:
+entrypoint (via `scripts/mihomo_entrypoint.sh` and the `./scripts:/scripts:ro` mount — it renders
+to a temp path with `MIHOMO_RENDER_OUT`, gates the result with `mihomo -t`, and swaps it over the
+live `config.yaml` only on green, keeping the last-good config running and writing a 0600,
+secrets-scrubbed `.config.yaml.rejected` marker on failure) and CI. Honors `MIHOMO_CONFIG_DIR`
+(default `/root/.config/mihomo`) so tests can point it at a temp dir. Key correctness points:
 
 - **Subscription parse:** strips an optional leading `label=` and trailing whitespace,
   *preserving* `=` inside the URL — `sed -e 's/^[A-Za-z0-9_.-]*=//' -e 's/[[:space:]]*$//'`.
@@ -149,8 +153,8 @@ Runs on push/PR to `main` and `master`:
 | `compose-policy` | `python scripts/ci/compose_policy_check.py` — asserts **fail-closed** image refs: every compose `image:` is exactly `${VAR}`/`${VAR:?msg}` (no defaults, no hardcoded refs) and `.env.example` defines the image vars and ships `REGISTRY_MODE=acr` (ACR default; `docker` upstream is an explicit opt-in, not forbidden); also freezes the **container-name contract** — every service pins `container_name:`, the core pair is exactly `mihomo`/`mihomo-ui`, and `scripts/lib/compose.sh`'s defaults mirror them (a rename is a breaking operator-contract change) |
 | `package-check` | `python scripts/ci/package_check.py` — builds the dev, enduser, **and pi** bundles in throwaway repos and proves **no secret can ship** (planted `.env`/subscription/`config.yaml` absent from the archives' names *and* bytes), checksums verify, the enduser bundle prunes developer/`.md`/CI files (including the Pi port), ships the installer + `.txt` guides, contains no identity string, and its leak-gate fails closed on an injected leak; the pi bundle ships the Pi port on top of the enduser set, keeps the identity gate fail-closed, and tolerates the upstream forge URLs its runtime needs |
 | `privacy-check` | Scans tracked files and reachable blobs for private operational identifiers, credentials, private keys, and accidentally tracked runtime files (+ the gate's self-test) |
-| `dsm-shell-tests` | Ten BusyBox `sh` suites with fake Docker/Compose/service CLIs: `dsm_installer_check`, `lifecycle_check`, `auto_update_check`, `cloudflared_check`, `generic_update_check`, `gateway_cli_check`, `migrate_legacy_check`, `seed_provider_check`, `proxy_groups_check` (the doctor's zero-node guard for filtered proxy groups), `pi_installer_check` (the Raspberry Pi port's shared seams) — plus `validate_release.sh --self-test`, the unit checks of the on-NAS release-validation helper's measurement functions |
-| `shellcheck` | `sh -n` parse-checks **every** `*.sh` in the repo, then `shellcheck -x` on 19 targets: `install.sh`, `install-pi.sh`, `gateway.sh`, `auto_update.sh`, `pi/auto_update_lite.sh`, `pi/lite_ctl.sh`, `install_scheduler.sh`, `setup_network.sh`, `render_config.sh`, `package.sh`, `doctor.sh`, `state_diff.sh`, `migrate_legacy.sh`, `seed_provider.sh`, `bootstrap.sh`, `lib/container.sh`, `lib/targets.sh`, `lib/geodata.sh`, `validate_release.sh` (sourced libs followed in-context) |
+| `dsm-shell-tests` | Eleven BusyBox `sh` suites with fake Docker/Compose/service CLIs: `dsm_installer_check`, `lifecycle_check`, `auto_update_check`, `cloudflared_check`, `generic_update_check`, `gateway_cli_check`, `migrate_legacy_check`, `seed_provider_check`, `proxy_groups_check` (the doctor's zero-node guard for filtered proxy groups), `mihomo_entrypoint_check` (the entrypoint's render-to-temp + `mihomo -t` gate: swap on green, last-good fallback + scrubbed rejection marker), `pi_installer_check` (the Raspberry Pi port's shared seams) — plus `validate_release.sh --self-test`, the unit checks of the on-NAS release-validation helper's measurement functions |
+| `shellcheck` | `sh -n` parse-checks **every** `*.sh` in the repo, then `shellcheck -x` on 20 targets: `install.sh`, `install-pi.sh`, `gateway.sh`, `auto_update.sh`, `pi/auto_update_lite.sh`, `pi/lite_ctl.sh`, `install_scheduler.sh`, `setup_network.sh`, `render_config.sh`, `mihomo_entrypoint.sh`, `package.sh`, `doctor.sh`, `state_diff.sh`, `migrate_legacy.sh`, `seed_provider.sh`, `bootstrap.sh`, `lib/container.sh`, `lib/targets.sh`, `lib/geodata.sh`, `validate_release.sh` (sourced libs followed in-context) |
 
 ## The CLI contract (generated files)
 
@@ -258,7 +262,7 @@ docker compose --env-file .env.example config --quiet
 # release packaging safeguard (hermetic; builds both bundles in temp repos, needs git)
 python3 scripts/ci/package_check.py
 
-# the ten fake-Docker/PATH-stub TDD suites CI runs, plus the
+# the eleven fake-Docker/PATH-stub TDD suites CI runs, plus the
 # release-validation helper's self-test (no NAS mutation)
 sh scripts/ci/dsm_installer_check.sh
 sh scripts/ci/lifecycle_check.sh
@@ -269,6 +273,7 @@ sh scripts/ci/gateway_cli_check.sh
 sh scripts/ci/migrate_legacy_check.sh
 sh scripts/ci/seed_provider_check.sh
 sh scripts/ci/proxy_groups_check.sh
+sh scripts/ci/mihomo_entrypoint_check.sh
 sh scripts/ci/pi_installer_check.sh
 sh scripts/validate_release.sh --self-test
 

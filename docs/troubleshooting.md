@@ -229,11 +229,16 @@ NAS cannot reach its own macvlan child.
 docker logs mihomo --tail 80
 ```
 Common causes:
-- **Empty/garbled subscription or DNS** — the renderer fails loudly:
-  `ERROR: subscription.txt has no usable URL` or `ERROR: DNS_… must be set`. Fix the **live**
-  files `../syno-mihomo-gateway-data/config/subscription.txt` / the `DNS_*` keys in
+- **First boot with a broken config** — the entrypoint gate refuses to start when there is no
+  previous config to fall back on: the renderer fails loudly
+  (`ERROR: subscription.txt has no usable URL`, `ERROR: DNS_… must be set`) or `mihomo -t`
+  rejects the render. Fix the **live** files
+  `../syno-mihomo-gateway-data/config/subscription.txt` / the `DNS_*` keys in
   `../syno-mihomo-gateway-data/.env` (the in-repo `config/` only ships the `.example`), then
   `docker compose --env-file ../syno-mihomo-gateway-data/.env up -d --force-recreate mihomo`.
+  On an **already-running install** the same errors do NOT crash-loop anymore — the gateway
+  keeps running on the previous config instead; see
+  [Config test failed](#config-test-failed--gateway-running-on-the-previous-config) below.
 - **`/dev/net/tun` missing** — run `sudo ./scripts/setup_network.sh`.
 - **`iptables (nf_tables): Could not fetch rule set generation id`** — the image's nft-backed
   iptables is incompatible with the DSM kernel. Set `TUN_AUTO_REDIRECT=false` in `.env` and
@@ -665,3 +670,32 @@ Stopgap while you fix it: pick `auto` (the unfiltered full pool) in the dashboar
 selector. If doctor instead reports `provider-empty` — **every** url-test group empty — the
 provider itself has no nodes: that is the [Provider has no nodes](#provider-has-no-nodes-foreign-sites-dead-node-list-empty)
 condition above, not a filter problem (`sudo sh scripts/seed_provider.sh`).
+
+## Config test failed — gateway running on the previous config
+
+**Symptom:** you edited `.env` (or the subscription) and redeployed, but the change is not in
+effect; `docker logs mihomo` shouts `!!! CONFIG REJECTED (render-failed)` or
+`!!! CONFIG REJECTED (config-test-failed)`, and
+`../syno-mihomo-gateway-data/config/.config.yaml.rejected` exists.
+
+**Cause:** the entrypoint gate renders every candidate config to a temp file and tests it with
+`mihomo -t` before activating it. Your last edit produced a config that failed the render
+(e.g. a backtick in a filter knob, a malformed `COUNTRY_GROUPS` spec, missing DNS) or failed
+the config test (e.g. an invalid regex in `AUTO_EXCLUDE_FILTER`/`COUNTRY_GROUPS` — an
+unguarded pattern would otherwise panic mihomo and crash-loop the gateway). Rather than take
+the LAN down, the gateway **keeps running the last-known-good config**; your edit is simply
+not applied yet.
+
+**Fix:** read the marker — its first line names the failing stage, the rest is that stage's
+output (with the subscription URL and controller secret scrubbed):
+
+```bash
+cat ../syno-mihomo-gateway-data/config/.config.yaml.rejected
+```
+
+Correct the named `.env` key (or subscription line), then **Redeploy**
+(`sudo sh ./install.sh`) or
+`docker compose --env-file ../syno-mihomo-gateway-data/.env up -d --force-recreate mihomo`.
+A green render activates the new config and removes the marker automatically. On a **first
+boot** (no previous config) the container fails hard instead of falling back — fix the config
+and recreate.

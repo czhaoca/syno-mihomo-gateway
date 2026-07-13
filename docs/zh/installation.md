@@ -171,10 +171,12 @@ sudo ./scripts/setup_network.sh
 sudo docker compose --env-file ../syno-mihomo-gateway-data/.env up -d
 ```
 
-启动时，mihomo 的入口点会根据模板 + 你的订阅 + `.env`，把 `config.yaml` 渲染到持久化
+启动时，mihomo 的入口点会根据模板 + 你的订阅 + `.env`，先把**候选**配置渲染到持久化
 数据目录（`../syno-mihomo-gateway-data/config/`，在容器内挂载为 `/root/.config/mihomo`
-—— 不是发布目录里的 `config/`），然后启动 mihomo。如果订阅 URL 或 DNS 值缺失，它会
-**大声报错失败**（容器不会运行被污染的配置）。查看日志：
+—— 不是发布目录里的 `config/`），再用 `mihomo -t` 测试，通过后才正式生效。如果渲染或
+测试失败（订阅 URL / DNS 缺失，或 `AUTO_EXCLUDE_FILTER`/`COUNTRY_GROUPS` 模式无效），
+**上一份**有效配置会继续运行，并由 `.config.yaml.rejected` 记录原因；首次安装没有旧配置
+时则**大声报错失败**（容器绝不运行被污染的配置）。查看日志：
 
 ```bash
 docker logs mihomo

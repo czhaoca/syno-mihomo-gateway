@@ -204,11 +204,14 @@ sudo sh scripts/doctor.sh --egress
 docker logs mihomo --tail 80
 ```
 常见原因：
-- **订阅或 DNS 为空 / 损坏** —— 渲染器会明确报错：`ERROR: subscription.txt has no usable URL`
-  或 `ERROR: DNS_… must be set`。请修复**实际生效**的文件
+- **首次启动即遇到损坏的配置** —— 没有旧配置可回退时，入口点守门会拒绝启动：渲染器明确
+  报错（`ERROR: subscription.txt has no usable URL`、`ERROR: DNS_… must be set`），或
+  `mihomo -t` 拒绝了渲染结果。请修复**实际生效**的文件
   `../syno-mihomo-gateway-data/config/subscription.txt` /
   `../syno-mihomo-gateway-data/.env` 中的 `DNS_*` 键（仓库内的 `config/` 只附带 `.example`），
   然后执行 `docker compose --env-file ../syno-mihomo-gateway-data/.env up -d --force-recreate mihomo`。
+  在**已在运行的安装**上，同样的错误不会再造成反复崩溃重启——网关会继续运行上一份配置；
+  见下文[配置测试失败](#配置测试失败网关仍在运行上一份配置)。
 - **缺少 `/dev/net/tun`** —— 运行 `sudo ./scripts/setup_network.sh`。
 - **`iptables (nf_tables): Could not fetch rule set generation id`** —— 镜像中的 nft 后端
   iptables 与 DSM 内核不兼容。在 `.env` 中设置 `TUN_AUTO_REDIRECT=false` 后重新部署；
@@ -581,3 +584,27 @@ doctor 就是让你发现*原因*的地方。
 选 `auto`（未过滤的完整节点池）。若 doctor 报告的是 `provider-empty`——**所有** url-test
 分组皆空——那是机场节点全部消失（见上一节），先做种子恢复
 （`sudo sh scripts/seed_provider.sh`），与过滤器无关。
+
+## 配置测试失败——网关仍在运行上一份配置
+
+**现象：** 你修改了 `.env`（或订阅）并重新部署，但改动没有生效；`docker logs mihomo` 中
+出现 `!!! CONFIG REJECTED (render-failed)` 或 `!!! CONFIG REJECTED (config-test-failed)`，
+且 `../syno-mihomo-gateway-data/config/.config.yaml.rejected` 文件存在。
+
+**原因：** 入口点守门会先把每份候选配置渲染到临时文件，再用 `mihomo -t` 测试，通过后才
+正式生效。你最后一次修改产生的配置要么渲染失败（例如过滤开关里有反引号、`COUNTRY_GROUPS`
+格式错误、DNS 缺失），要么配置测试失败（例如 `AUTO_EXCLUDE_FILTER`/`COUNTRY_GROUPS` 中的
+无效正则——不加防护会让 mihomo 启动即崩溃并反复重启）。网关不会因此断网，而是**继续运行
+上一份有效配置**；你的改动只是尚未生效。
+
+**解决：** 查看标记文件——第一行注明失败的阶段，其余是该阶段的输出（订阅 URL 与控制器
+密钥已抹除）：
+
+```bash
+cat ../syno-mihomo-gateway-data/config/.config.yaml.rejected
+```
+
+修正被点名的 `.env` 键（或订阅行），然后**重新部署**（`sudo sh ./install.sh`）或执行
+`docker compose --env-file ../syno-mihomo-gateway-data/.env up -d --force-recreate mihomo`。
+渲染通过后新配置即刻生效，标记文件会被自动清除。**首次启动**（没有旧配置可回退）时容器
+会直接报错退出而不是回退——修好配置后重建容器即可。
