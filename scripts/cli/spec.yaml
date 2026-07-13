@@ -321,9 +321,10 @@ json_output:
     split-horizon foreign-by-default, v1 = a pre-v1.3.10 render whose
     fallback dual-query still copies long-tail lookups to the domestic
     resolvers, legacy = the domestic resolvers see every lookup;
-    ipv6_bypass is ok|exposed - exposed means global IPv6 is live on the
-    LAN interface, a path dual-stack clients use around the IPv4-only
-    gateway; "unknown" means the surface is not probeable on this box).
+    ipv6_bypass is ok|exposed - exposed means internet-routable global
+    IPv6 (not a private ULA) is live on the LAN interface, a path
+    dual-stack clients use around the IPv4-only gateway; "unknown" means
+    the surface is not probeable on this box).
     Exactly one object on stdout; logs never interleave.
   zh: >-
     status --json 输出一个扁平对象：
@@ -345,6 +346,7 @@ json_output:
     v2|v1|legacy —— v2 = 分域（境外优先）隐私模式，v1 = v1.3.10 之前的
     渲染残留（fallback 双查询仍会把长尾查询抄送国内解析器），legacy =
     国内解析器可见全部查询；ipv6_bypass 取值 ok|exposed —— exposed
-    表示 LAN 接口上存在全局 IPv6，双栈客户端会经 IPv6 绕过纯 IPv4
+    表示 LAN 接口上存在可路由互联网的全局 IPv6（私有 ULA 不算），
+    双栈客户端会经 IPv6 绕过纯 IPv4
     网关；"unknown" 表示此机器上该项不可探测）。
     标准输出只有这一个对象，日志绝不混入。

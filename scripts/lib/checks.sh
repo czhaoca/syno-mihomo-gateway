@@ -244,7 +244,13 @@ chk_dns_privacy() {
 # PARENT_INTERFACE is the witness: it sits on the same L2 segment as the
 # clients, so a global inet6 there proves the RAs reach everyone. RA
 # addresses outlive the router setting (valid-lifetime), so the warn can
-# persist until leases expire or the interface bounces.
+# persist until leases expire or the interface bounces. Only ROUTABLE
+# addresses (GUA, 2000::/3 - first hex digit 2 or 3) mean a real bypass:
+# a ULA (fc00::/7) is private address space the kernel still labels
+# 'scope global', announced by Matter/Thread border routers (Apple
+# HomePod/TV and the like) with no route to the internet - harmless, and
+# warning on it would leave doctor permanently DEGRADED on any LAN with
+# a smart-home hub (observed live 2026-07-13).
 chk_ipv6_bypass() {
   command -v ip >/dev/null 2>&1 || { CHECK_VALUE=unknown CHECK_SEV=silent; return 0; }
   [ -n "${PARENT_INTERFACE:-}" ] || { CHECK_VALUE=unknown CHECK_SEV=silent; return 0; }
@@ -252,10 +258,13 @@ chk_ipv6_bypass() {
     CHECK_VALUE=unknown CHECK_SEV=silent
     return 0
   fi
-  if printf '%s\n' "$_ci6" | grep -q 'inet6 .*scope global'; then
+  if printf '%s\n' "$_ci6" | grep -q 'inet6 [23].*scope global'; then
     CHECK_VALUE=exposed CHECK_SEV=warn
-    CHECK_DETAIL="global IPv6 is live on $PARENT_INTERFACE - dual-stack clients resolve and route over IPv6 around the IPv4-only gateway (DNS leaks; IPv6-preferring sites go direct)"
+    CHECK_DETAIL="internet-routable global IPv6 is live on $PARENT_INTERFACE - dual-stack clients resolve and route over IPv6 around the IPv4-only gateway (DNS leaks; IPv6-preferring sites go direct)"
     CHECK_HINT="      disable IPv6 (or its RA/RDNSS announcements) on the router's LAN, then renew client leases - see docs/troubleshooting.md"
+  elif printf '%s\n' "$_ci6" | grep -q 'inet6 .*scope global'; then
+    CHECK_VALUE=ok CHECK_SEV=ok
+    CHECK_DETAIL="only private (ULA) IPv6 on $PARENT_INTERFACE - not internet-routable, no path around the gateway (Matter/Thread hubs announce these)"
   else
     CHECK_VALUE=ok CHECK_SEV=ok
     CHECK_DETAIL="no global IPv6 on $PARENT_INTERFACE - no IPv6 path around the gateway"

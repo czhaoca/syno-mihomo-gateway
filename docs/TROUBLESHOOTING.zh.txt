@@ -257,9 +257,12 @@ IPv6 让流量整体绕过网关（泄漏时有时无，Netflix 打不开）
          查询经 IPv6 泄漏；偏好 IPv6 的服务（Netflix 正是）经运营商
          直连——被墙或地区错误——即使经网关的一切都健康，它们照样
          失败。
-  检查： 当 NAS 自己拿到全局 IPv6 地址时，doctor 会告警
-         "ipv6_bypass: exposed"（NAS 与设备同在一个局域网，它有地址
-         即证明路由器的通告能到达每台设备）。
+  检查： 当 NAS 自己拿到可路由互联网的 IPv6 地址（公网前缀，以 2 或
+         3 开头）时，doctor 会告警 "ipv6_bypass: exposed"（NAS 与设备
+         同在一个局域网，它有地址即证明路由器的通告能到达每台设备）。
+         仅有私有 fd...（ULA）地址不算绕过：智能家居中枢（如 Apple
+         HomePod/TV）会为 Matter/Thread 通告一个 ULA 前缀，它无法
+         到达互联网，doctor 照常报告 ok。
   解决： 在路由器上关闭 IPv6。UniFi：设置 > 互联网 > 你的 WAN >
          IPv6 连接 = 禁用；再到 设置 > 网络 > 你的 LAN > IPv6 = 关闭。
          其他路由器：关闭 LAN IPv6（至少关掉 RA/RDNSS 与 DHCPv6

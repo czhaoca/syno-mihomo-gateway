@@ -546,10 +546,13 @@ services that prefer IPv6 (Netflix does) connect directly over the ISP's v6 — 
 geo-wrong on a filtered network — so they fail even though the v4 path through the gateway
 is healthy. The sniffer cannot help here: these packets never arrive at the gateway.
 
-**Diagnosis:** `doctor` warns `ipv6_bypass: exposed` when the NAS's LAN interface carries a
-global IPv6 address — the NAS sits on the same L2 segment as the clients, so a global
-address there proves the router's announcements reach everyone. On a client, any global
-(non-`fe80::`) address in `ipconfig` / `ip -6 addr` means that client has the bypass path.
+**Diagnosis:** `doctor` warns `ipv6_bypass: exposed` when the NAS's LAN interface carries an
+internet-routable IPv6 address (public, starting `2` or `3`) — the NAS sits on the same L2
+segment as the clients, so an address there proves the router's announcements reach everyone.
+On a client, such an address in `ipconfig` / `ip -6 addr` means that client has the bypass
+path. A private `fd…` (ULA) address alone is **not** the bypass — Matter/Thread border
+routers (an Apple HomePod/TV, for example) announce one for smart-home traffic; it cannot
+route to the internet and `doctor` reports it ok.
 
 **Fix:** turn IPv6 off at the router, so no client is handed a path around the gateway. On
 UniFi: Settings → Internet → your WAN → **IPv6 Connection = Disabled**, and Settings →

@@ -114,7 +114,9 @@ chmod +x "$STUB/id"
 # address query returns empty = the code's own "cannot verify, don't block"
 # path. Deterministic on both platforms, no real network I/O. The `-6 addr`
 # form feeds chk_ipv6_bypass: FAKE_IP6_RC flips it unprobeable, FAKE_IP6_GLOBAL
-# emits one global inet6 line (RFC 3849 documentation prefix, fixture-only).
+# emits one routable global inet6 line (RFC 3849 documentation prefix,
+# fixture-only), FAKE_IP6_ULA one private fd00:: line the kernel also labels
+# 'scope global' (the Matter/Thread border-router shape).
 cat > "$STUB/ip" <<'EOF'
 #!/bin/sh
 case "$*" in
@@ -122,6 +124,8 @@ case "$*" in
     [ "${FAKE_IP6_RC:-0}" = 0 ] || exit "$FAKE_IP6_RC"
     [ "${FAKE_IP6_GLOBAL:-0}" = 1 ] \
       && printf '    inet6 2001:db8::1/64 scope global dynamic\n'
+    [ "${FAKE_IP6_ULA:-0}" = 1 ] \
+      && printf '    inet6 fd00::1/64 scope global mngtmpaddr dynamic\n'
     exit 0 ;;
 esac
 exit 0
@@ -652,6 +656,20 @@ if [ "$_fp_run" = 1 ]; then
     && grep -q 'disable IPv6' "$TMP/derr" \
     && ok || fail "ipv6_bypass-exposed parity (json=$_jrc human=$_hrc)"
   unset FAKE_IP6_GLOBAL
+
+  # ipv6_bypass ULA-only (Matter/Thread hub RA): ok in BOTH modes, rc 0 - a
+  # private fd00:: prefix is not internet-routable and must never degrade
+  FAKE_IP6_ULA=1; export FAKE_IP6_ULA
+  dpar
+  jval ipv6_bypass ok && [ "$_jrc" = 0 ] && [ "$_hrc" = 0 ] \
+    && grep -q 'only private (ULA) IPv6' "$TMP/dout" \
+    && ok || fail "ipv6_bypass-ula parity (json=$_jrc human=$_hrc)"
+  # ...and a routable GUA alongside the ULA still wins: exposed, rc 2
+  FAKE_IP6_GLOBAL=1; export FAKE_IP6_GLOBAL
+  dpar
+  jval ipv6_bypass exposed && [ "$_jrc" = 2 ] && [ "$_hrc" = 2 ] \
+    && ok || fail "ipv6_bypass-ula+gua parity (json=$_jrc human=$_hrc)"
+  unset FAKE_IP6_ULA FAKE_IP6_GLOBAL
 
   # ipv6_bypass unprobeable (ip errors): unknown in --json, silent in human, rc 0
   FAKE_IP6_RC=1; export FAKE_IP6_RC

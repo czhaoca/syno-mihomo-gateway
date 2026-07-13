@@ -298,8 +298,12 @@ IPv6 carries traffic around the gateway (leaks persist, Netflix fails)
          does) connect directly through the ISP - blocked or region-
          wrong - even though everything through the gateway is healthy.
   Check: the doctor warns "ipv6_bypass: exposed" when the NAS itself has
-         a global IPv6 address (it sits on the same LAN, so the router's
-         announcements demonstrably reach every device).
+         an internet-routable IPv6 address (public, starting 2 or 3 - it
+         sits on the same LAN, so the router's announcements demonstrably
+         reach every device). A private fd... (ULA) address alone is NOT
+         the bypass: smart-home hubs (Apple HomePod/TV and the like)
+         announce one for Matter/Thread; it cannot reach the internet
+         and the doctor reports it ok.
   Fix:   disable IPv6 on the router. UniFi: Settings > Internet > your
          WAN > IPv6 Connection = Disabled, and Settings > Networks >
          your LAN > IPv6 = Off. Other routers: turn off LAN IPv6 (at
