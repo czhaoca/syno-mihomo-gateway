@@ -55,6 +55,15 @@ Enforces:
     whitespace-only pattern fails closed at render time (an invalid pattern
     PANICS mihomo at startup; a backtick is mihomo's multi-pattern separator);
     the .env.example default must itself render auto-x as the routing default;
+  * the COUNTRY_GROUPS generation markers (country-groups epic): a
+    'NAME=regex;NAME=regex' spec generates one url-test group per entry
+    (filter, empty-fallback REJECT, tolerance, NO own url:/interval:) spliced
+    after the auto groups and before DIRECT in BOTH the PROXY and STREAMING
+    selectors, a multi-country regex being one combined group; the group
+    inventory assertions are SPEC-DERIVED, never a hardcoded country list;
+    unset/empty renders byte-identically without any generated group; every
+    malformed-spec class (backtick, no '=', empty name/regex/entry, duplicate
+    or builtin-colliding or whitespace-bearing name) refuses to render;
   * geox-url mirrors point at hosts reachable from mainland China — never the
     blocked upstream Git host or the flaky primary jsDelivr domain;
   * TUN is ON by default (transparent gateway): the DEFAULT render INCLUDES the tun block
@@ -182,6 +191,7 @@ def render(raw: str, tun_auto_redirect: str | None = None,
            geoip_no_resolve: str | None = None,
            sniffer_enable: str | None = None,
            auto_exclude_filter: str | None = None,
+           country_groups: str | None = None,
            sub_line: str | None = None):
     """Run the real renderer in an isolated config directory."""
     with tempfile.TemporaryDirectory() as td:
@@ -227,6 +237,9 @@ def render(raw: str, tun_auto_redirect: str | None = None,
         # .env.example ships an HK default for new installs.
         if auto_exclude_filter is not None:
             env["AUTO_EXCLUDE_FILTER"] = auto_exclude_filter
+        # Country-group spec stays ABSENT unless a case opts in, same contract.
+        if country_groups is not None:
+            env["COUNTRY_GROUPS"] = country_groups
         proc = subprocess.run(["sh", str(RENDERER)], env=env,
                               capture_output=True, text=True)
         out = tdp / "config.yaml"
@@ -254,6 +267,37 @@ def unwrap_fence(raw: str, name: str) -> str:
     return "".join(
         line for line in raw.splitlines(keepends=True)
         if f"{{{{{name}_BEGIN}}}}" not in line and f"{{{{{name}_END}}}}" not in line)
+
+
+def drop_token_lines(raw: str, name: str) -> str:
+    """Delete whole lines carrying a standalone {{NAME}} marker — the
+    renderer's spec-unset sed for the COUNTRY_* generation token sites."""
+    return "".join(line for line in raw.splitlines(keepends=True)
+                   if f"{{{{{name}}}}}" not in line)
+
+
+def spec_names(spec: str) -> list:
+    """Group names from a VALID COUNTRY_GROUPS spec, mirroring the renderer's
+    POSIX field split: ';' separates entries, one trailing separator is
+    absorbed, the name is everything before the first '='."""
+    parts = spec.split(";")
+    if parts and parts[-1] == "":
+        parts.pop()
+    return [p.split("=", 1)[0] for p in parts]
+
+
+def expected_groups(auto_exclude: str | None = None,
+                    country_spec: str | None = None) -> list:
+    """The SPEC-DERIVED proxy-group inventory (in order): auto, the auto-x
+    sibling when the exclude knob is on, the generated country groups in spec
+    order, then the PROXY/STREAMING selectors. Never a hardcoded country
+    list (CLAUDE.md rule) — country names come only from the spec under test."""
+    names = ["auto"]
+    if auto_exclude:
+        names.append("auto-x")
+    if country_spec:
+        names.extend(spec_names(country_spec))
+    return names + ["PROXY", "STREAMING"]
 
 
 TOKEN = re.compile(r"\{\{([A-Z0-9_]+)\}\}")
@@ -473,9 +517,9 @@ def main() -> None:
     # first member, so day-one routing equals pre-1.3.10 behavior until an
     # unlock node is pinned in the dashboard.
     gnames = [g.get("name") for g in doc.get("proxy-groups") or []]
-    if gnames != ["auto", "PROXY", "STREAMING"]:
-        fail(f"proxy-groups must be exactly ['auto', 'PROXY', 'STREAMING'] "
-             f"in order: got {gnames!r}")
+    if gnames != expected_groups():
+        fail(f"default proxy-groups must be exactly {expected_groups()!r} "
+             f"in order (spec-derived: no knobs set): got {gnames!r}")
     streaming = next(g for g in doc.get("proxy-groups") if g.get("name") == "STREAMING")
     if streaming.get("type") != "select":
         fail(f"STREAMING must be a select group (dashboard-pinnable): "
@@ -628,6 +672,11 @@ def main() -> None:
             raw, "DNSPOLICY"), "DNSSPLIT"), "SNIFFER"), "AUTOX"),
             "AUTOXMEMBER"),
         "DNSLEGACY").replace("{{GEOIP_NO_RESOLVE}}", "")
+    for marker in ("COUNTRY_GROUPS", "COUNTRY_MEMBERS_PROXY",
+                   "COUNTRY_MEMBERS_STREAMING"):
+        if f"{{{{{marker}}}}}" not in raw:
+            fail(f"template must carry the {{{{{marker}}}}} generation marker")
+        legacy_raw = drop_token_lines(legacy_raw, marker)
     proc_l, legacy = render(legacy_raw)
     if proc_l.returncode != 0 or legacy is None:
         fail(f"DNS-fence-stripped render failed: {proc_l.stderr.strip()}")
@@ -787,9 +836,9 @@ def main() -> None:
              "sit flush against their neighbors")
     xdoc = yaml.safe_load(xr)
     xnames = [g.get("name") for g in xdoc.get("proxy-groups") or []]
-    if xnames != ["auto", "auto-x", "PROXY", "STREAMING"]:
-        fail(f"knob-on proxy-groups must be exactly "
-             f"['auto', 'auto-x', 'PROXY', 'STREAMING'] in order: got {xnames!r}")
+    if xnames != expected_groups(EXCL):
+        fail(f"knob-on proxy-groups must be exactly {expected_groups(EXCL)!r} "
+             f"in order (spec-derived): got {xnames!r}")
     xgroups = {g.get("name"): g for g in xdoc.get("proxy-groups")}
     autox = xgroups["auto-x"]
     if autox.get("type") != "url-test":
@@ -874,6 +923,149 @@ def main() -> None:
         fail("empty-string AUTO_EXCLUDE_FILTER must render byte-identical to "
              "unset (the compose ':-' pass-through contract)")
 
+    # 11d) COUNTRY_GROUPS generation markers (country-groups epic, #33): a
+    # 'NAME=regex;NAME=regex' spec makes the renderer GENERATE one url-test
+    # group per entry - filter over the provider pool, empty-fallback REJECT
+    # (the #32 DEC-B outcome applies to every filtered group), tolerance but
+    # NO own url:/interval: (provider health check inherited) - and splice
+    # the names into BOTH selectors after the auto groups, before DIRECT
+    # (spec order = dashboard order). A multi-country regex is simply one
+    # combined group (the countries-as-a-group ask). The fixture carries CJK
+    # names, '|', '\d' and '^' anchors; inventories are derived from the spec
+    # under test via expected_groups() - never a hardcoded country list.
+    CG = '日本=日本|JP\\d|^JP;美国=美国|US\\d;亚洲组=日本|台湾|新加坡'
+    CG_NAMES = spec_names(CG)
+    proc_cg, cg = render(raw, country_groups=CG)
+    if proc_cg.returncode != 0 or cg is None:
+        fail(f"COUNTRY_GROUPS render failed: {proc_cg.stderr.strip()}")
+    assert_resolved("country-groups", cg)
+    if "\n\n\n" in cg:
+        fail("country-groups render contains doubled blank lines - generated "
+             "blocks must sit flush against their neighbors")
+    cgdoc = yaml.safe_load(cg)
+    cgnames = [g.get("name") for g in cgdoc.get("proxy-groups") or []]
+    if cgnames != expected_groups(None, CG):
+        fail(f"spec-on proxy-groups must be exactly {expected_groups(None, CG)!r} "
+             f"in order: got {cgnames!r}")
+    cgroups = {g.get("name"): g for g in cgdoc.get("proxy-groups")}
+    specd = {p.split("=", 1)[0]: p.split("=", 1)[1]
+             for p in CG.split(";") if p}
+    for name, regex in specd.items():
+        g = cgroups[name]
+        if g.get("type") != "url-test":
+            fail(f"generated group {name!r} must be url-test: got {g.get('type')!r}")
+        if g.get("filter") != regex:
+            fail(f"generated group {name!r} filter did not round-trip: "
+                 f"got {g.get('filter')!r}, expected {regex!r}")
+        if g.get("empty-fallback") != "REJECT":
+            fail(f"generated group {name!r} must fail closed via "
+                 f"empty-fallback: REJECT: got {g.get('empty-fallback')!r}")
+        if g.get("use") != ["my-airport"]:
+            fail(f"generated group {name!r} must use: [my-airport]: "
+                 f"got {g.get('use')!r}")
+        if g.get("tolerance") != 50:
+            fail(f"generated group {name!r} must carry tolerance: 50: "
+                 f"got {g.get('tolerance')!r}")
+        for absent in ("url", "interval"):
+            if absent in g:
+                fail(f"generated group {name!r} must carry NO own {absent!r} "
+                     f"(inherits the provider health check): got {g.get(absent)!r}")
+    if cgroups["PROXY"].get("proxies") != ["auto"] + CG_NAMES + ["DIRECT", "REJECT"]:
+        fail(f"PROXY members with the spec on must be auto + spec order + "
+             f"DIRECT/REJECT: got {cgroups['PROXY'].get('proxies')!r}")
+    if cgroups["STREAMING"].get("proxies") != ["PROXY", "auto"] + CG_NAMES + ["DIRECT"]:
+        fail(f"STREAMING members with the spec on must be PROXY/auto + spec "
+             f"order + DIRECT: got {cgroups['STREAMING'].get('proxies')!r}")
+    if cgroups["auto"] != dauto:
+        fail(f"auto must be UNTOUCHED by the country spec: {cgroups['auto']!r}")
+    if cgdoc.get("rules") != RULES_BASE:
+        fail(f"[country-groups] rules must be unchanged: got {cgdoc.get('rules')!r}")
+    check_rule_targets(cgdoc)
+    check_dns_detour_targets(cgdoc)
+
+    # Combined with the exclude knob: auto-x still first in PROXY, country
+    # groups after the auto pair, both inventories spec-derived.
+    proc_cb, cb = render(raw, auto_exclude_filter=EXCL, country_groups=CG)
+    if proc_cb.returncode != 0 or cb is None:
+        fail(f"combined exclude+spec render failed: {proc_cb.stderr.strip()}")
+    assert_resolved("exclude+country", cb)
+    cbdoc = yaml.safe_load(cb)
+    cbnames = [g.get("name") for g in cbdoc.get("proxy-groups") or []]
+    if cbnames != expected_groups(EXCL, CG):
+        fail(f"combined proxy-groups must be exactly {expected_groups(EXCL, CG)!r}"
+             f" in order: got {cbnames!r}")
+    cbgroups = {g.get("name"): g for g in cbdoc.get("proxy-groups")}
+    if cbgroups["PROXY"].get("proxies") != (["auto-x", "auto"] + CG_NAMES
+                                            + ["DIRECT", "REJECT"]):
+        fail(f"combined PROXY members must be auto-x, auto, spec order, "
+             f"DIRECT, REJECT: got {cbgroups['PROXY'].get('proxies')!r}")
+    if cbgroups["STREAMING"].get("proxies") != (["PROXY", "auto"] + CG_NAMES
+                                                + ["DIRECT"]):
+        fail(f"combined STREAMING members must be PROXY, auto, spec order, "
+             f"DIRECT: got {cbgroups['STREAMING'].get('proxies')!r}")
+    check_rule_targets(cbdoc)
+    check_dns_detour_targets(cbdoc)
+
+    # The SHIPPED .env.example starter spec must itself render, combined with
+    # the shipped exclude default (both ship ON for new installs).
+    mcg = re.search(r"^COUNTRY_GROUPS=(.+)$", env_example, re.M)
+    if not mcg or not mcg.group(1).strip():
+        fail(".env.example must ship a non-empty COUNTRY_GROUPS starter spec "
+             "(seed-only rollout, issue #33 DEC-A)")
+    default_cg = mcg.group(1).strip()
+    proc_cd, cd = render(raw, auto_exclude_filter=default_excl,
+                         country_groups=default_cg)
+    if proc_cd.returncode != 0 or cd is None:
+        fail(f".env.example COUNTRY_GROUPS default failed to render: "
+             f"{proc_cd.stderr.strip()}")
+    cddoc = yaml.safe_load(cd)
+    cdnames = [g.get("name") for g in cddoc.get("proxy-groups") or []]
+    if cdnames != expected_groups(default_excl, default_cg):
+        fail(f".env.example defaults must render the spec-derived inventory "
+             f"{expected_groups(default_excl, default_cg)!r}: got {cdnames!r}")
+    cdgroups = {g.get("name"): g for g in cddoc.get("proxy-groups")}
+    for name in spec_names(default_cg):
+        for sel in ("PROXY", "STREAMING"):
+            if name not in (cdgroups[sel].get("proxies") or []):
+                fail(f".env.example spec group {name!r} missing from {sel}")
+    check_rule_targets(cddoc)
+
+    # Malformed-spec classes: each must refuse to render (no config.yaml)
+    # with an error naming COUNTRY_GROUPS - an invalid pattern would panic
+    # mihomo at startup, and a shadowing name would corrupt routing.
+    for bad_spec, why in (
+            ('日本=日本`REJECT`', "backtick"),
+            ('日本', "entry without '='"),
+            ('=日本', "empty name"),
+            ('日本=', "empty regex"),
+            ('日本= \t', "whitespace-only regex"),
+            ('日本=x;日本=y', "duplicate name"),
+            ('auto=x', "builtin collision (auto)"),
+            ('auto-x=x', "builtin collision (auto-x)"),
+            ('PROXY=x', "builtin collision (PROXY)"),
+            ('DIRECT=x', "reserved adapter collision (DIRECT)"),
+            ('日本=x;;美国=y', "empty entry"),
+            ('日 本=x', "whitespace in name")):
+        proc_b, b = render(raw, country_groups=bad_spec)
+        if proc_b.returncode == 0 or b is not None:
+            fail(f"malformed COUNTRY_GROUPS ({why}: {bad_spec!r}) was accepted "
+                 f"or wrote config.yaml")
+        if "COUNTRY_GROUPS" not in proc_b.stderr:
+            fail(f"malformed-spec error ({why}) must name COUNTRY_GROUPS: "
+                 f"{proc_b.stderr.strip()!r}")
+    # A single trailing ';' is the POSIX field-split absorption case - legal.
+    proc_tr, tr = render(raw, country_groups='日本=日本;')
+    if proc_tr.returncode != 0 or tr is None:
+        fail(f"trailing-';' spec must render (field-split absorption): "
+             f"{proc_tr.stderr.strip()}")
+    if [g.get("name") for g in (yaml.safe_load(tr).get("proxy-groups") or [])] \
+            != expected_groups(None, '日本=日本'):
+        fail("trailing-';' spec must render exactly one generated group")
+    # Empty string == unset (the compose ':-' pass-through contract).
+    proc_ce, ce = render(raw, country_groups="")
+    if proc_ce.returncode != 0 or ce != rendered:
+        fail("empty-string COUNTRY_GROUPS must render byte-identical to unset")
+
     # 12) IP-literal subscription host: no DNS pin is possible or needed - the
     # panel entries in nameserver-policy and fake-ip-filter must degrade to
     # comments (never a bogus policy key), the mirror pins stay, and the render
@@ -911,7 +1103,12 @@ def main() -> None:
           "when true; the AUTOX fences render auto-x (exclude-filter, empty-fallback "
           "REJECT, no own probe) FIRST in PROXY when the exclude knob is set - inert "
           "when unset/empty, failing closed on backtick/blank patterns, with the "
-          ".env.example default rendering as the routing default; DNS detour "
+          ".env.example default rendering as the routing default; the "
+          "COUNTRY_GROUPS spec generates url-test groups (filter, empty-fallback "
+          "REJECT, no own probe) in both selectors after the auto groups with "
+          "spec-derived inventories, inert when unset/empty, refusing every "
+          "malformed-spec class, the .env.example starter spec rendering "
+          "combined with the exclude default; DNS detour "
           "fragments name real groups; geox-url hosts "
           "China-reachable; no hardcoded literals; fences pair, tokens map "
           "bidirectionally, rule/group targets resolve (never a provider), and every "

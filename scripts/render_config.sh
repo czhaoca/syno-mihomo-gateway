@@ -18,6 +18,9 @@ PRE2="$CFG_DIR/.config.yaml.pre2"
 PRE3="$CFG_DIR/.config.yaml.pre3"
 PRE4="$CFG_DIR/.config.yaml.pre4"
 PRE5="$CFG_DIR/.config.yaml.pre5"
+PRE6="$CFG_DIR/.config.yaml.pre6"
+CG_GROUPS_FRAG="$CFG_DIR/.country_groups.frag"
+CG_MEMBERS_FRAG="$CFG_DIR/.country_members.frag"
 
 # Port/secret may default; DNS must come from .env (CLAUDE.md: no hardcoded DNS).
 : "${CONTROLLER_PORT:=9090}"
@@ -95,6 +98,66 @@ if [ -n "$AUTO_EXCLUDE_FILTER" ]; then
       exit 1 ;;
   esac
 fi
+# Country groups: 'NAME=regex;NAME=regex' generates one url-test group per
+# entry (nodes matching the regexp2 pattern; a multi-country regex IS the
+# multi-country group) spliced into the PROXY and STREAMING selectors in
+# spec order. Empty/unset renders WITHOUT any generated group, byte-identical
+# to the pre-feature output. Validation is up here with the other knobs; the
+# fragment build lives below yaml_dq() (it needs the escaper). Every poison
+# class fails BEFORE anything is written: an invalid pattern panics mihomo at
+# startup, and a name shadowing a built-in group corrupts routing.
+: "${COUNTRY_GROUPS:=}"
+if [ -n "$COUNTRY_GROUPS" ]; then
+  case "$COUNTRY_GROUPS" in
+    *\`*)
+      echo "ERROR: COUNTRY_GROUPS must not contain a backtick (mihomo's multi-pattern separator; an invalid pattern crashes mihomo at startup)" >&2
+      exit 1 ;;
+  esac
+  _cg_seen=";"
+  _cg_old_ifs=$IFS; IFS=';'
+  set -f
+  # shellcheck disable=SC2086  # deliberate ';' field split of the spec
+  set -- $COUNTRY_GROUPS
+  set +f
+  IFS=$_cg_old_ifs
+  [ $# -gt 0 ] || { echo "ERROR: COUNTRY_GROUPS has no entries (expected NAME=regex;NAME=regex)" >&2; exit 1; }
+  for _cg_entry in "$@"; do
+    case "$_cg_entry" in
+      '')
+        echo "ERROR: COUNTRY_GROUPS has an empty entry (doubled or leading ';')" >&2
+        exit 1 ;;
+      *=*) : ;;
+      *)
+        echo "ERROR: COUNTRY_GROUPS entry '$_cg_entry' is malformed (expected NAME=regex)" >&2
+        exit 1 ;;
+    esac
+    _cg_name=${_cg_entry%%=*}
+    _cg_re=${_cg_entry#*=}
+    [ -n "$_cg_name" ] || { echo "ERROR: COUNTRY_GROUPS entry '$_cg_entry' has an empty name" >&2; exit 1; }
+    case "$_cg_name" in
+      *[[:space:]]*)
+        echo "ERROR: COUNTRY_GROUPS name '$_cg_name' contains whitespace (no spaces around ';' or '=')" >&2
+        exit 1 ;;
+    esac
+    case "$_cg_name" in
+      auto|auto-x|PROXY|STREAMING|DIRECT|REJECT|REJECT-DROP|PASS|COMPATIBLE|GLOBAL)
+        echo "ERROR: COUNTRY_GROUPS name '$_cg_name' collides with a built-in group/adapter" >&2
+        exit 1 ;;
+    esac
+    case "$_cg_re" in
+      *[![:space:]]*) : ;;
+      *)
+        echo "ERROR: COUNTRY_GROUPS entry for '$_cg_name' has an empty regex" >&2
+        exit 1 ;;
+    esac
+    case "$_cg_seen" in
+      *";$_cg_name;"*)
+        echo "ERROR: COUNTRY_GROUPS name '$_cg_name' is duplicated" >&2
+        exit 1 ;;
+    esac
+    _cg_seen="$_cg_seen$_cg_name;"
+  done
+fi
 if [ "$DNS_GEOIP_NO_RESOLVE" = true ]; then
   GEOIP_NO_RESOLVE=",no-resolve"
 else
@@ -160,6 +223,38 @@ esc() { printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/&/\\\&/g' -e 's/|/\\|/g'; 
 #   \" is only meaningful inside double quotes.
 yaml_dq() { printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'; }
 
+# Country-group fragment build (spec validated up top with the other knobs;
+# nothing here can fail). Two files: the group blocks (each ending in a blank
+# line so the insertion leaves the original spacing) and the selector member
+# lines, both inserted RAW at their {{COUNTRY_*}} marker lines below - names
+# and regexes pass through yaml_dq only (no sed replacement is involved, so
+# esc() is not needed and the pattern arrives verbatim).
+if [ -n "$COUNTRY_GROUPS" ]; then
+  : > "$CG_GROUPS_FRAG"
+  : > "$CG_MEMBERS_FRAG"
+  _cg_old_ifs=$IFS; IFS=';'
+  set -f
+  # shellcheck disable=SC2086  # deliberate ';' field split of the spec
+  set -- $COUNTRY_GROUPS
+  set +f
+  IFS=$_cg_old_ifs
+  for _cg_entry in "$@"; do
+    _cg_name=${_cg_entry%%=*}
+    _cg_re=${_cg_entry#*=}
+    {
+      printf '  - name: "%s"\n' "$(yaml_dq "$_cg_name")"
+      printf '    type: url-test\n'
+      printf '    use:\n'
+      printf '      - my-airport\n'
+      printf '    filter: "%s"\n' "$(yaml_dq "$_cg_re")"
+      printf '    empty-fallback: REJECT\n'
+      printf '    tolerance: 50\n'
+      printf '\n'
+    } >> "$CG_GROUPS_FRAG"
+    printf '      - "%s"\n' "$(yaml_dq "$_cg_name")" >> "$CG_MEMBERS_FRAG"
+  done
+fi
+
 # Pass 1 - fenced-block inclusion. Each block is fenced by '# {{X_BEGIN}}' /
 # '# {{X_END}}' marker lines. Disabled: delete the whole fenced range. Enabled:
 # delete only the two marker lines and keep the block (its tokens fill below).
@@ -209,6 +304,24 @@ else
   sed -e '/{{AUTOX_BEGIN}}/,/{{AUTOX_END}}/d' \
       -e '/{{AUTOXMEMBER_BEGIN}}/,/{{AUTOXMEMBER_END}}/d' "$PRE4" > "$PRE5"
 fi
+#   COUNTRY markers - single marker lines, not fences: replaced by the
+#                     generated group/member fragments when the spec is set
+#                     (awk raw-inserts the files - deterministic across
+#                     GNU/BSD/BusyBox, unlike the sed r+d interplay), deleted
+#                     when unset so the render stays byte-identical.
+if [ -n "$COUNTRY_GROUPS" ]; then
+  awk -v groups="$CG_GROUPS_FRAG" -v members="$CG_MEMBERS_FRAG" '
+    function emit(f,  l) { while ((getline l < f) > 0) print l; close(f) }
+    index($0, "{{COUNTRY_GROUPS}}")            { emit(groups); next }
+    index($0, "{{COUNTRY_MEMBERS_PROXY}}")     { emit(members); next }
+    index($0, "{{COUNTRY_MEMBERS_STREAMING}}") { emit(members); next }
+    { print }
+  ' "$PRE5" > "$PRE6"
+else
+  sed -e '/{{COUNTRY_GROUPS}}/d' \
+      -e '/{{COUNTRY_MEMBERS_PROXY}}/d' \
+      -e '/{{COUNTRY_MEMBERS_STREAMING}}/d' "$PRE5" > "$PRE6"
+fi
 
 # Pass 2 - token substitution (a disabled fence simply leaves no token behind;
 # EXTERNAL_UI_DIR renders inside a YAML double-quoted scalar like the secret).
@@ -227,8 +340,9 @@ sed \
   -e "s|{{TUN_AUTO_REDIRECT}}|$(esc "$TUN_AUTO_REDIRECT")|g" \
   -e "s|{{EXTERNAL_UI_DIR}}|$(esc "$(yaml_dq "$EXTERNAL_UI_DIR")")|g" \
   -e "s|{{AUTO_EXCLUDE_FILTER}}|$(esc "$(yaml_dq "$AUTO_EXCLUDE_FILTER")")|g" \
-  "$PRE5" > "$TMP"
-rm -f "$PRE" "$PRE2" "$PRE3" "$PRE4" "$PRE5"
+  "$PRE6" > "$TMP"
+rm -f "$PRE" "$PRE2" "$PRE3" "$PRE4" "$PRE5" "$PRE6" \
+      "$CG_GROUPS_FRAG" "$CG_MEMBERS_FRAG"
 mv "$TMP" "$OUT"
 echo "Rendered $OUT"
 

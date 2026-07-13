@@ -237,6 +237,7 @@ proxy-groups:
     empty-fallback: REJECT
 
 # {{AUTOX_END}}
+# {{COUNTRY_GROUPS}}
   # PROXY: dashboard-facing selector and the rule target. Defaults to `auto`; an
   # operator can pin a specific provider node (surfaced via use:), force DIRECT
   # (bypass), or REJECT (block) from MetaCubeXD.
@@ -247,6 +248,7 @@ proxy-groups:
       - auto-x
 # {{AUTOXMEMBER_END}}
       - auto
+# {{COUNTRY_MEMBERS_PROXY}}
       - DIRECT
       - REJECT
     use:
@@ -262,6 +264,7 @@ proxy-groups:
     proxies:
       - PROXY
       - auto
+# {{COUNTRY_MEMBERS_STREAMING}}
       - DIRECT
     use:
       - my-airport

@@ -166,6 +166,20 @@ DNS settings
       the auto-x group at all (your existing config, byte for byte).
       A backtick is refused.
 
+  COUNTRY_GROUPS
+      One-click "fastest node in country X" from the dashboard:
+      NAME=regex;NAME=regex creates one auto-selecting group per
+      entry - the panel shows NAME and keeps it on the fastest node
+      whose name matches regex. A regex naming several countries IS
+      a multi-country group. The shipped example fits airports that
+      name nodes in Chinese (美国01, 新加坡05...) - edit the entries
+      to match YOUR airport's naming. A group that matches no node
+      blocks traffic when selected instead of silently bypassing the
+      proxy. Names must not contain spaces or reuse auto / auto-x /
+      PROXY / STREAMING / DIRECT / REJECT; backticks and malformed
+      entries refuse to render. Leave empty for no generated groups
+      (your existing config, byte for byte).
+
       These settings are for the GATEWAY only. The NAS's OWN DNS lives in
       DSM Control Panel > Network > General and must also point at
       resolvers reachable from your network - a NAS whose only resolver is
