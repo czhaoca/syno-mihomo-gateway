@@ -67,10 +67,9 @@ Compose 兼容的引号，因此包含空格、`&`、`#`、`$`、引号或反斜
 | 键 | Req | 说明 | 示例 |
 |---|:--:|---|---|
 | `DNS_DEFAULT_NAMESERVER` | ✅ | 引导解析器——仅用于解析本节中出现的 DoH/DoT 服务器**域名**（当所有条目都以 IP 承载时处于闲置）。必须保持纯 IP、国内可达、**不走隧道**。 | `223.5.5.5,119.29.29.29` |
-| `DNS_NAMESERVER` | ✅ | 引导钉扎（geo 镜像、健康检查主机、机场面板）的解析出口，**同时**——渲染为 `proxy-server-nameserver`——在任何代理就绪之前解析机场节点域名（见下文）。分域解析对未设时（传统配置档）它也是通用上游。DoH-on-IP、国内、**绝不**加分组片段后缀。 | `https://223.5.5.5/dns-query,https://120.53.53.53/dns-query` |
-| `DNS_FALLBACK` | ✅ | **仅传统配置档使用：** fallback 双查询的境外抗污染解析器，当应答的 geoip 不是 CN 时使用。分域解析设置后完全不使用、**根本不会渲染**——v2 没有 fallback，因为双查询正是把所有长尾域名抄送国内解析器的通道。保持必填是为了随时能切回传统配置档。 | `https://1.1.1.1/dns-query#auto,tls://8.8.8.8:853#auto` |
-| `DNS_CN_NAMESERVER` | | **分域解析对 (a)：** 命中 mihomo `geosite:cn` 列表的域名只在这里解析——国内、直连。与 `DNS_FOREIGN_NAMESERVER` 同设或同不设：只设一个会拒绝渲染；**都不设**时渲染传统配置档，与 1.3.8 之前逐字节一致（现有 `.env` 原样可用——重新部署向导会主动提议升级）。 | `https://223.5.5.5/dns-query,https://120.53.53.53/dns-query` |
-| `DNS_FOREIGN_NAMESERVER` | | **分域解析对 (b)，v2 境外优先：** 渲染为**默认** `nameserver`——所有未被策略条目命中的域名（geosite 境外列表**以及**未列出的长尾）只在这里解析——境外、经 `#auto` 走隧道。这些域名完全不会到达任何国内运营方；隧道全灭时解析**失败关闭**（SERVFAIL），绝不悄悄泄漏。 | `https://1.1.1.1/dns-query#auto,https://8.8.8.8/dns-query#auto` |
+| `DNS_NAMESERVER` | ✅ | 引导钉扎（geo 镜像、健康检查主机、机场面板）的解析出口，**同时**——渲染为 `proxy-server-nameserver`——在任何代理就绪之前解析机场节点域名（见下文）。DoH-on-IP、国内、**绝不**加分组片段后缀。 | `https://223.5.5.5/dns-query,https://120.53.53.53/dns-query` |
+| `DNS_CN_NAMESERVER` | ✅ | **分域解析对 (a)：** 命中 mihomo `geosite:cn` 列表的域名只在这里解析——国内、直连。必须与 `DNS_FOREIGN_NAMESERVER` 一起设置——分域解析 v2 是**唯一**的 DNS 配置档；缺失任何一项都会拒绝渲染（入口点守门会保持上一份配置继续运行）。 | `https://223.5.5.5/dns-query,https://120.53.53.53/dns-query` |
+| `DNS_FOREIGN_NAMESERVER` | ✅ | **分域解析对 (b)，v2 境外优先：** 渲染为**默认** `nameserver`——所有未被策略条目命中的域名（geosite 境外列表**以及**未列出的长尾）只在这里解析——境外、经 `#auto` 走隧道。这些域名完全不会到达任何国内运营方；隧道全灭时解析**失败关闭**（SERVFAIL），绝不悄悄泄漏（fallback 双查询已随传统配置档一并移除）。 | `https://1.1.1.1/dns-query#auto,https://8.8.8.8/dns-query#auto` |
 | `DNS_GEOIP_NO_RESOLVE` | | `true` 会在 `GEOIP,CN,DIRECT` 规则上渲染出 `no-resolve`，使其完全不再强制任何解析。在 v2 下这次强制解析本就走隧道境外列表（私密），所以默认保持 `false`，未列出的国内域名保住直连捷径。`true` 的代价：`geosite:cn` 漏收的国内域名经 `MATCH` 走代理（见[故障排查](troubleshooting.md#开启-no-resolve-后小众国内网站变慢或打不开)）。仅接受小写 `true`/`false`。 | `false` |
 | `SNIFFER_ENABLE` | | 渲染**流量嗅探**（TLS SNI / HTTP Host / QUIC，`parse-pure-ip` + `override-destination`）：在网关**之外**解析 DNS 的局域网客户端发出的裸 IP 连接会恢复出域名，域名规则（含 `STREAMING`）照常路由它们，被污染的客户端解析结果也会在节点侧按域名重拨。未设/`false` 时不渲染该块，与 v1.3.10 之前逐字节一致（升级兼容）；`.env.example` 出厂为 `true`。路由自愈，但绕过网关的客户端要修复**隐私**仍须把设备 DNS 指向网关——见[故障排查](troubleshooting.md#局域网客户端绕过网关-dnsdnsleaktest-仍显示国内解析器)。 | `true` |
 | `AUTO_EXCLUDE_FILTER` | | 渲染 **`auto-x`** url-test 分组——剔除匹配该正则的机场节点——并作为 **`PROXY` 的第一项**（即默认线路）。出厂默认剔除香港：很多网站封锁香港出口 IP，而香港节点居多的套餐会让按延迟优选的 `auto` 几乎总是落在香港节点上。`auto` 本身保留**全部**节点（分域解析 DNS 的 `#auto` 通道走它），面板里一键即可切回。语法：regexp2（.NET 风格）——默认区分大小写（可用 `(?i)`），**无锚点子串**匹配（`香港` 匹配 `香港01`），`\|` 表示或；**反引号会拒绝渲染**（非法正则会让 mihomo 启动即崩溃）。若正则匹配了*所有*节点，`auto-x` 会 **REJECT**（失败关闭——绝不悄悄绕过代理直连；doctor 会报告，见[故障排查](troubleshooting.md#doctor-报告过滤分组为空proxy_groupsauto-x-拒绝流量--某国家分组没有节点)）。留空/未设则完全不渲染该分组，与此功能之前的配置逐字节一致（既有 `.env` 不受影响）。 | `香港\|HK\|(?i)hong ?kong` |
@@ -87,9 +86,9 @@ Compose 兼容的引号，因此包含空格、`&`、`#`、`$`、引号或反斜
 
 **`proxy-server-nameserver`——冷启动不变量。** 渲染后的配置把 `DNS_NAMESERVER` 复用为
 mihomo 的 `proxy-server-nameserver`：机场节点域名经国内列表**直连**解析，处于一切依赖
-隧道的路径之外。节点 IP 通常不在国内：传统配置档下 geoip 过滤器会把它们转给走隧道的
-fallback 解析器，v2 下默认解析器本身就走隧道——无论哪种，**在任何节点就绪之前**都不可
-达。没有这一条，全新启动或节点缓存过期时会在每个节点上以 `dns resolve failed` 收场——
+隧道的路径之外。节点 IP 通常不在国内，而默认解析器本身就走隧道——**在任何节点就绪
+之前**都不可达。没有这一条，全新启动或节点缓存过期时会在每个节点上以 `dns resolve
+failed` 收场——
 生产环境实际发生过（2026-07-10）。因此 `DNS_NAMESERVER` 必须保持国内、且绝不能带
 `#分组` 片段；CI 会在每个渲染变体上断言这两条性质。
 
@@ -233,8 +232,8 @@ dry-run 标志、updated/unchanged/failed/rolled-back 计数与名称——由 `
 |---|---|
 | `{{AIRPORT_URL}}` | `../syno-mihomo-gateway-data/config/subscription.txt` 的第一行（去除标签后） |
 | `{{CONTROLLER_PORT}}` / `{{CONTROLLER_SECRET}}` | `.env` |
-| `{{DNS_DEFAULT_NAMESERVER}}` / `{{DNS_NAMESERVER}}` / `{{DNS_FALLBACK}}` | `.env` |
-| `{{DNS_CN_NAMESERVER}}` / `{{DNS_FOREIGN_NAMESERVER}}` | `.env`（分域解析对；同时决定渲染哪套围栏 DNS 核心——设置时为 v2 境外优先，未设时为传统 `nameserver`+`fallback`） |
+| `{{DNS_DEFAULT_NAMESERVER}}` / `{{DNS_NAMESERVER}}` | `.env` |
+| `{{DNS_CN_NAMESERVER}}` / `{{DNS_FOREIGN_NAMESERVER}}` | `.env`（分域解析对——必填；v2 境外优先是唯一的 DNS 配置档） |
 | `{{GEOIP_NO_RESOLVE}}` | `.env` 的 `DNS_GEOIP_NO_RESOLVE`（为 `true` 时在 GEOIP 规则上渲染 `,no-resolve`） |
 | `{{TUN_AUTO_REDIRECT}}` | `.env`（缺省时为 `false`） |
 

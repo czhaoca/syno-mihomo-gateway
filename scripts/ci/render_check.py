@@ -16,16 +16,16 @@ Enforces:
     including DoH (https://) / DoT (tls://) URL entries and '#auto' detour
     fragments (route-this-resolver-through-the-auto-group; the China-safe
     .env defaults ship exactly that shape);
-  * the split-horizon fences (v2, foreign-by-default): knobs-unset renders the
-    LEGACY dns core (domestic nameserver + fallback + fallback-filter)
-    byte-identical to a fence-stripped template (pre-1.3.8 .env compat,
-    mirroring the EXTUI proof); both-knobs-set renders the exact
-    nameserver-policy mapping AND swaps the core — dns.nameserver becomes the
-    tunneled foreign list while fallback/fallback-filter are ABSENT (the
-    dual-query copy channel to domestic resolvers is gone; a dead tunnel
-    fails closed) — while default-nameserver / proxy-server-nameserver stay
-    UNPROXIED plain lists (the cold-start invariant from the 2026-07
-    incident); exactly-one-set fails loud naming the missing var, and
+  * split-horizon v2 (foreign-by-default) is the ONLY DNS profile (the
+    2026-07-14 purge, issue #43): DNS_CN_NAMESERVER + DNS_FOREIGN_NAMESERVER
+    are REQUIRED — missing or empty fails loud NAMING the variable, writing
+    nothing — and every render carries the exact nameserver-policy mapping
+    with dns.nameserver = the tunneled foreign list while
+    fallback/fallback-filter are ABSENT (the dual-query copy channel to
+    domestic resolvers is gone; a dead tunnel fails closed);
+    default-nameserver / proxy-server-nameserver stay UNPROXIED plain lists
+    (the cold-start invariant from the 2026-07 incident); the template
+    carries NO legacy DNS fence markers and no {{DNS_FALLBACK}} token; and
     DNS_GEOIP_NO_RESOLVE renders ',no-resolve' / bare / fails closed on
     garbage;
   * the bootstrap DNS pins (2026-07-12 provider outage): EVERY variant pins the
@@ -112,15 +112,14 @@ SECRET = 's3cr&t|"x\\y'  # & | render via esc(); " and \ render via yaml_dq()
 # DNS fixtures mirror the shipped .env.example shape: a plain-IP bootstrap
 # list, DoH-on-IP domestic lists, and '#auto'-fragment (detoured through the
 # auto url-test group — NOT #PROXY, so a dashboard PROXY=DIRECT pin cannot
-# kill or leak long-tail resolution) foreign/fallback entries. The URLs must
+# kill or leak long-tail resolution) foreign entries. The URLs must
 # survive esc() (sed) and parse as YAML flow-sequence STRING scalars — '#'
 # preceded by a non-space is NOT a YAML comment, and the exact-equality
 # assertions prove the fragments survive.
-# All six lists are pairwise DISTINCT so ANY swapped {{DNS_*}} substitution
+# All five lists are pairwise DISTINCT so ANY swapped {{DNS_*}} substitution
 # fails the round-trip assertions.
 DNS_DEFAULT = ["223.6.6.6", "119.29.29.29"]
 DNS_NS = ["https://223.5.5.5/dns-query", "https://120.53.53.53/dns-query"]
-DNS_FB = ["https://1.1.1.1/dns-query#auto", "tls://8.8.8.8:853#auto"]
 DNS_CN = ["https://223.4.4.4/dns-query", "https://120.53.53.102/dns-query"]
 DNS_FOREIGN = ["https://1.0.0.1/dns-query#auto", "https://8.8.4.4/dns-query#auto"]
 
@@ -158,6 +157,11 @@ PIN_MIRROR = "testingcf.jsdelivr.net"
 PIN_GSTATIC = "www.gstatic.com"
 PANEL_HOST = "h.example.com"
 BOOTSTRAP_PINS = {PIN_MIRROR: DNS_NS, PIN_GSTATIC: DNS_NS, PANEL_HOST: DNS_NS}
+# v2 is the only DNS profile: every render carries the bootstrap pins PLUS
+# the split-horizon policy entries (geosite:cn domestic, everything-foreign
+# tunneled) — there is no knobs-off variant anymore (issue #43).
+EXPECTED_POLICY = {**BOOTSTRAP_PINS,
+                   "geosite:cn": DNS_CN, "geosite:geolocation-!cn": DNS_FOREIGN}
 FAKEIP_FILTER = [PIN_MIRROR, PANEL_HOST]
 PROVIDER_PATH = "./proxies/my-airport.yaml"
 # An IP-literal subscription host needs no DNS pin at all - the renderer must
@@ -186,8 +190,8 @@ def fail(msg: str):
 def render(raw: str, tun_auto_redirect: str | None = None,
            tun_enable: str | None = None,
            external_ui_dir: str | None = None,
-           dns_cn: str | None = None,
-           dns_foreign: str | None = None,
+           dns_cn: str | None = ",".join(DNS_CN),
+           dns_foreign: str | None = ",".join(DNS_FOREIGN),
            geoip_no_resolve: str | None = None,
            sniffer_enable: str | None = None,
            auto_exclude_filter: str | None = None,
@@ -210,7 +214,6 @@ def render(raw: str, tun_auto_redirect: str | None = None,
             "CONTROLLER_SECRET": SECRET,
             "DNS_DEFAULT_NAMESERVER": ",".join(DNS_DEFAULT),
             "DNS_NAMESERVER": ",".join(DNS_NS),
-            "DNS_FALLBACK": ",".join(DNS_FB),
         }
         if tun_auto_redirect is not None:
             env["TUN_AUTO_REDIRECT"] = tun_auto_redirect
@@ -218,9 +221,11 @@ def render(raw: str, tun_auto_redirect: str | None = None,
             env["TUN_ENABLE"] = tun_enable
         if external_ui_dir is not None:
             env["EXTERNAL_UI_DIR"] = external_ui_dir
-        # Split-horizon knobs stay ABSENT unless a case opts in, so every
-        # pre-existing render in this suite doubles as the legacy-path
-        # (pre-1.3.8 .env) regression.
+        # The split-horizon pair is REQUIRED (v2 is the only DNS profile) and
+        # rides along by default. None = the variable is ABSENT from the env
+        # entirely; "" = present-but-empty (the compose ':-' pass-through for
+        # a stale pre-v2 .env) — both must fail the render loudly, exercised
+        # by the required-pair failure cases below.
         if dns_cn is not None:
             env["DNS_CN_NAMESERVER"] = dns_cn
         if dns_foreign is not None:
@@ -259,14 +264,6 @@ def strip_fence(raw: str, name: str) -> str:
         if not skipping:
             out.append(line)
     return "".join(out)
-
-
-def unwrap_fence(raw: str, name: str) -> str:
-    """Delete ONLY the {{NAME_BEGIN}}/{{NAME_END}} marker lines, keeping the
-    fenced content — the renderer's enabled-fence sed."""
-    return "".join(
-        line for line in raw.splitlines(keepends=True)
-        if f"{{{{{name}_BEGIN}}}}" not in line and f"{{{{{name}_END}}}}" not in line)
 
 
 def drop_token_lines(raw: str, name: str) -> str:
@@ -441,7 +438,8 @@ def main() -> None:
     check_fences(raw)
     check_token_mapping(raw)
 
-    # 2) Run the REAL renderer with the backwards-compatible omitted-key path.
+    # 2) Run the REAL renderer with the default fixture env (v2 pair included
+    # — split-horizon is the only DNS profile).
     proc, rendered = render(raw)
     if proc.returncode != 0 or rendered is None:
         fail(f"render_config.sh exited {proc.returncode}: {proc.stderr.strip()}")
@@ -479,31 +477,42 @@ def main() -> None:
 
     # 5) DNS lists must round-trip EXACTLY: the comma list splits into flow-seq
     # items, and DoH/DoT URL entries stay STRING scalars (a YAML mis-parse would
-    # surface here as a dict or a mangled token). proxy-server-nameserver reuses
-    # the domestic list so node hostnames resolve without the fallback-filter
-    # (the filtered-network chicken-and-egg observed in production).
+    # surface here as a dict or a mangled token). v2 is the ONLY profile:
+    # dns.nameserver is the tunneled foreign list ('#auto' fragments surviving
+    # into the parsed values), and proxy-server-nameserver reuses the domestic
+    # list so node hostnames resolve direct (the filtered-network
+    # chicken-and-egg observed in production).
     dns = doc.get("dns") or {}
     for field, expected in (("default-nameserver", DNS_DEFAULT),
-                            ("nameserver", DNS_NS),
-                            ("proxy-server-nameserver", DNS_NS),
-                            ("fallback", DNS_FB)):
+                            ("nameserver", DNS_FOREIGN),
+                            ("proxy-server-nameserver", DNS_NS)):
         servers = dns.get(field)
         if servers != expected:
             fail(f"dns.{field} did not round-trip: got {servers!r}, expected {expected!r}")
-    # The LEGACY core keeps the anti-pollution dual-query filter; only the
-    # split-horizon (v2) render drops it (asserted absent in section 10).
-    if "fallback-filter" not in dns:
-        fail("legacy render must keep dns.fallback-filter (anti-pollution "
-             "dual-query is the legacy contract)")
+    # The fallback dual-query — the channel that copied every long-tail
+    # hostname to the domestic resolvers — must not exist in ANY render
+    # (the legacy profile was purged, issue #43).
+    for gone in ("fallback", "fallback-filter"):
+        if gone in dns:
+            fail(f"dns.{gone} must NOT render — v2 is the only DNS profile "
+                 f"(legacy purged): got {dns.get(gone)!r}")
+    # Cold-start invariant: the bootstrap and node-hostname resolvers stay
+    # UNPROXIED plain lists — no '#group' fragments (the 2026-07 incident).
+    for field in ("default-nameserver", "proxy-server-nameserver"):
+        tunneled = [e for e in dns.get(field) or [] if "#" in str(e)]
+        if tunneled:
+            fail(f"dns.{field} must stay UNPROXIED — no '#group' fragments "
+                 f"(cold-start invariant): {tunneled}")
     check_dns_detour_targets(doc)
 
-    # 5a) Bootstrap DNS pins: the geodata mirror and the airport-panel host must
-    # resolve via the domestic list (bypassing fallback/fallback-filter) and be
-    # excluded from fake-ip, in EVERY render - a cold start has no node to
-    # tunnel a resolver or a fetch through (2026-07-12 provider outage).
-    if dns.get("nameserver-policy") != BOOTSTRAP_PINS:
+    # 5a) nameserver-policy: the bootstrap pins (geodata mirror, gstatic,
+    # airport panel — a cold start has no node to tunnel a resolver or a
+    # fetch through; 2026-07-12 provider outage) PLUS the always-on
+    # split-horizon entries, exactly.
+    if dns.get("nameserver-policy") != EXPECTED_POLICY:
         fail(f"default render nameserver-policy must be exactly the bootstrap "
-             f"pins {BOOTSTRAP_PINS!r}: got {dns.get('nameserver-policy')!r}")
+             f"pins + split-horizon entries {EXPECTED_POLICY!r}: "
+             f"got {dns.get('nameserver-policy')!r}")
     if dns.get("fake-ip-filter") != FAKEIP_FILTER:
         fail(f"dns.fake-ip-filter must be {FAKEIP_FILTER!r}: "
              f"got {dns.get('fake-ip-filter')!r}")
@@ -644,113 +653,60 @@ def main() -> None:
     if yaml.safe_load(extui).get("external-ui") != ui_dir:
         fail(f"external-ui did not round-trip: {yaml.safe_load(extui).get('external-ui')!r}")
 
-    # 10) Split-horizon DNS fences (privacy hardening v2). Knobs UNSET —
-    # which is every render above — must be INERT: no geosite policy entries,
-    # the LEGACY dns core (domestic nameserver + fallback + fallback-filter),
-    # the bare GEOIP rule, and byte-identity against a template with the
-    # DNSPOLICY + DNSSPLIT fences stripped, the DNSLEGACY markers unwrapped,
-    # and the {{GEOIP_NO_RESOLVE}} token removed. That is the mechanical
-    # proof a pre-1.3.8 .env renders exactly as before.
-    for fence in ("DNSPOLICY", "DNSSPLIT", "DNSLEGACY", "SNIFFER",
-                  "AUTOX", "AUTOXMEMBER"):
+    # 10) v2-only DNS (issue #43): the legacy-profile machinery is GONE. The
+    # template must carry NO DNS fence marker and no {{DNS_FALLBACK}} token;
+    # the policy entries and the foreign-by-default core render
+    # unconditionally (asserted exactly in 5/5a on the default render). The
+    # remaining fences must still pair, and their unset-inertness is proven
+    # by byte-identity against a stripped template.
+    for fence in ("SNIFFER", "AUTOX", "AUTOXMEMBER"):
         if (f"{{{{{fence}_BEGIN}}}}" not in raw
                 or f"{{{{{fence}_END}}}}" not in raw):
             fail(f"template must carry the {fence}_BEGIN/{fence}_END fence pair")
+    for gone in ("DNSPOLICY_BEGIN", "DNSPOLICY_END", "DNSSPLIT_BEGIN",
+                 "DNSSPLIT_END", "DNSLEGACY_BEGIN", "DNSLEGACY_END",
+                 "DNS_FALLBACK"):
+        if f"{{{{{gone}}}}}" in raw:
+            fail(f"template must NOT carry {{{{{gone}}}}} — the legacy DNS "
+                 f"profile was purged (v2 is the only profile, issue #43)")
     if "{{GEOIP_NO_RESOLVE}}" not in raw:
         fail("template must carry the {{GEOIP_NO_RESOLVE}} token on the GEOIP,CN rule")
-    # Knobs unset: nameserver-policy carries ONLY the bootstrap pins (asserted
-    # exactly in 5a) - i.e. no geosite entries leak out of the fence.
-    for leaked in ("geosite:cn", "geosite:geolocation-!cn"):
-        if leaked in (doc.get("dns") or {}).get("nameserver-policy", {}):
-            fail(f"default render must NOT carry the {leaked!r} policy entry "
-                 f"(knobs unset)")
     if doc.get("rules") != RULES_BASE:
         fail(f"default rules must be the v1.3.10 chain in order "
              f"{RULES_BASE!r}: got {doc.get('rules')!r}")
-    legacy_raw = unwrap_fence(
-        strip_fence(strip_fence(strip_fence(strip_fence(strip_fence(
-            raw, "DNSPOLICY"), "DNSSPLIT"), "SNIFFER"), "AUTOX"),
-            "AUTOXMEMBER"),
-        "DNSLEGACY").replace("{{GEOIP_NO_RESOLVE}}", "")
+    plain_raw = strip_fence(strip_fence(strip_fence(
+        raw, "SNIFFER"), "AUTOX"), "AUTOXMEMBER").replace(
+        "{{GEOIP_NO_RESOLVE}}", "")
     for marker in ("COUNTRY_GROUPS", "COUNTRY_MEMBERS_PROXY",
                    "COUNTRY_MEMBERS_STREAMING"):
         if f"{{{{{marker}}}}}" not in raw:
             fail(f"template must carry the {{{{{marker}}}}} generation marker")
-        legacy_raw = drop_token_lines(legacy_raw, marker)
-    proc_l, legacy = render(legacy_raw)
-    if proc_l.returncode != 0 or legacy is None:
-        fail(f"DNS-fence-stripped render failed: {proc_l.stderr.strip()}")
-    if legacy != rendered:
-        fail("knobs-unset render is not byte-identical to a DNS-fence-less "
+        plain_raw = drop_token_lines(plain_raw, marker)
+    proc_l, plain = render(plain_raw)
+    if proc_l.returncode != 0 or plain is None:
+        fail(f"fence-stripped render failed: {proc_l.stderr.strip()}")
+    if plain != rendered:
+        fail("knobs-unset render is not byte-identical to a fence-less "
              "template render — the fences/token are not inert for existing .env files")
-    # EMPTY-STRING knobs must behave exactly like unset ones: docker-compose
-    # passes '${DNS_CN_NAMESERVER:-}' through as an empty env var for every
-    # pre-1.3.8 .env, so empty==off is the interop contract with the compose
-    # environment allowlist (the renderer's ':=' colon-form normalizes null).
-    proc_es, empty_set = render(raw, dns_cn="", dns_foreign="", geoip_no_resolve="")
-    if proc_es.returncode != 0 or empty_set != rendered:
-        fail("empty-string knobs must render byte-identical to unset knobs "
-             "(the compose ':-' pass-through contract)")
 
-    # Both knobs set: split-horizon v2 (foreign-by-default). The policy block
-    # renders with the exact mapping AND the dns core swaps: nameserver
-    # becomes the tunneled foreign list ('#auto' fragments surviving into the
-    # parsed YAML values), while fallback and fallback-filter are ABSENT —
-    # removing the dual-query that copied every long-tail hostname to the
-    # domestic resolvers (the dnsleaktest AliDNS finding). Cold-start
-    # invariants hold on THIS variant too: default-nameserver and
-    # proxy-server-nameserver keep their plain domestic lists with NO '#'
-    # fragment (proxied bootstrap = the 2026-07 incident chicken-and-egg).
-    proc_p, pol = render(raw, dns_cn=",".join(DNS_CN), dns_foreign=",".join(DNS_FOREIGN))
-    if proc_p.returncode != 0 or pol is None:
-        fail(f"split-horizon render failed: {proc_p.stderr.strip()}")
-    assert_resolved("DNSPOLICY", pol)
-    if "\n\n\n" in pol:
-        fail("split-horizon render contains doubled blank lines — the fences must "
-             "sit flush against their neighbors")
-    pdoc = yaml.safe_load(pol)
-    policy = (pdoc.get("dns") or {}).get("nameserver-policy")
-    expected_policy = {**BOOTSTRAP_PINS,
-                       "geosite:cn": DNS_CN, "geosite:geolocation-!cn": DNS_FOREIGN}
-    if policy != expected_policy:
-        fail(f"nameserver-policy did not round-trip: got {policy!r}, "
-             f"expected {expected_policy!r}")
-    if (pdoc.get("dns") or {}).get("fake-ip-filter") != FAKEIP_FILTER:
-        fail(f"[DNSPOLICY] dns.fake-ip-filter must be {FAKEIP_FILTER!r}: "
-             f"got {(pdoc.get('dns') or {}).get('fake-ip-filter')!r}")
-    for field, expected in (("default-nameserver", DNS_DEFAULT),
-                            ("nameserver", DNS_FOREIGN),
-                            ("proxy-server-nameserver", DNS_NS)):
-        if (pdoc.get("dns") or {}).get(field) != expected:
-            fail(f"[DNSPOLICY] dns.{field} must be {expected!r} under v2: "
-                 f"got {(pdoc.get('dns') or {}).get(field)!r}")
-    for gone in ("fallback", "fallback-filter"):
-        if gone in (pdoc.get("dns") or {}):
-            fail(f"[DNSPOLICY] split-horizon v2 must NOT render dns.{gone} — "
-                 f"the dual-query copy channel to domestic resolvers: "
-                 f"got {(pdoc.get('dns') or {}).get(gone)!r}")
-    for field in ("default-nameserver", "proxy-server-nameserver"):
-        tunneled = [e for e in (pdoc.get("dns") or {}).get(field) or [] if "#" in str(e)]
-        if tunneled:
-            fail(f"dns.{field} must stay UNPROXIED — no '#group' fragments "
-                 f"(cold-start invariant): {tunneled}")
-    if pdoc.get("rules") != RULES_BASE:
-        fail(f"[DNSPOLICY] rules must be the same v1.3.10 chain regardless of "
-             f"DNS variant: got {pdoc.get('rules')!r}")
-    check_rule_targets(pdoc)
-    check_dns_detour_targets(pdoc)
-
-    # Exactly ONE knob set is a broken half-configuration: fail loud, write
-    # nothing, and NAME the missing variable in the error.
-    for kwargs, missing in (({"dns_cn": "223.5.5.5"}, "DNS_FOREIGN_NAMESERVER"),
-                            ({"dns_foreign": "https://1.0.0.1/dns-query#auto"},
-                             "DNS_CN_NAMESERVER")):
+    # The REQUIRED pair: a missing OR empty DNS_CN_NAMESERVER /
+    # DNS_FOREIGN_NAMESERVER refuses to render, names the variable, writes
+    # nothing. Absent and empty behave identically — docker-compose passes
+    # '${DNS_CN_NAMESERVER:-}' through as an empty var for a stale pre-v2
+    # .env, and that .env must fail LOUD (the entrypoint gate then keeps the
+    # previous config running), never render a leaky half-profile.
+    for kwargs, missing in (
+            ({"dns_cn": None}, "DNS_CN_NAMESERVER"),
+            ({"dns_cn": ""}, "DNS_CN_NAMESERVER"),
+            ({"dns_foreign": None}, "DNS_FOREIGN_NAMESERVER"),
+            ({"dns_foreign": ""}, "DNS_FOREIGN_NAMESERVER"),
+            ({"dns_cn": None, "dns_foreign": None}, "DNS_CN_NAMESERVER")):
         proc_h, half = render(raw, **kwargs)
         if proc_h.returncode == 0 or half is not None:
-            fail(f"half-configured split-horizon ({list(kwargs)[0]} only) was "
-                 f"accepted or wrote config.yaml")
+            fail(f"render without the split-horizon pair ({kwargs!r}) was "
+                 f"accepted or wrote config.yaml (the pair is REQUIRED)")
         if missing not in proc_h.stderr:
-            fail(f"half-configured error must name the missing {missing}: "
+            fail(f"missing-pair error must name {missing}: "
                  f"{proc_h.stderr.strip()!r}")
 
     # 11) DNS_GEOIP_NO_RESOLVE opt-in, independent of the policy knobs:
@@ -1076,9 +1032,12 @@ def main() -> None:
     assert_resolved("IP-literal-sub", ip_rendered)
     ipdoc = yaml.safe_load(ip_rendered)
     ipdns = ipdoc.get("dns") or {}
-    if ipdns.get("nameserver-policy") != {PIN_MIRROR: DNS_NS, PIN_GSTATIC: DNS_NS}:
-        fail(f"[IP-literal] nameserver-policy must carry ONLY the mirror + "
-             f"gstatic pins: got {ipdns.get('nameserver-policy')!r}")
+    if ipdns.get("nameserver-policy") != {PIN_MIRROR: DNS_NS, PIN_GSTATIC: DNS_NS,
+                                          "geosite:cn": DNS_CN,
+                                          "geosite:geolocation-!cn": DNS_FOREIGN}:
+        fail(f"[IP-literal] nameserver-policy must carry the mirror + gstatic "
+             f"pins + the split-horizon entries and NO panel pin: "
+             f"got {ipdns.get('nameserver-policy')!r}")
     if ipdns.get("fake-ip-filter") != [PIN_MIRROR]:
         fail(f"[IP-literal] fake-ip-filter must carry ONLY the mirror: "
              f"got {ipdns.get('fake-ip-filter')!r}")
@@ -1089,11 +1048,11 @@ def main() -> None:
     print("OK: renderer preserves URL/secrets; controller, DNS, CORS valid; TUN is ON by "
           "default (stack: system keeps the controller reachable, allow-lan + fake-ip set; "
           "TUN_ENABLE=false omits the block); auto-redirect/enable opt-ins are strict; "
-          "external-ui + split-horizon DNS fences inert when unset (byte-identical "
-          "legacy render incl. fallback/fallback-filter); split-on renders v2 foreign-"
-          "by-default (nameserver = tunneled foreign list with #auto fragments, "
-          "fallback/fallback-filter ABSENT) while default/proxy-server-nameserver stay "
-          "unproxied; half-config fails loud; GEOIP no-resolve knob strict; bootstrap "
+          "split-horizon v2 is the ONLY DNS profile (required pair fails loud when "
+          "missing/empty, naming the variable; nameserver = tunneled foreign list with "
+          "#auto fragments; fallback/fallback-filter never render; no legacy fence "
+          "markers or {{DNS_FALLBACK}} token survive) while default/proxy-server-"
+          "nameserver stay unproxied; GEOIP no-resolve knob strict; bootstrap "
           "pins (geodata mirror + gstatic + panel host) in nameserver-policy — mirror + "
           "panel in fake-ip-filter — on every variant with the stable provider cache "
           "path, degrading to mirror+gstatic on an IP-literal subscription host; rules "

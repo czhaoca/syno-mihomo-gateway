@@ -149,7 +149,8 @@ macvlan 父接口 / 接口不匹配
 --------------------------------------------------------------------------
   原因：通常是订阅地址错误/无法访问、DNS 设置有误，或 TUN 故障。
   解决：检查 ../syno-mihomo-gateway-data/config/subscription.txt（订阅地址）以及
-        DNS_DEFAULT_NAMESERVER / DNS_NAMESERVER / DNS_FALLBACK 各项，然后
+        DNS_DEFAULT_NAMESERVER / DNS_NAMESERVER / DNS_CN_NAMESERVER /
+        DNS_FOREIGN_NAMESERVER 各项，然后
         重新部署。部署与自动更新流程都会对新镜像做健康检查，若持续不健康会
         自动回滚。
         如果日志显示 "iptables (nf_tables): Could not fetch rule set

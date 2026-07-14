@@ -19,7 +19,6 @@ OUT="${MIHOMO_RENDER_OUT:-$CFG_DIR/config.yaml}"
 TMP="$CFG_DIR/.config.yaml.tmp"
 PRE="$CFG_DIR/.config.yaml.pre"
 PRE2="$CFG_DIR/.config.yaml.pre2"
-PRE3="$CFG_DIR/.config.yaml.pre3"
 PRE4="$CFG_DIR/.config.yaml.pre4"
 PRE5="$CFG_DIR/.config.yaml.pre5"
 PRE6="$CFG_DIR/.config.yaml.pre6"
@@ -46,24 +45,13 @@ esac
 # the DSM compose path) removes the fenced external-ui block entirely, so the
 # render stays byte-identical to the pre-fence template output.
 : "${EXTERNAL_UI_DIR:=}"
-# Split-horizon DNS (privacy hardening, v2 foreign-by-default): BOTH lists set
-# keeps the fenced nameserver-policy entries AND swaps the dns core - the
-# default resolver becomes the tunneled foreign list with NO fallback
-# dual-query (a dead tunnel fails closed instead of leaking long-tail
-# hostnames to the domestic resolvers). BOTH empty/unset keeps the legacy
-# core, rendering byte-identical to the pre-split-horizon output so existing
-# .env files keep working untouched. Exactly ONE set is a half-configuration
-# - fail loud, write nothing.
-: "${DNS_CN_NAMESERVER:=}"
-: "${DNS_FOREIGN_NAMESERVER:=}"
-if [ -n "$DNS_CN_NAMESERVER" ] && [ -z "$DNS_FOREIGN_NAMESERVER" ]; then
-  echo "ERROR: DNS_CN_NAMESERVER is set but DNS_FOREIGN_NAMESERVER is empty - set both (split-horizon) or neither (legacy)" >&2
-  exit 1
-fi
-if [ -z "$DNS_CN_NAMESERVER" ] && [ -n "$DNS_FOREIGN_NAMESERVER" ]; then
-  echo "ERROR: DNS_FOREIGN_NAMESERVER is set but DNS_CN_NAMESERVER is empty - set both (split-horizon) or neither (legacy)" >&2
-  exit 1
-fi
+# Split-horizon DNS (privacy hardening, v2 foreign-by-default) is the ONLY
+# profile (the legacy fallback dual-query - which copied every long-tail
+# hostname to the domestic resolvers - was purged, proxy-groups-v2 epic
+# 2026-07-14): the nameserver-policy entries and the foreign-by-default core
+# render unconditionally, and BOTH lists are REQUIRED - validated in the
+# mandatory-DNS loop below, failing loud with the variable named. A dead
+# tunnel fails closed (SERVFAIL) instead of leaking to a domestic resolver.
 # true appends ',no-resolve' to the GEOIP,CN rule so it stops forcing local
 # lookups of unmatched domains (see the template comment for the trade-off).
 : "${DNS_GEOIP_NO_RESOLVE:=false}"
@@ -167,7 +155,8 @@ if [ "$DNS_GEOIP_NO_RESOLVE" = true ]; then
 else
   GEOIP_NO_RESOLVE=""
 fi
-for _v in DNS_DEFAULT_NAMESERVER DNS_NAMESERVER DNS_FALLBACK; do
+for _v in DNS_DEFAULT_NAMESERVER DNS_NAMESERVER \
+          DNS_CN_NAMESERVER DNS_FOREIGN_NAMESERVER; do
   eval "_val=\${$_v:-}"
   [ -n "$_val" ] || { echo "ERROR: $_v must be set in .env (see .env.example)" >&2; exit 1; }
 done
@@ -264,14 +253,6 @@ fi
 # delete only the two marker lines and keep the block (its tokens fill below).
 #   TUN block       - kept when TUN_ENABLE=true (the transparent-gateway default).
 #   EXTUI block     - kept when EXTERNAL_UI_DIR is non-empty (Pi bare-metal mode).
-#   DNS fences      - three blocks switch TOGETHER on the split-horizon
-#                     condition (validated above: both or neither, so testing
-#                     one suffices). ON: keep the DNSPOLICY entries + the
-#                     DNSSPLIT core (foreign-by-default nameserver, no
-#                     fallback), delete the DNSLEGACY core. OFF: delete
-#                     DNSPOLICY + DNSSPLIT, keep the DNSLEGACY core (domestic
-#                     nameserver + fallback + fallback-filter) so a pre-1.3.8
-#                     .env renders byte-identical to its old output.
 if [ "$TUN_ENABLE" = true ]; then
   sed -e '/{{TUN_BEGIN}}/d' -e '/{{TUN_END}}/d' "$TEMPLATE" > "$PRE"
 else
@@ -282,21 +263,12 @@ if [ -n "$EXTERNAL_UI_DIR" ]; then
 else
   sed -e '/{{EXTUI_BEGIN}}/,/{{EXTUI_END}}/d' "$PRE" > "$PRE2"
 fi
-if [ -n "$DNS_CN_NAMESERVER" ]; then
-  sed -e '/{{DNSPOLICY_BEGIN}}/d' -e '/{{DNSPOLICY_END}}/d' \
-      -e '/{{DNSSPLIT_BEGIN}}/d' -e '/{{DNSSPLIT_END}}/d' \
-      -e '/{{DNSLEGACY_BEGIN}}/,/{{DNSLEGACY_END}}/d' "$PRE2" > "$PRE3"
-else
-  sed -e '/{{DNSPOLICY_BEGIN}}/,/{{DNSPOLICY_END}}/d' \
-      -e '/{{DNSSPLIT_BEGIN}}/,/{{DNSSPLIT_END}}/d' \
-      -e '/{{DNSLEGACY_BEGIN}}/d' -e '/{{DNSLEGACY_END}}/d' "$PRE2" > "$PRE3"
-fi
 #   SNIFFER block   - kept when SNIFFER_ENABLE=true (hostname recovery for
 #                     raw-IP flows from DNS-bypassing LAN clients).
 if [ "$SNIFFER_ENABLE" = true ]; then
-  sed -e '/{{SNIFFER_BEGIN}}/d' -e '/{{SNIFFER_END}}/d' "$PRE3" > "$PRE4"
+  sed -e '/{{SNIFFER_BEGIN}}/d' -e '/{{SNIFFER_END}}/d' "$PRE2" > "$PRE4"
 else
-  sed -e '/{{SNIFFER_BEGIN}}/,/{{SNIFFER_END}}/d' "$PRE3" > "$PRE4"
+  sed -e '/{{SNIFFER_BEGIN}}/,/{{SNIFFER_END}}/d' "$PRE2" > "$PRE4"
 fi
 #   AUTOX blocks    - the auto-x group and its PROXY member line switch
 #                     TOGETHER on AUTO_EXCLUDE_FILTER being non-empty
@@ -337,7 +309,6 @@ sed \
   -e "s|{{CONTROLLER_SECRET}}|$(esc "$(yaml_dq "$CONTROLLER_SECRET")")|g" \
   -e "s|{{DNS_DEFAULT_NAMESERVER}}|$(esc "$DNS_DEFAULT_NAMESERVER")|g" \
   -e "s|{{DNS_NAMESERVER}}|$(esc "$DNS_NAMESERVER")|g" \
-  -e "s|{{DNS_FALLBACK}}|$(esc "$DNS_FALLBACK")|g" \
   -e "s|{{DNS_CN_NAMESERVER}}|$(esc "$DNS_CN_NAMESERVER")|g" \
   -e "s|{{DNS_FOREIGN_NAMESERVER}}|$(esc "$DNS_FOREIGN_NAMESERVER")|g" \
   -e "s|{{GEOIP_NO_RESOLVE}}|$(esc "$GEOIP_NO_RESOLVE")|g" \
@@ -345,7 +316,7 @@ sed \
   -e "s|{{EXTERNAL_UI_DIR}}|$(esc "$(yaml_dq "$EXTERNAL_UI_DIR")")|g" \
   -e "s|{{AUTO_EXCLUDE_FILTER}}|$(esc "$(yaml_dq "$AUTO_EXCLUDE_FILTER")")|g" \
   "$PRE6" > "$TMP"
-rm -f "$PRE" "$PRE2" "$PRE3" "$PRE4" "$PRE5" "$PRE6" \
+rm -f "$PRE" "$PRE2" "$PRE4" "$PRE5" "$PRE6" \
       "$CG_GROUPS_FRAG" "$CG_MEMBERS_FRAG"
 mv "$TMP" "$OUT"
 echo "Rendered $OUT"

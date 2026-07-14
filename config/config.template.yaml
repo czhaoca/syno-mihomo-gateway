@@ -100,7 +100,6 @@ dns:
     'testingcf.jsdelivr.net': [ {{DNS_NAMESERVER}} ]
     'www.gstatic.com': [ {{DNS_NAMESERVER}} ]
     {{AIRPORT_DNS_PIN}}
-# {{DNSPOLICY_BEGIN}}
     # Split-horizon resolution (DNS privacy): a domain matching a key below is
     # resolved ONLY by that key's servers. CN domains resolve via the domestic
     # list, dialed DIRECT; the listed foreign categories resolve via overseas
@@ -115,14 +114,12 @@ dns:
     # existing .env files keep working unchanged.
     'geosite:cn': [ {{DNS_CN_NAMESERVER}} ]
     'geosite:geolocation-!cn': [ {{DNS_FOREIGN_NAMESERVER}} ]
-# {{DNSPOLICY_END}}
   # Proxy-server (airport node) hostnames resolve via the domestic list
   # DIRECTLY: node IPs are usually non-CN, so tunneled or filter-diverted
   # resolution dead-ends with "dns resolve failed" on every node BEFORE any
   # node is up (observed in production) - the same cold-start invariant as
   # the bootstrap pins above.
   proxy-server-nameserver: [ {{DNS_NAMESERVER}} ]
-# {{DNSSPLIT_BEGIN}}
   # Split-horizon v2 (foreign-by-default): the DEFAULT resolver for every
   # domain NOT matched by nameserver-policy above is the tunneled foreign
   # list - the domestic operators never see long-tail hostnames at all (the
@@ -130,17 +127,6 @@ dns:
   # deliberately NO fallback here: a dead tunnel fails CLOSED (SERVFAIL)
   # instead of silently answering from a domestic resolver.
   nameserver: [ {{DNS_FOREIGN_NAMESERVER}} ]
-# {{DNSSPLIT_END}}
-# {{DNSLEGACY_BEGIN}}
-  # Legacy core (split-horizon lists unset, e.g. a pre-1.3.8 .env): domestic
-  # default resolver plus the anti-pollution fallback dual-query. NOTE: with
-  # this profile the domestic operators see every hostname mihomo resolves -
-  # the redeploy wizard offers the split-horizon upgrade.
-  nameserver: [ {{DNS_NAMESERVER}} ]
-  fallback: [ {{DNS_FALLBACK}} ]
-  fallback-filter:
-    geoip: true
-# {{DNSLEGACY_END}}
 # {{SNIFFER_BEGIN}}
 # Sniffer (SNIFFER_ENABLE, default ON for new installs): recovers the REAL
 # hostname from raw-IP flows via TLS SNI / HTTP Host / QUIC. LAN clients that

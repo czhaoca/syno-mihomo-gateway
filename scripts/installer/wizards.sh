@@ -22,49 +22,6 @@ example_default() {
   dotenv_decode "$_ed_raw" || :
 }
 
-# offer_dns_privacy_upgrade - one-shot .env migration to the split-horizon v2
-# DNS profile (interactive, default No, never silent). Fires only when the
-# saved .env predates the split pair (DNS_CN_NAMESERVER empty): writes both
-# split lists from the .env.example defaults, and - only when the current
-# DNS_NAMESERVER is a plain-IP list (the pre-1.3.8 default shape; any value
-# carrying '://' is a deliberate custom choice) - refreshes it to the
-# encrypted DoH-on-IP default. Declining changes nothing; the offer returns
-# on the next redeploy (stateless). Values come from example_default(),
-# never from literals in this file (#27).
-offer_dns_privacy_upgrade() {
-  _odp_cn="$(env_get DNS_CN_NAMESERVER 2>/dev/null || echo '')"
-  [ -z "$_odp_cn" ] || return 0
-  _odp_cn_new="$(example_default DNS_CN_NAMESERVER)"
-  _odp_fo_new="$(example_default DNS_FOREIGN_NAMESERVER)"
-  { [ -n "$_odp_cn_new" ] && [ -n "$_odp_fo_new" ]; } || return 0
-  ui_say ""
-  ui_say "$(msg dnsup_head)"
-  ui_say "$(msgf dnsup_cn "$_odp_cn_new")"
-  ui_say "$(msgf dnsup_foreign "$_odp_fo_new")"
-  _odp_ns="$(env_get DNS_NAMESERVER 2>/dev/null || echo '')"
-  _odp_ns_new="$(example_default DNS_NAMESERVER)"
-  _odp_refresh=0
-  case "$_odp_ns" in
-    *://*) : ;;  # custom encrypted resolver list - never clobbered
-    *)
-      if [ -n "$_odp_ns" ] && [ -n "$_odp_ns_new" ] && [ "$_odp_ns" != "$_odp_ns_new" ]; then
-        _odp_refresh=1
-        ui_say "$(msgf dnsup_ns "$_odp_ns" "$_odp_ns_new")"
-      fi ;;
-  esac
-  if ui_yesno "$(msg dnsup_ask)" n; then
-    env_set DNS_CN_NAMESERVER "$_odp_cn_new"
-    env_set DNS_FOREIGN_NAMESERVER "$_odp_fo_new"
-    if [ "$_odp_refresh" = 1 ]; then
-      env_set DNS_NAMESERVER "$_odp_ns_new"
-    fi
-    ui_ok "$(msg dnsup_done)"
-  else
-    ui_say "$(msg dnsup_skipped)"
-  fi
-  return 0
-}
-
 # seed_config - create .env + config/subscription.txt from the shipped examples
 # if absent (never clobber a configured file), and restore +x on scripts. Folds
 # bootstrap.sh's behavior so the operator only ever runs install.sh.
@@ -147,7 +104,6 @@ wizard_express() {
   _we_ctl="$(env_get CONTROLLER_PORT 2>/dev/null || example_default CONTROLLER_PORT)"
   _we_dns_b="$(env_get DNS_DEFAULT_NAMESERVER 2>/dev/null || example_default DNS_DEFAULT_NAMESERVER)"
   _we_dns_d="$(env_get DNS_NAMESERVER 2>/dev/null || example_default DNS_NAMESERVER)"
-  _we_dns_f="$(env_get DNS_FALLBACK 2>/dev/null || example_default DNS_FALLBACK)"
   _we_tz="$(env_get TZ 2>/dev/null || example_default TZ)"
 
   ui_step "$(msg step_express)"
@@ -155,7 +111,7 @@ wizard_express() {
   ui_say "$(msgf express_net "$_we_router" "$_we_cidr")"
   ui_say "$(msgf express_ip "$_we_ip")"
   ui_say "$(msgf express_ports "$_we_web" "$_we_ctl")"
-  ui_say "$(msgf express_dns "$_we_dns_b" "$_we_dns_d" "$_we_dns_f")"
+  ui_say "$(msgf express_dns "$_we_dns_b" "$_we_dns_d")"
   ui_say "$(msgf express_tz "$_we_tz")"
   _we_img="$(env_get MIHOMO_IMAGE 2>/dev/null || echo '')"
   if [ -n "$_we_img" ]; then
@@ -175,7 +131,6 @@ wizard_express() {
   env_set CONTROLLER_PORT "$_we_ctl"
   env_set DNS_DEFAULT_NAMESERVER "$_we_dns_b"
   env_set DNS_NAMESERVER "$_we_dns_d"
-  env_set DNS_FALLBACK "$_we_dns_f"
   env_set TZ "$_we_tz"
   MIHOMO_IP="$_we_ip"; export MIHOMO_IP
   _secret_guard
@@ -248,8 +203,6 @@ wizard_env() {
   env_set DNS_DEFAULT_NAMESERVER "$DNS_DEFAULT_NAMESERVER"
   ui_ask_validated DNS_NAMESERVER "$(msg q_dns_domestic)" "$(env_get DNS_NAMESERVER || example_default DNS_NAMESERVER)" is_dns_list
   env_set DNS_NAMESERVER "$DNS_NAMESERVER"
-  ui_ask_validated DNS_FALLBACK "$(msg q_dns_fallback)" "$(env_get DNS_FALLBACK || example_default DNS_FALLBACK)" is_dns_list
-  env_set DNS_FALLBACK "$DNS_FALLBACK"
 
   ui_ask TZ "$(msg q_tz)" "$(env_get TZ || example_default TZ)"
   env_set TZ "$TZ"
@@ -452,7 +405,6 @@ precheck_env() {
   _pc_need CONTROLLER_PORT is_port     q_controller_port
   _pc_need DNS_DEFAULT_NAMESERVER is_dns_list q_dns_bootstrap
   _pc_need DNS_NAMESERVER         is_dns_list q_dns_domestic
-  _pc_need DNS_FALLBACK           is_dns_list q_dns_fallback
   # Image refs must resolve or compose fails closed (${MIHOMO_IMAGE:?}).
   if [ -z "$(env_get MIHOMO_IMAGE 2>/dev/null || echo '')" ] \
      || [ -z "$(env_get METACUBEXD_IMAGE 2>/dev/null || echo '')" ]; then

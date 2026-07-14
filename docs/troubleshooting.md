@@ -604,9 +604,8 @@ fails **closed** instead of silently answering from a domestic resolver (which i
 leak dnsleaktest used to show). The flows those lookups would feed are unreachable without the
 tunnel anyway.
 
-**Fix:** restore the airport (or temporarily unset the split-horizon pair and redeploy to run
-the legacy profile while you migrate subscriptions — accepting that the domestic operators see
-every hostname again; `doctor`'s `dns_privacy` check reports which profile is live). Note the
+**Fix:** restore the airport (renew / replace the subscription — split-horizon v2 is the only
+DNS profile, so there is no legacy fallback mode to switch back to). Note the
 DNS detour rides the `auto` group, so pinning `PROXY=DIRECT` in the dashboard does **not**
 break resolution — only a genuinely dead provider does. Also expect the **first** lookup of a
 new domain to add one tunneled round-trip (~hundreds of ms); mihomo's DNS cache is in-memory,

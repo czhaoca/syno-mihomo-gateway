@@ -170,7 +170,8 @@ Gateway is "unhealthy" after deploy
 --------------------------------------------------------------------------
   Cause: usually a bad/unreachable subscription URL, bad DNS, or a TUN error.
   Fix:   check ../syno-mihomo-gateway-data/config/subscription.txt and the
-         DNS_DEFAULT_NAMESERVER / DNS_NAMESERVER / DNS_FALLBACK values, then
+         DNS_DEFAULT_NAMESERVER / DNS_NAMESERVER / DNS_CN_NAMESERVER /
+         DNS_FOREIGN_NAMESERVER values, then
          redeploy. The deploy and auto-update flows health-gate the new image
          and roll back automatically if it stays unhealthy.
          If the log says "iptables (nf_tables): Could not fetch rule set

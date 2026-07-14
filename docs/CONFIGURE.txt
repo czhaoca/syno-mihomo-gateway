@@ -96,7 +96,6 @@ DNS settings
 --------------------------------------------------------------------------
   DNS_DEFAULT_NAMESERVER
   DNS_NAMESERVER
-  DNS_FALLBACK
   DNS_CN_NAMESERVER
   DNS_FOREIGN_NAMESERVER
       Comma-separated lists of DNS servers. These control how the gateway
@@ -110,12 +109,9 @@ DNS settings
       pair: Chinese-list names resolve only domestically, and EVERYTHING
       ELSE - foreign-list names AND names on no list at all - resolves
       only via the tunnel; if the airport is completely down, those
-      lookups fail instead of leaking to a domestic resolver. Set BOTH or
-      NEITHER (neither = the older all-domestic behavior; exactly one
-      refuses to render; upgrading from an old .env? the redeploy screen
-      offers to switch this on for you).
-      DNS_FALLBACK is used by the OLDER profile only - once the
-      split-horizon pair is set it is not used at all.
+      lookups fail instead of leaking to a domestic resolver. Both are
+      REQUIRED - split-horizon v2 is the only DNS profile, and the
+      renderer refuses to render without them.
       Keep DNS_NAMESERVER domestic and never #-suffixed: it also resolves
       the airport node names BEFORE any proxy exists, so a tunneled entry
       there can dead-end a fresh start.

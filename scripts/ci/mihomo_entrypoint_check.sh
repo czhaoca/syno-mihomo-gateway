@@ -38,8 +38,9 @@ cp -R "$ROOT/scripts" "$TREE/scripts"
 # nameserver (CLAUDE.md rule); the renderer only needs them non-empty.
 DNSD=$(sed -n 's/^DNS_DEFAULT_NAMESERVER=//p' "$ROOT/.env.example")
 DNSN=$(sed -n 's/^DNS_NAMESERVER=//p' "$ROOT/.env.example")
-DNSF=$(sed -n 's/^DNS_FALLBACK=//p' "$ROOT/.env.example")
-[ -n "$DNSD" ] && [ -n "$DNSN" ] && [ -n "$DNSF" ] \
+DNSC=$(sed -n 's/^DNS_CN_NAMESERVER=//p' "$ROOT/.env.example")
+DNSFO=$(sed -n 's/^DNS_FOREIGN_NAMESERVER=//p' "$ROOT/.env.example")
+[ -n "$DNSD" ] && [ -n "$DNSN" ] && [ -n "$DNSC" ] && [ -n "$DNSFO" ] \
   || { echo "FAIL: could not read DNS fixtures from .env.example" >&2; exit 1; }
 
 SUB_URL='https://air.example.com/api/v1/sub?token=hunter2secret'
@@ -79,7 +80,8 @@ run_ep() { # STATE [ENV=VAL ...] - run the entrypoint hermetically; rc in $EP_RC
     MIHOMO_CONFIG_DIR="$_st/cfg" MIHOMO_BIN=mihomo \
     MIHOMO_TEMPLATE="$ROOT/config/config.template.yaml" \
     CONTROLLER_PORT=9090 CONTROLLER_SECRET="$SECRET" \
-    DNS_DEFAULT_NAMESERVER="$DNSD" DNS_NAMESERVER="$DNSN" DNS_FALLBACK="$DNSF" \
+    DNS_DEFAULT_NAMESERVER="$DNSD" DNS_NAMESERVER="$DNSN" \
+    DNS_CN_NAMESERVER="$DNSC" DNS_FOREIGN_NAMESERVER="$DNSFO" \
     "$@" \
     sh "$TREE/scripts/mihomo_entrypoint.sh" > "$OUT_F" 2>&1 || EP_RC=$?
 }
@@ -94,7 +96,8 @@ printf '%s\n' "$SUB_URL" > "$REF/subscription.txt"
 env -i PATH="/usr/bin:/bin" MIHOMO_CONFIG_DIR="$REF" \
   MIHOMO_TEMPLATE="$ROOT/config/config.template.yaml" \
   CONTROLLER_PORT=9090 CONTROLLER_SECRET="$SECRET" \
-  DNS_DEFAULT_NAMESERVER="$DNSD" DNS_NAMESERVER="$DNSN" DNS_FALLBACK="$DNSF" \
+  DNS_DEFAULT_NAMESERVER="$DNSD" DNS_NAMESERVER="$DNSN" \
+  DNS_CN_NAMESERVER="$DNSC" DNS_FOREIGN_NAMESERVER="$DNSFO" \
   sh "$TREE/scripts/render_config.sh" > /dev/null 2>&1 \
   || { echo "FAIL: reference render failed" >&2; exit 1; }
 

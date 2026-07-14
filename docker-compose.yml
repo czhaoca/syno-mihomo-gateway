@@ -32,11 +32,11 @@ services:
       - CONTROLLER_SECRET=${CONTROLLER_SECRET}
       - DNS_DEFAULT_NAMESERVER=${DNS_DEFAULT_NAMESERVER}
       - DNS_NAMESERVER=${DNS_NAMESERVER}
-      - DNS_FALLBACK=${DNS_FALLBACK}
-      # Split-horizon DNS policy knobs (set both or neither) + GEOIP
-      # no-resolve opt-in. The ':-' defaults keep a pre-1.3.8 .env
-      # warning-free: absent vars pass through empty, and the renderer
-      # treats empty as "feature off".
+      # Split-horizon DNS pair (REQUIRED - v2 is the only profile) + GEOIP
+      # no-resolve opt-in. The ':-' defaults keep compose warning-free on a
+      # stale pre-v2 .env; the RENDERER owns the loud failure (a missing
+      # pair refuses to render and the entrypoint gate keeps the previous
+      # config running).
       - DNS_CN_NAMESERVER=${DNS_CN_NAMESERVER:-}
       - DNS_FOREIGN_NAMESERVER=${DNS_FOREIGN_NAMESERVER:-}
       - DNS_GEOIP_NO_RESOLVE=${DNS_GEOIP_NO_RESOLVE:-false}

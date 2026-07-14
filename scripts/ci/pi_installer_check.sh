@@ -111,9 +111,11 @@ render_tpl() {
     MIHOMO_CONFIG_DIR="$CFG" MIHOMO_TEMPLATE="$_rt_tpl" \
     CONTROLLER_PORT=9090 CONTROLLER_SECRET='' \
     DNS_DEFAULT_NAMESERVER='192.0.2.53' DNS_NAMESERVER='192.0.2.53' \
-    DNS_FALLBACK='192.0.2.54' TUN_ENABLE="$_rt_tun"
+    DNS_CN_NAMESERVER='192.0.2.53' DNS_FOREIGN_NAMESERVER='192.0.2.54' \
+    TUN_ENABLE="$_rt_tun"
     export MIHOMO_CONFIG_DIR MIHOMO_TEMPLATE CONTROLLER_PORT CONTROLLER_SECRET \
-      DNS_DEFAULT_NAMESERVER DNS_NAMESERVER DNS_FALLBACK TUN_ENABLE
+      DNS_DEFAULT_NAMESERVER DNS_NAMESERVER DNS_CN_NAMESERVER \
+      DNS_FOREIGN_NAMESERVER TUN_ENABLE
     unset EXTERNAL_UI_DIR
     if [ -n "$_rt_extui" ]; then EXTERNAL_UI_DIR="$_rt_extui"; export EXTERNAL_UI_DIR; fi
     sh "$ROOT/scripts/render_config.sh" >/dev/null
@@ -466,7 +468,8 @@ printf 'Default=https://sub.example.com/api?token=abc\n' > "$TD/lite-rt/config/s
   env_set CONTROLLER_SECRET 'pa$word'
   env_set DNS_DEFAULT_NAMESERVER 192.0.2.53
   env_set DNS_NAMESERVER 192.0.2.53
-  env_set DNS_FALLBACK 192.0.2.54
+  env_set DNS_CN_NAMESERVER 192.0.2.53
+  env_set DNS_FOREIGN_NAMESERVER 192.0.2.54
   pi_lite_render_unit
 ) >/dev/null 2>&1 || die "round-trip fixture setup failed"
 grep -qF 'pa$$word' "$TD/lite-rt/.env" || die "env_set did not compose-escape the fixture secret"
@@ -834,7 +837,7 @@ grep -q 'pi_flow_cron' "$ROOT/install-pi.sh" \
   ui_ask_secret() { eval "$1=''"; }
   ui_yesno() { return 1; }
   pi_lite_wizard >/dev/null 2>&1 || { echo "parity: pi_lite_wizard failed" >&2; exit 1; }
-  for _k in CONTROLLER_PORT DNS_DEFAULT_NAMESERVER DNS_NAMESERVER DNS_FALLBACK TZ; do
+  for _k in CONTROLLER_PORT DNS_DEFAULT_NAMESERVER DNS_NAMESERVER TZ; do
     _want="$( (ENV_FILE="$ROOT/.env.example"; dotenv_get "$_k") )"
     [ -n "$_want" ] || { echo "parity: $_k missing from .env.example" >&2; exit 1; }
     _got="$(dotenv_get "$_k" 2>/dev/null || echo '')"
@@ -842,18 +845,6 @@ grep -q 'pi_flow_cron' "$ROOT/install-pi.sh" \
       || { echo "parity: $_k got '$_got' want '$_want'" >&2; exit 1; }
   done ) \
   && ok || fail "pi_lite_wizard defaults diverge from .env.example"
-
-# v1.3.10: the lite wizard must offer the DNS privacy upgrade BEFORE the DNS
-# prompts, so the prompts pre-fill from the migrated values. The helper is
-# shared from scripts/installer/wizards.sh and behaviorally covered in
-# dsm_installer_check.sh; this pins the pi-side call and its ordering.
-_dnsup_ord="$(grep -n 'offer_dns_privacy_upgrade\|q_dns_bootstrap' "$ROOT/scripts/pi/flow_lite.sh" | head -2)"
-case "$_dnsup_ord" in
-  *offer_dns_privacy_upgrade*q_dns_bootstrap*)
-    ok ;;
-  *)
-    fail "flow_lite.sh must call offer_dns_privacy_upgrade before the DNS prompts (got: $_dnsup_ord)" ;;
-esac
 
 # Default literals belong in .env.example ONLY (#27).
 grep -n '223\.5\.5\.5\|119\.29\.29\.29\|1\.1\.1\.1\|8\.8\.8\.8\|8080\|9090\|192\.168\.\|Asia/Shanghai' \
@@ -884,7 +875,8 @@ mk_ctl_sandbox() {
     printf 'HEALTH_RETRIES=2\nHEALTH_INTERVAL=0\nHEALTH_MAX_RESTARTS=3\n'
     printf 'TUN_ENABLE=false\n'
     printf 'CONTROLLER_PORT=9090\n'
-    printf 'DNS_DEFAULT_NAMESERVER=192.0.2.53\nDNS_NAMESERVER=192.0.2.53\nDNS_FALLBACK=192.0.2.54\n'
+    printf 'DNS_DEFAULT_NAMESERVER=192.0.2.53\nDNS_NAMESERVER=192.0.2.53\n'
+    printf 'DNS_CN_NAMESERVER=192.0.2.53\nDNS_FOREIGN_NAMESERVER=192.0.2.54\n'
   } > "$_mcs/.env"
 }
 

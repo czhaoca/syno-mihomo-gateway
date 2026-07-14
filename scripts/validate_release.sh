@@ -210,7 +210,7 @@ self_test() {
 
   # 1) the shipped .env.example carries every key this script reads from it
   REL="$ROOT"
-  for _k in DNS_NAMESERVER DNS_FALLBACK DNS_CN_NAMESERVER \
+  for _k in DNS_NAMESERVER DNS_CN_NAMESERVER \
             DNS_FOREIGN_NAMESERVER DNS_GEOIP_NO_RESOLVE SNIFFER_ENABLE \
             AUTO_EXCLUDE_FILTER COUNTRY_GROUPS; do
     if [ -n "$(example_dns "$_k")" ]; then st_ok; else st_bad ".env.example lacks $_k"; fi
@@ -539,7 +539,7 @@ esac
 
 say "A4: enable split-horizon + sniffer + exclude/country groups from the shipped .env.example defaults"
 cp -p "$ENV_FILE" "$ORIG"
-for _k in DNS_NAMESERVER DNS_FALLBACK DNS_CN_NAMESERVER DNS_FOREIGN_NAMESERVER \
+for _k in DNS_NAMESERVER DNS_CN_NAMESERVER DNS_FOREIGN_NAMESERVER \
           SNIFFER_ENABLE AUTO_EXCLUDE_FILTER COUNTRY_GROUPS; do
   _v="$(example_dns "$_k")"
   [ -n "$_v" ] || { bad "no $_k in $REL/.env.example"; exit 3; }
@@ -612,7 +612,6 @@ if [ -d "$GATEWAY_DATA_DIR/config/proxies" ]; then
   CACHES="$CACHES $GATEWAY_DATA_DIR/config/proxies"
 fi
 echo "parked:${CACHES:- (nothing cached)}"
-env_set DNS_FALLBACK "$BLACKHOLE"
 env_set DNS_FOREIGN_NAMESERVER "$BLACKHOLE"
 recreate || bad "compose recreate (cold)"
 load_env || true
@@ -661,7 +660,6 @@ unpark "$GATEWAY_DATA_DIR/config/cache.db"
 unpark "$GATEWAY_DATA_DIR/config/proxies"
 
 say "B2: real tunnel resolvers back + doctor --egress"
-env_set DNS_FALLBACK "$(example_dns DNS_FALLBACK)"
 env_set DNS_FOREIGN_NAMESERVER "$(example_dns DNS_FOREIGN_NAMESERVER)"
 recreate || bad "compose recreate (restore resolvers)"
 load_env || true

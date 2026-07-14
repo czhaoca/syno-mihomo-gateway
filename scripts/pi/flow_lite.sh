@@ -42,19 +42,10 @@ pi_lite_wizard() {
     _secret_guard
   fi
 
-  # A hand-rolled / pre-split .env keeps rendering the legacy DNS profile -
-  # offer the v2 upgrade BEFORE the prompts below, so they pre-fill from the
-  # migrated values (fresh installs seed .env from .env.example, where the
-  # split pair is already set, and the offer no-ops). Shared helper from
-  # scripts/installer/wizards.sh (same catalog keys, same default-No).
-  offer_dns_privacy_upgrade
-
   ui_ask_validated DNS_DEFAULT_NAMESERVER "$(msg q_dns_bootstrap)" "$(env_get DNS_DEFAULT_NAMESERVER || example_default DNS_DEFAULT_NAMESERVER)" is_dns_list
   env_set DNS_DEFAULT_NAMESERVER "$DNS_DEFAULT_NAMESERVER"
   ui_ask_validated DNS_NAMESERVER "$(msg q_dns_domestic)" "$(env_get DNS_NAMESERVER || example_default DNS_NAMESERVER)" is_dns_list
   env_set DNS_NAMESERVER "$DNS_NAMESERVER"
-  ui_ask_validated DNS_FALLBACK "$(msg q_dns_fallback)" "$(env_get DNS_FALLBACK || example_default DNS_FALLBACK)" is_dns_list
-  env_set DNS_FALLBACK "$DNS_FALLBACK"
 
   ui_ask TZ "$(msg q_tz)" "$(env_get TZ || example_default TZ)"
   env_set TZ "$TZ"
@@ -92,7 +83,6 @@ pi_lite_render_config() {
   CONTROLLER_SECRET="${CONTROLLER_SECRET:-}" \
   DNS_DEFAULT_NAMESERVER="${DNS_DEFAULT_NAMESERVER:-}" \
   DNS_NAMESERVER="${DNS_NAMESERVER:-}" \
-  DNS_FALLBACK="${DNS_FALLBACK:-}" \
   DNS_CN_NAMESERVER="$(env_get DNS_CN_NAMESERVER 2>/dev/null || echo '')" \
   DNS_FOREIGN_NAMESERVER="$(env_get DNS_FOREIGN_NAMESERVER 2>/dev/null || echo '')" \
   DNS_GEOIP_NO_RESOLVE="$(env_get DNS_GEOIP_NO_RESOLVE 2>/dev/null || echo false)" \

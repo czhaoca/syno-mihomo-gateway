@@ -228,7 +228,7 @@ chk_dns_privacy() {
   else
     CHECK_VALUE=legacy CHECK_SEV=warn
     CHECK_DETAIL="legacy DNS profile - the domestic resolvers see every hostname mihomo resolves"
-    CHECK_HINT="      the redeploy wizard offers the split-horizon upgrade: sudo sh ./install.sh (Redeploy)"
+    CHECK_HINT="      a stale pre-v2 render is on disk - re-render onto the v2 core: sudo sh ./install.sh (Redeploy)"
   fi
 }
 

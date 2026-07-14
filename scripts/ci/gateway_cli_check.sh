@@ -211,7 +211,8 @@ WEB_UI_PORT=8080
 CONTROLLER_PORT=9090
 DNS_DEFAULT_NAMESERVER=1.1.1.1
 DNS_NAMESERVER=1.1.1.1
-DNS_FALLBACK=1.1.1.1
+DNS_CN_NAMESERVER=1.1.1.1
+DNS_FOREIGN_NAMESERVER=1.1.1.1
 EXPECTED_ARCH=$HOST_ARCH
 TUN_ENABLE=false
 TUN_AUTO_REDIRECT=false
@@ -420,7 +421,7 @@ grep -q '"name":"dns_privacy","value":"legacy"' "$TMP/out" \
   || fail "doctor --json lacks dns_privacy:legacy without policy entries"
 FAKE_UID=0 PATH="$STUB:$PATH" sh "$ROOT/scripts/doctor.sh" </dev/null >"$TMP/dout" 2>"$TMP/derr" || :
 grep -q 'WARN.*legacy DNS profile' "$TMP/derr" || fail "doctor.sh did not warn about the legacy profile"
-grep -q 'split-horizon upgrade' "$TMP/derr" || fail "doctor.sh legacy warn lacks the upgrade hint"
+grep -q 're-render onto the v2 core' "$TMP/derr" || fail "doctor.sh legacy warn lacks the redeploy hint"
 # unreadable/missing config -> unknown in --json, SILENT in human (no line).
 rm -f "$DATA/config/config.yaml"
 FAKE_UID=1000 PATH="$STUB:$PATH" sh "$GW" doctor --json </dev/null >"$TMP/out" 2>"$TMP/err" || :
@@ -798,7 +799,8 @@ MIHOMO_IP=192.168.1.100
 WEB_UI_PORT=8080
 DNS_DEFAULT_NAMESERVER=1.1.1.1
 DNS_NAMESERVER=1.1.1.1
-DNS_FALLBACK=1.1.1.1
+DNS_CN_NAMESERVER=1.1.1.1
+DNS_FOREIGN_NAMESERVER=1.1.1.1
 EXPECTED_ARCH=$HOST_ARCH
 TUN_ENABLE=false
 TUN_AUTO_REDIRECT=false
