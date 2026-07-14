@@ -70,8 +70,11 @@ blocking/challenging. Four asks:
   strings), `installer/i18n.sh` + `cli/spec.yaml` (EN+ZH), reserved-name
   collision guards (`render_config.sh:147`, `checks.sh:328`,
   `validate_release.sh:142`), docs EN+ZH incl. troubleshooting anchor slugs.
-- Unaffected (verified): `scripts/pi/*`, `migrate_legacy.sh`,
-  `seed_provider*`, `privacy_check*`.
+- Unaffected (verified): `scripts/pi/*`, `privacy_check*`. (The original
+  claim wrongly listed `migrate_legacy.sh` and `seed_provider*` here —
+  `seed_provider.sh` probes `/proxies/auto` by name and its CI suite stubs
+  that endpoint; corrected in the Revision below, which also removes
+  `migrate_legacy.sh` entirely.)
 
 ### streaming rules + upgrade machinery (repo)
 
@@ -167,6 +170,50 @@ blocking/challenging. Four asks:
    validate_release self-test fixtures + live probes + cache.db pin-reset
    handling; release-note draft (pins reset once; owner .env hand-edit for
    English country names).
+
+## Revision — 2026-07-14 (owner decisions during /issue-resolver, recorded on #39)
+
+Execution of #39 stopped on a scope drift (the "seed_provider* unaffected"
+claim above was false), and the owner resolved it — plus the ticket's open
+DECs — interactively, then widened the epic into a no-back-compat direction:
+
+- **DEC-1 SUPERSEDED — no migration machinery at all.** The renderer does
+  NOT rewrite `#auto`/`#auto-x` detour fragments. This is a single-NAS
+  deployment: the owner hand-edits the NAS `.env` once when moving to the
+  new code (the Sequence-40 release note carries the exact checklist).
+- **DEC-7 SUPERSEDED — no legacy knob fallback.** `AUTO_EXCLUDE_FILTER`
+  renames outright to `PRIORITY_EXCLUDE_FILTER` in Sequence 20; whether a
+  stale value trips a loud renderer error or is simply dropped is Sequence
+  20's DEC-B (recommendation: tripwire).
+- **#39 DEC-A — reserve only the new names.** The COUNTRY_GROUPS collision
+  guard lists `All Nodes`/`Priority Nodes` + the builtins; `auto`/`auto-x`
+  become legal user group names (safe: no rewrite exists to collide with).
+- **#39 DEC-B — internal fence/token names rename too.** `AUTOX*` →
+  `PRIORITY*`, `AUTOXMEMBER*` → `PRIORITYMEMBER*` (Sequence 10);
+  `{{AUTO_EXCLUDE_FILTER}}` → `{{PRIORITY_EXCLUDE_FILTER}}` (Sequence 20).
+- **Purge of all migration/back-compat machinery**, staged as two new
+  tickets ahead of the rename:
+  - **Sequence 5 (#44)**: delete `migrate_legacy.sh` + its CI suite +
+    `legacy_install_detect` + the doctor import hint + bundle-manifest
+    entries + doc sections; delete the renderer's provider-cache md5
+    adoption and `seed_provider.sh`'s dual-name cache write.
+  - **Sequence 7 (#43)**: split-horizon v2 becomes the ONLY DNS profile —
+    the DNSLEGACY core, `DNS_FALLBACK`, and `offer_dns_privacy_upgrade`
+    are removed everywhere (template/renderer/compose/.env.example/DSM +
+    Pi installers/CI fixtures/validate_release/docs); the
+    DNSPOLICY/DNSSPLIT fences are inlined; the split-horizon pair becomes
+    REQUIRED (fail loud, named errors).
+  - Deliberately KEPT: the `UPDATE_IMAGES` normalization in `common.sh`
+    (mislabeled compat — it expands the literal default the current
+    `.env.example` ships) and `chk_dns_privacy`'s v2|v1|legacy|unknown
+    DETECTION vocabulary (it reads the on-disk rendered config; during the
+    owner's own upgrade it is the stale-render signal — only its
+    wizard-pointing hint text is reworded).
+- **seed_provider fix folded into #39** (probes rename to the %XX-encoded
+  new group names; its suite fixtures updated).
+
+Chain after the restructure: **#44 (Seq 5) → #43 (Seq 7) → #39 (Seq 10) →
+#40 (Seq 20) → #41 (Seq 30) → #42 (Seq 40)**.
 
 ## Verification gate
 
