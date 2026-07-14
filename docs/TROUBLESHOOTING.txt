@@ -316,7 +316,7 @@ IPv6 carries traffic around the gateway (leaks persist, Netflix fails)
 Netflix (or another streaming service) says "not available in your region"
 --------------------------------------------------------------------------
   Cause: streaming services blacklist most datacenter exit addresses. The
-         auto group picks nodes by LATENCY, and the fastest node is rarely
+         All Nodes group picks nodes by LATENCY, and the fastest node is rarely
          a streaming-unlock node - the tunnel works, but Netflix refuses
          its exit. This is a node property, not a rule fault: Netflix is
          routed deterministically into its own STREAMING selector
@@ -324,7 +324,7 @@ Netflix (or another streaming service) says "not available in your region"
   Fix:   open the dashboard > Proxies > STREAMING and pin a node your
          airport marks as streaming/Netflix-capable (often named NF,
          "streaming", "unlock"...), then reload the title. Only streaming
-         traffic moves; everything else stays on PROXY/auto.
+         traffic moves; everything else stays on PROXY.
          Still failing on an unlock node? Some devices (smart TVs,
          Android Private DNS) bypass the gateway's DNS and connect by raw
          IP - those flows miss the domain rule and ride PROXY instead,
@@ -344,7 +344,7 @@ Unlisted-domain lookups fail while the airport is down
          exactly what leaked your browsing history to it). Chinese sites
          keep working throughout.
   Fix:   restore the airport (renew / replace the subscription). The DNS
-         detour rides the auto group, so pinning PROXY to DIRECT in the
+         detour rides the All Nodes group, so pinning PROXY to DIRECT in the
          dashboard does NOT break lookups - only a dead subscription
          does. Also, the FIRST lookup of a new site adds one tunneled
          round-trip and the DNS cache resets on restart - brief slowness
@@ -353,7 +353,7 @@ Unlisted-domain lookups fail while the airport is down
 --------------------------------------------------------------------------
 Provider has no nodes (foreign sites dead, node list empty)
 --------------------------------------------------------------------------
-  Symptom: the dashboard shows only auto/DIRECT/REJECT - no airport nodes -
+  Symptom: the dashboard shows only All Nodes/DIRECT/REJECT - no airport nodes -
            foreign sites time out while domestic sites work, and the mihomo
            log repeats "[Provider] my-airport pull error".
   Cause:   mihomo cannot fetch the subscription from inside the container

@@ -193,7 +193,7 @@ On start, the mihomo entrypoint renders a **candidate** config into the persiste
 directory (`../syno-mihomo-gateway-data/config/`, mounted at `/root/.config/mihomo` in the
 container — not the release tree's `config/`) from the template + your subscription + `.env`,
 tests it with `mihomo -t`, and only then activates it. If the render or the test fails (missing
-subscription URL/DNS, or an invalid `AUTO_EXCLUDE_FILTER`/`COUNTRY_GROUPS` pattern), the
+subscription URL/DNS, or an invalid `PRIORITY_INCLUDE_FILTER`/`PRIORITY_EXCLUDE_FILTER`/`COUNTRY_GROUPS` pattern), the
 **previous** config keeps running and `.config.yaml.rejected` records why — on a first install
 with no previous config it **fails loudly** instead (the container never runs a poisoned
 config). Check logs:

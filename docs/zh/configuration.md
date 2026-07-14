@@ -57,9 +57,9 @@ Compose 兼容的引号，因此包含空格、`&`、`#`、`$`、引号或反斜
 ### DNS（注入到配置模板中）
 
 逗号分隔的列表 → 渲染为 YAML 流式序列。**前三项必填**（若任一为空，渲染器会显式报错
-失败——仓库中不会硬编码任何 DNS）。服务器末尾的 `#auto` 是 mihomo 的分组绕行片段语法：
-该解析器会**经由**模板中字面命名为 `auto` 的分组拨号（两处名字要一起改；CI 会校验每个
-片段都指向真实存在的分组）。绕行特意走 `auto`（url-test 组）而非 `PROXY` 选择器：`auto`
+失败——仓库中不会硬编码任何 DNS）。服务器末尾的 `#All Nodes` 是 mihomo 的分组绕行片段语法：
+该解析器会**经由**模板中字面命名为 `All Nodes` 的分组拨号（两处名字要一起改；CI 会校验每个
+片段都指向真实存在的分组）。绕行特意走 `All Nodes`（url-test 组）而非 `PROXY` 选择器：它
 总是按健康度选一个存活节点，因此即使你在面板里把 `PROXY` 固定为 `DIRECT`，DNS 解析也
 照常工作。出厂条目全部是纯 IP 或 **DoH-on-IP** URL，任何条目都不依赖先解析一个域名——
 冷启动没有引导鸡生蛋问题。
@@ -69,11 +69,12 @@ Compose 兼容的引号，因此包含空格、`&`、`#`、`$`、引号或反斜
 | `DNS_DEFAULT_NAMESERVER` | ✅ | 引导解析器——仅用于解析本节中出现的 DoH/DoT 服务器**域名**（当所有条目都以 IP 承载时处于闲置）。必须保持纯 IP、国内可达、**不走隧道**。 | `223.5.5.5,119.29.29.29` |
 | `DNS_NAMESERVER` | ✅ | 引导钉扎（geo 镜像、健康检查主机、机场面板）的解析出口，**同时**——渲染为 `proxy-server-nameserver`——在任何代理就绪之前解析机场节点域名（见下文）。DoH-on-IP、国内、**绝不**加分组片段后缀。 | `https://223.5.5.5/dns-query,https://120.53.53.53/dns-query` |
 | `DNS_CN_NAMESERVER` | ✅ | **分域解析对 (a)：** 命中 mihomo `geosite:cn` 列表的域名只在这里解析——国内、直连。必须与 `DNS_FOREIGN_NAMESERVER` 一起设置——分域解析 v2 是**唯一**的 DNS 配置档；缺失任何一项都会拒绝渲染（入口点守门会保持上一份配置继续运行）。 | `https://223.5.5.5/dns-query,https://120.53.53.53/dns-query` |
-| `DNS_FOREIGN_NAMESERVER` | ✅ | **分域解析对 (b)，v2 境外优先：** 渲染为**默认** `nameserver`——所有未被策略条目命中的域名（geosite 境外列表**以及**未列出的长尾）只在这里解析——境外、经 `#auto` 走隧道。这些域名完全不会到达任何国内运营方；隧道全灭时解析**失败关闭**（SERVFAIL），绝不悄悄泄漏（fallback 双查询已随传统配置档一并移除）。 | `https://1.1.1.1/dns-query#auto,https://8.8.8.8/dns-query#auto` |
+| `DNS_FOREIGN_NAMESERVER` | ✅ | **分域解析对 (b)，v2 境外优先：** 渲染为**默认** `nameserver`——所有未被策略条目命中的域名（geosite 境外列表**以及**未列出的长尾）只在这里解析——境外、经 `#All Nodes` 走隧道。这些域名完全不会到达任何国内运营方；隧道全灭时解析**失败关闭**（SERVFAIL），绝不悄悄泄漏（fallback 双查询已随传统配置档一并移除）。 | `https://1.1.1.1/dns-query#All Nodes,https://8.8.8.8/dns-query#All Nodes` |
 | `DNS_GEOIP_NO_RESOLVE` | | `true` 会在 `GEOIP,CN,DIRECT` 规则上渲染出 `no-resolve`，使其完全不再强制任何解析。在 v2 下这次强制解析本就走隧道境外列表（私密），所以默认保持 `false`，未列出的国内域名保住直连捷径。`true` 的代价：`geosite:cn` 漏收的国内域名经 `MATCH` 走代理（见[故障排查](troubleshooting.md#开启-no-resolve-后小众国内网站变慢或打不开)）。仅接受小写 `true`/`false`。 | `false` |
 | `SNIFFER_ENABLE` | | 渲染**流量嗅探**（TLS SNI / HTTP Host / QUIC，`parse-pure-ip` + `override-destination`）：在网关**之外**解析 DNS 的局域网客户端发出的裸 IP 连接会恢复出域名，域名规则（含 `STREAMING`）照常路由它们，被污染的客户端解析结果也会在节点侧按域名重拨。未设/`false` 时不渲染该块，与 v1.3.10 之前逐字节一致（升级兼容）；`.env.example` 出厂为 `true`。路由自愈，但绕过网关的客户端要修复**隐私**仍须把设备 DNS 指向网关——见[故障排查](troubleshooting.md#局域网客户端绕过网关-dnsdnsleaktest-仍显示国内解析器)。 | `true` |
-| `AUTO_EXCLUDE_FILTER` | | 渲染 **`auto-x`** url-test 分组——剔除匹配该正则的机场节点——并作为 **`PROXY` 的第一项**（即默认线路）。出厂默认剔除香港：很多网站封锁香港出口 IP，而香港节点居多的套餐会让按延迟优选的 `auto` 几乎总是落在香港节点上。`auto` 本身保留**全部**节点（分域解析 DNS 的 `#auto` 通道走它），面板里一键即可切回。语法：regexp2（.NET 风格）——默认区分大小写（可用 `(?i)`），**无锚点子串**匹配（`香港` 匹配 `香港01`），`\|` 表示或；**反引号会拒绝渲染**（非法正则会让 mihomo 启动即崩溃）。若正则匹配了*所有*节点，`auto-x` 会 **REJECT**（失败关闭——绝不悄悄绕过代理直连；doctor 会报告，见[故障排查](troubleshooting.md#doctor-报告过滤分组为空proxy_groupsauto-x-拒绝流量--某国家分组没有节点)）。留空/未设则完全不渲染该分组，与此功能之前的配置逐字节一致（既有 `.env` 不受影响）。 | `香港\|HK\|(?i)hong ?kong` |
-| `COUNTRY_GROUPS` | | 按国家自动优选：`名称=正则;名称=正则;…` 每项生成一个 **url-test** 分组——面板显示 `名称`，自动选中匹配 `正则` 的最快节点（regexp2，与 `AUTO_EXCLUDE_FILTER` 同款；短拉丁代码要加锚点，如 `US\d\|^US`）。正则跨越多个国家即是**多国分组**（如 `亚洲=日本\|新加坡`）。分组同时出现在 `PROXY` 与 `STREAMING` 中、排在 auto 分组之后、按 spec 顺序；不带独立健康检查（零额外探测流量）；匹配不到任何节点的分组被选中时 **REJECT**（失败关闭；doctor 会报告）。`名称` 可用中文、不含空格、不得与 `auto`/`auto-x`/`PROXY`/`STREAMING`/`DIRECT`/`REJECT` 重名；反引号、空名称/空正则、重复名称及格式错误的条目**拒绝渲染**。请按*你的*机场节点命名调整出厂示例。留空/未设则完全不生成任何分组（既有 `.env` 不受影响）。 | `美国=美国\|US\d\|^US;新加坡=…`（见 `.env.example`） |
+| `PRIORITY_INCLUDE_FILTER` | | **默认线路的地域范围（先生效）：** 只有匹配该正则的机场节点才有资格进入 **`Priority Nodes`** url-test 分组。出厂默认锁定**日本**，让按延迟切换不再在不同国家的出口之间跳来跳去（登录敏感的网站会标记位置频繁变化的账号）。正则风味同下；请按*你的*机场命名调整——只用城市名（东京/大阪）的节点池需要把这些词加进来。匹配不到任何节点 ⇒ **REJECT**（失败关闭；doctor 会报告，见[故障排查](troubleshooting.md#doctor-报告过滤分组为空proxy_groupspriority-nodes-拒绝流量--某国家分组没有节点)）。留空则该分组不渲染 `filter:` 行（仅剔除、不圈定）。需要同时设置 `PRIORITY_EXCLUDE_FILTER`。 | `日本\|JP\d\|^JP` |
+| `PRIORITY_EXCLUDE_FILTER` | | 渲染 **`Priority Nodes`** url-test 分组——在上面的圈定过滤之后再剔除匹配该正则的节点——并作为 **`PROXY` 的第一项**（即默认线路）。出厂默认剔除香港：很多网站封锁香港出口 IP，而香港节点居多的套餐会让按延迟优选几乎总是落在香港节点上。`All Nodes` 保留**全部**节点（分域解析 DNS 的绕行通道走它），面板里一键即可切回。语法：regexp2（.NET 风格）——默认区分大小写（可用 `(?i)`），**无锚点子串**匹配（`香港` 匹配 `香港01`），`\|` 表示或；**反引号会拒绝渲染**（非法正则会让 mihomo 启动即崩溃）。若正则匹配了*所有*节点，`Priority Nodes` 会 **REJECT**（失败关闭——绝不悄悄绕过代理直连；doctor 会报告，见[故障排查](troubleshooting.md#doctor-报告过滤分组为空proxy_groupspriority-nodes-拒绝流量--某国家分组没有节点)）。留空/未设则完全不渲染该分组。此键**取代**了 `AUTO_EXCLUDE_FILTER`：残留的旧键名会让渲染报错拒绝——请删除旧行。 | `香港\|HK\|(?i)hong ?kong` |
+| `COUNTRY_GROUPS` | | 按国家自动优选：`名称=正则;名称=正则;…` 每项生成一个 **url-test** 分组——面板显示 `名称`，自动选中匹配 `正则` 的最快节点（regexp2，与 `PRIORITY_EXCLUDE_FILTER` 同款；短拉丁代码要加锚点，如 `US\d\|^US`）。正则跨越多个国家即是**多国分组**（如 `亚洲=日本\|新加坡`）。分组同时出现在 `PROXY` 与 `STREAMING` 中、排在 `Priority Nodes`/`All Nodes` 之后、按 spec 顺序；不带独立健康检查（零额外探测流量）；匹配不到任何节点的分组被选中时 **REJECT**（失败关闭；doctor 会报告）。`名称` 可用中文、可含中间空格（`Japan Auto`）——首尾空白会拒绝——且不得与 `All Nodes`/`Priority Nodes`/`PROXY`/`STREAMING`/`DIRECT`/`REJECT` 重名；反引号、空名称/空正则、重复名称及格式错误的条目**拒绝渲染**。请按*你的*机场节点命名调整出厂示例。留空/未设则完全不生成任何分组（既有 `.env` 不受影响）。 | `US Auto=美国\|US\d\|^US;Singapore Auto=…`（见 `.env.example`） |
 
 **谁能看到你的 DNS 查询**（在出厂的分域解析 v2 默认值下）：
 
@@ -251,9 +252,9 @@ docker compose --env-file ../syno-mihomo-gateway-data/.env up -d --force-recreat
 `GEOSITE,GEOLOCATION-!CN,PROXY` / `GEOIP,CN,DIRECT` / `MATCH,PROXY`：私网/链路本地目标
 绝不走隧道（`LAN` 是 mihomo 内建类别，无需 geo 数据库），流媒体走自己的可固定分组，
 国内流量直连，境外列表域名**不经任何本地 DNS 解析**直接走代理，GEOIP 兜底其余流量。`PROXY` 是一个可选择的
-代理组，默认指向 `auto`（订阅中延迟最低的节点），同时提供 `DIRECT` / `REJECT`；
+代理组，默认指向 `Priority Nodes`/`All Nodes`（订阅中延迟最低的节点），同时提供 `DIRECT` / `REJECT`；
 `STREAMING` 是第二个选择器，默认指向 `PROXY`——在 MetaCubeXD 里把它固定到支持流媒体
-解锁的节点，就能只切换流媒体流量（`auto` 按延迟选节点，而低延迟节点很少具备解锁能
+解锁的节点，就能只切换流媒体流量（`All Nodes` 按延迟选节点，而低延迟节点很少具备解锁能
 力）。规则只能指向**代理组**，不能直接指向 `proxy-provider`；geosite 分类
 （`netflix`、`cn`、`geolocation-!cn`）来自预下载 `geosite.dat` 中社区维护的开源列表——
 无需任何额外下载。

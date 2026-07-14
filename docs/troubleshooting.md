@@ -575,7 +575,7 @@ v4-only, with everything steered through the gateway.
 "you seem to be using an unblocker or proxy" error, or another streaming service refuses to
 play.
 
-**Cause:** streaming services blacklist most datacenter exit IPs. The `auto` group picks nodes
+**Cause:** streaming services blacklist most datacenter exit IPs. The `All Nodes` group picks nodes
 by **latency**, and the lowest-latency node is rarely a streaming-unlock node — so Netflix
 rides a working tunnel whose exit is refused by Netflix. This is a node property, not a rule
 fault: since v1.3.10 the `GEOSITE,NETFLIX,STREAMING` rule routes Netflix deterministically
@@ -583,7 +583,7 @@ into its own `STREAMING` selector (default: `PROXY`, i.e. today's behavior).
 
 **Fix:** open MetaCubeXD → Proxies → `STREAMING` and pin a node your airport marks as
 streaming/Netflix-capable (often named `NF`, `流媒体`, `解锁`…), then reload the title. Only
-streaming traffic moves; everything else keeps riding `PROXY`/`auto`. If it still fails on an
+streaming traffic moves; everything else keeps riding `PROXY`. If it still fails on an
 unlock node: some devices (smart TVs, Android **Private DNS**) bypass the gateway's DNS and
 connect by raw IP — since v1.3.10 the sniffer recovers those flows' hostnames from SNI so they
 still reach `STREAMING`, but a device whose own resolver returns poisoned garbage may still
@@ -606,14 +606,14 @@ tunnel anyway.
 
 **Fix:** restore the airport (renew / replace the subscription — split-horizon v2 is the only
 DNS profile, so there is no legacy fallback mode to switch back to). Note the
-DNS detour rides the `auto` group, so pinning `PROXY=DIRECT` in the dashboard does **not**
+DNS detour rides the `All Nodes` group, so pinning `PROXY=DIRECT` in the dashboard does **not**
 break resolution — only a genuinely dead provider does. Also expect the **first** lookup of a
 new domain to add one tunneled round-trip (~hundreds of ms); mihomo's DNS cache is in-memory,
 so caches start cold after every restart.
 
 ## Provider has no nodes (foreign sites dead, node list empty)
 
-**Symptom:** the dashboard's Proxies view shows only `auto` / `DIRECT` / `REJECT` — no airport
+**Symptom:** the dashboard's Proxies view shows only `All Nodes` / `DIRECT` / `REJECT` — no airport
 nodes — foreign sites time out while domestic sites stay fine, and the mihomo log repeats
 `[Provider] my-airport pull error: …`.
 
@@ -637,22 +637,24 @@ pull fails, so the seed survives restarts until the fetch path heals. If the hos
 fails with a `4xx`, re-copy the subscription URL from the airport panel (token rotated / plan
 expired); on a timeout, the panel is unreachable from your network at that moment.
 
-## Doctor reports an empty filtered group (`proxy_groups`: auto-x REJECTs / a country group has no nodes)
+## Doctor reports an empty filtered group (`proxy_groups`: Priority Nodes REJECTs / a country group has no nodes)
 
-**Symptom:** `doctor` shows `ERROR default route auto-x has NO nodes …` (result BROKEN) or
-`WARN country group(s) match no provider node: …` (DEGRADED); selecting the named group in the
-dashboard rejects every connection instead of routing it.
+**Symptom:** `doctor` shows `ERROR default route Priority Nodes has NO nodes …` (result BROKEN)
+or `WARN country group(s) match no provider node: …` (DEGRADED); selecting the named group in
+the dashboard rejects every connection instead of routing it.
 
-**Cause:** a filter regex matches zero provider nodes. `AUTO_EXCLUDE_FILTER` (the `auto-x`
-default route) or a `COUNTRY_GROUPS` entry no longer fits the airport's node naming — airports
-rename nodes (香港01 → HK-01) without notice. The groups fail **closed** by design
-(`empty-fallback: REJECT`): traffic is blocked, never silently routed DIRECT out the uplink —
-the doctor is how you find out *why*.
+**Cause:** a filter regex matches zero provider nodes. The `PRIORITY_INCLUDE_FILTER` /
+`PRIORITY_EXCLUDE_FILTER` pair (the `Priority Nodes` default route) or a `COUNTRY_GROUPS`
+entry no longer fits the airport's node naming — airports rename nodes (香港01 → HK-01)
+without notice, and a city-named pool (东京/大阪) never matched `日本|JP\d|^JP` to begin
+with. The groups fail **closed** by design (`empty-fallback: REJECT`): traffic is blocked,
+never silently routed DIRECT out the uplink — the doctor is how you find out *why*.
 
 **Fix:** compare the pattern against the live node names (dashboard Proxies view), adjust the
-regex in `.env` (`AUTO_EXCLUDE_FILTER` / the `COUNTRY_GROUPS` entry — syntax notes in
+regex in `.env` (`PRIORITY_INCLUDE_FILTER` / `PRIORITY_EXCLUDE_FILTER` / the `COUNTRY_GROUPS`
+entry — syntax notes in
 [configuration](configuration.md)), then re-render with **Redeploy** (`sudo sh ./install.sh`).
-Stopgap while you fix it: pick `auto` (the unfiltered full pool) in the dashboard's PROXY
+Stopgap while you fix it: pick `All Nodes` (the unfiltered full pool) in the dashboard's PROXY
 selector. If doctor instead reports `provider-empty` — **every** url-test group empty — the
 provider itself has no nodes: that is the [Provider has no nodes](#provider-has-no-nodes-foreign-sites-dead-node-list-empty)
 condition above, not a filter problem (`sudo sh scripts/seed_provider.sh`).
@@ -667,7 +669,7 @@ effect; `docker logs mihomo` shouts `!!! CONFIG REJECTED (render-failed)` or
 **Cause:** the entrypoint gate renders every candidate config to a temp file and tests it with
 `mihomo -t` before activating it. Your last edit produced a config that failed the render
 (e.g. a backtick in a filter knob, a malformed `COUNTRY_GROUPS` spec, missing DNS) or failed
-the config test (e.g. an invalid regex in `AUTO_EXCLUDE_FILTER`/`COUNTRY_GROUPS` — an
+the config test (e.g. an invalid regex in `PRIORITY_INCLUDE_FILTER`/`PRIORITY_EXCLUDE_FILTER`/`COUNTRY_GROUPS` — an
 unguarded pattern would otherwise panic mihomo and crash-loop the gateway). Rather than take
 the LAN down, the gateway **keeps running the last-known-good config**; your edit is simply
 not applied yet.
