@@ -56,7 +56,8 @@ chmod +x "$STUB/id"
 # docker: `compose version` ok (detect_compose); `restart` records itself;
 # `logs` emits a provider error CARRYING the token URL (the suite asserts the
 # script's excerpt redacts it); `exec ... wget ... URL` answers the controller
-# from canned per-endpoint JSON, switching auto's members after a restart.
+# from canned per-endpoint JSON, switching the All Nodes members after a
+# restart (the spaced name arrives %XX-encoded: All%20Nodes).
 cat > "$STUB/docker" <<'EOF'
 #!/bin/sh
 STATE="${FAKE_STATE:?}"
@@ -72,14 +73,14 @@ esac
 URL=""
 for _a in "$@"; do URL="$_a"; done
 case "$URL" in
-  */proxies/auto*)
+  */proxies/All%20Nodes*)
     if [ -f "$STATE/restarted" ]; then cat "$STATE/auto_after.json"
     else cat "$STATE/auto_before.json"; fi ;;
-  */group/auto/*) echo '{}' ;;
+  */group/All%20Nodes/*) echo '{}' ;;
   */proxies/PROXY/delay*)
     if [ -f "$STATE/delay_ok" ]; then echo '{"delay":42}'
     else echo '{"message":"timeout"}'; fi ;;
-  */proxies/PROXY*) echo '{"all":["auto","DIRECT","REJECT"],"now":"auto"}' ;;
+  */proxies/PROXY*) echo '{"all":["All Nodes","DIRECT","REJECT"],"now":"All Nodes"}' ;;
   *) echo '{}' ;;
 esac
 exit 0

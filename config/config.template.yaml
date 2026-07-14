@@ -88,10 +88,10 @@ dns:
   # Bootstrap DNS pins: BEFORE any node is up, mihomo must fetch the node list
   # (the airport panel, derived from subscription.txt) and geodata (the CDN
   # mirror in geox-url below), and the health probes must reach the 204
-  # endpoint. These usually sit on non-CN IPs, so the split-horizon / fallback
+  # endpoint. These usually sit on non-CN IPs, so the split-horizon
   # machinery below would otherwise route their resolution through a tunnel
   # that does not exist yet at cold start. A nameserver-policy match bypasses
-  # nameserver/fallback/fallback-filter entirely: these hosts resolve via the
+  # the default nameserver entirely: these hosts resolve via the
   # domestic list, dialed direct, always (2026-07-12 provider outage).
   # www.gstatic.com: the delay probes (doctor --egress, validate_release) and
   # the COMPATIBLE placeholder an EMPTY group degrades to dial the 204 URL
@@ -103,15 +103,14 @@ dns:
     # Split-horizon resolution (DNS privacy): a domain matching a key below is
     # resolved ONLY by that key's servers. CN domains resolve via the domestic
     # list, dialed DIRECT; the listed foreign categories resolve via overseas
-    # servers TUNNELED through a proxy group - a '#auto' suffix on a server is
-    # mihomo's route-via-group syntax, and auto is the LITERAL url-test group
-    # defined under proxy-groups below (rename both together; CI enforces the
-    # reference). Detouring via auto instead of the PROXY selector keeps
-    # resolution alive even when an operator pins PROXY to DIRECT in the
-    # dashboard. The renderer keeps these two entries - and swaps in the
-    # foreign-by-default core below - only when BOTH lists are set in .env;
-    # with neither set the render carries only the bootstrap pins above, so
-    # existing .env files keep working unchanged.
+    # servers TUNNELED through a proxy group - a '#All Nodes' suffix on a
+    # server is mihomo's route-via-group syntax, and All Nodes is the LITERAL
+    # url-test group defined under proxy-groups below (rename both together;
+    # CI enforces the reference). Detouring via All Nodes instead of the PROXY
+    # selector keeps resolution alive even when an operator pins PROXY to
+    # DIRECT in the dashboard. These two entries and the foreign-by-default
+    # core below render unconditionally - split-horizon v2 is the only DNS
+    # profile, and both lists are REQUIRED in .env.
     'geosite:cn': [ {{DNS_CN_NAMESERVER}} ]
     'geosite:geolocation-!cn': [ {{DNS_FOREIGN_NAMESERVER}} ]
   # Proxy-server (airport node) hostnames resolve via the domestic list
@@ -194,9 +193,9 @@ proxy-providers:
 # not a routable target. These groups consume that provider via `use:`; the MATCH rule
 # below targets the PROXY group instead.
 proxy-groups:
-  # auto: lowest-latency node pulled from the provider, re-tested on an interval.
-  # tolerance (ms) avoids flapping between near-equal nodes.
-  - name: auto
+  # All Nodes: lowest-latency node from the FULL provider pool, re-tested on
+  # an interval. tolerance (ms) avoids flapping between near-equal nodes.
+  - name: All Nodes
     type: url-test
     use:
       - my-airport
@@ -204,36 +203,38 @@ proxy-groups:
     interval: 300
     tolerance: 50
 
-# {{AUTOX_BEGIN}}
-  # auto-x: `auto` minus the provider nodes matching AUTO_EXCLUDE_FILTER
-  # (regexp2, unanchored substring; the shipped default excludes Hong Kong -
-  # many sites block HK egress while the airport pool is HK-heavy). Listed
-  # FIRST in PROXY below, so this is the routing default; picking `auto` in
-  # the dashboard restores the full pool with one click. No url:/interval: -
-  # the group inherits the provider health check (zero extra probe traffic),
-  # and the DNS '#auto' detour stays on `auto`, so LAN-wide resolution never
-  # depends on the filtered pool. empty-fallback REJECT fails CLOSED when the
-  # filter matches every node: traffic is blocked, never silently handed to
-  # the Direct-typed COMPATIBLE placeholder (an unproxied-uplink leak).
-  - name: auto-x
+# {{PRIORITY_BEGIN}}
+  # Priority Nodes: All Nodes minus the provider nodes matching
+  # AUTO_EXCLUDE_FILTER (regexp2, unanchored substring; the shipped default
+  # excludes Hong Kong - many sites block HK egress while the airport pool is
+  # HK-heavy). Listed FIRST in PROXY below, so this is the routing default;
+  # picking All Nodes in the dashboard restores the full pool with one click.
+  # No url:/interval: - the group inherits the provider health check (zero
+  # extra probe traffic), and the DNS '#All Nodes' detour stays on All Nodes,
+  # so LAN-wide resolution never depends on the filtered pool. empty-fallback
+  # REJECT fails CLOSED when the filter matches every node: traffic is
+  # blocked, never silently handed to the Direct-typed COMPATIBLE placeholder
+  # (an unproxied-uplink leak).
+  - name: Priority Nodes
     type: url-test
     use:
       - my-airport
     exclude-filter: "{{AUTO_EXCLUDE_FILTER}}"
     empty-fallback: REJECT
 
-# {{AUTOX_END}}
+# {{PRIORITY_END}}
 # {{COUNTRY_GROUPS}}
-  # PROXY: dashboard-facing selector and the rule target. Defaults to `auto`; an
-  # operator can pin a specific provider node (surfaced via use:), force DIRECT
-  # (bypass), or REJECT (block) from MetaCubeXD.
+  # PROXY: dashboard-facing selector and the rule target. Defaults to its
+  # first member (Priority Nodes with the shipped exclude knob, All Nodes
+  # otherwise); an operator can pin a specific provider node (surfaced via
+  # use:), force DIRECT (bypass), or REJECT (block) from MetaCubeXD.
   - name: PROXY
     type: select
     proxies:
-# {{AUTOXMEMBER_BEGIN}}
-      - auto-x
-# {{AUTOXMEMBER_END}}
-      - auto
+# {{PRIORITYMEMBER_BEGIN}}
+      - Priority Nodes
+# {{PRIORITYMEMBER_END}}
+      - All Nodes
 # {{COUNTRY_MEMBERS_PROXY}}
       - DIRECT
       - REJECT
@@ -243,13 +244,13 @@ proxy-groups:
   # STREAMING: per-service selector for unlock-sensitive sites (the GEOSITE
   # rules below send netflix here). First member PROXY = day-one behavior is
   # identical to a single-group config; pin a streaming-unlock node from
-  # MetaCubeXD to move ONLY streaming traffic - `auto` picks nodes by latency,
+  # MetaCubeXD to move ONLY streaming traffic - All Nodes picks by latency,
   # which is rarely an unlock node (the "Netflix says not available" class).
   - name: STREAMING
     type: select
     proxies:
       - PROXY
-      - auto
+      - All Nodes
 # {{COUNTRY_MEMBERS_STREAMING}}
       - DIRECT
     use:

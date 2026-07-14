@@ -5,7 +5,7 @@
 # documented contract:
 #   ok             - every filtered group has real nodes, or no filtered
 #                    groups are rendered at all (pre-epic config)
-#   default-empty  - auto-x (the routing default) has no real nodes -> bad
+#   default-empty  - Priority Nodes (the routing default) has no real nodes -> bad
 #   country-empty  - some generated country group(s) empty -> warn
 #   provider-empty - EVERY url-test group is empty (cold provider, not a
 #                    filter problem; DEC-A grace) -> warn + seed hint
@@ -64,11 +64,14 @@ exit 0
 EOF
 chmod +x "$STUB/docker"
 
-# Hardcoded %XX byte encodings (independent check of the sh encoder):
-#   auto   = %61%75%74%6f          auto-x = %61%75%74%6f%2d%78
-#   日本   = %e6%97%a5%e6%9c%ac    美国   = %e7%be%8e%e5%9b%bd
-ENC_AUTO='%61%75%74%6f'
-ENC_AUTOX='%61%75%74%6f%2d%78'
+# Hardcoded %XX byte encodings (independent check of the sh encoder; the
+# every-byte encoder carries SPACES as %20, which is what makes the renamed
+# spaced groups URL-safe):
+#   All Nodes      = %41%6c%6c%20%4e%6f%64%65%73
+#   Priority Nodes = %50%72%69%6f%72%69%74%79%20%4e%6f%64%65%73
+#   日本           = %e6%97%a5%e6%9c%ac    美国 = %e7%be%8e%e5%9b%bd
+ENC_ALL='%41%6c%6c%20%4e%6f%64%65%73'
+ENC_PRI='%50%72%69%6f%72%69%74%79%20%4e%6f%64%65%73'
 ENC_JP='%e6%97%a5%e6%9c%ac'
 ENC_US='%e7%be%8e%e5%9b%bd'
 
@@ -77,8 +80,8 @@ REAL1='{"all":["n2"],"now":"n2"}'
 EMPTY_REJECT='{"all":["REJECT"],"emptyFallback":"REJECT","now":"REJECT"}'
 EMPTY_COMPAT='{"all":["COMPATIBLE"],"now":"COMPATIBLE"}'
 
-GROUPS_FULL='{"proxies":[{"name":"auto","type":"URLTest","all":["n1","n2","n3"]},{"name":"auto-x","type":"URLTest","all":["n2"]},{"name":"日本","type":"URLTest","all":["n2"]},{"name":"美国","type":"URLTest","all":["n2"]},{"name":"PROXY","type":"Selector","all":["auto-x","auto","日本","美国","DIRECT","REJECT"]},{"name":"STREAMING","type":"Selector","all":["PROXY","auto","日本","美国","DIRECT"]},{"name":"GLOBAL","type":"Selector","all":["auto","PROXY"]}]}'
-GROUPS_PREEPIC='{"proxies":[{"name":"auto","type":"URLTest","all":["n1","n2","n3"]},{"name":"PROXY","type":"Selector","all":["auto","DIRECT","REJECT"]},{"name":"STREAMING","type":"Selector","all":["PROXY","auto","DIRECT"]},{"name":"GLOBAL","type":"Selector","all":["auto","PROXY"]}]}'
+GROUPS_FULL='{"proxies":[{"name":"All Nodes","type":"URLTest","all":["n1","n2","n3"]},{"name":"Priority Nodes","type":"URLTest","all":["n2"]},{"name":"日本","type":"URLTest","all":["n2"]},{"name":"美国","type":"URLTest","all":["n2"]},{"name":"PROXY","type":"Selector","all":["Priority Nodes","All Nodes","日本","美国","DIRECT","REJECT"]},{"name":"STREAMING","type":"Selector","all":["PROXY","All Nodes","日本","美国","DIRECT"]},{"name":"GLOBAL","type":"Selector","all":["All Nodes","PROXY"]}]}'
+GROUPS_PREEPIC='{"proxies":[{"name":"All Nodes","type":"URLTest","all":["n1","n2","n3"]},{"name":"PROXY","type":"Selector","all":["All Nodes","DIRECT","REJECT"]},{"name":"STREAMING","type":"Selector","all":["PROXY","All Nodes","DIRECT"]},{"name":"GLOBAL","type":"Selector","all":["All Nodes","PROXY"]}]}'
 
 new_state() { # NAME GROUP_JSON -> prints dir; per-group fixtures added after
   _d="$TMP/state-$1"; mkdir -p "$_d"
@@ -97,10 +100,10 @@ run_pg() { # STATE [ENV=VAL ...] - emit the proxy_groups record hermetically
     > "$OUT_F" 2>&1 || true
 }
 
-# 1) healthy: auto + auto-x + two country groups, all with real nodes -> ok
+# 1) healthy: All Nodes + Priority Nodes + two country groups, real nodes -> ok
 ST=$(new_state healthy "$GROUPS_FULL")
-printf '%s' "$REAL3" > "$ST/proxies-$ENC_AUTO.json"
-printf '%s' "$REAL1" > "$ST/proxies-$ENC_AUTOX.json"
+printf '%s' "$REAL3" > "$ST/proxies-$ENC_ALL.json"
+printf '%s' "$REAL1" > "$ST/proxies-$ENC_PRI.json"
 printf '%s' "$REAL1" > "$ST/proxies-$ENC_JP.json"
 printf '%s' "$REAL1" > "$ST/proxies-$ENC_US.json"
 run_pg "$ST"
@@ -110,8 +113,8 @@ grep -q '^proxy_groups|ok|ok|' "$OUT_F" \
 # 2) one country group empty (REJECT placeholder only) -> country-empty warn,
 #    detail names the group, remediation hint follows
 ST=$(new_state cempty "$GROUPS_FULL")
-printf '%s' "$REAL3" > "$ST/proxies-$ENC_AUTO.json"
-printf '%s' "$REAL1" > "$ST/proxies-$ENC_AUTOX.json"
+printf '%s' "$REAL3" > "$ST/proxies-$ENC_ALL.json"
+printf '%s' "$REAL1" > "$ST/proxies-$ENC_PRI.json"
 printf '%s' "$REAL1" > "$ST/proxies-$ENC_JP.json"
 printf '%s' "$EMPTY_REJECT" > "$ST/proxies-$ENC_US.json"
 run_pg "$ST"
@@ -120,14 +123,14 @@ grep -q '^proxy_groups|country-empty|warn|.*美国' "$OUT_F" \
 grep -q '^#hint|.*COUNTRY_GROUPS' "$OUT_F" \
   && ok || fail "country-empty: want a COUNTRY_GROUPS remediation hint"
 
-# 3) auto-x empty -> default-empty bad; empty country groups ride the detail
+# 3) Priority Nodes empty -> default-empty bad; empty country groups ride the detail
 ST=$(new_state dempty "$GROUPS_FULL")
-printf '%s' "$REAL3" > "$ST/proxies-$ENC_AUTO.json"
-printf '%s' "$EMPTY_REJECT" > "$ST/proxies-$ENC_AUTOX.json"
+printf '%s' "$REAL3" > "$ST/proxies-$ENC_ALL.json"
+printf '%s' "$EMPTY_REJECT" > "$ST/proxies-$ENC_PRI.json"
 printf '%s' "$REAL1" > "$ST/proxies-$ENC_JP.json"
 printf '%s' "$EMPTY_REJECT" > "$ST/proxies-$ENC_US.json"
 run_pg "$ST"
-grep -q '^proxy_groups|default-empty|bad|.*auto-x' "$OUT_F" \
+grep -q '^proxy_groups|default-empty|bad|.*Priority Nodes' "$OUT_F" \
   && ok || fail "default-empty: want bad record, got: $(cat "$OUT_F")"
 grep -q '^proxy_groups|default-empty|bad|.*美国' "$OUT_F" \
   && ok || fail "default-empty: detail must also carry the empty country group"
@@ -137,8 +140,8 @@ grep -q '^#hint|.*AUTO_EXCLUDE_FILTER' "$OUT_F" \
 # 4) EVERY url-test group empty -> the DEC-A provider-empty condition (warn,
 #    seed_provider hint), never per-group findings
 ST=$(new_state pempty "$GROUPS_FULL")
-printf '%s' "$EMPTY_COMPAT" > "$ST/proxies-$ENC_AUTO.json"
-printf '%s' "$EMPTY_REJECT" > "$ST/proxies-$ENC_AUTOX.json"
+printf '%s' "$EMPTY_COMPAT" > "$ST/proxies-$ENC_ALL.json"
+printf '%s' "$EMPTY_REJECT" > "$ST/proxies-$ENC_PRI.json"
 printf '%s' "$EMPTY_REJECT" > "$ST/proxies-$ENC_JP.json"
 printf '%s' "$EMPTY_REJECT" > "$ST/proxies-$ENC_US.json"
 run_pg "$ST"
@@ -147,16 +150,16 @@ grep -q '^proxy_groups|provider-empty|warn|' "$OUT_F" \
 grep -q '^#hint|.*seed_provider' "$OUT_F" \
   && ok || fail "provider-empty: want the seed_provider.sh hint"
 
-# 5) pre-epic config (no filtered groups) with a healthy auto -> plain ok
+# 5) pre-epic config (no filtered groups) with a healthy All Nodes -> plain ok
 ST=$(new_state preepic "$GROUPS_PREEPIC")
-printf '%s' "$REAL3" > "$ST/proxies-$ENC_AUTO.json"
+printf '%s' "$REAL3" > "$ST/proxies-$ENC_ALL.json"
 run_pg "$ST"
 grep -q '^proxy_groups|ok|ok|.*no filtered' "$OUT_F" \
   && ok || fail "pre-epic: want ok/no-filtered record, got: $(cat "$OUT_F")"
 
-# 6) pre-epic config with an EMPTY auto -> provider-empty (DEC-A extension)
+# 6) pre-epic config with an EMPTY All Nodes -> provider-empty (DEC-A extension)
 ST=$(new_state preempty "$GROUPS_PREEPIC")
-printf '%s' "$EMPTY_COMPAT" > "$ST/proxies-$ENC_AUTO.json"
+printf '%s' "$EMPTY_COMPAT" > "$ST/proxies-$ENC_ALL.json"
 run_pg "$ST"
 grep -q '^proxy_groups|provider-empty|warn|' "$OUT_F" \
   && ok || fail "pre-epic empty: want provider-empty, got: $(cat "$OUT_F")"
@@ -170,7 +173,7 @@ grep -q '^proxy_groups|unknown|silent|' "$OUT_F" \
 
 # 8) bearer token rides stdin, NEVER docker argv (repo rule)
 ST=$(new_state secret "$GROUPS_PREEPIC")
-printf '%s' "$REAL3" > "$ST/proxies-$ENC_AUTO.json"
+printf '%s' "$REAL3" > "$ST/proxies-$ENC_ALL.json"
 run_pg "$ST" CONTROLLER_SECRET=sekret-token-123
 grep -q '^proxy_groups|ok|ok|' "$OUT_F" \
   && ok || fail "secret path: want ok record, got: $(cat "$OUT_F")"

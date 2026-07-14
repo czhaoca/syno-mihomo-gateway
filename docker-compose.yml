@@ -41,9 +41,9 @@ services:
       - DNS_FOREIGN_NAMESERVER=${DNS_FOREIGN_NAMESERVER:-}
       - DNS_GEOIP_NO_RESOLVE=${DNS_GEOIP_NO_RESOLVE:-false}
       - SNIFFER_ENABLE=${SNIFFER_ENABLE:-false}
-      # Automatic-selection exclusion: non-empty renders the auto-x group
-      # (nodes matching the regex removed) as PROXY's first member. The ':-'
-      # default keeps a pre-feature .env warning-free and renders identically.
+      # Automatic-selection exclusion: non-empty renders the Priority Nodes
+      # group (nodes matching the regex removed) as PROXY's first member. The
+      # ':-' default keeps a pre-feature .env warning-free and renders identically.
       - AUTO_EXCLUDE_FILTER=${AUTO_EXCLUDE_FILTER:-}
       # Per-country auto-selection groups ('NAME=regex;...' spec); same
       # empty-means-off pass-through contract.

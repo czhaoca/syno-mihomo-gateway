@@ -62,7 +62,7 @@ _msg_en() {
     verify_tun)       printf '%s' 'TUN interface + IP forwarding active' ;;
     verify_tun_off)   printf '%s' 'TUN disabled (plain proxy mode)' ;;
     verify_ui)        printf '%s' 'dashboard container running' ;;
-    verify_groups)    printf '%s' 'filtered proxy groups (auto-x / countries) have nodes' ;;
+    verify_groups)    printf '%s' 'filtered proxy groups (Priority Nodes / countries) have nodes' ;;
     rep_secret_loc)   printf '%s' 'dashboard secret: stored in .env (CONTROLLER_SECRET) - the dashboard asks for it on first login' ;;
     warn_dashboard_open) printf '%s' 'dashboard has NO secret - anyone on the LAN can control the proxy' ;;
     st_fresh)         printf '%s' 'status: not deployed yet' ;;
@@ -283,8 +283,8 @@ _msg_en() {
     diag_egress)      printf '%s' 'the gateway is up, but it could NOT reach the internet through %s (the nodes time out)' ;;
     diag_egress_fix)  printf '%s' 'your subscription may be expired or its nodes down/blocked from this network - open the dashboard (Proxies -> test the nodes), pick a working node, or update the subscription URL, then redeploy; if the verification below reports the filtered proxy groups EMPTY, the cause is AUTO_EXCLUDE_FILTER/COUNTRY_GROUPS in .env matching no node - fix the filter, not the subscription' ;;
     info_egress_skip) printf '%s' 'egress test skipped (no wget/curl in the mihomo image)' ;;
-    diag_pg_default)  printf '%s' 'the default route auto-x matched ZERO provider nodes - PROXY traffic is being REJECTED (fail closed), clients have no internet through the gateway' ;;
-    diag_pg_default_fix) printf '%s' 'AUTO_EXCLUDE_FILTER in .env excludes every node of this airport - fix the regex and Redeploy (sudo sh ./install.sh); stopgap: pick auto in the dashboard PROXY selector' ;;
+    diag_pg_default)  printf '%s' 'the default route Priority Nodes matched ZERO provider nodes - PROXY traffic is being REJECTED (fail closed), clients have no internet through the gateway' ;;
+    diag_pg_default_fix) printf '%s' 'AUTO_EXCLUDE_FILTER in .env excludes every node of this airport - fix the regex and Redeploy (sudo sh ./install.sh); stopgap: pick All Nodes in the dashboard PROXY selector' ;;
     diag_pg_country)  printf '%s' 'country group(s) matched no provider node - selecting them in the dashboard REJECTs (fail closed)' ;;
     diag_pg_country_fix) printf '%s' 'tune the COUNTRY_GROUPS regex(es) in .env to your airport node names, then Redeploy' ;;
     diag_pg_provider) printf '%s' 'every url-test group is empty - the provider has no nodes yet (cold start or dead subscription), not a filter problem' ;;
@@ -444,7 +444,7 @@ _msg_zh() {
     verify_tun)       printf '%s' 'TUN 接口与 IP 转发已启用' ;;
     verify_tun_off)   printf '%s' 'TUN 已关闭（纯代理模式）' ;;
     verify_ui)        printf '%s' '面板容器运行中' ;;
-    verify_groups)    printf '%s' '过滤型代理分组（auto-x / 国家组）有可用节点' ;;
+    verify_groups)    printf '%s' '过滤型代理分组（Priority Nodes / 国家组）有可用节点' ;;
     rep_secret_loc)   printf '%s' '面板密钥：保存在 .env（CONTROLLER_SECRET）——面板首次登录时需要输入' ;;
     warn_dashboard_open) printf '%s' '面板未设置密钥——局域网上的任何人都能控制代理' ;;
     st_fresh)         printf '%s' '状态：尚未部署' ;;
@@ -665,8 +665,8 @@ _msg_zh() {
     diag_egress)      printf '%s' '网关已启动，但无法通过 %s 访问外网（节点超时）' ;;
     diag_egress_fix)  printf '%s' '订阅可能已过期，或其节点已下线/在本网络被阻断——请打开面板（代理 -> 测试节点），选择一个可用节点，或更新订阅链接后重新部署；若下方部署验证显示过滤型代理分组为空，原因是 .env 中的 AUTO_EXCLUDE_FILTER/COUNTRY_GROUPS 匹配不到任何节点——应修正过滤器而非订阅' ;;
     info_egress_skip) printf '%s' '已跳过出口测试（mihomo 镜像中没有 wget/curl）' ;;
-    diag_pg_default)  printf '%s' '默认线路 auto-x 匹配不到任何机场节点——PROXY 流量正被 REJECT（失败关闭），客户端经网关无法上网' ;;
-    diag_pg_default_fix) printf '%s' '.env 中的 AUTO_EXCLUDE_FILTER 排除了该机场的全部节点——修正正则后重新部署（sudo sh ./install.sh）；应急：在面板 PROXY 选择器中选 auto' ;;
+    diag_pg_default)  printf '%s' '默认线路 Priority Nodes 匹配不到任何机场节点——PROXY 流量正被 REJECT（失败关闭），客户端经网关无法上网' ;;
+    diag_pg_default_fix) printf '%s' '.env 中的 AUTO_EXCLUDE_FILTER 排除了该机场的全部节点——修正正则后重新部署（sudo sh ./install.sh）；应急：在面板 PROXY 选择器中选 All Nodes' ;;
     diag_pg_country)  printf '%s' '有国家分组匹配不到任何机场节点——在面板中选中它们会被 REJECT（失败关闭）' ;;
     diag_pg_country_fix) printf '%s' '按机场的节点命名调整 .env 中对应的 COUNTRY_GROUPS 正则，然后重新部署' ;;
     diag_pg_provider) printf '%s' '所有 url-test 分组皆空——机场尚无节点（冷启动或订阅失效），与过滤器无关' ;;

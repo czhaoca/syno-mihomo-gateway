@@ -68,8 +68,8 @@ case "$SNIFFER_ENABLE" in
   *) echo "ERROR: SNIFFER_ENABLE must be true or false" >&2; exit 1 ;;
 esac
 # Automatic-selection exclusion: a non-empty regexp2 pattern renders the
-# auto-x sibling group (nodes matching the pattern removed) as PROXY's first
-# member. Empty/unset renders WITHOUT the group, byte-identical to the
+# Priority Nodes sibling group (nodes matching the pattern removed) as
+# PROXY's first member. Empty/unset renders WITHOUT the group, byte-identical to the
 # pre-feature output (upgrade compat; .env.example ships an HK default for
 # new installs). An INVALID pattern panics mihomo at startup, so the two
 # statically-detectable poison classes fail the render here: a backtick
@@ -86,7 +86,7 @@ if [ -n "$AUTO_EXCLUDE_FILTER" ]; then
   case "$AUTO_EXCLUDE_FILTER" in
     *[![:space:]]*) : ;;
     *)
-      echo "ERROR: AUTO_EXCLUDE_FILTER is whitespace-only - set a real pattern, or leave it empty/unset to disable the auto-x group" >&2
+      echo "ERROR: AUTO_EXCLUDE_FILTER is whitespace-only - set a real pattern, or leave it empty/unset to disable the Priority Nodes group" >&2
       exit 1 ;;
   esac
 fi
@@ -126,13 +126,21 @@ if [ -n "$COUNTRY_GROUPS" ]; then
     _cg_name=${_cg_entry%%=*}
     _cg_re=${_cg_entry#*=}
     [ -n "$_cg_name" ] || { echo "ERROR: COUNTRY_GROUPS entry '$_cg_entry' has an empty name" >&2; exit 1; }
+    # Interior SPACES are legal in names ("Japan Auto" is a valid group);
+    # leading/trailing whitespace (a stray space around ';' or '=') and any
+    # non-space whitespace (tab/newline) still refuse loudly.
     case "$_cg_name" in
+      ' '*|*' ')
+        echo "ERROR: COUNTRY_GROUPS name '$_cg_name' has leading/trailing whitespace (no spaces around ';' or '=')" >&2
+        exit 1 ;;
+    esac
+    case "$(printf '%s' "$_cg_name" | tr -d ' ')" in
       *[[:space:]]*)
-        echo "ERROR: COUNTRY_GROUPS name '$_cg_name' contains whitespace (no spaces around ';' or '=')" >&2
+        echo "ERROR: COUNTRY_GROUPS name '$_cg_name' contains whitespace other than interior spaces" >&2
         exit 1 ;;
     esac
     case "$_cg_name" in
-      auto|auto-x|PROXY|STREAMING|DIRECT|REJECT|REJECT-DROP|PASS|COMPATIBLE|GLOBAL)
+      'All Nodes'|'Priority Nodes'|PROXY|STREAMING|DIRECT|REJECT|REJECT-DROP|PASS|COMPATIBLE|GLOBAL)
         echo "ERROR: COUNTRY_GROUPS name '$_cg_name' collides with a built-in group/adapter" >&2
         exit 1 ;;
     esac
@@ -270,15 +278,15 @@ if [ "$SNIFFER_ENABLE" = true ]; then
 else
   sed -e '/{{SNIFFER_BEGIN}}/,/{{SNIFFER_END}}/d' "$PRE2" > "$PRE4"
 fi
-#   AUTOX blocks    - the auto-x group and its PROXY member line switch
-#                     TOGETHER on AUTO_EXCLUDE_FILTER being non-empty
-#                     (validated above), mirroring the DNS fence trio.
+#   PRIORITY blocks - the Priority Nodes group and its PROXY member line
+#                     switch TOGETHER on AUTO_EXCLUDE_FILTER being non-empty
+#                     (validated above).
 if [ -n "$AUTO_EXCLUDE_FILTER" ]; then
-  sed -e '/{{AUTOX_BEGIN}}/d' -e '/{{AUTOX_END}}/d' \
-      -e '/{{AUTOXMEMBER_BEGIN}}/d' -e '/{{AUTOXMEMBER_END}}/d' "$PRE4" > "$PRE5"
+  sed -e '/{{PRIORITY_BEGIN}}/d' -e '/{{PRIORITY_END}}/d' \
+      -e '/{{PRIORITYMEMBER_BEGIN}}/d' -e '/{{PRIORITYMEMBER_END}}/d' "$PRE4" > "$PRE5"
 else
-  sed -e '/{{AUTOX_BEGIN}}/,/{{AUTOX_END}}/d' \
-      -e '/{{AUTOXMEMBER_BEGIN}}/,/{{AUTOXMEMBER_END}}/d' "$PRE4" > "$PRE5"
+  sed -e '/{{PRIORITY_BEGIN}}/,/{{PRIORITY_END}}/d' \
+      -e '/{{PRIORITYMEMBER_BEGIN}}/,/{{PRIORITYMEMBER_END}}/d' "$PRE4" > "$PRE5"
 fi
 #   COUNTRY markers - single marker lines, not fences: replaced by the
 #                     generated group/member fragments when the spec is set

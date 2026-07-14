@@ -70,14 +70,16 @@ case "$1" in
       *'/version'*) exit "${FAKE_CTL_RC:-0}" ;;
       # proxy_groups controller endpoints (chk_proxy_groups): /group lists the
       # groups; per-group /proxies/<name> URLs arrive %XX-encoded byte by byte
-      # (auto=%61%75%74%6f, auto-x=%61%75%74%6f%2d%78, JPX=%4a%50%58 - the
-      # auto-x pattern must precede auto, whose encoding is its prefix).
+      # (All Nodes=%41%6c%6c%20%4e%6f%64%65%73,
+      # Priority Nodes=%50%72%69%6f%72%69%74%79%20%4e%6f%64%65%73, JPX=%4a%50%58 -
+      # spaces ride as %20; the encodings are no longer prefixes of each
+      # other, but the specific-before-generic case order is kept).
       *'/group'*)
         case "${FAKE_PG_MODE:-healthy}" in
-          preepic) printf '{"proxies":[{"name":"auto","type":"URLTest","all":["n1","n2"]},{"name":"PROXY","type":"Selector","all":["auto","DIRECT","REJECT"]},{"name":"STREAMING","type":"Selector","all":["PROXY","auto","DIRECT"]},{"name":"GLOBAL","type":"Selector","all":["auto","PROXY"]}]}' ;;
-          *) printf '{"proxies":[{"name":"auto","type":"URLTest","all":["n1","n2"]},{"name":"auto-x","type":"URLTest","all":["n1"]},{"name":"JPX","type":"URLTest","all":["n1"]},{"name":"PROXY","type":"Selector","all":["auto-x","auto","JPX","DIRECT","REJECT"]},{"name":"STREAMING","type":"Selector","all":["PROXY","auto","JPX","DIRECT"]},{"name":"GLOBAL","type":"Selector","all":["auto","PROXY"]}]}' ;;
+          preepic) printf '{"proxies":[{"name":"All Nodes","type":"URLTest","all":["n1","n2"]},{"name":"PROXY","type":"Selector","all":["All Nodes","DIRECT","REJECT"]},{"name":"STREAMING","type":"Selector","all":["PROXY","All Nodes","DIRECT"]},{"name":"GLOBAL","type":"Selector","all":["All Nodes","PROXY"]}]}' ;;
+          *) printf '{"proxies":[{"name":"All Nodes","type":"URLTest","all":["n1","n2"]},{"name":"Priority Nodes","type":"URLTest","all":["n1"]},{"name":"JPX","type":"URLTest","all":["n1"]},{"name":"PROXY","type":"Selector","all":["Priority Nodes","All Nodes","JPX","DIRECT","REJECT"]},{"name":"STREAMING","type":"Selector","all":["PROXY","All Nodes","JPX","DIRECT"]},{"name":"GLOBAL","type":"Selector","all":["All Nodes","PROXY"]}]}' ;;
         esac ;;
-      *'/proxies/%61%75%74%6f%2d%78'*)
+      *'/proxies/%50%72%69%6f%72%69%74%79%20%4e%6f%64%65%73'*)
         if [ "${FAKE_PG_MODE:-healthy}" = default-empty ]; then
           printf '{"all":["REJECT"],"now":"REJECT"}'
         else
@@ -88,7 +90,7 @@ case "$1" in
           country-empty|default-empty) printf '{"all":["REJECT"],"now":"REJECT"}' ;;
           *) printf '{"all":["n1"],"now":"n1"}' ;;
         esac ;;
-      *'/proxies/%61%75%74%6f'*) printf '{"all":["n1","n2"],"now":"n1"}' ;;
+      *'/proxies/%41%6c%6c%20%4e%6f%64%65%73'*) printf '{"all":["n1","n2"],"now":"n1"}' ;;
     esac
     exit 0 ;;
   network)
@@ -713,11 +715,11 @@ if [ "$_fp_run" = 1 ]; then
     && grep -q 'COUNTRY_GROUPS' "$TMP/derr" \
     && ok || fail "proxy_groups-country-empty parity (json=$_jrc human=$_hrc)"
 
-  # proxy_groups default-empty (auto-x matches no node): BROKEN both, rc 3
+  # proxy_groups default-empty (Priority Nodes matches no node): BROKEN both, rc 3
   FAKE_PG_MODE=default-empty; export FAKE_PG_MODE
   dpar
   jval proxy_groups default-empty && [ "$_jrc" = 3 ] && [ "$_hrc" = 3 ] \
-    && grep -q 'ERROR.*auto-x' "$TMP/derr" \
+    && grep -q 'ERROR.*Priority Nodes' "$TMP/derr" \
     && ok || fail "proxy_groups-default-empty parity (json=$_jrc human=$_hrc)"
 
   # proxy_groups pre-epic config (no filtered groups rendered): ok both, rc 0

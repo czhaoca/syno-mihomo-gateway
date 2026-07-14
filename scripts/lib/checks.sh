@@ -269,7 +269,7 @@ chk_ipv6_bypass() {
 
 # proxy_groups - zero-node guard for the FILTERED url-test groups (#34).
 # A filter matching zero provider nodes is only observable at runtime: the
-# epic renders every filtered group (auto-x + the COUNTRY_GROUPS set) with
+# epic renders every filtered group (Priority Nodes + the COUNTRY_GROUPS set) with
 # empty-fallback REJECT, so an emptied group blackholes its traffic instead
 # of silently leaking DIRECT - either way the operator finds out HERE.
 # Group discovery is DYNAMIC from the controller (/group), never a hardcoded
@@ -312,8 +312,9 @@ chk_proxy_groups() {
     return 0
   fi
   # Every "name" key in /group is a group name (member nodes appear only as
-  # bare strings inside all[]). Country names cannot contain whitespace
-  # (renderer-validated) and cannot shadow the builtins skipped below.
+  # bare strings inside all[]). Group names may carry interior spaces (the
+  # line-wise read below is space-safe) and cannot shadow the builtins
+  # skipped below.
   _pg_names="$(printf '%s' "$_pg_raw" \
     | awk -F'"name":"' '{ for (i = 2; i <= NF; i++) { n = $i; sub(/".*/, "", n); print n } }')"
   _pg_have_autox=0; _pg_autox_empty=0; _pg_country_n=0
@@ -326,8 +327,8 @@ chk_proxy_groups() {
     _pg_c="$(_pg_real "$_pg_n")"; _pg_c=${_pg_c:-0}
     [ "$_pg_c" -gt 0 ] && _pg_any_real=1
     case "$_pg_n" in
-      auto) : ;;  # full pool - its emptiness IS the provider condition below
-      auto-x)
+      'All Nodes') : ;;  # full pool - its emptiness IS the provider condition below
+      'Priority Nodes')
         _pg_have_autox=1
         [ "$_pg_c" -eq 0 ] && _pg_autox_empty=1 ;;
       *)
@@ -354,8 +355,8 @@ PGEOF
   fi
   if [ "$_pg_autox_empty" -eq 1 ]; then
     CHECK_VALUE=default-empty CHECK_SEV=bad
-    CHECK_DETAIL="default route auto-x has NO nodes - AUTO_EXCLUDE_FILTER matches every provider node, so auto-x traffic is REJECTED (fail closed)${_pg_empty:+; empty country group(s): $_pg_empty}"
-    CHECK_HINT="      fix AUTO_EXCLUDE_FILTER in .env and redeploy: sudo sh ./install.sh (Redeploy); stopgap: pick 'auto' in the dashboard PROXY selector"
+    CHECK_DETAIL="default route Priority Nodes has NO nodes - AUTO_EXCLUDE_FILTER matches every provider node, so Priority Nodes traffic is REJECTED (fail closed)${_pg_empty:+; empty country group(s): $_pg_empty}"
+    CHECK_HINT="      fix AUTO_EXCLUDE_FILTER in .env and redeploy: sudo sh ./install.sh (Redeploy); stopgap: pick 'All Nodes' in the dashboard PROXY selector"
     return 0
   fi
   if [ -n "$_pg_empty" ]; then
@@ -365,7 +366,7 @@ PGEOF
     return 0
   fi
   CHECK_VALUE=ok CHECK_SEV=ok
-  CHECK_DETAIL="filtered proxy groups all have real nodes (auto-x${_pg_country_n:+ + $_pg_country_n country group(s)})"
+  CHECK_DETAIL="filtered proxy groups all have real nodes (Priority Nodes${_pg_country_n:+ + $_pg_country_n country group(s)})"
 }
 
 # config_rejected - consumer of the entrypoint gate's rejection marker (#38,

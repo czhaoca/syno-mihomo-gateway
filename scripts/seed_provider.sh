@@ -55,10 +55,11 @@ ctl_get() {
   fi
 }
 
-# Provider nodes in the `auto` group: its members come from the provider only,
-# and an EMPTY group degrades to the COMPATIBLE placeholder - never a node.
+# Provider nodes in the "All Nodes" group: its members come from the provider
+# only, and an EMPTY group degrades to the COMPATIBLE placeholder - never a
+# node. The spaced name rides the URL %XX-encoded (All Nodes = All%20Nodes).
 real_nodes() {
-  ctl_get /proxies/auto | sed -n 's/.*"all":\[\([^]]*\)\].*/\1/p' \
+  ctl_get /proxies/All%20Nodes | sed -n 's/.*"all":\[\([^]]*\)\].*/\1/p' \
     | tr ',' '\n' | sed -n 's/^"\(.*\)"$/\1/p' | grep -c -v '^COMPATIBLE$'
 }
 
@@ -118,9 +119,9 @@ echo "OK: provider loaded $N nodes from the seeded cache"
 # effective member must be a REAL node: an empty group degrades to COMPATIBLE
 # (= DIRECT), and gstatic's generate_204 answers direct from CN.
 GSTATIC="http://www.gstatic.com/generate_204"
-ctl_get "/group/auto/delay?timeout=8000&url=$GSTATIC" >/dev/null 2>&1 || true
+ctl_get "/group/All%20Nodes/delay?timeout=8000&url=$GSTATIC" >/dev/null 2>&1 || true
 _now=$(ctl_get /proxies/PROXY | sed -n 's/.*"now":"\([^"]*\)".*/\1/p')
-[ "$_now" = auto ] && _now=$(ctl_get /proxies/auto | sed -n 's/.*"now":"\([^"]*\)".*/\1/p')
+[ "$_now" = "All Nodes" ] && _now=$(ctl_get /proxies/All%20Nodes | sed -n 's/.*"now":"\([^"]*\)".*/\1/p')
 case "$(ctl_get "/proxies/PROXY/delay?timeout=5000&url=$GSTATIC")" in
   *'"delay"'*)
     case "$_now" in

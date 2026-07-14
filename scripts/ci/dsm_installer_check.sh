@@ -783,7 +783,7 @@ done
 
 # --- deploy-time filtered-group surfacing (#37): the verify table carries a
 # filtered-groups row (real chk_proxy_groups, reused never forked) and an empty
-# auto-x lands a correctly-attributed end-of-report diagnosis (names the
+# Priority Nodes lands a correctly-attributed end-of-report diagnosis (names the
 # AUTO_EXCLUDE_FILTER knob, never the subscription) while the deploy still
 # succeeds (DEC-A warn-and-continue). Sourcing flow_deploy WITHOUT checks.sh
 # must keep report_success alive (guarded row -> skip).
@@ -818,25 +818,25 @@ done
   esac
 
   # The real check against a stub controller. Canned %XX answers copied from
-  # gateway_cli_check.sh (auto=%61%75%74%6f, auto-x=%61%75%74%6f%2d%78,
-  # JPX=%4a%50%58 - the auto-x pattern must precede auto, whose encoding is
-  # its prefix). DOCKER_BIN resolves to a shell function: only the URL
-  # (always the last exec arg) matters.
+  # gateway_cli_check.sh (All Nodes=%41%6c%6c%20%4e%6f%64%65%73,
+  # Priority Nodes=%50%72%69%6f%72%69%74%79%20%4e%6f%64%65%73,
+  # JPX=%4a%50%58 - spaces ride as %20). DOCKER_BIN resolves to a shell
+  # function: only the URL (always the last exec arg) matters.
   # shellcheck source=scripts/lib/checks.sh
   . "$ROOT/scripts/lib/checks.sh"
   fake_docker() {
     _fd_u=''; for _fd_a in "$@"; do _fd_u="$_fd_a"; done
     case "$_fd_u" in
       */group)
-        printf '{"proxies":[{"name":"auto","type":"URLTest","all":["n1","n2"]},{"name":"auto-x","type":"URLTest","all":["n1"]},{"name":"JPX","type":"URLTest","all":["n1"]},{"name":"PROXY","type":"Selector","all":["auto-x","auto","JPX","DIRECT","REJECT"]},{"name":"STREAMING","type":"Selector","all":["PROXY","auto","JPX","DIRECT"]},{"name":"GLOBAL","type":"Selector","all":["auto","PROXY"]}]}' ;;
-      */proxies/%61%75%74%6f%2d%78*)
+        printf '{"proxies":[{"name":"All Nodes","type":"URLTest","all":["n1","n2"]},{"name":"Priority Nodes","type":"URLTest","all":["n1"]},{"name":"JPX","type":"URLTest","all":["n1"]},{"name":"PROXY","type":"Selector","all":["Priority Nodes","All Nodes","JPX","DIRECT","REJECT"]},{"name":"STREAMING","type":"Selector","all":["PROXY","All Nodes","JPX","DIRECT"]},{"name":"GLOBAL","type":"Selector","all":["All Nodes","PROXY"]}]}' ;;
+      */proxies/%50%72%69%6f%72%69%74%79%20%4e%6f%64%65%73*)
         if [ "${FAKE_PG_MODE:-healthy}" = default-empty ]; then
           printf '{"all":["REJECT"],"now":"REJECT"}'
         else
           printf '{"all":["n1"],"now":"n1"}'
         fi ;;
       */proxies/%4a%50%58*) printf '{"all":["n1"],"now":"n1"}' ;;
-      */proxies/%61%75%74%6f*) printf '{"all":["n1","n2"],"now":"n1"}' ;;
+      */proxies/%41%6c%6c%20%4e%6f%64%65%73*) printf '{"all":["n1","n2"],"now":"n1"}' ;;
     esac
     return 0
   }
@@ -853,11 +853,11 @@ done
     *diag_pg_*) fail "healthy: unexpected filtered-group diagnosis: $_out" ;;
   esac
 
-  # 2) empty auto-x: FAILED row + end-of-report diagnosis attributing the
+  # 2) empty Priority Nodes: FAILED row + end-of-report diagnosis attributing the
   #    filter knob (after rep_next, the operator's last screen); the report
   #    itself still succeeds (DEC-A warn-and-continue, deploy exit 0)
   FAKE_PG_MODE=default-empty
-  _out="$(report_success 2>&1)" || fail "DEC-A violated: report_success failed on empty auto-x"
+  _out="$(report_success 2>&1)" || fail "DEC-A violated: report_success failed on empty Priority Nodes"
   case "$_out" in
     *'verify_failed verify_groups'*) : ;;
     *) fail "default-empty: missing FAILED groups row: $_out" ;;

@@ -47,14 +47,15 @@ Enforces:
     parse-pure-ip + override-destination (restores domain routing for
     LAN clients that resolve DNS outside the gateway — the v1.3.10
     raw-IP-flows incident); garbage fails closed;
-  * the AUTOX fences (country-groups epic): a non-empty AUTO_EXCLUDE_FILTER
-    renders the auto-x sibling url-test group (exclude-filter, empty-fallback
-    REJECT, NO own url:/interval:) listed FIRST in PROXY, with `auto`
-    untouched (full pool — the DNS '#auto' detour rides it); unset/empty
+  * the PRIORITY fences (country-groups epic): a non-empty AUTO_EXCLUDE_FILTER
+    renders the Priority Nodes sibling url-test group (exclude-filter,
+    empty-fallback REJECT, NO own url:/interval:) listed FIRST in PROXY, with
+    All Nodes untouched (full pool — the DNS detour rides it); unset/empty
     renders WITHOUT the group byte-identically; a backtick-bearing or
     whitespace-only pattern fails closed at render time (an invalid pattern
     PANICS mihomo at startup; a backtick is mihomo's multi-pattern separator);
-    the .env.example default must itself render auto-x as the routing default;
+    the .env.example default must itself render Priority Nodes as the
+    routing default;
   * the COUNTRY_GROUPS generation markers (country-groups epic): a
     'NAME=regex;NAME=regex' spec generates one url-test group per entry
     (filter, empty-fallback REJECT, tolerance, NO own url:/interval:) spliced
@@ -111,7 +112,7 @@ SECRET = 's3cr&t|"x\\y'  # & | render via esc(); " and \ render via yaml_dq()
 
 # DNS fixtures mirror the shipped .env.example shape: a plain-IP bootstrap
 # list, DoH-on-IP domestic lists, and '#auto'-fragment (detoured through the
-# auto url-test group — NOT #PROXY, so a dashboard PROXY=DIRECT pin cannot
+# All Nodes url-test group — NOT #PROXY, so a dashboard PROXY=DIRECT pin cannot
 # kill or leak long-tail resolution) foreign entries. The URLs must
 # survive esc() (sed) and parse as YAML flow-sequence STRING scalars — '#'
 # preceded by a non-space is NOT a YAML comment, and the exact-equality
@@ -121,7 +122,7 @@ SECRET = 's3cr&t|"x\\y'  # & | render via esc(); " and \ render via yaml_dq()
 DNS_DEFAULT = ["223.6.6.6", "119.29.29.29"]
 DNS_NS = ["https://223.5.5.5/dns-query", "https://120.53.53.53/dns-query"]
 DNS_CN = ["https://223.4.4.4/dns-query", "https://120.53.53.102/dns-query"]
-DNS_FOREIGN = ["https://1.0.0.1/dns-query#auto", "https://8.8.4.4/dns-query#auto"]
+DNS_FOREIGN = ["https://1.0.0.1/dns-query#All Nodes", "https://8.8.4.4/dns-query#All Nodes"]
 
 # The full rule chain (v1.3.10). Order is semantic: LAN first (raw-IP flows
 # to private/link-local destinations go DIRECT before anything else — the
@@ -285,13 +286,13 @@ def spec_names(spec: str) -> list:
 
 def expected_groups(auto_exclude: str | None = None,
                     country_spec: str | None = None) -> list:
-    """The SPEC-DERIVED proxy-group inventory (in order): auto, the auto-x
-    sibling when the exclude knob is on, the generated country groups in spec
-    order, then the PROXY/STREAMING selectors. Never a hardcoded country
-    list (CLAUDE.md rule) — country names come only from the spec under test."""
-    names = ["auto"]
+    """The SPEC-DERIVED proxy-group inventory (in order): All Nodes, the
+    Priority Nodes sibling when the exclude knob is on, the generated country
+    groups in spec order, then the PROXY/STREAMING selectors. Never a
+    hardcoded country list (CLAUDE.md rule) — names come from the spec."""
+    names = ["All Nodes"]
     if auto_exclude:
-        names.append("auto-x")
+        names.append("Priority Nodes")
     if country_spec:
         names.extend(spec_names(country_spec))
     return names + ["PROXY", "STREAMING"]
@@ -659,7 +660,7 @@ def main() -> None:
     # unconditionally (asserted exactly in 5/5a on the default render). The
     # remaining fences must still pair, and their unset-inertness is proven
     # by byte-identity against a stripped template.
-    for fence in ("SNIFFER", "AUTOX", "AUTOXMEMBER"):
+    for fence in ("SNIFFER", "PRIORITY", "PRIORITYMEMBER"):
         if (f"{{{{{fence}_BEGIN}}}}" not in raw
                 or f"{{{{{fence}_END}}}}" not in raw):
             fail(f"template must carry the {fence}_BEGIN/{fence}_END fence pair")
@@ -675,7 +676,7 @@ def main() -> None:
         fail(f"default rules must be the v1.3.10 chain in order "
              f"{RULES_BASE!r}: got {doc.get('rules')!r}")
     plain_raw = strip_fence(strip_fence(strip_fence(
-        raw, "SNIFFER"), "AUTOX"), "AUTOXMEMBER").replace(
+        raw, "SNIFFER"), "PRIORITY"), "PRIORITYMEMBER").replace(
         "{{GEOIP_NO_RESOLVE}}", "")
     for marker in ("COUNTRY_GROUPS", "COUNTRY_MEMBERS_PROXY",
                    "COUNTRY_MEMBERS_STREAMING"):
@@ -767,13 +768,13 @@ def main() -> None:
         fail("invalid SNIFFER_ENABLE was accepted or wrote config.yaml")
 
     # 11c) AUTO_EXCLUDE_FILTER fences (country-groups epic, #32): a non-empty
-    # regexp2 pattern renders the auto-x sibling url-test group - matching
+    # regexp2 pattern renders the Priority Nodes sibling url-test group - matching
     # provider nodes removed, empty-fallback REJECT (fail closed: an emptied
     # group must never degrade to the Direct-typed COMPATIBLE placeholder,
     # which routes LAN traffic out the uplink unproxied), NO own
     # url:/interval: (inherits the provider health check - zero extra probe
-    # traffic) - listed FIRST in PROXY (the routing default) while `auto`
-    # keeps the full pool (the DNS '#auto' detour rides auto, so LAN-wide
+    # traffic) - listed FIRST in PROXY (the routing default) while All Nodes
+    # keeps the full pool (the DNS detour rides All Nodes, so LAN-wide
     # resolution never depends on the filtered pool). Unset/empty renders
     # WITHOUT the group byte-identically (composed strip proven in 10 + the
     # empty==unset case here); a backtick (mihomo's multi-pattern separator,
@@ -786,55 +787,58 @@ def main() -> None:
     proc_x, xr = render(raw, auto_exclude_filter=EXCL)
     if proc_x.returncode != 0 or xr is None:
         fail(f"AUTO_EXCLUDE_FILTER render failed: {proc_x.stderr.strip()}")
-    assert_resolved("auto-x", xr)
+    assert_resolved("Priority Nodes", xr)
     if "\n\n\n" in xr:
-        fail("auto-x render contains doubled blank lines - the fences must "
-             "sit flush against their neighbors")
+        fail("Priority Nodes render contains doubled blank lines - the fences "
+             "must sit flush against their neighbors")
     xdoc = yaml.safe_load(xr)
     xnames = [g.get("name") for g in xdoc.get("proxy-groups") or []]
     if xnames != expected_groups(EXCL):
         fail(f"knob-on proxy-groups must be exactly {expected_groups(EXCL)!r} "
              f"in order (spec-derived): got {xnames!r}")
     xgroups = {g.get("name"): g for g in xdoc.get("proxy-groups")}
-    autox = xgroups["auto-x"]
+    autox = xgroups["Priority Nodes"]
     if autox.get("type") != "url-test":
-        fail(f"auto-x must be a url-test group: got {autox.get('type')!r}")
+        fail(f"Priority Nodes must be a url-test group: got {autox.get('type')!r}")
     if autox.get("exclude-filter") != EXCL:
         fail(f"exclude-filter did not round-trip: got "
              f"{autox.get('exclude-filter')!r}, expected {EXCL!r}")
     if autox.get("empty-fallback") != "REJECT":
-        fail(f"auto-x must fail closed via empty-fallback: REJECT (verified "
-             f"supported in the deployed image, issue #32 DEC-B): got "
-             f"{autox.get('empty-fallback')!r}")
+        fail(f"Priority Nodes must fail closed via empty-fallback: REJECT "
+             f"(verified supported in the deployed image, issue #32 DEC-B): "
+             f"got {autox.get('empty-fallback')!r}")
     if autox.get("use") != ["my-airport"]:
-        fail(f"auto-x must surface provider nodes via use: [my-airport]: "
+        fail(f"Priority Nodes must surface provider nodes via use: [my-airport]: "
              f"got {autox.get('use')!r}")
     for absent in ("url", "interval", "tolerance"):
         if absent in autox:
-            fail(f"auto-x must carry NO own {absent!r} - it inherits the "
-                 f"provider health check (no probe amplification): "
+            fail(f"Priority Nodes must carry NO own {absent!r} - it inherits "
+                 f"the provider health check (no probe amplification): "
                  f"got {autox.get(absent)!r}")
-    if xgroups["PROXY"].get("proxies") != ["auto-x", "auto", "DIRECT", "REJECT"]:
+    if xgroups["PROXY"].get("proxies") != ["Priority Nodes", "All Nodes",
+                                           "DIRECT", "REJECT"]:
         fail(f"PROXY members with the knob on must be "
-             f"['auto-x', 'auto', 'DIRECT', 'REJECT'] (auto-x FIRST = the "
-             f"routing default, auto one click away): "
+             f"['Priority Nodes', 'All Nodes', 'DIRECT', 'REJECT'] (Priority "
+             f"Nodes FIRST = the routing default, All Nodes one click away): "
              f"got {xgroups['PROXY'].get('proxies')!r}")
-    dauto = next(g for g in doc.get("proxy-groups") if g.get("name") == "auto")
-    if xgroups["auto"] != dauto:
-        fail(f"auto must be UNTOUCHED by the exclude knob (full pool - the "
-             f"split-horizon DNS detour rides it): {xgroups['auto']!r} != {dauto!r}")
+    dauto = next(g for g in doc.get("proxy-groups")
+                 if g.get("name") == "All Nodes")
+    if xgroups["All Nodes"] != dauto:
+        fail(f"All Nodes must be UNTOUCHED by the exclude knob (full pool - "
+             f"the split-horizon DNS detour rides it): "
+             f"{xgroups['All Nodes']!r} != {dauto!r}")
     if (xgroups["STREAMING"].get("proxies") or [None])[0] != "PROXY":
-        fail(f"[auto-x] STREAMING's first member must stay PROXY: "
+        fail(f"[Priority Nodes] STREAMING's first member must stay PROXY: "
              f"got {xgroups['STREAMING'].get('proxies')!r}")
     if xdoc.get("rules") != RULES_BASE:
-        fail(f"[auto-x] rules must be unchanged by the exclude fences: "
+        fail(f"[Priority Nodes] rules must be unchanged by the exclude fences: "
              f"got {xdoc.get('rules')!r}")
     check_rule_targets(xdoc)
     check_dns_detour_targets(xdoc)
 
     # The SHIPPED .env.example default must itself render (seed-only rollout:
-    # new installs get HK-exclusion out of the box) with auto-x as PROXY's
-    # first member and the pattern round-tripping exactly.
+    # new installs get HK-exclusion out of the box) with Priority Nodes as
+    # PROXY's first member and the pattern round-tripping exactly.
     env_example = (REPO / ".env.example").read_text()
     m = re.search(r"^AUTO_EXCLUDE_FILTER=(.+)$", env_example, re.M)
     if not m or not m.group(1).strip():
@@ -847,12 +851,12 @@ def main() -> None:
              f"{proc_xd.stderr.strip()}")
     xddoc = yaml.safe_load(xd)
     xdgroups = {g.get("name"): g for g in xddoc.get("proxy-groups") or []}
-    if (xdgroups.get("PROXY", {}).get("proxies") or [None])[0] != "auto-x":
-        fail(f".env.example default must render auto-x FIRST in PROXY: "
+    if (xdgroups.get("PROXY", {}).get("proxies") or [None])[0] != "Priority Nodes":
+        fail(f".env.example default must render Priority Nodes FIRST in PROXY: "
              f"got {xdgroups.get('PROXY', {}).get('proxies')!r}")
-    if xdgroups.get("auto-x", {}).get("exclude-filter") != default_excl:
+    if xdgroups.get("Priority Nodes", {}).get("exclude-filter") != default_excl:
         fail(f".env.example AUTO_EXCLUDE_FILTER default did not round-trip: "
-             f"got {xdgroups.get('auto-x', {}).get('exclude-filter')!r}, "
+             f"got {xdgroups.get('Priority Nodes', {}).get('exclude-filter')!r}, "
              f"expected {default_excl!r}")
 
     # Fail-closed inputs: a backtick or an all-whitespace pattern must refuse
@@ -889,7 +893,7 @@ def main() -> None:
     # combined group (the countries-as-a-group ask). The fixture carries CJK
     # names, '|', '\d' and '^' anchors; inventories are derived from the spec
     # under test via expected_groups() - never a hardcoded country list.
-    CG = '日本=日本|JP\\d|^JP;美国=美国|US\\d;亚洲组=日本|台湾|新加坡'
+    CG = 'Japan Auto=日本|JP\\d|^JP;美国=美国|US\\d;亚洲组=日本|台湾|新加坡'
     CG_NAMES = spec_names(CG)
     proc_cg, cg = render(raw, country_groups=CG)
     if proc_cg.returncode != 0 or cg is None:
@@ -926,21 +930,22 @@ def main() -> None:
             if absent in g:
                 fail(f"generated group {name!r} must carry NO own {absent!r} "
                      f"(inherits the provider health check): got {g.get(absent)!r}")
-    if cgroups["PROXY"].get("proxies") != ["auto"] + CG_NAMES + ["DIRECT", "REJECT"]:
-        fail(f"PROXY members with the spec on must be auto + spec order + "
+    if cgroups["PROXY"].get("proxies") != ["All Nodes"] + CG_NAMES + ["DIRECT", "REJECT"]:
+        fail(f"PROXY members with the spec on must be All Nodes + spec order + "
              f"DIRECT/REJECT: got {cgroups['PROXY'].get('proxies')!r}")
-    if cgroups["STREAMING"].get("proxies") != ["PROXY", "auto"] + CG_NAMES + ["DIRECT"]:
-        fail(f"STREAMING members with the spec on must be PROXY/auto + spec "
-             f"order + DIRECT: got {cgroups['STREAMING'].get('proxies')!r}")
-    if cgroups["auto"] != dauto:
-        fail(f"auto must be UNTOUCHED by the country spec: {cgroups['auto']!r}")
+    if cgroups["STREAMING"].get("proxies") != ["PROXY", "All Nodes"] + CG_NAMES + ["DIRECT"]:
+        fail(f"STREAMING members with the spec on must be PROXY/All Nodes + "
+             f"spec order + DIRECT: got {cgroups['STREAMING'].get('proxies')!r}")
+    if cgroups["All Nodes"] != dauto:
+        fail(f"All Nodes must be UNTOUCHED by the country spec: "
+             f"{cgroups['All Nodes']!r}")
     if cgdoc.get("rules") != RULES_BASE:
         fail(f"[country-groups] rules must be unchanged: got {cgdoc.get('rules')!r}")
     check_rule_targets(cgdoc)
     check_dns_detour_targets(cgdoc)
 
-    # Combined with the exclude knob: auto-x still first in PROXY, country
-    # groups after the auto pair, both inventories spec-derived.
+    # Combined with the exclude knob: Priority Nodes still first in PROXY,
+    # country groups after the auto pair, both inventories spec-derived.
     proc_cb, cb = render(raw, auto_exclude_filter=EXCL, country_groups=CG)
     if proc_cb.returncode != 0 or cb is None:
         fail(f"combined exclude+spec render failed: {proc_cb.stderr.strip()}")
@@ -951,14 +956,14 @@ def main() -> None:
         fail(f"combined proxy-groups must be exactly {expected_groups(EXCL, CG)!r}"
              f" in order: got {cbnames!r}")
     cbgroups = {g.get("name"): g for g in cbdoc.get("proxy-groups")}
-    if cbgroups["PROXY"].get("proxies") != (["auto-x", "auto"] + CG_NAMES
-                                            + ["DIRECT", "REJECT"]):
-        fail(f"combined PROXY members must be auto-x, auto, spec order, "
-             f"DIRECT, REJECT: got {cbgroups['PROXY'].get('proxies')!r}")
-    if cbgroups["STREAMING"].get("proxies") != (["PROXY", "auto"] + CG_NAMES
-                                                + ["DIRECT"]):
-        fail(f"combined STREAMING members must be PROXY, auto, spec order, "
-             f"DIRECT: got {cbgroups['STREAMING'].get('proxies')!r}")
+    if cbgroups["PROXY"].get("proxies") != (["Priority Nodes", "All Nodes"]
+                                            + CG_NAMES + ["DIRECT", "REJECT"]):
+        fail(f"combined PROXY members must be Priority Nodes, All Nodes, spec "
+             f"order, DIRECT, REJECT: got {cbgroups['PROXY'].get('proxies')!r}")
+    if cbgroups["STREAMING"].get("proxies") != (["PROXY", "All Nodes"]
+                                                + CG_NAMES + ["DIRECT"]):
+        fail(f"combined STREAMING members must be PROXY, All Nodes, spec "
+             f"order, DIRECT: got {cbgroups['STREAMING'].get('proxies')!r}")
     check_rule_targets(cbdoc)
     check_dns_detour_targets(cbdoc)
 
@@ -996,12 +1001,14 @@ def main() -> None:
             ('日本=', "empty regex"),
             ('日本= \t', "whitespace-only regex"),
             ('日本=x;日本=y', "duplicate name"),
-            ('auto=x', "builtin collision (auto)"),
-            ('auto-x=x', "builtin collision (auto-x)"),
+            ('All Nodes=x', "builtin collision (All Nodes)"),
+            ('Priority Nodes=x', "builtin collision (Priority Nodes)"),
             ('PROXY=x', "builtin collision (PROXY)"),
             ('DIRECT=x', "reserved adapter collision (DIRECT)"),
             ('日本=x;;美国=y', "empty entry"),
-            ('日 本=x', "whitespace in name")):
+            (' 日本=x', "leading space in name"),
+            ('日本 =x', "trailing space in name"),
+            ('日\t本=x', "tab in name")):
         proc_b, b = render(raw, country_groups=bad_spec)
         if proc_b.returncode == 0 or b is not None:
             fail(f"malformed COUNTRY_GROUPS ({why}: {bad_spec!r}) was accepted "
@@ -1009,6 +1016,16 @@ def main() -> None:
         if "COUNTRY_GROUPS" not in proc_b.stderr:
             fail(f"malformed-spec error ({why}) must name COUNTRY_GROUPS: "
                  f"{proc_b.stderr.strip()!r}")
+    # DEC-A (2026-07-14): the LEGACY words are no longer reserved - a user
+    # group named 'auto' is legal and renders (no detour rewrite exists to
+    # collide with it).
+    proc_lg, lg = render(raw, country_groups='auto=x')
+    if proc_lg.returncode != 0 or lg is None:
+        fail(f"COUNTRY_GROUPS name 'auto' must be LEGAL post-rename (DEC-A): "
+             f"{proc_lg.stderr.strip()}")
+    if [g.get("name") for g in (yaml.safe_load(lg).get("proxy-groups") or [])] \
+            != expected_groups(None, 'auto=x'):
+        fail("the legal 'auto' user group did not render as a generated group")
     # A single trailing ';' is the POSIX field-split absorption case - legal.
     proc_tr, tr = render(raw, country_groups='日本=日本;')
     if proc_tr.returncode != 0 or tr is None:
@@ -1059,7 +1076,7 @@ def main() -> None:
           "are the exact v1.3.10 sextuple (LAN-direct no-resolve first) with STREAMING "
           "defaulting to PROXY; the SNIFFER fence is inert when unset/false and "
           "renders SNI/HTTP/QUIC sniffing with parse-pure-ip + override-destination "
-          "when true; the AUTOX fences render auto-x (exclude-filter, empty-fallback "
+          "when true; the PRIORITY fences render Priority Nodes (exclude-filter, empty-fallback "
           "REJECT, no own probe) FIRST in PROXY when the exclude knob is set - inert "
           "when unset/empty, failing closed on backtick/blank patterns, with the "
           ".env.example default rendering as the routing default; the "
