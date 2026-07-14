@@ -350,13 +350,13 @@ PGEOF
   fi
   if [ "$_pg_have_autox" -eq 0 ] && [ "$_pg_country_n" -eq 0 ]; then
     CHECK_VALUE=ok CHECK_SEV=ok
-    CHECK_DETAIL="no filtered proxy groups rendered (AUTO_EXCLUDE_FILTER/COUNTRY_GROUPS unset)"
+    CHECK_DETAIL="no filtered proxy groups rendered (PRIORITY_EXCLUDE_FILTER/COUNTRY_GROUPS unset)"
     return 0
   fi
   if [ "$_pg_autox_empty" -eq 1 ]; then
     CHECK_VALUE=default-empty CHECK_SEV=bad
-    CHECK_DETAIL="default route Priority Nodes has NO nodes - AUTO_EXCLUDE_FILTER matches every provider node, so Priority Nodes traffic is REJECTED (fail closed)${_pg_empty:+; empty country group(s): $_pg_empty}"
-    CHECK_HINT="      fix AUTO_EXCLUDE_FILTER in .env and redeploy: sudo sh ./install.sh (Redeploy); stopgap: pick 'All Nodes' in the dashboard PROXY selector"
+    CHECK_DETAIL="default route Priority Nodes has NO nodes - the PRIORITY_INCLUDE_FILTER/PRIORITY_EXCLUDE_FILTER pair matches no provider node, so Priority Nodes traffic is REJECTED (fail closed)${_pg_empty:+; empty country group(s): $_pg_empty}"
+    CHECK_HINT="      fix PRIORITY_INCLUDE_FILTER / PRIORITY_EXCLUDE_FILTER in .env and redeploy: sudo sh ./install.sh (Redeploy); stopgap: pick 'All Nodes' in the dashboard PROXY selector"
     return 0
   fi
   if [ -n "$_pg_empty" ]; then

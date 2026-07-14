@@ -41,9 +41,14 @@ services:
       - DNS_FOREIGN_NAMESERVER=${DNS_FOREIGN_NAMESERVER:-}
       - DNS_GEOIP_NO_RESOLVE=${DNS_GEOIP_NO_RESOLVE:-false}
       - SNIFFER_ENABLE=${SNIFFER_ENABLE:-false}
-      # Automatic-selection exclusion: non-empty renders the Priority Nodes
-      # group (nodes matching the regex removed) as PROXY's first member. The
-      # ':-' default keeps a pre-feature .env warning-free and renders identically.
+      # Priority Nodes filters: include region-scopes the pool (applied
+      # first; ships Japan), exclude subtracts (ships HK). Non-empty exclude
+      # renders the group as PROXY's first member; the ':-' defaults keep
+      # compose warning-free when unset.
+      - PRIORITY_INCLUDE_FILTER=${PRIORITY_INCLUDE_FILTER:-}
+      - PRIORITY_EXCLUDE_FILTER=${PRIORITY_EXCLUDE_FILTER:-}
+      # Legacy-name tripwire (#40 DEC-B): passed through ONLY so the renderer
+      # fails loud when a stale .env still sets the old knob name.
       - AUTO_EXCLUDE_FILTER=${AUTO_EXCLUDE_FILTER:-}
       # Per-country auto-selection groups ('NAME=regex;...' spec); same
       # empty-means-off pass-through contract.
@@ -59,7 +64,8 @@ services:
     # Entrypoint: render to a TEMP config via the shared, CI-tested renderer,
     # gate it with `mihomo -t`, and swap it over the live config.yaml only on
     # green. A hand-edited .env that poisons the render (e.g. an invalid
-    # AUTO_EXCLUDE_FILTER/COUNTRY_GROUPS pattern, which panics mihomo at
+    # PRIORITY_INCLUDE_FILTER/PRIORITY_EXCLUDE_FILTER/COUNTRY_GROUPS pattern,
+    # which panics mihomo at
     # startup) can no longer crash-loop the gateway or destroy the last-good
     # config: the previous config keeps running and .config.yaml.rejected
     # marks the rejection. First boot with a bad config still fails hard. See

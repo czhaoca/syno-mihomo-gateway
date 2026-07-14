@@ -212,7 +212,7 @@ self_test() {
   REL="$ROOT"
   for _k in DNS_NAMESERVER DNS_CN_NAMESERVER \
             DNS_FOREIGN_NAMESERVER DNS_GEOIP_NO_RESOLVE SNIFFER_ENABLE \
-            AUTO_EXCLUDE_FILTER COUNTRY_GROUPS; do
+            PRIORITY_INCLUDE_FILTER PRIORITY_EXCLUDE_FILTER COUNTRY_GROUPS; do
     if [ -n "$(example_dns "$_k")" ]; then st_ok; else st_bad ".env.example lacks $_k"; fi
   done
 
@@ -540,7 +540,7 @@ esac
 say "A4: enable split-horizon + sniffer + exclude/country groups from the shipped .env.example defaults"
 cp -p "$ENV_FILE" "$ORIG"
 for _k in DNS_NAMESERVER DNS_CN_NAMESERVER DNS_FOREIGN_NAMESERVER \
-          SNIFFER_ENABLE AUTO_EXCLUDE_FILTER COUNTRY_GROUPS; do
+          SNIFFER_ENABLE PRIORITY_INCLUDE_FILTER PRIORITY_EXCLUDE_FILTER COUNTRY_GROUPS; do
   _v="$(example_dns "$_k")"
   [ -n "$_v" ] || { bad "no $_k in $REL/.env.example"; exit 3; }
   env_set "$_k" "$_v"
@@ -589,7 +589,7 @@ else
     if [ "$_fn" -gt 0 ]; then
       ok "filtered group '$_fg': $_fn real node(s)"
     else
-      bad "filtered group '$_fg' matches ZERO provider nodes - the shipped regex does not fit this airport's naming (selection REJECTs; fix AUTO_EXCLUDE_FILTER/COUNTRY_GROUPS in .env.example before release)"
+      bad "filtered group '$_fg' matches ZERO provider nodes - the shipped regex does not fit this airport's naming (selection REJECTs; fix PRIORITY_INCLUDE_FILTER/PRIORITY_EXCLUDE_FILTER/COUNTRY_GROUPS in .env.example before release)"
     fi
   done <<FGEOF
 $_FG_LIST

@@ -204,10 +204,12 @@ proxy-groups:
     tolerance: 50
 
 # {{PRIORITY_BEGIN}}
-  # Priority Nodes: All Nodes minus the provider nodes matching
-  # AUTO_EXCLUDE_FILTER (regexp2, unanchored substring; the shipped default
-  # excludes Hong Kong - many sites block HK egress while the airport pool is
-  # HK-heavy). Listed FIRST in PROXY below, so this is the routing default;
+  # Priority Nodes: the region-scoped routing default. PRIORITY_INCLUDE_FILTER
+  # (rendered as filter:, applied FIRST - the shipped default scopes to Japan
+  # so latency switching stops hopping the egress country) keeps only matching
+  # provider nodes; PRIORITY_EXCLUDE_FILTER then subtracts (regexp2, unanchored
+  # substring; the shipped default excludes Hong Kong - many sites block HK
+  # egress while the airport pool is HK-heavy). Listed FIRST in PROXY below;
   # picking All Nodes in the dashboard restores the full pool with one click.
   # No url:/interval: - the group inherits the provider health check (zero
   # extra probe traffic), and the DNS '#All Nodes' detour stays on All Nodes,
@@ -219,7 +221,8 @@ proxy-groups:
     type: url-test
     use:
       - my-airport
-    exclude-filter: "{{AUTO_EXCLUDE_FILTER}}"
+    filter: "{{PRIORITY_INCLUDE_FILTER}}"
+    exclude-filter: "{{PRIORITY_EXCLUDE_FILTER}}"
     empty-fallback: REJECT
 
 # {{PRIORITY_END}}

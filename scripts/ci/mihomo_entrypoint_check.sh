@@ -178,7 +178,7 @@ grep -q 'hunter2secret' "$ST/started.env" \
 # 6) rider 2 - renderer rejects (backtick knob) + last-good: cause-distinct
 ST=$(new_state rrej)
 printf 'OLD SENTINEL\n' > "$ST/cfg/config.yaml"
-run_ep "$ST" AUTO_EXCLUDE_FILTER='bad`tick'
+run_ep "$ST" PRIORITY_EXCLUDE_FILTER='bad`tick'
 [ "$EP_RC" = 0 ] && ok || fail "render-reject: want rc 0 (running on last-good), got $EP_RC: $(cat "$OUT_F")"
 printf 'OLD SENTINEL\n' | cmp -s - "$ST/cfg/config.yaml" \
   && ok || fail "render-reject: live config.yaml must be byte-unchanged"
@@ -200,7 +200,7 @@ sed -n 1p "$ST/cfg/.config.yaml.rejected" | grep -q '^reason: config-test-failed
 
 # 8) first boot + renderer reject: hard fail, cause-distinct marker
 ST=$(new_state bootrrej)
-run_ep "$ST" AUTO_EXCLUDE_FILTER='bad`tick'
+run_ep "$ST" PRIORITY_EXCLUDE_FILTER='bad`tick'
 [ "$EP_RC" != 0 ] && [ ! -f "$ST/started.log" ] \
   && ok || fail "first-boot render-reject: want nonzero rc and no start"
 sed -n 1p "$ST/cfg/.config.yaml.rejected" | grep -q '^reason: render-failed$' \

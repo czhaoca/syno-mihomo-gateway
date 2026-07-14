@@ -47,7 +47,7 @@ Enforces:
     parse-pure-ip + override-destination (restores domain routing for
     LAN clients that resolve DNS outside the gateway — the v1.3.10
     raw-IP-flows incident); garbage fails closed;
-  * the PRIORITY fences (country-groups epic): a non-empty AUTO_EXCLUDE_FILTER
+  * the PRIORITY fences (country-groups epic): a non-empty PRIORITY_EXCLUDE_FILTER
     renders the Priority Nodes sibling url-test group (exclude-filter,
     empty-fallback REJECT, NO own url:/interval:) listed FIRST in PROXY, with
     All Nodes untouched (full pool — the DNS detour rides it); unset/empty
@@ -195,7 +195,9 @@ def render(raw: str, tun_auto_redirect: str | None = None,
            dns_foreign: str | None = ",".join(DNS_FOREIGN),
            geoip_no_resolve: str | None = None,
            sniffer_enable: str | None = None,
-           auto_exclude_filter: str | None = None,
+           priority_exclude: str | None = None,
+           priority_include: str | None = None,
+           legacy_exclude: str | None = None,
            country_groups: str | None = None,
            sub_line: str | None = None):
     """Run the real renderer in an isolated config directory."""
@@ -240,9 +242,15 @@ def render(raw: str, tun_auto_redirect: str | None = None,
             env["SNIFFER_ENABLE"] = sniffer_enable
         # Exclude knob stays ABSENT unless a case opts in: unset must render
         # byte-identical to the pre-feature output (upgrade compat), while
-        # .env.example ships an HK default for new installs.
-        if auto_exclude_filter is not None:
-            env["AUTO_EXCLUDE_FILTER"] = auto_exclude_filter
+        # .env.example ships an HK default for new installs. The include
+        # knob region-scopes the Priority Nodes pool (#40); the LEGACY name
+        # is only ever a fail-loud tripwire.
+        if priority_exclude is not None:
+            env["PRIORITY_EXCLUDE_FILTER"] = priority_exclude
+        if priority_include is not None:
+            env["PRIORITY_INCLUDE_FILTER"] = priority_include
+        if legacy_exclude is not None:
+            env["AUTO_EXCLUDE_FILTER"] = legacy_exclude
         # Country-group spec stays ABSENT unless a case opts in, same contract.
         if country_groups is not None:
             env["COUNTRY_GROUPS"] = country_groups
@@ -666,7 +674,7 @@ def main() -> None:
             fail(f"template must carry the {fence}_BEGIN/{fence}_END fence pair")
     for gone in ("DNSPOLICY_BEGIN", "DNSPOLICY_END", "DNSSPLIT_BEGIN",
                  "DNSSPLIT_END", "DNSLEGACY_BEGIN", "DNSLEGACY_END",
-                 "DNS_FALLBACK"):
+                 "DNS_FALLBACK", "AUTO_EXCLUDE_FILTER"):
         if f"{{{{{gone}}}}}" in raw:
             fail(f"template must NOT carry {{{{{gone}}}}} — the legacy DNS "
                  f"profile was purged (v2 is the only profile, issue #43)")
@@ -767,7 +775,7 @@ def main() -> None:
     if proc_sb.returncode == 0 or sb is not None:
         fail("invalid SNIFFER_ENABLE was accepted or wrote config.yaml")
 
-    # 11c) AUTO_EXCLUDE_FILTER fences (country-groups epic, #32): a non-empty
+    # 11c) PRIORITY_EXCLUDE_FILTER fences (country-groups epic, #32): a non-empty
     # regexp2 pattern renders the Priority Nodes sibling url-test group - matching
     # provider nodes removed, empty-fallback REJECT (fail closed: an emptied
     # group must never degrade to the Direct-typed COMPATIBLE placeholder,
@@ -784,9 +792,9 @@ def main() -> None:
     # `\` the yaml_dq() layer (exclude-filter renders inside a YAML
     # double-quoted scalar where a bare \d is an invalid escape).
     EXCL = '香港|HK\\d+|(?i)hong ?kong'
-    proc_x, xr = render(raw, auto_exclude_filter=EXCL)
+    proc_x, xr = render(raw, priority_exclude=EXCL)
     if proc_x.returncode != 0 or xr is None:
-        fail(f"AUTO_EXCLUDE_FILTER render failed: {proc_x.stderr.strip()}")
+        fail(f"PRIORITY_EXCLUDE_FILTER render failed: {proc_x.stderr.strip()}")
     assert_resolved("Priority Nodes", xr)
     if "\n\n\n" in xr:
         fail("Priority Nodes render contains doubled blank lines - the fences "
@@ -810,7 +818,7 @@ def main() -> None:
     if autox.get("use") != ["my-airport"]:
         fail(f"Priority Nodes must surface provider nodes via use: [my-airport]: "
              f"got {autox.get('use')!r}")
-    for absent in ("url", "interval", "tolerance"):
+    for absent in ("url", "interval", "tolerance", "filter"):
         if absent in autox:
             fail(f"Priority Nodes must carry NO own {absent!r} - it inherits "
                  f"the provider health check (no probe amplification): "
@@ -840,14 +848,20 @@ def main() -> None:
     # new installs get HK-exclusion out of the box) with Priority Nodes as
     # PROXY's first member and the pattern round-tripping exactly.
     env_example = (REPO / ".env.example").read_text()
-    m = re.search(r"^AUTO_EXCLUDE_FILTER=(.+)$", env_example, re.M)
+    m = re.search(r"^PRIORITY_EXCLUDE_FILTER=(.+)$", env_example, re.M)
     if not m or not m.group(1).strip():
-        fail(".env.example must ship a non-empty AUTO_EXCLUDE_FILTER default "
+        fail(".env.example must ship a non-empty PRIORITY_EXCLUDE_FILTER default "
              "(seed-only rollout, issue #32 DEC-4)")
     default_excl = m.group(1).strip()
-    proc_xd, xd = render(raw, auto_exclude_filter=default_excl)
+    mi = re.search(r"^PRIORITY_INCLUDE_FILTER=(.+)$", env_example, re.M)
+    if not mi or not mi.group(1).strip():
+        fail(".env.example must ship a non-empty PRIORITY_INCLUDE_FILTER "
+             "default (JP-scoped routing default, issue #40 / brief DEC-3)")
+    default_inc = mi.group(1).strip()
+    proc_xd, xd = render(raw, priority_exclude=default_excl,
+                         priority_include=default_inc)
     if proc_xd.returncode != 0 or xd is None:
-        fail(f".env.example AUTO_EXCLUDE_FILTER default failed to render: "
+        fail(f".env.example PRIORITY_* defaults failed to render: "
              f"{proc_xd.stderr.strip()}")
     xddoc = yaml.safe_load(xd)
     xdgroups = {g.get("name"): g for g in xddoc.get("proxy-groups") or []}
@@ -855,33 +869,97 @@ def main() -> None:
         fail(f".env.example default must render Priority Nodes FIRST in PROXY: "
              f"got {xdgroups.get('PROXY', {}).get('proxies')!r}")
     if xdgroups.get("Priority Nodes", {}).get("exclude-filter") != default_excl:
-        fail(f".env.example AUTO_EXCLUDE_FILTER default did not round-trip: "
+        fail(f".env.example PRIORITY_EXCLUDE_FILTER default did not round-trip: "
              f"got {xdgroups.get('Priority Nodes', {}).get('exclude-filter')!r}, "
              f"expected {default_excl!r}")
+    if xdgroups.get("Priority Nodes", {}).get("filter") != default_inc:
+        fail(f".env.example PRIORITY_INCLUDE_FILTER default did not round-trip: "
+             f"got {xdgroups.get('Priority Nodes', {}).get('filter')!r}, "
+             f"expected {default_inc!r}")
 
     # Fail-closed inputs: a backtick or an all-whitespace pattern must refuse
     # to render (named error, no config.yaml); the empty string must equal
     # unset (the compose ':-' pass-through contract).
-    proc_bt, bt = render(raw, auto_exclude_filter="香港|`REJECT`")
+    proc_bt, bt = render(raw, priority_exclude="香港|`REJECT`")
     if proc_bt.returncode == 0 or bt is not None:
-        fail("backtick-bearing AUTO_EXCLUDE_FILTER was accepted or wrote "
+        fail("backtick-bearing PRIORITY_EXCLUDE_FILTER was accepted or wrote "
              "config.yaml (backtick separates patterns in mihomo - never "
              "valid inside one; an invalid pattern panics mihomo at startup)")
-    if "AUTO_EXCLUDE_FILTER" not in proc_bt.stderr:
-        fail(f"backtick error must name AUTO_EXCLUDE_FILTER: "
+    if "PRIORITY_EXCLUDE_FILTER" not in proc_bt.stderr:
+        fail(f"backtick error must name PRIORITY_EXCLUDE_FILTER: "
              f"{proc_bt.stderr.strip()!r}")
-    proc_ws, ws = render(raw, auto_exclude_filter=" \t ")
+    proc_ws, ws = render(raw, priority_exclude=" \t ")
     if proc_ws.returncode == 0 or ws is not None:
-        fail("whitespace-only AUTO_EXCLUDE_FILTER was accepted or wrote "
+        fail("whitespace-only PRIORITY_EXCLUDE_FILTER was accepted or wrote "
              "config.yaml (an effectively-empty pattern would match - and "
              "exclude - every node)")
-    if "AUTO_EXCLUDE_FILTER" not in proc_ws.stderr:
-        fail(f"whitespace-only error must name AUTO_EXCLUDE_FILTER: "
+    if "PRIORITY_EXCLUDE_FILTER" not in proc_ws.stderr:
+        fail(f"whitespace-only error must name PRIORITY_EXCLUDE_FILTER: "
              f"{proc_ws.stderr.strip()!r}")
-    proc_xe, xe = render(raw, auto_exclude_filter="")
+    proc_xe, xe = render(raw, priority_exclude="")
     if proc_xe.returncode != 0 or xe != rendered:
-        fail("empty-string AUTO_EXCLUDE_FILTER must render byte-identical to "
+        fail("empty-string PRIORITY_EXCLUDE_FILTER must render byte-identical to "
              "unset (the compose ':-' pass-through contract)")
+
+    # 11c') PRIORITY_INCLUDE_FILTER (#40): region-scopes the Priority Nodes
+    # pool. Set, it renders as the group's `filter:` (mihomo applies filter
+    # while appending provider nodes; exclude-filter subtracts afterwards -
+    # include applies FIRST). Unset, the template's token LINE is deleted
+    # (no filter: key - the exclude-only render above asserts its absence).
+    # include-only refuses (the group renders only with the exclude knob);
+    # malformed values refuse naming the variable; the legacy knob name is a
+    # fail-loud rename tripwire (#40 DEC-B), never a value source.
+    INC = '日本|JP\\d+|^JP'
+    proc_pi, pir = render(raw, priority_exclude=EXCL, priority_include=INC)
+    if proc_pi.returncode != 0 or pir is None:
+        fail(f"include+exclude render failed: {proc_pi.stderr.strip()}")
+    assert_resolved("include+exclude", pir)
+    pigroups = {g.get("name"): g for g in yaml.safe_load(pir).get("proxy-groups")}
+    pinode = pigroups["Priority Nodes"]
+    if pinode.get("filter") != INC:
+        fail(f"PRIORITY_INCLUDE_FILTER did not round-trip as filter:: "
+             f"got {pinode.get('filter')!r}, expected {INC!r}")
+    if pinode.get("exclude-filter") != EXCL:
+        fail(f"include+exclude: exclude-filter mangled: "
+             f"got {pinode.get('exclude-filter')!r}")
+    if pigroups["PROXY"].get("proxies") != ["Priority Nodes", "All Nodes",
+                                            "DIRECT", "REJECT"]:
+        fail(f"include+exclude PROXY members wrong: "
+             f"got {pigroups['PROXY'].get('proxies')!r}")
+    proc_io, _io = render(raw, priority_include=INC)
+    if proc_io.returncode == 0 or _io is not None:
+        fail("PRIORITY_INCLUDE_FILTER without PRIORITY_EXCLUDE_FILTER was "
+             "accepted or wrote config.yaml (the group only renders with the "
+             "exclude knob set)")
+    if ("PRIORITY_INCLUDE_FILTER" not in proc_io.stderr
+            or "PRIORITY_EXCLUDE_FILTER" not in proc_io.stderr):
+        fail(f"include-only error must name both knobs: "
+             f"{proc_io.stderr.strip()!r}")
+    for bad, why in (('日本|`REJECT`', "backtick"), (" \t ", "whitespace-only")):
+        proc_ib, ib = render(raw, priority_exclude=EXCL, priority_include=bad)
+        if proc_ib.returncode == 0 or ib is not None:
+            fail(f"{why} PRIORITY_INCLUDE_FILTER was accepted or wrote config.yaml")
+        if "PRIORITY_INCLUDE_FILTER" not in proc_ib.stderr:
+            fail(f"{why} include error must name PRIORITY_INCLUDE_FILTER: "
+                 f"{proc_ib.stderr.strip()!r}")
+    # Rename tripwire (#40 DEC-B): a stale .env still setting the OLD knob
+    # refuses to render with an error naming BOTH names - never a silent
+    # render without the Priority Nodes group, never a value fallback.
+    for tw_kwargs in ({"legacy_exclude": "香港"},
+                      {"legacy_exclude": "香港", "priority_exclude": EXCL}):
+        proc_tw, tw = render(raw, **tw_kwargs)
+        if proc_tw.returncode == 0 or tw is not None:
+            fail(f"stale AUTO_EXCLUDE_FILTER ({tw_kwargs!r}) was accepted or "
+                 f"wrote config.yaml (the rename tripwire must fail loud)")
+        if ("AUTO_EXCLUDE_FILTER" not in proc_tw.stderr
+                or "PRIORITY_EXCLUDE_FILTER" not in proc_tw.stderr):
+            fail(f"tripwire error must name both the old and new knob: "
+                 f"{proc_tw.stderr.strip()!r}")
+    # compose ':-' passthrough: an EMPTY legacy var is exactly "unset".
+    proc_te, te = render(raw, legacy_exclude="", priority_exclude=EXCL)
+    if proc_te.returncode != 0 or te != xr:
+        fail("empty-string AUTO_EXCLUDE_FILTER (compose ':-' passthrough) must "
+             "render identically to unset")
 
     # 11d) COUNTRY_GROUPS generation markers (country-groups epic, #33): a
     # 'NAME=regex;NAME=regex' spec makes the renderer GENERATE one url-test
@@ -946,7 +1024,7 @@ def main() -> None:
 
     # Combined with the exclude knob: Priority Nodes still first in PROXY,
     # country groups after the auto pair, both inventories spec-derived.
-    proc_cb, cb = render(raw, auto_exclude_filter=EXCL, country_groups=CG)
+    proc_cb, cb = render(raw, priority_exclude=EXCL, country_groups=CG)
     if proc_cb.returncode != 0 or cb is None:
         fail(f"combined exclude+spec render failed: {proc_cb.stderr.strip()}")
     assert_resolved("exclude+country", cb)
@@ -974,7 +1052,8 @@ def main() -> None:
         fail(".env.example must ship a non-empty COUNTRY_GROUPS starter spec "
              "(seed-only rollout, issue #33 DEC-A)")
     default_cg = mcg.group(1).strip()
-    proc_cd, cd = render(raw, auto_exclude_filter=default_excl,
+    proc_cd, cd = render(raw, priority_exclude=default_excl,
+                         priority_include=default_inc,
                          country_groups=default_cg)
     if proc_cd.returncode != 0 or cd is None:
         fail(f".env.example COUNTRY_GROUPS default failed to render: "

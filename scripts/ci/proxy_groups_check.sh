@@ -134,8 +134,8 @@ grep -q '^proxy_groups|default-empty|bad|.*Priority Nodes' "$OUT_F" \
   && ok || fail "default-empty: want bad record, got: $(cat "$OUT_F")"
 grep -q '^proxy_groups|default-empty|bad|.*美国' "$OUT_F" \
   && ok || fail "default-empty: detail must also carry the empty country group"
-grep -q '^#hint|.*AUTO_EXCLUDE_FILTER' "$OUT_F" \
-  && ok || fail "default-empty: want an AUTO_EXCLUDE_FILTER remediation hint"
+grep -q '^#hint|.*PRIORITY_EXCLUDE_FILTER' "$OUT_F" \
+  && ok || fail "default-empty: want a PRIORITY_* remediation hint"
 
 # 4) EVERY url-test group empty -> the DEC-A provider-empty condition (warn,
 #    seed_provider hint), never per-group findings

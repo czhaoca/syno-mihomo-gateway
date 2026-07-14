@@ -67,6 +67,15 @@ case "$SNIFFER_ENABLE" in
   true|false) : ;;
   *) echo "ERROR: SNIFFER_ENABLE must be true or false" >&2; exit 1 ;;
 esac
+# Legacy-name tripwire (the knob was renamed, proxy-groups-v2 #40 DEC-B):
+# compose still passes the OLD name through ONLY so a stale .env fails LOUD
+# here instead of silently rendering without the Priority Nodes group. The
+# old value is never used (no fallback semantics - owner decision).
+: "${AUTO_EXCLUDE_FILTER:=}"
+if [ -n "$AUTO_EXCLUDE_FILTER" ]; then
+  echo "ERROR: AUTO_EXCLUDE_FILTER was renamed - set PRIORITY_EXCLUDE_FILTER in .env (and delete the AUTO_EXCLUDE_FILTER line)" >&2
+  exit 1
+fi
 # Automatic-selection exclusion: a non-empty regexp2 pattern renders the
 # Priority Nodes sibling group (nodes matching the pattern removed) as
 # PROXY's first member. Empty/unset renders WITHOUT the group, byte-identical to the
@@ -76,17 +85,39 @@ esac
 # (mihomo's multi-pattern separator - never valid inside one pattern) and a
 # whitespace-only value (an effectively-empty pattern matches - and would
 # exclude - every node).
-: "${AUTO_EXCLUDE_FILTER:=}"
-if [ -n "$AUTO_EXCLUDE_FILTER" ]; then
-  case "$AUTO_EXCLUDE_FILTER" in
+: "${PRIORITY_EXCLUDE_FILTER:=}"
+if [ -n "$PRIORITY_EXCLUDE_FILTER" ]; then
+  case "$PRIORITY_EXCLUDE_FILTER" in
     *\`*)
-      echo "ERROR: AUTO_EXCLUDE_FILTER must not contain a backtick (mihomo's multi-pattern separator; an invalid pattern crashes mihomo at startup)" >&2
+      echo "ERROR: PRIORITY_EXCLUDE_FILTER must not contain a backtick (mihomo's multi-pattern separator; an invalid pattern crashes mihomo at startup)" >&2
       exit 1 ;;
   esac
-  case "$AUTO_EXCLUDE_FILTER" in
+  case "$PRIORITY_EXCLUDE_FILTER" in
     *[![:space:]]*) : ;;
     *)
-      echo "ERROR: AUTO_EXCLUDE_FILTER is whitespace-only - set a real pattern, or leave it empty/unset to disable the Priority Nodes group" >&2
+      echo "ERROR: PRIORITY_EXCLUDE_FILTER is whitespace-only - set a real pattern, or leave it empty/unset to disable the Priority Nodes group" >&2
+      exit 1 ;;
+  esac
+fi
+# Region scoping (include filter, #40): keeps only matching provider nodes
+# in Priority Nodes, applied BEFORE the exclude filter. Only meaningful when
+# the group renders at all, so include-without-exclude refuses loudly rather
+# than being silently ignored. Same regexp2 poison classes as above.
+: "${PRIORITY_INCLUDE_FILTER:=}"
+if [ -n "$PRIORITY_INCLUDE_FILTER" ]; then
+  if [ -z "$PRIORITY_EXCLUDE_FILTER" ]; then
+    echo "ERROR: PRIORITY_INCLUDE_FILTER is set but PRIORITY_EXCLUDE_FILTER is unset - the Priority Nodes group only renders with the exclude knob set" >&2
+    exit 1
+  fi
+  case "$PRIORITY_INCLUDE_FILTER" in
+    *\`*)
+      echo "ERROR: PRIORITY_INCLUDE_FILTER must not contain a backtick (mihomo's multi-pattern separator; an invalid pattern crashes mihomo at startup)" >&2
+      exit 1 ;;
+  esac
+  case "$PRIORITY_INCLUDE_FILTER" in
+    *[![:space:]]*) : ;;
+    *)
+      echo "ERROR: PRIORITY_INCLUDE_FILTER is whitespace-only - set a real pattern, or leave it empty/unset to render without a filter: line" >&2
       exit 1 ;;
   esac
 fi
@@ -279,11 +310,19 @@ else
   sed -e '/{{SNIFFER_BEGIN}}/,/{{SNIFFER_END}}/d' "$PRE2" > "$PRE4"
 fi
 #   PRIORITY blocks - the Priority Nodes group and its PROXY member line
-#                     switch TOGETHER on AUTO_EXCLUDE_FILTER being non-empty
-#                     (validated above).
-if [ -n "$AUTO_EXCLUDE_FILTER" ]; then
-  sed -e '/{{PRIORITY_BEGIN}}/d' -e '/{{PRIORITY_END}}/d' \
-      -e '/{{PRIORITYMEMBER_BEGIN}}/d' -e '/{{PRIORITYMEMBER_END}}/d' "$PRE4" > "$PRE5"
+#                     switch TOGETHER on PRIORITY_EXCLUDE_FILTER being
+#                     non-empty (validated above). The include filter is a
+#                     single token LINE inside the group: deleted when the
+#                     include knob is unset, substituted in pass 2 when set.
+if [ -n "$PRIORITY_EXCLUDE_FILTER" ]; then
+  if [ -n "$PRIORITY_INCLUDE_FILTER" ]; then
+    sed -e '/{{PRIORITY_BEGIN}}/d' -e '/{{PRIORITY_END}}/d' \
+        -e '/{{PRIORITYMEMBER_BEGIN}}/d' -e '/{{PRIORITYMEMBER_END}}/d' "$PRE4" > "$PRE5"
+  else
+    sed -e '/{{PRIORITY_BEGIN}}/d' -e '/{{PRIORITY_END}}/d' \
+        -e '/{{PRIORITYMEMBER_BEGIN}}/d' -e '/{{PRIORITYMEMBER_END}}/d' \
+        -e '/{{PRIORITY_INCLUDE_FILTER}}/d' "$PRE4" > "$PRE5"
+  fi
 else
   sed -e '/{{PRIORITY_BEGIN}}/,/{{PRIORITY_END}}/d' \
       -e '/{{PRIORITYMEMBER_BEGIN}}/,/{{PRIORITYMEMBER_END}}/d' "$PRE4" > "$PRE5"
@@ -322,7 +361,8 @@ sed \
   -e "s|{{GEOIP_NO_RESOLVE}}|$(esc "$GEOIP_NO_RESOLVE")|g" \
   -e "s|{{TUN_AUTO_REDIRECT}}|$(esc "$TUN_AUTO_REDIRECT")|g" \
   -e "s|{{EXTERNAL_UI_DIR}}|$(esc "$(yaml_dq "$EXTERNAL_UI_DIR")")|g" \
-  -e "s|{{AUTO_EXCLUDE_FILTER}}|$(esc "$(yaml_dq "$AUTO_EXCLUDE_FILTER")")|g" \
+  -e "s|{{PRIORITY_EXCLUDE_FILTER}}|$(esc "$(yaml_dq "$PRIORITY_EXCLUDE_FILTER")")|g" \
+  -e "s|{{PRIORITY_INCLUDE_FILTER}}|$(esc "$(yaml_dq "$PRIORITY_INCLUDE_FILTER")")|g" \
   "$PRE6" > "$TMP"
 rm -f "$PRE" "$PRE2" "$PRE4" "$PRE5" "$PRE6" \
       "$CG_GROUPS_FRAG" "$CG_MEMBERS_FRAG"

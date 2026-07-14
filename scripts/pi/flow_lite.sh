@@ -87,7 +87,8 @@ pi_lite_render_config() {
   DNS_FOREIGN_NAMESERVER="$(env_get DNS_FOREIGN_NAMESERVER 2>/dev/null || echo '')" \
   DNS_GEOIP_NO_RESOLVE="$(env_get DNS_GEOIP_NO_RESOLVE 2>/dev/null || echo false)" \
   SNIFFER_ENABLE="$(env_get SNIFFER_ENABLE 2>/dev/null || echo false)" \
-  AUTO_EXCLUDE_FILTER="$(env_get AUTO_EXCLUDE_FILTER 2>/dev/null || echo '')" \
+  PRIORITY_INCLUDE_FILTER="$(env_get PRIORITY_INCLUDE_FILTER 2>/dev/null || echo '')" \
+  PRIORITY_EXCLUDE_FILTER="$(env_get PRIORITY_EXCLUDE_FILTER 2>/dev/null || echo '')" \
   COUNTRY_GROUPS="$(env_get COUNTRY_GROUPS 2>/dev/null || echo '')" \
   TUN_ENABLE="${TUN_ENABLE:-true}" \
   TUN_AUTO_REDIRECT="${TUN_AUTO_REDIRECT:-false}" \

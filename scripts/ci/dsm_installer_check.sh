@@ -784,7 +784,7 @@ done
 # --- deploy-time filtered-group surfacing (#37): the verify table carries a
 # filtered-groups row (real chk_proxy_groups, reused never forked) and an empty
 # Priority Nodes lands a correctly-attributed end-of-report diagnosis (names the
-# AUTO_EXCLUDE_FILTER knob, never the subscription) while the deploy still
+# PRIORITY_* filter knobs, never the subscription) while the deploy still
 # succeeds (DEC-A warn-and-continue). Sourcing flow_deploy WITHOUT checks.sh
 # must keep report_success alive (guarded row -> skip).
 (
@@ -871,8 +871,8 @@ done
     *) fail "default-empty: diagnosis must land AFTER rep_next (end of report): $_out" ;;
   esac
   case "$_out" in
-    *AUTO_EXCLUDE_FILTER*) : ;;
-    *) fail "default-empty: detail must name AUTO_EXCLUDE_FILTER: $_out" ;;
+    *PRIORITY_EXCLUDE_FILTER*) : ;;
+    *) fail "default-empty: detail must name the PRIORITY filter pair: $_out" ;;
   esac
   exit 0
 ) || exit 1
