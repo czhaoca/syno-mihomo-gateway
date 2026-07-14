@@ -1,15 +1,16 @@
 #!/bin/sh
 # seed_provider_check.sh - hermetic behavioral suite for
 # scripts/seed_provider.sh (the provider-cache recovery tool: host-side
-# subscription fetch -> both cache filenames -> restart -> REAL-node
+# subscription fetch -> the stable cache filename -> restart -> REAL-node
 # verification). Asserts the documented contract:
 #   rc 0 nodes restored (or already present) | 2 seeded but no nodes |
 #   3 fetch or validation failed | 6 needs root
 # plus the privacy/robustness properties: the subscription URL (token) never
 # reaches stdout - not even via the docker-logs excerpt on the rc-2 path -
-# both cache files land mode 600 (the payload embeds node credentials), the
-# COMPATIBLE placeholder of an empty group is never counted as a node, and
-# the already-has-nodes path fetches and restarts nothing.
+# the cache file lands mode 600 (the payload embeds node credentials), the
+# legacy md5-of-URL cache name is never written (pre-1.3.8 adoption purged),
+# the COMPATIBLE placeholder of an empty group is never counted as a node,
+# and the already-has-nodes path fetches and restarts nothing.
 #
 # Every invocation is HERMETIC (env -i, tree copy, PATH-stub docker/curl/id)
 # so the suite cannot mask an env-dependence bug. BusyBox-ash safe.
@@ -148,12 +149,14 @@ ST=$(new_state good "$EMPTY_AUTO" "$FULL_AUTO"); : > "$ST/delay_ok"
 run_sp "$ST"
 if [ "$RC" = 0 ]; then ok; else fail "seed rc=$RC, want 0"; fi
 if [ -f "$ST/restarted" ]; then ok; else fail "seed did not restart mihomo"; fi
+f="$DATA/config/proxies/my-airport.yaml"
+if [ -f "$f" ] && grep -q '^proxies:' "$f"; then ok; else fail "cache $f missing or not the payload"; fi
+_mode=$(ls -l "$f" | cut -c1-10)
+if [ "$_mode" = "-rw-------" ]; then ok; else fail "cache $f mode $_mode, want -rw------- (600)"; fi
+# The legacy md5-of-URL cache name is NEVER written - the pre-1.3.8
+# adoption machinery was purged; only the stable `path:` name remains.
 HASH=$(printf '%s' "https://panel.example.com/api/v1/sub?token=SECRETTOKEN" | md5sum | awk '{print $1}')
-for f in "$DATA/config/proxies/my-airport.yaml" "$DATA/config/proxies/$HASH"; do
-  if [ -f "$f" ] && grep -q '^proxies:' "$f"; then ok; else fail "cache $f missing or not the payload"; fi
-  _mode=$(ls -l "$f" | cut -c1-10)
-  if [ "$_mode" = "-rw-------" ]; then ok; else fail "cache $f mode $_mode, want -rw------- (600)"; fi
-done
+if [ ! -f "$DATA/config/proxies/$HASH" ]; then ok; else fail "legacy md5-named cache was written: proxies/$HASH"; fi
 if grep -q 'provider loaded 3 nodes' "$OUT_F"; then ok; else fail "seed did not report 3 loaded nodes"; fi
 if ! grep -q 'SECRETTOKEN' "$OUT_F"; then ok; else fail "subscription token leaked to output"; fi
 
@@ -195,4 +198,4 @@ printf 'https://panel.example.com/api/v1/sub?token=SECRETTOKEN\n' > "$SUB"
 
 echo "seed_provider_check: $pass passed, $failn failed"
 [ "$failn" -eq 0 ] || exit 1
-echo "OK: seed_provider.sh contract (rc 0/2/3/6), 600-mode dual cache write, no-op path fetches nothing, COMPATIBLE never counted, token never printed (incl. redacted rc-2 log excerpt)"
+echo "OK: seed_provider.sh contract (rc 0/2/3/6), 600-mode stable-path cache write (legacy md5 name never written), no-op path fetches nothing, COMPATIBLE never counted, token never printed (incl. redacted rc-2 log excerpt)"

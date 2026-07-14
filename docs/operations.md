@@ -146,7 +146,6 @@ sh scripts/ci/auto_update_check.sh
 sh scripts/ci/cloudflared_check.sh
 sh scripts/ci/generic_update_check.sh
 sh scripts/ci/gateway_cli_check.sh
-sh scripts/ci/migrate_legacy_check.sh
 sh scripts/ci/seed_provider_check.sh
 sh scripts/ci/proxy_groups_check.sh
 sh scripts/ci/mihomo_entrypoint_check.sh

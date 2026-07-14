@@ -198,10 +198,6 @@ After install
 --------------------------------------------------------------------------
   * Review CONFIGURE.txt for the full .env reference.
   * Set up automatic updates with AUTO-UPDATE.txt.
-  * Upgrading from an old flat installation (everything in one folder)?
-    Import its state first: sudo sh scripts/migrate_legacy.sh --yes
-    (details in TROUBLESHOOTING.txt, "Upgrading from an old flat
-    installation").
   * If anything fails, see TROUBLESHOOTING.txt.
   * An install log is written to ../syno-mihomo-gateway-data/logs/install.log
     (in the persistent data folder next to this one).

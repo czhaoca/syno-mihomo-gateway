@@ -174,9 +174,6 @@ IP 冲突检查（设置 mihomo 的 IP 时）
 --------------------------------------------------------------------------
   * 查看 CONFIGURE.zh.txt 了解完整的 .env 参考。
   * 参考 AUTO-UPDATE.zh.txt 设置自动更新。
-  * 从旧的平铺安装升级（所有文件在一个文件夹里）？先导入旧状态：
-    sudo sh scripts/migrate_legacy.sh --yes
-    （详见 TROUBLESHOOTING.zh.txt「从旧的平铺安装升级」一节）。
   * 若有问题，参见 TROUBLESHOOTING.zh.txt。
   * 安装日志写入 ../syno-mihomo-gateway-data/logs/install.log
     （本文件夹旁边的持久数据文件夹）。

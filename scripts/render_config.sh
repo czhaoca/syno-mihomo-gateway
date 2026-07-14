@@ -349,21 +349,3 @@ rm -f "$PRE" "$PRE2" "$PRE3" "$PRE4" "$PRE5" "$PRE6" \
       "$CG_GROUPS_FRAG" "$CG_MEMBERS_FRAG"
 mv "$TMP" "$OUT"
 echo "Rendered $OUT"
-
-# One-time provider-cache adoption: pre-1.3.8 renders had no provider `path:`,
-# so mihomo cached the fetched node list under its md5-of-URL default filename
-# (also where the documented seed recovery used to write it). The stable
-# `path: ./proxies/my-airport.yaml` in the template reads the named file only -
-# adopt an existing hash-named cache so an upgrade never cold-starts node-less
-# when a live fetch happens to be impossible at that moment.
-PROV_NAMED="$CFG_DIR/proxies/my-airport.yaml"
-if [ ! -f "$PROV_NAMED" ] && command -v md5sum >/dev/null 2>&1; then
-  _hash=$(printf '%s' "$SUB_URL" | md5sum | awk '{print $1}')
-  if [ -f "$CFG_DIR/proxies/$_hash" ]; then
-    if cp "$CFG_DIR/proxies/$_hash" "$PROV_NAMED" 2>/dev/null; then
-      echo "Adopted provider cache proxies/$_hash -> proxies/my-airport.yaml"
-    else
-      echo "WARN: failed to adopt provider cache proxies/$_hash" >&2
-    fi
-  fi
-fi

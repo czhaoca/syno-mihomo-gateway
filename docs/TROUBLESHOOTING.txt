@@ -350,23 +350,6 @@ Unlisted-domain lookups fail while the airport is down
          right after a restart is normal.
 
 --------------------------------------------------------------------------
-Upgrading from an old flat installation (everything in one folder)
---------------------------------------------------------------------------
-  Cause: very old setups kept config.yaml, subscription.txt, the geo
-         databases and docker-compose.yml in ONE docker-shared folder.
-         Unpacking a release next to it migrates NOTHING by itself: the
-         doctor reports ".env is missing" and the old containers still own
-         the container names, so a preserve-mode deploy is refused
-         (they belong to a foreign/legacy Compose project).
-  Fix:   import the old state first (copies, never moves):
-         sudo sh scripts/migrate_legacy.sh --yes
-         (auto-detects the old folder; --from DIR to point at it;
-         --dry-run to preview). Then run sudo sh ./install.sh and deploy -
-         when the cleanup planner flags the old containers as a
-         legacy/foreign project, choose automatic cleanup so the new stack
-         takes over the names.
-
---------------------------------------------------------------------------
 Provider has no nodes (foreign sites dead, node list empty)
 --------------------------------------------------------------------------
   Symptom: the dashboard shows only auto/DIRECT/REJECT - no airport nodes -

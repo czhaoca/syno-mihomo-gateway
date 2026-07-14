@@ -612,19 +612,6 @@ break resolution — only a genuinely dead provider does. Also expect the **firs
 new domain to add one tunneled round-trip (~hundreds of ms); mihomo's DNS cache is in-memory,
 so caches start cold after every restart.
 
-## Upgrading from a legacy flat install
-
-**Symptom:** after unpacking a release next to an old everything-in-one-folder install,
-`doctor` reports `.env is missing`, and a preserve-mode deploy is refused because the existing
-`mihomo`/`mihomo-ui` containers belong to a **foreign/legacy Compose project**
-(`foreign_project` cleanup reason).
-
-**Fix:** run `sudo sh scripts/migrate_legacy.sh --yes` first (auto-detects the legacy dir;
-`--from DIR` / `--dry-run` supported) — it copies the subscription, geo databases and
-`cache.db` into the data dir and prints `.env` hints, never touching the legacy install.
-Then `sudo sh ./install.sh` → deploy, choosing **automatic cleanup** when the planner flags
-the legacy containers, so the new stack takes over the container names.
-
 ## Provider has no nodes (foreign sites dead, node list empty)
 
 **Symptom:** the dashboard's Proxies view shows only `auto` / `DIRECT` / `REJECT` — no airport

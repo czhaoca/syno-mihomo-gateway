@@ -41,10 +41,6 @@ chk_env() {
   if [ ! -f "$ENV_FILE" ]; then
     CHECK_DETAIL=".env is missing: $ENV_FILE"
     CHECK_HINT="      the release tree is unpacked but not configured - run: sudo sh ./install.sh"
-    if _ce_legacy="$(legacy_install_detect 2>/dev/null)"; then
-      CHECK_HINT="$CHECK_HINT
-      a legacy flat install exists at $_ce_legacy - import its state first: sudo sh scripts/migrate_legacy.sh --from $_ce_legacy --yes"
-    fi
   else
     CHECK_DETAIL=".env is present but does not parse - fix the reported line or re-run: sudo sh ./install.sh"
   fi

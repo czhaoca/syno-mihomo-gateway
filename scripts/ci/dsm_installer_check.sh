@@ -260,18 +260,6 @@ grep -v '^[[:space:]]*#' "$ROOT/scripts/lib/resolve.sh" \
   exit 0
 ) || exit 1
 
-# legacy_install_detect: the SMG_LEGACY_DIR seam wins; a dir missing the
-# config.yaml + docker-compose.yml + subscription.txt triple is not a hit.
-(
-  _LG="$TD/legacy-fixture"; mkdir -p "$_LG"
-  SMG_LEGACY_DIR="$_LG"
-  legacy_install_detect >/dev/null && fail "an empty dir was detected as a legacy install"
-  printf 'x' > "$_LG/config.yaml"; printf 'x' > "$_LG/docker-compose.yml"
-  printf 'x' > "$_LG/subscription.txt"
-  [ "$(legacy_install_detect)" = "$_LG" ] || fail "legacy_install_detect missed the seam dir"
-  exit 0
-) || exit 1
-
 # geodata pre-seed: cache detection, mirror fallback, size sanity - with the
 # network fetch stubbed (the seam _geodata_fetch exists for exactly this).
 (

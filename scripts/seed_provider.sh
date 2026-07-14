@@ -9,17 +9,16 @@
 #   sudo sh scripts/seed_provider.sh
 #
 # Writes the cache under the data dir only (never a world-readable location -
-# the payload embeds your node credentials), at BOTH names mihomo may read:
-# proxies/my-airport.yaml (the stable `path:` since v1.3.8) and the
-# md5-of-URL default filename (configs rendered by older releases). The
-# subscription URL itself is never printed. Then restarts mihomo and verifies
-# real provider nodes appear (built-ins and the COMPATIBLE placeholder of an
-# empty group are never counted).
+# the payload embeds your node credentials), at the stable name mihomo reads:
+# proxies/my-airport.yaml (the provider's `path:`). The subscription URL
+# itself is never printed. Then restarts mihomo and verifies real provider
+# nodes appear (built-ins and the COMPATIBLE placeholder of an empty group
+# are never counted).
 #
 # Exit: 0 nodes restored | 2 seeded but no nodes appeared | 3 fetch or
 #       validation failed | 6 needs root
 # POSIX /bin/sh (BusyBox-safe). English-only output (house rule for the
-# non-interactive entry points, like doctor.sh and migrate_legacy.sh).
+# non-interactive entry points, like doctor.sh and setup_network.sh).
 
 SELF_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
 # shellcheck source=scripts/lib/common.sh
@@ -34,11 +33,10 @@ export NO_LOG_INIT
 
 [ "$(id -u)" = 0 ] || { echo "ERROR: run with sudo (docker socket is root-only)" >&2; exit 6; }
 # The fetched payload embeds node credentials: every file this script creates
-# (the staging tmp and both cache names) must be owner-only, like the repo's
+# (the staging tmp and the cache) must be owner-only, like the repo's
 # .env/subscription.txt convention. mihomo runs as root and reads 600 fine.
 umask 077
 command -v curl >/dev/null 2>&1 || { echo "ERROR: curl not found on the host" >&2; exit 3; }
-command -v md5sum >/dev/null 2>&1 || { echo "ERROR: md5sum not found on the host" >&2; exit 3; }
 
 load_env || { echo "ERROR: load_env failed (is the gateway configured?)" >&2; exit 3; }
 detect_compose >/dev/null 2>&1 || { echo "ERROR: docker not detected" >&2; exit 3; }
@@ -78,7 +76,6 @@ fi
 
 PDIR="$GATEWAY_DATA_DIR/config/proxies"
 TMP="$GATEWAY_DATA_DIR/config/.seed.fetch.tmp"
-HASH=$(printf '%s' "$SUB_URL" | md5sum | awk '{print $1}')
 
 echo "fetching the subscription on the host (URL stays hidden) ..."
 if ! printf 'url = "%s"\n' "$SUB_URL" | curl -sS -K - -m 40 -o "$TMP" \
@@ -96,9 +93,8 @@ echo "payload OK: $_sz bytes, ~$(grep -c 'server:' "$TMP") node entries"
 
 mkdir -p "$PDIR"
 cat "$TMP" > "$PDIR/my-airport.yaml" && chmod 600 "$PDIR/my-airport.yaml"
-cat "$TMP" > "$PDIR/$HASH" && chmod 600 "$PDIR/$HASH"
 rm -f "$TMP"
-echo "planted: proxies/my-airport.yaml and proxies/$HASH"
+echo "planted: proxies/my-airport.yaml"
 
 echo "restarting $MIHOMO_CONTAINER (loads the cache at startup) ..."
 "$DOCKER_BIN" restart "$MIHOMO_CONTAINER" >/dev/null || { echo "ERROR: docker restart failed" >&2; exit 2; }

@@ -83,7 +83,6 @@ ENDUSER_MUST_INCLUDE = [
     PREFIX + "scripts/lib/lifecycle.sh",
     PREFIX + "scripts/lib/scheduler.sh",
     PREFIX + "scripts/doctor.sh",
-    PREFIX + "scripts/migrate_legacy.sh",
     PREFIX + "scripts/seed_provider.sh",
     PREFIX + "scripts/lib/geodata.sh",
     PREFIX + "scripts/lib/checks.sh",
@@ -325,7 +324,7 @@ def build_enduser_fixture(root: Path):
     (root / "docs" / "CLI.txt").write_text("Command-line reference for gateway.sh.\n")
     (root / "docs" / "CLI.zh.txt").write_text("gateway.sh command line reference (zh).\n")
     for s in ("auto_update.sh", "render_config.sh", "install_scheduler.sh", "setup_network.sh",
-              "migrate_legacy.sh", "validate_release.sh", "seed_provider.sh"):
+              "validate_release.sh", "seed_provider.sh"):
         (root / "scripts" / s).write_text("#!/bin/sh\n:\n")
     (root / "scripts" / "lib" / "geodata.sh").write_text("#!/bin/sh\n:\n")
     (root / "scripts" / "lib" / "checks.sh").write_text("#!/bin/sh\n:\n")
