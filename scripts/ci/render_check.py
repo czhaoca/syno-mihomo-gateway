@@ -36,10 +36,12 @@ Enforces:
     fake-ip-filter, and gives the provider the stable cache path
     ./proxies/my-airport.yaml; an IP-literal subscription host renders the
     panel pins as comments (no DNS needed) while the mirror+gstatic pins remain;
-  * the rule chain is the exact v1.3.10 sextuple (LAN-direct with no-resolve
-    first — private/link-local destinations never ride the tunnel — then
-    NETFLIX->STREAMING before CN-direct before GEOLOCATION-!CN->PROXY before
-    the GEOIP fallthrough), the STREAMING select group defaults to PROXY
+  * the rule chain is exact (LAN-direct with no-resolve first —
+    private/link-local destinations never ride the tunnel — then the
+    streaming service rules: NETFLIX plus the four audio services
+    SPOTIFY/TIDAL/DEEZER/SOUNDCLOUD -> STREAMING, all before CN-direct
+    before GEOLOCATION-!CN->PROXY before the GEOIP fallthrough), the
+    STREAMING select group defaults to PROXY
     (day-one behavior unchanged until an unlock node is pinned), and every
     '#group' detour fragment on a DNS server entry names a real proxy-group;
   * the SNIFFER fence: unset/false renders WITHOUT the block byte-identically
@@ -124,18 +126,23 @@ DNS_NS = ["https://223.5.5.5/dns-query", "https://120.53.53.53/dns-query"]
 DNS_CN = ["https://223.4.4.4/dns-query", "https://120.53.53.102/dns-query"]
 DNS_FOREIGN = ["https://1.0.0.1/dns-query#All Nodes", "https://8.8.4.4/dns-query#All Nodes"]
 
-# The full rule chain (v1.3.10). Order is semantic: LAN first (raw-IP flows
+# The full rule chain. Order is semantic: LAN first (raw-IP flows
 # to private/link-local destinations go DIRECT before anything else — the
 # production incident where Windows Delivery Optimization peers at foreign
 # RFC1918 addresses rode the tunnel; 'lan' is HARDCODED in mihomo and needs
 # no geo database, and no-resolve is mandatory so the top-of-chain GEOIP
-# never forces a lookup of domain flows), NETFLIX before GEOLOCATION-!CN
-# (netflix is a subset — a later rule would never match), and both GEOSITE
-# foreign rules before the GEOIP,CN fallthrough so listed domains never
-# force a local lookup just for routing.
+# never forces a lookup of domain flows), the streaming service rules —
+# NETFLIX + the audio services (proxy-groups-v2 #41) — before
+# GEOLOCATION-!CN (each service is a subset — a later rule would never
+# match), and both GEOSITE foreign rules before the GEOIP,CN fallthrough
+# so listed domains never force a local lookup just for routing.
 RULES_BASE = [
     "GEOIP,LAN,DIRECT,no-resolve",
     "GEOSITE,NETFLIX,STREAMING",
+    "GEOSITE,SPOTIFY,STREAMING",
+    "GEOSITE,TIDAL,STREAMING",
+    "GEOSITE,DEEZER,STREAMING",
+    "GEOSITE,SOUNDCLOUD,STREAMING",
     "GEOSITE,CN,DIRECT",
     "GEOSITE,GEOLOCATION-!CN,PROXY",
     "GEOIP,CN,DIRECT",
@@ -668,7 +675,7 @@ def main() -> None:
     # unconditionally (asserted exactly in 5/5a on the default render). The
     # remaining fences must still pair, and their unset-inertness is proven
     # by byte-identity against a stripped template.
-    for fence in ("SNIFFER", "PRIORITY", "PRIORITYMEMBER"):
+    for fence in ("SNIFFER", "PRIORITY", "PRIORITYMEMBER", "PRIORITYSTREAM"):
         if (f"{{{{{fence}_BEGIN}}}}" not in raw
                 or f"{{{{{fence}_END}}}}" not in raw):
             fail(f"template must carry the {fence}_BEGIN/{fence}_END fence pair")
@@ -681,11 +688,11 @@ def main() -> None:
     if "{{GEOIP_NO_RESOLVE}}" not in raw:
         fail("template must carry the {{GEOIP_NO_RESOLVE}} token on the GEOIP,CN rule")
     if doc.get("rules") != RULES_BASE:
-        fail(f"default rules must be the v1.3.10 chain in order "
+        fail(f"default rules must be the exact chain in order "
              f"{RULES_BASE!r}: got {doc.get('rules')!r}")
-    plain_raw = strip_fence(strip_fence(strip_fence(
-        raw, "SNIFFER"), "PRIORITY"), "PRIORITYMEMBER").replace(
-        "{{GEOIP_NO_RESOLVE}}", "")
+    plain_raw = strip_fence(strip_fence(strip_fence(strip_fence(
+        raw, "SNIFFER"), "PRIORITY"), "PRIORITYMEMBER"),
+        "PRIORITYSTREAM").replace("{{GEOIP_NO_RESOLVE}}", "")
     for marker in ("COUNTRY_GROUPS", "COUNTRY_MEMBERS_PROXY",
                    "COUNTRY_MEMBERS_STREAMING"):
         if f"{{{{{marker}}}}}" not in raw:
@@ -835,8 +842,11 @@ def main() -> None:
         fail(f"All Nodes must be UNTOUCHED by the exclude knob (full pool - "
              f"the split-horizon DNS detour rides it): "
              f"{xgroups['All Nodes']!r} != {dauto!r}")
-    if (xgroups["STREAMING"].get("proxies") or [None])[0] != "PROXY":
-        fail(f"[Priority Nodes] STREAMING's first member must stay PROXY: "
+    if xgroups["STREAMING"].get("proxies") != ["PROXY", "Priority Nodes",
+                                               "All Nodes", "DIRECT"]:
+        fail(f"[Priority Nodes] STREAMING members with the knob on must be "
+             f"['PROXY', 'Priority Nodes', 'All Nodes', 'DIRECT'] (PROXY "
+             f"first = day-one default; brief DEC-5): "
              f"got {xgroups['STREAMING'].get('proxies')!r}")
     if xdoc.get("rules") != RULES_BASE:
         fail(f"[Priority Nodes] rules must be unchanged by the exclude fences: "
@@ -1038,10 +1048,12 @@ def main() -> None:
                                             + CG_NAMES + ["DIRECT", "REJECT"]):
         fail(f"combined PROXY members must be Priority Nodes, All Nodes, spec "
              f"order, DIRECT, REJECT: got {cbgroups['PROXY'].get('proxies')!r}")
-    if cbgroups["STREAMING"].get("proxies") != (["PROXY", "All Nodes"]
-                                                + CG_NAMES + ["DIRECT"]):
-        fail(f"combined STREAMING members must be PROXY, All Nodes, spec "
-             f"order, DIRECT: got {cbgroups['STREAMING'].get('proxies')!r}")
+    if cbgroups["STREAMING"].get("proxies") != (["PROXY", "Priority Nodes",
+                                                "All Nodes"] + CG_NAMES
+                                                + ["DIRECT"]):
+        fail(f"combined STREAMING members must be PROXY, Priority Nodes, "
+             f"All Nodes, spec order, DIRECT (brief DEC-5): "
+             f"got {cbgroups['STREAMING'].get('proxies')!r}")
     check_rule_targets(cbdoc)
     check_dns_detour_targets(cbdoc)
 
@@ -1152,7 +1164,7 @@ def main() -> None:
           "pins (geodata mirror + gstatic + panel host) in nameserver-policy — mirror + "
           "panel in fake-ip-filter — on every variant with the stable provider cache "
           "path, degrading to mirror+gstatic on an IP-literal subscription host; rules "
-          "are the exact v1.3.10 sextuple (LAN-direct no-resolve first) with STREAMING "
+          "are the exact chain (LAN-direct first, NETFLIX + four audio services -> STREAMING) with STREAMING "
           "defaulting to PROXY; the SNIFFER fence is inert when unset/false and "
           "renders SNI/HTTP/QUIC sniffing with parse-pure-ip + override-destination "
           "when true; the PRIORITY fences render Priority Nodes (exclude-filter, empty-fallback "

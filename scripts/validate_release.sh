@@ -501,6 +501,13 @@ if grep -q "^  - 'GEOSITE,NETFLIX,STREAMING'" "$CFG"; then
 else
   bad "GEOSITE,NETFLIX,STREAMING rule missing from the render"
 fi
+for _svc in SPOTIFY TIDAL DEEZER SOUNDCLOUD; do
+  if grep -q "^  - 'GEOSITE,$_svc,STREAMING'" "$CFG"; then
+    ok "$_svc rule rendered (audio streaming rides STREAMING)"
+  else
+    bad "GEOSITE,$_svc,STREAMING rule missing from the render"
+  fi
+done
 if grep -q "^  - 'GEOSITE,GEOLOCATION-!CN,PROXY'" "$CFG"; then
   ok "listed-foreign PROXY rule rendered (skips GEOIP lookups)"
 else

@@ -309,23 +309,26 @@ if [ "$SNIFFER_ENABLE" = true ]; then
 else
   sed -e '/{{SNIFFER_BEGIN}}/,/{{SNIFFER_END}}/d' "$PRE2" > "$PRE4"
 fi
-#   PRIORITY blocks - the Priority Nodes group and its PROXY member line
-#                     switch TOGETHER on PRIORITY_EXCLUDE_FILTER being
-#                     non-empty (validated above). The include filter is a
-#                     single token LINE inside the group: deleted when the
+#   PRIORITY blocks - the Priority Nodes group and its PROXY + STREAMING
+#                     member lines switch TOGETHER on PRIORITY_EXCLUDE_FILTER
+#                     being non-empty (validated above). The include filter is
+#                     a single token LINE inside the group: deleted when the
 #                     include knob is unset, substituted in pass 2 when set.
 if [ -n "$PRIORITY_EXCLUDE_FILTER" ]; then
   if [ -n "$PRIORITY_INCLUDE_FILTER" ]; then
     sed -e '/{{PRIORITY_BEGIN}}/d' -e '/{{PRIORITY_END}}/d' \
-        -e '/{{PRIORITYMEMBER_BEGIN}}/d' -e '/{{PRIORITYMEMBER_END}}/d' "$PRE4" > "$PRE5"
+        -e '/{{PRIORITYMEMBER_BEGIN}}/d' -e '/{{PRIORITYMEMBER_END}}/d' \
+        -e '/{{PRIORITYSTREAM_BEGIN}}/d' -e '/{{PRIORITYSTREAM_END}}/d' "$PRE4" > "$PRE5"
   else
     sed -e '/{{PRIORITY_BEGIN}}/d' -e '/{{PRIORITY_END}}/d' \
         -e '/{{PRIORITYMEMBER_BEGIN}}/d' -e '/{{PRIORITYMEMBER_END}}/d' \
+        -e '/{{PRIORITYSTREAM_BEGIN}}/d' -e '/{{PRIORITYSTREAM_END}}/d' \
         -e '/{{PRIORITY_INCLUDE_FILTER}}/d' "$PRE4" > "$PRE5"
   fi
 else
   sed -e '/{{PRIORITY_BEGIN}}/,/{{PRIORITY_END}}/d' \
-      -e '/{{PRIORITYMEMBER_BEGIN}}/,/{{PRIORITYMEMBER_END}}/d' "$PRE4" > "$PRE5"
+      -e '/{{PRIORITYMEMBER_BEGIN}}/,/{{PRIORITYMEMBER_END}}/d' \
+      -e '/{{PRIORITYSTREAM_BEGIN}}/,/{{PRIORITYSTREAM_END}}/d' "$PRE4" > "$PRE5"
 fi
 #   COUNTRY markers - single marker lines, not fences: replaced by the
 #                     generated group/member fragments when the spec is set

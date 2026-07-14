@@ -245,14 +245,19 @@ proxy-groups:
       - my-airport
 
   # STREAMING: per-service selector for unlock-sensitive sites (the GEOSITE
-  # rules below send netflix here). First member PROXY = day-one behavior is
-  # identical to a single-group config; pin a streaming-unlock node from
-  # MetaCubeXD to move ONLY streaming traffic - All Nodes picks by latency,
-  # which is rarely an unlock node (the "Netflix says not available" class).
+  # rules below send netflix + the audio services here). First member PROXY =
+  # day-one behavior is identical to a single-group config; pin a
+  # streaming-unlock node - or a country group for one-click Netflix-region
+  # pinning - from MetaCubeXD to move ONLY streaming traffic. All Nodes picks
+  # by latency, which is rarely an unlock node (the "Netflix says not
+  # available" class); Priority Nodes follows the stable-region default.
   - name: STREAMING
     type: select
     proxies:
       - PROXY
+# {{PRIORITYSTREAM_BEGIN}}
+      - Priority Nodes
+# {{PRIORITYSTREAM_END}}
       - All Nodes
 # {{COUNTRY_MEMBERS_STREAMING}}
       - DIRECT
@@ -271,8 +276,16 @@ rules:
   - 'GEOIP,LAN,DIRECT,no-resolve'
   # Streaming rides its own dashboard-pinnable group, ahead of everything so
   # neither DNS games nor the latency-optimal node choice can misroute it.
-  # (netflix is a subset of geolocation-!cn - this rule must come first.)
+  # Audio streaming (Spotify et al.) is streaming too - region-locked
+  # catalogs, same pinning needs. (each service is a subset of
+  # geolocation-!cn - these rules must come first; apple-music is
+  # deliberately absent: CN storefront risk, and youtube-music rides
+  # geosite:youtube -> PROXY.)
   - 'GEOSITE,NETFLIX,STREAMING'
+  - 'GEOSITE,SPOTIFY,STREAMING'
+  - 'GEOSITE,TIDAL,STREAMING'
+  - 'GEOSITE,DEEZER,STREAMING'
+  - 'GEOSITE,SOUNDCLOUD,STREAMING'
   - 'GEOSITE,CN,DIRECT'
   # Listed-foreign domains ride the proxy WITHOUT any local DNS resolution:
   # the GEOIP rule below never sees them - a privacy and a latency win.
