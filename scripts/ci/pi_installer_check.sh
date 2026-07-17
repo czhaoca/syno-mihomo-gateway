@@ -181,6 +181,34 @@ _out_tunoff="$(cat "$TD/out-tunoff.yaml")"
 assert_not_contains "tun off + extui: no tun block" "$_out_tunoff" 'mihomo-tun'
 assert_contains "tun off + extui: external-ui still present" "$_out_tunoff" 'external-ui: "/data/ui/metacubexd"'
 
+# Retired-knob tripwire on the Pi render path (the #45 gap-panel advisory):
+# the Pi flow exports the .env wholesale, so a stale PRIORITY_* line must
+# refuse the render here exactly as on the DSM path - never a silent
+# route-default change. The fixture drives the REAL renderer with the same
+# env render_tpl uses, plus the retired knob.
+_tw_out="$TD/tripwire-err.txt"
+tw_render() {  # the render_tpl env + the retired knob; must refuse
+  (
+    MIHOMO_CONFIG_DIR="$CFG" MIHOMO_TEMPLATE="$TEMPLATE" \
+    CONTROLLER_PORT=9090 CONTROLLER_SECRET='' \
+    DNS_DEFAULT_NAMESERVER='192.0.2.53' DNS_NAMESERVER='192.0.2.53' \
+    DNS_CN_NAMESERVER='192.0.2.53' DNS_FOREIGN_NAMESERVER='192.0.2.54' \
+    COUNTRY_GROUPS='JPX=jp' TUN_ENABLE=true \
+    PRIORITY_INCLUDE_FILTER='日本'
+    export MIHOMO_CONFIG_DIR MIHOMO_TEMPLATE CONTROLLER_PORT CONTROLLER_SECRET \
+      DNS_DEFAULT_NAMESERVER DNS_NAMESERVER DNS_CN_NAMESERVER \
+      DNS_FOREIGN_NAMESERVER COUNTRY_GROUPS TUN_ENABLE PRIORITY_INCLUDE_FILTER
+    sh "$ROOT/scripts/render_config.sh" >/dev/null 2>"$_tw_out"
+  )
+}
+rm -f "$CFG/config.yaml"
+expect_failure "pi path: stale PRIORITY_INCLUDE_FILTER refuses the render" \
+  tw_render
+expect_failure "pi path: tripwire refusal writes no config.yaml" \
+  test -f "$CFG/config.yaml"
+assert_contains "pi path: tripwire error names the retired knob" \
+  "$(cat "$_tw_out")" 'PRIORITY_INCLUDE_FILTER'
+
 # =============================================================================
 # Ticket #18 - install-pi.sh entry, hardware detect, compose-parity mode
 # =============================================================================

@@ -54,6 +54,10 @@ services:
       # renderer owns the loud failure and the entrypoint gate keeps the
       # previous config running).
       - COUNTRY_GROUPS=${COUNTRY_GROUPS:-}
+      # Per-device full-proxy band (OPTIONAL - renders the Full Proxy group
+      # + SRC-IP-CIDR rules only when set; empty is byte-identical to
+      # unset, so existing .envs are untouched).
+      - FULL_PROXY_SOURCES=${FULL_PROXY_SOURCES:-}
       # Transparent-gateway TUN is ON by default (stack: system keeps the controller
       # reachable - mihomo #1493). LAN devices set their gateway + DNS to MIHOMO_IP and
       # route through mihomo. Set TUN_ENABLE=false in .env to run as a plain proxy.

@@ -315,7 +315,7 @@ json_output:
     tun_gateway, controller, image_arch, proxy_groups, dashboard,
     update_task, boot_task,
     cloudflared, subscription, host_dns, geodata, dns_privacy,
-    config_rejected, ipv6_bypass
+    config_rejected, ipv6_bypass, full_proxy
     (update_task/boot_task verify the DSM Task Scheduler deployment;
     proxy_groups is ok|default-empty|country-empty|provider-empty for the
     generated "<Country> Auto" url-test groups - default-empty means the
@@ -338,7 +338,15 @@ json_output:
     unreadable); a green redeploy clears it;
     ipv6_bypass is ok|exposed - exposed means internet-routable global
     IPv6 (not a private ULA) is live on the LAN interface, a path
-    dual-stack clients use around the IPv4-only gateway; "unknown" means
+    dual-stack clients use around the IPv4-only gateway;
+    full_proxy is disabled|ok|parity-drift|chain-violation for the
+    per-device full-proxy band (FULL_PROXY_SOURCES) - disabled means the
+    band is not in use, parity-drift means the rendered SRC-IP-CIDR rules
+    differ from the knob (the band edit is not live - redeploy),
+    chain-violation means a non-LAN flow from a band source bypassed the
+    Full Proxy group (usually the documented UDP/QUIC fallthrough when
+    the exit node lacks UDP relay; the guarantee also assumes no routable
+    LAN IPv6 - see ipv6_bypass); "unknown" means
     the surface is not probeable on this box).
     Exactly one object on stdout; logs never interleave.
   zh: >-
@@ -355,7 +363,7 @@ json_output:
     controller、image_arch、proxy_groups、dashboard、update_task、boot_task、
     cloudflared、
     subscription、host_dns、geodata、dns_privacy、config_rejected、
-    ipv6_bypass（update_task/boot_task
+    ipv6_bypass、full_proxy（update_task/boot_task
     校验 DSM 任务计划的部署情况；proxy_groups 针对生成的“<国家> Auto”
     url-test 分组，
     取值 ok|default-empty|country-empty|provider-empty —— default-empty
@@ -376,5 +384,11 @@ json_output:
     ipv6_bypass 取值 ok|exposed —— exposed
     表示 LAN 接口上存在可路由互联网的全局 IPv6（私有 ULA 不算），
     双栈客户端会经 IPv6 绕过纯 IPv4
-    网关；"unknown" 表示此机器上该项不可探测）。
+    网关；full_proxy 针对整机代理网段（FULL_PROXY_SOURCES），取值
+    disabled|ok|parity-drift|chain-violation —— disabled 表示未启用网段，
+    parity-drift 表示渲染出的 SRC-IP-CIDR 规则与 .env 不一致（网段修改
+    未生效——请重新部署），chain-violation 表示网段设备的非局域网流量
+    绕过了 Full Proxy 分组（通常是已在文档说明的 UDP/QUIC 穿透：出口
+    节点不支持 UDP 中继；该保证同样要求局域网没有可路由 IPv6——参见
+    ipv6_bypass）；"unknown" 表示此机器上该项不可探测）。
     标准输出只有这一个对象，日志绝不混入。

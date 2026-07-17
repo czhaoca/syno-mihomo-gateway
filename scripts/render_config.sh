@@ -21,8 +21,10 @@ PRE="$CFG_DIR/.config.yaml.pre"
 PRE2="$CFG_DIR/.config.yaml.pre2"
 PRE4="$CFG_DIR/.config.yaml.pre4"
 PRE6="$CFG_DIR/.config.yaml.pre6"
+PRE5="$CFG_DIR/.config.yaml.pre5"
 CG_GROUPS_FRAG="$CFG_DIR/.country_groups.frag"
 CG_MEMBERS_FRAG="$CFG_DIR/.country_members.frag"
+FP_RULES_FRAG="$CFG_DIR/.full_proxy_rules.frag"
 
 # Port/secret may default; DNS must come from .env (CLAUDE.md: no hardcoded DNS).
 : "${CONTROLLER_PORT:=9090}"
@@ -160,6 +162,93 @@ if [ -n "$COUNTRY_GROUPS" ]; then
         exit 1 ;;
     esac
     _cg_seen="$_cg_seen$_cg_name;"
+  done
+fi
+# Full-proxy band (per-device-full-proxy #46): comma-separated IPv4
+# addresses/CIDRs. OPTIONAL - set, it keeps the fenced 'Full Proxy' select
+# group and renders one 'SRC-IP-CIDR,<entry>,Full Proxy' rule per entry
+# right after the LAN rule; unset/empty renders byte-identical to a
+# template with the machinery stripped (fully additive). Validation
+# mirrors the COUNTRY_GROUPS error classes: every poison class fails
+# BEFORE anything is written. IPv4-only by design - the gateway is
+# IPv4-only, and routable LAN IPv6 bypasses it entirely (the doctor's
+# ipv6_bypass check owns that reality). A bare IP normalizes to /32.
+: "${FULL_PROXY_SOURCES:=}"
+if [ -n "$FULL_PROXY_SOURCES" ]; then
+  case "$FULL_PROXY_SOURCES" in
+    *\`*)
+      echo "ERROR: FULL_PROXY_SOURCES must not contain a backtick" >&2
+      exit 1 ;;
+    *[[:space:]]*)
+      echo "ERROR: FULL_PROXY_SOURCES must not contain whitespace (comma-separated IPv4 addresses/CIDRs, no spaces)" >&2
+      exit 1 ;;
+  esac
+  _fp_seen=","
+  _fp_old_ifs=$IFS; IFS=','
+  set -f
+  # shellcheck disable=SC2086  # deliberate ',' field split of the band list
+  set -- $FULL_PROXY_SOURCES
+  set +f
+  IFS=$_fp_old_ifs
+  [ $# -gt 0 ] || { echo "ERROR: FULL_PROXY_SOURCES has no entries (expected comma-separated IPv4 addresses/CIDRs)" >&2; exit 1; }
+  for _fp_e in "$@"; do
+    [ -n "$_fp_e" ] || { echo "ERROR: FULL_PROXY_SOURCES has an empty entry (doubled or leading ',')" >&2; exit 1; }
+    case "$_fp_e" in
+      *:*)
+        echo "ERROR: FULL_PROXY_SOURCES entry '$_fp_e' looks like IPv6 - the band is IPv4-only (the gateway carries no IPv6; routable LAN IPv6 bypasses it entirely - see the doctor's ipv6_bypass check)" >&2
+        exit 1 ;;
+    esac
+    case "$_fp_e" in
+      */*) _fp_ip=${_fp_e%%/*}; _fp_len=${_fp_e#*/} ;;
+      *)   _fp_ip=$_fp_e;       _fp_len=32 ;;
+    esac
+    case "$_fp_len" in
+      */*)
+        echo "ERROR: FULL_PROXY_SOURCES entry '$_fp_e' has more than one '/'" >&2
+        exit 1 ;;
+      ''|*[!0-9]*)
+        echo "ERROR: FULL_PROXY_SOURCES entry '$_fp_e' has a non-numeric or empty prefix (expected /0-/32)" >&2
+        exit 1 ;;
+      0) : ;;
+      0*)
+        echo "ERROR: FULL_PROXY_SOURCES entry '$_fp_e' has a leading-zero prefix (mihomo's parser rejects it at startup)" >&2
+        exit 1 ;;
+    esac
+    if [ "${#_fp_len}" -gt 2 ] || [ "$_fp_len" -gt 32 ]; then
+      echo "ERROR: FULL_PROXY_SOURCES entry '$_fp_e' has prefix /$_fp_len (maximum /32)" >&2
+      exit 1
+    fi
+    # Octet walk: the for-list is expanded before the first iteration, so
+    # re-using set -- inside the outer loop body is POSIX-safe.
+    _fp_old_ifs=$IFS; IFS='.'
+    set -f
+    # shellcheck disable=SC2086  # deliberate '.' field split of the address
+    set -- $_fp_ip
+    set +f
+    IFS=$_fp_old_ifs
+    [ $# -eq 4 ] || { echo "ERROR: FULL_PROXY_SOURCES entry '$_fp_e' is not a dotted-quad IPv4 address (hostnames are not supported)" >&2; exit 1; }
+    for _fp_o in "$@"; do
+      case "$_fp_o" in
+        ''|*[!0-9]*)
+          echo "ERROR: FULL_PROXY_SOURCES entry '$_fp_e' has a non-numeric octet '$_fp_o' (hostnames are not supported)" >&2
+          exit 1 ;;
+        0) : ;;
+        0*)
+          echo "ERROR: FULL_PROXY_SOURCES entry '$_fp_e' has a leading-zero octet '$_fp_o' (mihomo's parser rejects it at startup)" >&2
+          exit 1 ;;
+      esac
+      if [ "${#_fp_o}" -gt 3 ] || [ "$_fp_o" -gt 255 ]; then
+        echo "ERROR: FULL_PROXY_SOURCES entry '$_fp_e' has octet '$_fp_o' out of range (0-255)" >&2
+        exit 1
+      fi
+    done
+    _fp_norm="$_fp_ip/$_fp_len"
+    case "$_fp_seen" in
+      *",$_fp_norm,"*)
+        echo "ERROR: FULL_PROXY_SOURCES entry '$_fp_e' is a duplicate (after /32 normalization)" >&2
+        exit 1 ;;
+    esac
+    _fp_seen="$_fp_seen$_fp_norm,"
   done
 fi
 if [ "$DNS_GEOIP_NO_RESOLVE" = true ]; then
@@ -300,6 +389,27 @@ for _cg_entry in "$@"; do
   printf '      - "%s"\n' "$(yaml_dq "$_cg_name")" >> "$CG_MEMBERS_FRAG"
 done
 
+# Full-proxy rule fragment (validated up top; the charset is [0-9./] so the
+# lines are inserted RAW - no escaping layer applies). Empty knob leaves an
+# empty fragment: the awk marker pass below then simply drops the marker
+# line, keeping the render byte-identical to a stripped template.
+: > "$FP_RULES_FRAG"
+if [ -n "$FULL_PROXY_SOURCES" ]; then
+  _fp_old_ifs=$IFS; IFS=','
+  set -f
+  # shellcheck disable=SC2086  # deliberate ',' field split of the band list
+  set -- $FULL_PROXY_SOURCES
+  set +f
+  IFS=$_fp_old_ifs
+  for _fp_e in "$@"; do
+    case "$_fp_e" in
+      */*) _fp_norm=$_fp_e ;;
+      *)   _fp_norm="$_fp_e/32" ;;
+    esac
+    printf "  - 'SRC-IP-CIDR,%s,Full Proxy'\n" "$_fp_norm" >> "$FP_RULES_FRAG"
+  done
+fi
+
 # Pass 1 - fenced-block inclusion. Each block is fenced by '# {{X_BEGIN}}' /
 # '# {{X_END}}' marker lines. Disabled: delete the whole fenced range. Enabled:
 # delete only the two marker lines and keep the block (its tokens fill below).
@@ -322,19 +432,33 @@ if [ "$SNIFFER_ENABLE" = true ]; then
 else
   sed -e '/{{SNIFFER_BEGIN}}/,/{{SNIFFER_END}}/d' "$PRE2" > "$PRE4"
 fi
+#   FULL_PROXY block - kept when FULL_PROXY_SOURCES is non-empty (the
+#                      fenced Full Proxy group incl. its member marker; the
+#                      SRC-IP rules ride the {{FULL_PROXY_RULES}} marker in
+#                      the awk pass below).
+if [ -n "$FULL_PROXY_SOURCES" ]; then
+  sed -e '/{{FULL_PROXY_BEGIN}}/d' -e '/{{FULL_PROXY_END}}/d' "$PRE4" > "$PRE5"
+else
+  sed -e '/{{FULL_PROXY_BEGIN}}/,/{{FULL_PROXY_END}}/d' "$PRE4" > "$PRE5"
+fi
 #   COUNTRY markers - single marker lines, not fences: replaced by the
 #                     generated group/member fragments (awk raw-inserts the
 #                     files - deterministic across GNU/BSD/BusyBox, unlike
 #                     the sed r+d interplay). The spec is REQUIRED, so this
-#                     always runs: Country Pick's members and the Streaming
-#                     Sites splice come from the same member fragment.
-awk -v groups="$CG_GROUPS_FRAG" -v members="$CG_MEMBERS_FRAG" '
+#                     always runs: Country Pick's members, the Streaming
+#                     Sites splice, and (when its fence survived) the Full
+#                     Proxy splice come from the same member fragment. The
+#                     FULL_PROXY_RULES marker always resolves here: an
+#                     empty fragment simply drops the marker line.
+awk -v groups="$CG_GROUPS_FRAG" -v members="$CG_MEMBERS_FRAG" -v fprules="$FP_RULES_FRAG" '
   function emit(f,  l) { while ((getline l < f) > 0) print l; close(f) }
-  index($0, "{{COUNTRY_GROUPS}}")            { emit(groups); next }
-  index($0, "{{COUNTRY_MEMBERS_PICK}}")      { emit(members); next }
-  index($0, "{{COUNTRY_MEMBERS_STREAMING}}") { emit(members); next }
+  index($0, "{{COUNTRY_GROUPS}}")              { emit(groups); next }
+  index($0, "{{COUNTRY_MEMBERS_PICK}}")        { emit(members); next }
+  index($0, "{{COUNTRY_MEMBERS_STREAMING}}")   { emit(members); next }
+  index($0, "{{COUNTRY_MEMBERS_FULL_PROXY}}")  { emit(members); next }
+  index($0, "{{FULL_PROXY_RULES}}")            { emit(fprules); next }
   { print }
-' "$PRE4" > "$PRE6"
+' "$PRE5" > "$PRE6"
 
 # Pass 2 - token substitution (a disabled fence simply leaves no token behind;
 # EXTERNAL_UI_DIR renders inside a YAML double-quoted scalar like the secret).
@@ -352,7 +476,7 @@ sed \
   -e "s|{{TUN_AUTO_REDIRECT}}|$(esc "$TUN_AUTO_REDIRECT")|g" \
   -e "s|{{EXTERNAL_UI_DIR}}|$(esc "$(yaml_dq "$EXTERNAL_UI_DIR")")|g" \
   "$PRE6" > "$TMP"
-rm -f "$PRE" "$PRE2" "$PRE4" "$PRE6" \
-      "$CG_GROUPS_FRAG" "$CG_MEMBERS_FRAG"
+rm -f "$PRE" "$PRE2" "$PRE4" "$PRE5" "$PRE6" \
+      "$CG_GROUPS_FRAG" "$CG_MEMBERS_FRAG" "$FP_RULES_FRAG"
 mv "$TMP" "$OUT"
 echo "Rendered $OUT"

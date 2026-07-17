@@ -232,6 +232,7 @@ def render(raw: str, tun_auto_redirect: str | None = None,
            priority_include: str | None = None,
            legacy_exclude: str | None = None,
            country_groups: str | None = DEFAULT_CG,
+           full_proxy_sources: str | None = None,
            sub_line: str | None = None):
     """Run the real renderer in an isolated config directory."""
     with tempfile.TemporaryDirectory() as td:
@@ -288,6 +289,12 @@ def render(raw: str, tun_auto_redirect: str | None = None,
         # must refuse to render).
         if country_groups is not None:
             env["COUNTRY_GROUPS"] = country_groups
+        # Full-proxy band knob is OPTIONAL (renders only when set): None =
+        # absent, "" = the compose ':-' passthrough — both must render
+        # byte-identical to a template with the FULL_PROXY machinery
+        # stripped (fully additive; upgrade-safe).
+        if full_proxy_sources is not None:
+            env["FULL_PROXY_SOURCES"] = full_proxy_sources
         proc = subprocess.run(["sh", str(RENDERER)], env=env,
                               capture_output=True, text=True)
         out = tdp / "config.yaml"
@@ -326,14 +333,18 @@ def spec_names(spec: str) -> list:
     return [p.split("=", 1)[0] for p in parts]
 
 
-def expected_groups(country_spec: str = DEFAULT_CG) -> list:
-    """The SPEC-DERIVED proxy-group inventory (in order): the three
-    selectors first (dashboard order = config order — the cards users touch
-    come first), then the generated '<Country> Auto' groups in spec order,
-    then the hidden All Nodes DNS anchor LAST. Never a hardcoded country
-    list (CLAUDE.md rule) — names come from the spec."""
-    return (["Proxy Mode", "Streaming Sites", "Country Pick"]
-            + spec_names(country_spec) + ["All Nodes"])
+def expected_groups(country_spec: str = DEFAULT_CG,
+                    full_proxy: bool = False) -> list:
+    """The SPEC-DERIVED proxy-group inventory (in order): the selectors
+    first (dashboard order = config order — the cards users touch come
+    first; Full Proxy joins them right after Country Pick when the band
+    knob is set), then the generated '<Country> Auto' groups in spec
+    order, then the hidden All Nodes DNS anchor LAST. Never a hardcoded
+    country list (CLAUDE.md rule) — names come from the spec."""
+    selectors = ["Proxy Mode", "Streaming Sites", "Country Pick"]
+    if full_proxy:
+        selectors.append("Full Proxy")
+    return selectors + spec_names(country_spec) + ["All Nodes"]
 
 
 TOKEN = re.compile(r"\{\{([A-Z0-9_]+)\}\}")
@@ -741,7 +752,7 @@ def main() -> None:
     # unconditionally (asserted exactly in 5/5a on the default render). The
     # remaining fences must still pair, and their unset-inertness is proven
     # by byte-identity against a stripped template.
-    for fence in ("SNIFFER",):
+    for fence in ("SNIFFER", "FULL_PROXY"):
         if (f"{{{{{fence}_BEGIN}}}}" not in raw
                 or f"{{{{{fence}_END}}}}" not in raw):
             fail(f"template must carry the {fence}_BEGIN/{fence}_END fence pair")
@@ -763,11 +774,12 @@ def main() -> None:
         fail(f"default rules must be the exact chain in order "
              f"{RULES_BASE!r}: got {doc.get('rules')!r}")
     for marker in ("COUNTRY_GROUPS", "COUNTRY_MEMBERS_PICK",
-                   "COUNTRY_MEMBERS_STREAMING"):
+                   "COUNTRY_MEMBERS_STREAMING", "COUNTRY_MEMBERS_FULL_PROXY",
+                   "FULL_PROXY_RULES"):
         if f"{{{{{marker}}}}}" not in raw:
             fail(f"template must carry the {{{{{marker}}}}} generation marker")
-    # SNIFFER stays the one optional fence: its unset-inertness is proven by
-    # byte-identity against a fence-stripped template (same env, spec on).
+    # SNIFFER + FULL_PROXY are the optional fences: unset-inertness is proven
+    # by byte-identity against a fence-stripped template (same env, spec on).
     plain_raw = strip_fence(raw, "SNIFFER")
     proc_l, plain = render(plain_raw)
     if proc_l.returncode != 0 or plain is None:
@@ -1097,6 +1109,130 @@ def main() -> None:
             != expected_groups('日本=日本'):
         fail("trailing-';' spec must render exactly one generated group")
 
+    # 11e) FULL_PROXY_SOURCES (per-device full-proxy band, #46): OPTIONAL —
+    # set, it renders the fenced Full Proxy select group (members Proxy Mode
+    # + the country splice + REJECT, NO DIRECT — a band device can never be
+    # silently un-proxied at the group layer; REJECT is the kill switch) and
+    # one SRC-IP-CIDR rule per entry at the EXACT post-LAN-rule position
+    # (LAN destinations stay DIRECT; everything else — streaming AND CN
+    # sites — rides the band group). Unset/empty renders byte-identical to
+    # a template with the whole FULL_PROXY machinery stripped (fully
+    # additive; upgrade-safe). Bare IPs normalize to /32.
+    FP = "192.0.2.16/28,192.0.2.5"
+    FP_RULES = ["SRC-IP-CIDR,192.0.2.16/28,Full Proxy",
+                "SRC-IP-CIDR,192.0.2.5/32,Full Proxy"]
+    # Anchor on PARSED rules, never the raw text — the template's rules
+    # comment mentions SRC-IP-CIDR as prose (the comment-prose false-
+    # positive class validate_release's helpers document).
+    if any("SRC-IP-CIDR" in str(r) for r in doc.get("rules") or []):
+        fail("default render must carry NO SRC-IP-CIDR rules "
+             "(FULL_PROXY_SOURCES unset)")
+    if "Full Proxy" in {g.get("name") for g in doc.get("proxy-groups") or []}:
+        fail("default render must NOT contain the Full Proxy group "
+             "(FULL_PROXY_SOURCES unset)")
+    fp_plain_raw = drop_token_lines(strip_fence(raw, "FULL_PROXY"),
+                                    "FULL_PROXY_RULES")
+    proc_fs, fp_stripped = render(fp_plain_raw)
+    if proc_fs.returncode != 0 or fp_stripped is None:
+        fail(f"FULL_PROXY-stripped render failed: {proc_fs.stderr.strip()}")
+    if fp_stripped != rendered:
+        fail("band-unset render is not byte-identical to a FULL_PROXY-"
+             "stripped template render — the fence/marker is not inert for "
+             "existing .env files")
+    proc_fe, fp_empty = render(raw, full_proxy_sources="")
+    if proc_fe.returncode != 0 or fp_empty != rendered:
+        fail("FULL_PROXY_SOURCES='' (the compose ':-' passthrough) must "
+             "render byte-identical to unset")
+    proc_fp, fp_on = render(raw, full_proxy_sources=FP)
+    if proc_fp.returncode != 0 or fp_on is None:
+        fail(f"FULL_PROXY_SOURCES render failed: {proc_fp.stderr.strip()}")
+    assert_resolved("full-proxy", fp_on)
+    if "\n\n\n" in fp_on:
+        fail("full-proxy render contains doubled blank lines - the fence "
+             "must sit flush against its neighbors")
+    fpdoc = yaml.safe_load(fp_on)
+    fpnames = [g.get("name") for g in fpdoc.get("proxy-groups") or []]
+    if fpnames != expected_groups(full_proxy=True):
+        fail(f"band-on proxy-groups must be exactly "
+             f"{expected_groups(full_proxy=True)!r} in order (Full Proxy "
+             f"joins the selectors after Country Pick): got {fpnames!r}")
+    fpg = {g.get("name"): g for g in fpdoc.get("proxy-groups")}["Full Proxy"]
+    if fpg.get("type") != "select":
+        fail(f"Full Proxy must be a select group (zero probe traffic): "
+             f"got {fpg.get('type')!r}")
+    if fpg.get("proxies") != (["Proxy Mode"] + CG_DEFAULT_NAMES + ["REJECT"]):
+        fail(f"Full Proxy members must be ['Proxy Mode'] + the country "
+             f"splice + ['REJECT'] (NO DIRECT — brief DEC-3; Proxy Mode "
+             f"FIRST = the band follows the dashboard mode by default): "
+             f"got {fpg.get('proxies')!r}")
+    if "use" in fpg:
+        fail(f"Full Proxy must NOT surface raw nodes (pin nodes via Proxy "
+             f"Mode instead): got use: {fpg.get('use')!r}")
+    for absent in ("url", "interval"):
+        if absent in fpg:
+            fail(f"Full Proxy (select) must carry no {absent!r}: "
+                 f"got {fpg.get(absent)!r}")
+    if fpdoc.get("rules") != [RULES_BASE[0]] + FP_RULES + RULES_BASE[1:]:
+        fail(f"band-on rules must be the LAN rule, then the SRC-IP-CIDR "
+             f"lines (in knob order, /32-normalized), then the unchanged "
+             f"chain: got {fpdoc.get('rules')!r}")
+    check_rule_targets(fpdoc)
+    check_dns_detour_targets(fpdoc)
+    # The band composes with the no-resolve knob without disturbing it.
+    proc_fn, fp_nr = render(raw, full_proxy_sources=FP,
+                            geoip_no_resolve="true")
+    if proc_fn.returncode != 0 or fp_nr is None:
+        fail(f"band + no-resolve render failed: {proc_fn.stderr.strip()}")
+    if yaml.safe_load(fp_nr).get("rules") != ([RULES_NO_RESOLVE[0]]
+                                              + FP_RULES
+                                              + RULES_NO_RESOLVE[1:]):
+        fail("band + no-resolve rules must compose (SRC lines after the "
+             "LAN rule, ',no-resolve' on GEOIP,CN)")
+    # Malformed-knob classes: each must refuse to render (no config.yaml)
+    # with an error naming FULL_PROXY_SOURCES — mirroring the
+    # COUNTRY_GROUPS error classes. IPv6 entries additionally point at the
+    # ipv6_bypass reality (the gateway is IPv4-only; routable LAN IPv6
+    # bypasses it entirely).
+    for bad_fp, why, extra in (
+            ("2001:db8::1", "IPv6 address", "ipv6_bypass"),
+            ("2001:db8::/64", "IPv6 CIDR", "ipv6_bypass"),
+            ("host.example.com", "hostname", None),
+            ("192.0.2.300", "octet > 255", None),
+            ("192.0.2.0/33", "prefix > 32", None),
+            ("192.0.2.0/", "empty prefix", None),
+            ("192.002.2.5", "leading-zero octet (Go rejects at parse)", None),
+            ("192.0.2.0/08", "leading-zero prefix (Go rejects at parse)", None),
+            ("192.0.2.0/2x", "non-numeric prefix", None),
+            ("192.0.2.0/28/24", "doubled slash", None),
+            ("192.0.2.1,,192.0.2.2", "empty entry", None),
+            ("192.0.2.5,192.0.2.5", "duplicate entry", None),
+            ("192.0.2.5,192.0.2.5/32", "duplicate after /32 norm", None),
+            ("192.0.2.`5`", "backtick", None),
+            (" 192.0.2.5", "leading whitespace", None),
+            ("192.0.2.5, 192.0.2.6", "space after comma", None),
+            ("192.0.2", "three octets", None),
+            ("1.2.3.4.5", "five octets", None),
+            ("192.0.2.a", "non-numeric octet", None)):
+        proc_bf, bf = render(raw, full_proxy_sources=bad_fp)
+        if proc_bf.returncode == 0 or bf is not None:
+            fail(f"malformed FULL_PROXY_SOURCES ({why}: {bad_fp!r}) was "
+                 f"accepted or wrote config.yaml")
+        if "FULL_PROXY_SOURCES" not in proc_bf.stderr:
+            fail(f"malformed-band error ({why}) must name "
+                 f"FULL_PROXY_SOURCES: {proc_bf.stderr.strip()!r}")
+        if extra and extra not in proc_bf.stderr:
+            fail(f"malformed-band error ({why}) must point at {extra}: "
+                 f"{proc_bf.stderr.strip()!r}")
+    # The shipped .env.example documents the band knob commented-out ONLY
+    # (opt-in feature, placeholder addresses per CLAUDE.md — an ACTIVE line
+    # would flip every synced .env into band mode).
+    if "FULL_PROXY_SOURCES" not in env_example:
+        fail(".env.example must document the FULL_PROXY_SOURCES knob "
+             "(commented-out placeholder example)")
+    if re.search(r"^FULL_PROXY_SOURCES=", env_example, re.M):
+        fail(".env.example must NOT ship an active FULL_PROXY_SOURCES line "
+             "(the band is opt-in; ship it commented out)")
+
     # 12) IP-literal subscription host: no DNS pin is possible or needed - the
     # panel entries in nameserver-policy and fake-ip-filter must degrade to
     # comments (never a bogus policy key), the mirror pins stay, and the render
@@ -1145,7 +1281,12 @@ def main() -> None:
           "new-selector/retired-name/Full Proxy collisions; DNS detour fragments are "
           "render-time validated (dangling '#group' refuses; rendered groups, country "
           "names, DIRECT and '&h3' suffixes pass) and the .env.example's REAL DNS "
-          "values render end-to-end; the SNIFFER fence is inert when unset/false and "
+          "values render end-to-end; FULL_PROXY_SOURCES renders the fenced Full Proxy "
+          "select (Proxy Mode + country splice + REJECT, no DIRECT, no raw nodes) plus "
+          "/32-normalized SRC-IP-CIDR rules at the exact post-LAN position, is inert "
+          "when unset/empty (byte-identity), composes with no-resolve, refuses every "
+          "malformed class naming the knob (IPv6 pointing at ipv6_bypass), and ships "
+          "commented-out in .env.example; the SNIFFER fence is inert when unset/false and "
           "renders SNI/HTTP/QUIC sniffing with parse-pure-ip + override-destination "
           "when true; geox-url hosts China-reachable; no hardcoded literals; fences "
           "pair, tokens map bidirectionally, rule/group targets resolve (never a "

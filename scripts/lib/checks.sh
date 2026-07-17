@@ -267,6 +267,152 @@ chk_ipv6_bypass() {
   fi
 }
 
+# full_proxy helpers (#46) - pure text/arithmetic, no docker.
+#
+# _fp_ip2n IP - dotted-quad to integer; -1 for anything that is not a
+# canonical IPv4 (IPv6 sources, empty fields) so callers can skip it.
+_fp_ip2n() {
+  _f2_old_ifs=$IFS; IFS='.'
+  set -f
+  # shellcheck disable=SC2086  # deliberate '.' field split
+  set -- $1
+  set +f
+  IFS=$_f2_old_ifs
+  if [ $# -ne 4 ]; then echo -1; return 0; fi
+  for _f2_o in "$@"; do
+    case "$_f2_o" in
+      ''|*[!0-9]*) echo -1; return 0 ;;
+      0) : ;;
+      0*) echo -1; return 0 ;;  # leading zero: $((08)) is an octal SYNTAX ERROR in ash
+    esac
+    if [ "${#_f2_o}" -gt 3 ] || [ "$_f2_o" -gt 255 ]; then echo -1; return 0; fi
+  done
+  echo $(( $1 * 16777216 + $2 * 65536 + $3 * 256 + $4 ))
+}
+# _fp_in_band IP BAND - BAND is one CIDR per line; 0 when IP falls inside
+# any entry (64-bit shell arithmetic; BusyBox-safe).
+_fp_in_band() {
+  _fib_n=$(_fp_ip2n "$1")
+  [ "$_fib_n" -ge 0 ] || return 1
+  while IFS= read -r _fib_c; do
+    [ -n "$_fib_c" ] || continue
+    _fib_bn=$(_fp_ip2n "${_fib_c%%/*}")
+    [ "$_fib_bn" -ge 0 ] || continue
+    _fib_len=${_fib_c#*/}
+    if [ "$_fib_len" -ge 32 ]; then _fib_m=4294967295
+    elif [ "$_fib_len" -le 0 ]; then _fib_m=0
+    else _fib_m=$(( 4294967295 - (1 << (32 - _fib_len)) + 1 )); fi
+    [ $(( _fib_n & _fib_m )) -eq $(( _fib_bn & _fib_m )) ] && return 0
+  done <<FIBEOF
+$2
+FIBEOF
+  return 1
+}
+# _fp_is_lan IP - destinations mihomo's own GEOIP,LAN rule keeps DIRECT
+# for the band, and nothing more: private (10/8, 172.16/12, 192.168/16),
+# unspecified (0.0.0.0), loopback (127/8), link-local (169.254/16), and
+# multicast (exactly 224.0.0.0/4 - upstream isLan() uses IsMulticast(),
+# which does NOT cover 240.0.0.0/4 or the broadcast address, so those
+# stay SCANNABLE here; a band flow there is judged, not exempted).
+_fp_is_lan() {
+  _fil_n=$(_fp_ip2n "$1")
+  [ "$_fil_n" -ge 0 ] || return 1
+  [ "$_fil_n" -eq 0 ] && return 0
+  { [ "$_fil_n" -ge 167772160 ]  && [ "$_fil_n" -le 184549375 ]; }  && return 0
+  { [ "$_fil_n" -ge 2886729728 ] && [ "$_fil_n" -le 2887778303 ]; } && return 0
+  { [ "$_fil_n" -ge 3232235520 ] && [ "$_fil_n" -le 3232301055 ]; } && return 0
+  { [ "$_fil_n" -ge 2130706432 ] && [ "$_fil_n" -le 2147483647 ]; } && return 0
+  { [ "$_fil_n" -ge 2851995648 ] && [ "$_fil_n" -le 2852061183 ]; } && return 0
+  { [ "$_fil_n" -ge 3758096384 ] && [ "$_fil_n" -le 4026531839 ]; } && return 0
+  return 1
+}
+# _fp_conns - controller /connections JSON on stdin -> one line per
+# connection: sourceIP|destinationIP|network|fp/nofp (fp = the chain
+# carries 'Full Proxy'). Connections are split onto lines FIRST (a
+# multi-char RS is a gawk extension BusyBox awk lacks), then matched
+# field-by-field.
+_fp_conns() {
+  sed 's/{"id":/\
+{"id":/g' | awk '
+    /"id":/ {
+      src=""; dst=""; net=""; fp="nofp"
+      if (match($0, /"sourceIP":"[^"]*"/))      src=substr($0, RSTART+12, RLENGTH-13)
+      if (match($0, /"destinationIP":"[^"]*"/)) dst=substr($0, RSTART+17, RLENGTH-18)
+      if (match($0, /"network":"[^"]*"/))       net=substr($0, RSTART+11, RLENGTH-12)
+      if (match($0, /"chains":\[[^]]*"Full Proxy"[^]]*\]/)) fp="fp"
+      print src "|" dst "|" net "|" fp
+    }'
+}
+
+# full_proxy - the per-device full-proxy band guard (#46). Two legs:
+#   (a) STATIC PARITY (the dns_privacy stale-render pattern): the rendered
+#       SRC-IP-CIDR rule set must equal the normalized FULL_PROXY_SOURCES
+#       knob - a mismatch means the operator's band edit is NOT live.
+#   (b) RUNTIME (controller /connections via the _pg_ctl plumbing): any
+#       non-LAN flow FROM a band source whose chain lacks 'Full Proxy'
+#       breaks the band guarantee - in practice the DEC-A residual: a
+#       UDP/QUIC flow whose exit node lacks UDP relay falls through the
+#       SRC rule at the rule engine, and CN-listed destinations then go
+#       DIRECT (browsers retry over proxied TCP).
+# Ungated-tail placement (like dns_privacy/config_rejected): the static
+# leg is a host-side file read that must fire even when mihomo is down;
+# the runtime leg degrades to static-only when the controller is
+# unreachable. The guarantee also assumes no routable LAN IPv6 - the
+# ipv6_bypass check owns that condition.
+chk_full_proxy() {
+  _cfp_cfg="${CONFIG_STATE_DIR:-}/config.yaml"
+  _cfp_knob="${FULL_PROXY_SOURCES:-}"
+  _cfp_lines=""
+  [ -n "${CONFIG_STATE_DIR:-}" ] && [ -r "$_cfp_cfg" ] \
+    && _cfp_lines="$(sed -n "s/^  - 'SRC-IP-CIDR,\([^,]*\),Full Proxy'\$/\1/p" "$_cfp_cfg" 2>/dev/null)"
+  if [ -z "$_cfp_knob" ] && [ -z "$_cfp_lines" ]; then
+    CHECK_VALUE=disabled CHECK_SEV=silent
+    return 0
+  fi
+  if [ -n "$_cfp_knob" ] && { [ -z "${CONFIG_STATE_DIR:-}" ] || [ ! -r "$_cfp_cfg" ]; }; then
+    CHECK_VALUE=unknown CHECK_SEV=silent
+    return 0
+  fi
+  # normalize the knob exactly like the renderer: bare IP -> /32
+  _cfp_want="$(printf '%s' "$_cfp_knob" | tr ',' '\n' | sed -e '/^$/d' \
+    -e 's|^\([0-9.]*\)$|\1/32|')"
+  if [ "$_cfp_want" != "$_cfp_lines" ]; then
+    CHECK_VALUE=parity-drift CHECK_SEV=warn
+    CHECK_DETAIL="the rendered SRC-IP-CIDR band differs from FULL_PROXY_SOURCES - the band edit is NOT live (stale render)"
+    CHECK_HINT="      re-render: sudo sh ./install.sh (Redeploy); if the render was refused, config_rejected names the reason"
+    return 0
+  fi
+  _cfp_n=$(printf '%s\n' "$_cfp_want" | sed '/^$/d' | wc -l | tr -d ' ')
+  _cfp_raw="$(_pg_ctl /connections)" || _cfp_raw=''
+  if [ -z "$_cfp_raw" ]; then
+    CHECK_VALUE=ok CHECK_SEV=ok
+    CHECK_DETAIL="band rules live ($_cfp_n entr(y/ies)); runtime scan skipped - controller unreachable (guarantee assumes no routable LAN IPv6 - see ipv6_bypass)"
+    return 0
+  fi
+  _cfp_scanned=0; _cfp_viol=0; _cfp_vex=''
+  while IFS='|' read -r _cfp_src _cfp_dst _cfp_net _cfp_fp; do
+    [ -n "$_cfp_src" ] || continue
+    _fp_in_band "$_cfp_src" "$_cfp_want" || continue
+    [ -n "$_cfp_dst" ] || continue      # destination not resolved yet - unjudgeable
+    _fp_is_lan "$_cfp_dst" && continue  # LAN destinations stay DIRECT by design
+    _cfp_scanned=$((_cfp_scanned + 1))
+    if [ "$_cfp_fp" != fp ]; then
+      _cfp_viol=$((_cfp_viol + 1))
+      [ -n "$_cfp_vex" ] || _cfp_vex="$(printf '%s -> %s (%s)' "$_cfp_src" "$_cfp_dst" "${_cfp_net:-?}" | tr '|' '/')"
+    fi
+  done <<CFPEOF
+$(printf '%s' "$_cfp_raw" | _fp_conns)
+CFPEOF
+  if [ "$_cfp_viol" -gt 0 ]; then
+    CHECK_VALUE=chain-violation CHECK_SEV=warn
+    CHECK_DETAIL="$_cfp_viol of $_cfp_scanned non-LAN flow(s) from band source(s) bypass Full Proxy (e.g. $_cfp_vex) - usually the DEC-A UDP/QUIC fallthrough: the exit node lacks UDP relay, so CN destinations go DIRECT (browsers retry over proxied TCP); the band guarantee also assumes no routable LAN IPv6 (see ipv6_bypass)"
+    CHECK_HINT="      persistent TCP violations mean the rules on disk and in memory disagree - redeploy; UDP-only flags are the documented QUIC residual (an opt-in UDP block ships only if the airport's UDP proves unreliable)"
+    return 0
+  fi
+  CHECK_VALUE=ok CHECK_SEV=ok
+  CHECK_DETAIL="band rules live ($_cfp_n entr(y/ies)); $_cfp_scanned band flow(s) scanned, all riding Full Proxy (guarantee assumes no routable LAN IPv6 - see ipv6_bypass)"
+}
+
 # proxy_groups - zero-node guard for the generated "<Country> Auto" url-test
 # groups (#34, reworked for the group-model streamline #45). A regex matching
 # zero provider nodes is only observable at runtime: every generated group
@@ -327,6 +473,14 @@ chk_proxy_groups() {
   # pre-streamline config never miscounts its selectors as country groups).
   _pg_names="$(printf '%s' "$_pg_raw" \
     | awk -F'"name":"' '{ for (i = 2; i <= NF; i++) { n = $i; sub(/".*/, "", n); print n } }')"
+  # Country Pick EXISTS but its "now" fetch failed (transient controller
+  # flake): judging emptiness without the selection would misclassify
+  # default-empty as country-empty (the #45 gap-panel advisory) - report
+  # unknown instead of guessing; the next doctor run re-probes.
+  if [ -z "$_pg_now" ] && printf '%s\n' "$_pg_names" | grep -qx 'Country Pick'; then
+    CHECK_VALUE=unknown CHECK_SEV=silent
+    return 0
+  fi
   _pg_country_n=0; _pg_default_empty=0
   _pg_empty=''; _pg_any_real=0
   while IFS= read -r _pg_n; do
@@ -461,4 +615,5 @@ checks_run() {
   _c_emit dns_privacy
   _c_emit config_rejected
   _c_emit ipv6_bypass
+  _c_emit full_proxy
 }

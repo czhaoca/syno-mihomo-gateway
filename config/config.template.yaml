@@ -244,6 +244,25 @@ proxy-groups:
     proxies:
 # {{COUNTRY_MEMBERS_PICK}}
 
+# {{FULL_PROXY_BEGIN}}
+  # Full Proxy: strict per-device full-proxy for the FULL_PROXY_SOURCES
+  # band (this fenced group renders ONLY when that knob is set). The
+  # SRC-IP-CIDR rules just below the LAN rule send EVERYTHING from band
+  # devices here - streaming AND CN sites included; LAN destinations stay
+  # DIRECT via the rule above the band. Members deliberately exclude
+  # DIRECT: a band device can never be silently un-proxied - REJECT is the
+  # kill switch. Defaults to Proxy Mode (the band follows the dashboard
+  # mode); pick a country here to pin the band's exit independently.
+  # Devices enter/leave the band via a router-side fixed-IP reservation
+  # flip + reconnect - never a gateway restart (docs/configuration.md).
+  - name: Full Proxy
+    type: select
+    proxies:
+      - Proxy Mode
+# {{COUNTRY_MEMBERS_FULL_PROXY}}
+      - REJECT
+
+# {{FULL_PROXY_END}}
 # Generated "<Country> Auto" url-test groups: one per COUNTRY_GROUPS entry
 # (fastest provider node matching the entry's regex; empty-fallback REJECT
 # fails closed; tolerance avoids flapping between near-equal nodes; no own
@@ -275,6 +294,15 @@ rules:
   # Windows Delivery Optimization peers at foreign RFC1918 addresses were
   # falling through to MATCH and riding the proxy.
   - 'GEOIP,LAN,DIRECT,no-resolve'
+  # Full-proxy band (FULL_PROXY_SOURCES, optional): one SRC-IP-CIDR line
+  # per entry renders at the marker below - immediately after the LAN rule
+  # (band devices still reach LAN destinations DIRECT) and ahead of every
+  # domain rule, so band traffic can never match a DIRECT domain rule
+  # first. Caveat: a UDP/QUIC flow whose exit node lacks UDP relay falls
+  # through the SRC rule at the rule-engine layer - CN-listed destinations
+  # then go DIRECT (browsers retry over proxied TCP; the doctor's
+  # full_proxy check flags such flows). Unset renders nothing here.
+# {{FULL_PROXY_RULES}}
   # Streaming rides its own dashboard-pinnable group, ahead of everything so
   # neither DNS games nor the latency-optimal node choice can misroute it.
   # Audio streaming (Spotify et al.) is streaming too - region-locked

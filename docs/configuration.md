@@ -79,6 +79,7 @@ cold start.
 | `DNS_FOREIGN_NAMESERVER` | ✅ | **Split-horizon pair (b), v2 foreign-by-default:** rendered as the **default** `nameserver` — every domain *not* matched by a policy entry (geosite-listed foreign **and** the unlisted long tail) resolves ONLY here — overseas, tunneled via `#All Nodes`. Those names never reach a domestic operator; a dead tunnel fails **closed** (SERVFAIL) instead of silently leaking (there is no fallback dual-query — that channel was removed with the legacy profile). | `https://1.1.1.1/dns-query#All Nodes,https://8.8.8.8/dns-query#All Nodes` |
 | `DNS_GEOIP_NO_RESOLVE` | | `true` renders `no-resolve` onto the `GEOIP,CN,DIRECT` rule so it never forces a lookup at all. Under v2 the forced lookup already rides the tunneled foreign list (private), so the default stays `false` and unlisted CN domains keep their DIRECT short-circuit. Trade-off of `true`: CN domains missing from `geosite:cn` ride the proxy via `MATCH` (see [troubleshooting](troubleshooting.md#niche-domestic-site-slow-or-unreachable-after-enabling-no-resolve)). Only lowercase `true`/`false`. | `false` |
 | `SNIFFER_ENABLE` | | Renders the traffic **sniffer** (TLS SNI / HTTP Host / QUIC, `parse-pure-ip` + `override-destination`): raw-IP flows from LAN clients that resolve DNS **outside** the gateway recover their hostname, so domain rules (incl. `Streaming Sites`) still route them and poisoned client-side answers are re-dialed by hostname at the node. Unset/`false` renders without the block, byte-identical to pre-v1.3.10 (upgrade compat); `.env.example` ships `true`. Routing self-heals, but bypassing clients' *privacy* still requires pointing their DNS at the gateway — see [troubleshooting](troubleshooting.md#lan-clients-bypass-the-gateways-dns-dnsleaktest-still-shows-domestic-resolvers). | `true` |
+| `FULL_PROXY_SOURCES` | | **Optional per-device full-proxy band:** comma-separated IPv4 addresses/CIDRs (a bare IP means `/32`). Renders **only when set** — unset keeps the rendered config **byte-identical** (the feature is invisible). When set, a **`Full Proxy`** selector appears on the dashboard and one `SRC-IP-CIDR` rule per entry lands **immediately after the LAN rule**: band devices reach LAN destinations DIRECT, and **everything else — streaming and CN sites alike — rides `Full Proxy`** (strict semantics). Malformed values **refuse to render** naming this key — IPv6 entries, hostnames, octets >255, a prefix >32, duplicates, whitespace, backticks (IPv6 is refused on purpose: routable LAN IPv6 routes *around* the IPv4-only gateway — see the `ipv6_bypass` caveat). Per-device mode switching is **router-side** (a DHCP fixed-IP flip), never a gateway restart. See [Full-proxy devices](#full-proxy-devices-full_proxy_sources). | `192.168.1.240/28` |
 | `COUNTRY_GROUPS` | ✅ | **Required — the group model is built from it** (empty/unset refuses to render, pointing at the `.env.example` default): `NAME=regex;NAME=regex;…` generates one **`<Country> Auto`** url-test group per entry — the dashboard shows `NAME` and auto-picks the fastest provider node matching `regex` — and those groups ARE the members of the **`Country Pick`** selector. The **first** entry is the out-of-box default exit country; `.env.example` ships **Japan Auto first**. Regex flavor: regexp2 (.NET) — case-sensitive unless `(?i)`, **unanchored substring** match (`日本` matches `日本01`), `\|` alternates, a **backtick refuses to render** (an invalid pattern crashes mihomo at startup); anchor short Latin codes as `US\d\|^US` so they cannot hit inside other names. A regex spanning several countries **is** a multi-country group (e.g. `亚洲=日本\|新加坡`). No own health probe (the provider health check supplies the delay data); a zero-match group **REJECT**s when selected (fail closed, never a silent bypass; the doctor flags it — see [troubleshooting](troubleshooting.md#doctor-reports-an-empty-country-group-proxy_groups-default-empty--country-empty)). `NAME` may be CJK and may contain interior spaces (`Japan Auto`) — leading/trailing whitespace refuses — and must not shadow a built-in, reserved, or retired group/adapter name (`All Nodes` / `Country Pick` / `Proxy Mode` / `Streaming Sites` / `DIRECT` / `REJECT` / … — the render error names the collision; full list in `.env.example`); empty parts, duplicates and malformed entries **refuse to render**. Tune the shipped example to *your* airport's node names. | `Japan Auto=日本\|JP\d\|^JP;US Auto=…` (see `.env.example`) |
 
 **Naming legend** (the kind-suffix system used across the dashboard): **`<X> Auto`** = an
@@ -316,6 +317,65 @@ downloads (needed by the `GEOSITE`/`GEOIP` rules) at a jsdelivr CDN mirror — m
 source is blocked in mainland China, and a hung geo download prevents mihomo from ever
 finishing startup. If that mirror is blocked for you, replace the three URLs in the template
 (and re-render as above).
+
+## Full-proxy devices (`FULL_PROXY_SOURCES`)
+
+Optional. Setting `FULL_PROXY_SOURCES` reserves a small **IPv4 band** whose devices skip the
+smart routing above: one `SRC-IP-CIDR` rule per entry is spliced **immediately after the LAN
+rule**, so a band device still reaches LAN destinations DIRECT, but **everything else —
+streaming and CN sites alike — rides the `Full Proxy` group** (strict semantics: no
+CN short-circuit for these sources). Unset, nothing renders and the config stays
+**byte-identical** — the feature is invisible until you opt in.
+
+**The `Full Proxy` group** is a dashboard selector. Members:
+
+- **`Proxy Mode`** (default) — the band follows whatever the dashboard's `Proxy Mode` says.
+- every **`<Country> Auto`** group — pin the band's exit country **independently** of the
+  main `Country Pick` choice.
+- **`REJECT`** — the kill switch: one click takes the whole band offline.
+
+There is deliberately **no `DIRECT`** member: a band device can never be silently un-proxied
+by a dashboard click — leaving the band is a *router-side* act (below), never a selector
+state.
+
+**Prerequisite: DHCP fixed-IP reservations are the router's job.** The gateway does not
+control leases — it only matches source IPs. Reserve a small fixed-IP band on your router
+(e.g. `192.168.1.240/28`) and set `FULL_PROXY_SOURCES` to it.
+
+**Switching a device in or out is router-side** — verified on UniFi (per-client **Fixed IP**
+reservation), and any router with per-client DHCP reservations works the same way:
+
+1. Flip the device's fixed-IP reservation **into** the band and reconnect the device
+   (toggle Wi-Fi / re-plug) so it picks up the new lease → the device is now full-proxy.
+2. Flip the reservation back **out** of the band + reconnect → back to normal rule-based
+   routing.
+
+No gateway or container restart is ever involved — mode switching is entirely a router-side
+lease flip.
+
+**Changing the band itself** (the `.env` value) is a normal `.env` edit + redeploy
+(`sudo sh scripts/gateway.sh redeploy --yes`). The entrypoint render gate applies: a
+malformed value **refuses to render**, naming `FULL_PROXY_SOURCES`, and keeps the previous
+config running. Rejected loudly: IPv6 entries, hostnames, octets >255, a prefix >32,
+duplicates, whitespace, backticks. IPv6 entries are refused on purpose — matching is
+IPv4-only, and routable LAN IPv6 routes *around* the gateway entirely (caveat 3 below).
+
+`doctor` gained a **`full_proxy`** check: `disabled` (knob unused) · `ok` · `parity-drift`
+(the rendered rules no longer match the knob — your band edit is **not live**, redeploy) ·
+`chain-violation` (a non-LAN flow from a band source bypassed `Full Proxy`).
+
+**Caveats:**
+
+1. **CN sites/apps on band devices exit overseas.** Under fake-ip the node resolves band
+   devices' domains remotely — CN domains *correctly* ride the tunnel; expect CN services to
+   see an overseas exit and degrade accordingly. That is the strict semantics working as
+   designed, not a leak.
+2. **QUIC/UDP fallthrough.** A UDP flow whose exit node lacks UDP relay falls through the
+   `SRC-IP-CIDR` rule at the rule engine — CN-listed destinations then go DIRECT; browsers
+   retry over proxied TCP. The doctor's `full_proxy` check flags such flows; an opt-in UDP
+   block knob ships only if an airport's UDP proves unreliable.
+3. **The guarantee assumes no routable LAN IPv6** (doctor `ipv6_bypass`) — a dual-stack
+   device with global IPv6 routes *around* the IPv4-only gateway entirely.
 
 ## Subscription format
 

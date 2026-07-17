@@ -206,6 +206,14 @@ in any committed file (a project rule); real values live only in the
 `../syno-mihomo-gateway-data/.env` outside the repo (the `.gitignore` entries just guard stray
 in-repo copies). See [Configuration](configuration.md) and [Development](development.md).
 
+When the optional `FULL_PROXY_SOURCES` band is set, rendering additionally fences in a
+**`Full Proxy`** selector (members: `Proxy Mode` — the default — every `<Country> Auto`
+group, and `REJECT`; deliberately **no `DIRECT`**, so a band device can never be silently
+un-proxied) and splices one `SRC-IP-CIDR` rule per entry **immediately after the LAN rule**:
+band devices still reach LAN destinations direct, but everything else — streaming and CN
+alike — rides `Full Proxy`. Unset, none of this renders and the config stays byte-identical
+(see [Configuration](configuration.md#full-proxy-devices-full_proxy_sources)).
+
 ## Safety model ("safe-auto")
 
 This container is the **gateway/DNS for the whole house** — a broken auto-update would take the

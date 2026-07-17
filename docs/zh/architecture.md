@@ -190,6 +190,13 @@ CI 运行的也是**同一个脚本**
 `../syno-mihomo-gateway-data/.env` 中（`.gitignore` 条目只是防范仓库内的散落副本）。
 参见[配置](configuration.md)与[开发](development.md)。
 
+当可选的 `FULL_PROXY_SOURCES` 网段被设置时，渲染还会额外围栏出一个 **`Full Proxy`**
+选择器（成员：`Proxy Mode`——默认——每一个 `<Country> Auto` 分组，以及 `REJECT`；刻意
+**不含 `DIRECT`**，网段内设备因此绝不可能被悄悄取消代理），并为每个条目在 **LAN 规则
+之后紧邻的位置**拼接一条 `SRC-IP-CIDR` 规则：网段内设备访问局域网目标仍然直连，而其余
+一切——流媒体与国内一视同仁——都走 `Full Proxy`。未设时这一切都不渲染，配置保持逐字节
+不变（见[配置](configuration.md#全代理设备full_proxy_sources)）。
+
 ## 安全模型（"safe-auto"）
 
 该容器是**整个家庭的网关/DNS**——一次失败的自动更新会让整个 LAN 断网。因此"自动更新"

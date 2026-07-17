@@ -26,6 +26,16 @@
 #   --keep        keep split-horizon enabled in .env at the end
 #   --revert      restore the original .env at the end
 #                 (neither flag -> asked on the TTY; default is revert)
+#   --probe-ip X  automated full-proxy band probe (#46): X is a SPARE LAN
+#                 IPv4 the owner supplies (never committed - CLAUDE.md's
+#                 no-hardcoded-address rule is why there is no default).
+#                 A5 then temporarily adds X to FULL_PROXY_SOURCES,
+#                 attaches an ephemeral probe container (the mihomo image,
+#                 default route re-pointed at the gateway) and asserts its
+#                 flows carry 'Full Proxy' via /connections. Liveness-
+#                 checked first (a replying IP is NOT spare); torn down on
+#                 completion AND from the INT/TERM trap. Unset -> a manual
+#                 B3-style prompt when the band knob is live, else skipped.
 # Env overrides: SMG_STAGE, SMG_RELEASE_DIR.
 #
 # Controller/routing probes run INSIDE the mihomo container (docker exec):
@@ -57,16 +67,21 @@ SELF_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
 LOG="$STAGE/validate-results.log"
 BLACKHOLE="https://192.0.2.1/dns-query#All Nodes"  # RFC 5737 TEST-NET-1: never routes
 
-SELF_TEST=0; SKIP_KNOB=0; NO_EXTRACT=0; FINAL=""
-for _a in "$@"; do
-  case "$_a" in
+SELF_TEST=0; SKIP_KNOB=0; NO_EXTRACT=0; FINAL=""; PROBE_IP=""
+while [ $# -gt 0 ]; do
+  case "$1" in
     --self-test) SELF_TEST=1 ;;
     --skip-knob) SKIP_KNOB=1 ;;
     --no-extract) NO_EXTRACT=1 ;;
     --keep) FINAL=keep ;;
     --revert) FINAL=revert ;;
-    *) echo "unknown flag: $_a" >&2; exit 3 ;;
+    --probe-ip)
+      [ $# -ge 2 ] || { echo "--probe-ip needs a value (a spare LAN IPv4)" >&2; exit 3; }
+      PROBE_IP="$2"; shift ;;
+    --probe-ip=*) PROBE_IP="${1#*=}" ;;
+    *) echo "unknown flag: $1" >&2; exit 3 ;;
   esac
+  shift
 done
 
 # ---- measurement helpers (pure; unit-checked by --self-test) ----------------
@@ -178,6 +193,61 @@ resolve_now_chain() {
     _rnc_hop=$((_rnc_hop+1))
   done
   printf '%s' "$_rnc"
+}
+
+# fp_ip2n IP - dotted-quad to integer; -1 for anything not canonical IPv4
+# (IPv6 sources, empty fields) so callers can skip it. (#46)
+fp_ip2n() {
+  _f2_old_ifs=$IFS; IFS='.'
+  set -f
+  # shellcheck disable=SC2086  # deliberate '.' field split
+  set -- $1
+  set +f
+  IFS=$_f2_old_ifs
+  if [ $# -ne 4 ]; then echo -1; return 0; fi
+  for _f2_o in "$@"; do
+    case "$_f2_o" in
+      ''|*[!0-9]*) echo -1; return 0 ;;
+      0) : ;;
+      0*) echo -1; return 0 ;;  # leading zero: $((08)) is an octal SYNTAX ERROR in ash
+    esac
+    if [ "${#_f2_o}" -gt 3 ] || [ "$_f2_o" -gt 255 ]; then echo -1; return 0; fi
+  done
+  echo $(( $1 * 16777216 + $2 * 65536 + $3 * 256 + $4 ))
+}
+
+# fp_ip_in_cidr IP CIDR - 0 when IP falls inside CIDR (64-bit shell
+# arithmetic; BusyBox-safe). Non-IPv4 input never matches. (#46)
+fp_ip_in_cidr() {
+  _fic_n=$(fp_ip2n "$1")
+  [ "$_fic_n" -ge 0 ] || return 1
+  _fic_bn=$(fp_ip2n "${2%%/*}")
+  [ "$_fic_bn" -ge 0 ] || return 1
+  _fic_len=${2#*/}
+  case "$_fic_len" in ''|*[!0-9]*) return 1 ;; esac
+  if [ "$_fic_len" -ge 32 ]; then _fic_m=4294967295
+  elif [ "$_fic_len" -le 0 ]; then _fic_m=0
+  else _fic_m=$(( 4294967295 - (1 << (32 - _fic_len)) + 1 )); fi
+  [ $(( _fic_n & _fic_m )) -eq $(( _fic_bn & _fic_m )) ]
+}
+
+# fp_conn_lines - controller /connections JSON on stdin -> one line per
+# connection: sourceIP|destinationIP|network|fp/nofp (fp = the chain
+# carries 'Full Proxy'). Connections are split onto lines FIRST (a
+# multi-char RS is a gawk extension BusyBox awk lacks). Mirrors the
+# doctor's _fp_conns - duplicated because checks.sh and this script cannot
+# source each other; both sides are suite-covered. (#46)
+fp_conn_lines() {
+  sed 's/{"id":/\
+{"id":/g' | awk '
+    /"id":/ {
+      src=""; dst=""; net=""; fp="nofp"
+      if (match($0, /"sourceIP":"[^"]*"/))      src=substr($0, RSTART+12, RLENGTH-13)
+      if (match($0, /"destinationIP":"[^"]*"/)) dst=substr($0, RSTART+17, RLENGTH-18)
+      if (match($0, /"network":"[^"]*"/))       net=substr($0, RSTART+11, RLENGTH-12)
+      if (match($0, /"chains":\[[^]]*"Full Proxy"[^]]*\]/)) fp="fp"
+      print src "|" dst "|" net "|" fp
+    }'
 }
 
 # example_dns KEY - read a shipped default from the release .env.example
@@ -352,6 +422,21 @@ All Nodes' ]; then st_ok; else st_bad "urltest_groups got: $(printf '%s' "$_name
   if now_is_real "$_ch"; then st_bad "chain walk accepted placeholder '$_ch'"; else st_ok; fi
   unset -f ctl_get
 
+  # 3d) full-proxy band helpers (#46): connection-line parsing (chain
+  #     membership, per-connection splitting without gawk RS) + CIDR
+  #     membership arithmetic (the A5 probe and its IP guards ride these).
+  _fc=$(printf '%s' '{"connections":[{"id":"a1","metadata":{"network":"tcp","sourceIP":"192.0.2.20","destinationIP":"93.184.216.34"},"chains":["JP01","Japan Auto","Country Pick","Proxy Mode","Full Proxy"]},{"id":"a2","metadata":{"network":"udp","sourceIP":"192.0.2.21","destinationIP":"120.232.145.144"},"chains":["DIRECT"]}]}' | fp_conn_lines)
+  if [ "$_fc" = '192.0.2.20|93.184.216.34|tcp|fp
+192.0.2.21|120.232.145.144|udp|nofp' ]; then st_ok; else st_bad "fp_conn_lines got: $_fc"; fi
+  if fp_ip_in_cidr 192.0.2.20 192.0.2.16/28; then st_ok; else st_bad "fp_ip_in_cidr missed an in-band IP"; fi
+  if fp_ip_in_cidr 192.0.2.33 192.0.2.16/28; then st_bad "fp_ip_in_cidr accepted an out-of-band IP"; else st_ok; fi
+  if fp_ip_in_cidr 192.0.2.5 192.0.2.5/32; then st_ok; else st_bad "fp_ip_in_cidr missed a /32 exact"; fi
+  if fp_ip_in_cidr 192.0.2.6 192.0.2.5/32; then st_bad "fp_ip_in_cidr /32 matched a neighbor"; else st_ok; fi
+  if fp_ip_in_cidr bogus.example 192.0.2.16/28; then st_bad "fp_ip_in_cidr accepted a non-IP"; else st_ok; fi
+  # leading-zero octets must resolve to the -1 sentinel, never reach the
+  # arithmetic ($((08)) is an octal SYNTAX ERROR in dash/BusyBox ash)
+  if fp_ip_in_cidr 192.008.2.5 192.0.2.16/28; then st_bad "fp_ip_in_cidr accepted a leading-zero octet"; else st_ok; fi
+
   # 4) .env values are parsed via the repo dotenv parser, which strips quotes
   #    (v1 read them raw and built literal-quote URLs).
   printf 'MIHOMO_IP="192.0.2.10"\nCONTROLLER_PORT=9090\n' > "$TMP/env"
@@ -408,7 +493,7 @@ All Nodes' ]; then st_ok; else st_bad "urltest_groups got: $(printf '%s' "$_name
 
   echo "validate_release self-test: $_stp passed, $_stf failed"
   [ "$_stf" -eq 0 ] || exit 1
-  echo "OK: measurement helpers (policy/knob/psn/split-core rule anchoring incl. bootstrap-pin + comment-prose immunity, provider-node counting + real-member egress gate, filtered-group discovery + %XX name encoding + COMPATIBLE/REJECT placeholder exclusion, quoted-.env parsing, .env.example key coverage, scrubbed child env, doctor rc gate, summary accumulator, cache unpark)"
+  echo "OK: measurement helpers (policy/knob/psn/split-core rule anchoring incl. bootstrap-pin + comment-prose immunity, provider-node counting + real-member egress gate, filtered-group discovery + %XX name encoding + COMPATIBLE/REJECT placeholder exclusion, full-proxy band connection parsing + CIDR membership, quoted-.env parsing, .env.example key coverage, scrubbed child env, doctor rc gate, summary accumulator, cache unpark)"
   exit 0
 }
 [ "$SELF_TEST" = 1 ] && self_test
@@ -540,8 +625,11 @@ egress_via_real_node() {
 restore_env() {  # put the pre-validation .env back
   [ -f "$ORIG" ] && cat "$ORIG" > "$ENV_FILE" && rm -f "$ORIG"
 }
+# fp_probe_teardown - remove the A5 band-probe container if one is up; a
+# ^C must never leave it holding the owner's spare IP on the live macvlan.
+fp_probe_teardown() { "${DOCKER_BIN:-docker}" rm -f smg-fp-probe >/dev/null 2>&1 || true; }
 # shellcheck disable=SC2329 # invoked via the trap below
-on_abort() { echo "INTERRUPTED - restoring original .env"; restore_env; recreate; exit 1; }
+on_abort() { echo "INTERRUPTED - restoring original .env"; fp_probe_teardown; restore_env; recreate; exit 1; }
 trap on_abort INT TERM
 
 say "A2: redeploy + baseline doctor"
@@ -674,6 +762,99 @@ FGEOF
   else
     bad "no country groups rendered - COUNTRY_GROUPS is REQUIRED and the A4 env just set the shipped default; the render or recreate must have failed"
   fi
+fi
+
+# A5 runs in the resolvers-restored window (before the cold-start
+# black-holing) so the probe's fetches measure the real band path.
+say "A5: full-proxy band (#46; --probe-ip <spare-lan-ip> enables the automated leg)"
+if [ -n "$PROBE_IP" ]; then
+  _fp_go=1
+  case "$PROBE_IP" in
+    *:*|*/*) bad "probe IP '$PROBE_IP' must be a bare IPv4 (no CIDR, no IPv6)"; _fp_go=0 ;;
+  esac
+  if [ "$_fp_go" = 1 ] && [ "$(fp_ip2n "$PROBE_IP")" -lt 0 ]; then
+    bad "probe IP '$PROBE_IP' is not a valid IPv4 address"; _fp_go=0
+  fi
+  if [ "$_fp_go" = 1 ] && ! fp_ip_in_cidr "$PROBE_IP" "${SUBNET_CIDR:-0.0.0.0/32}"; then
+    bad "probe IP $PROBE_IP is outside SUBNET_CIDR ${SUBNET_CIDR:-<unset>}"; _fp_go=0
+  fi
+  if [ "$_fp_go" = 1 ] && { [ "$PROBE_IP" = "${MIHOMO_IP:-}" ] || [ "$PROBE_IP" = "${ROUTER_IP:-}" ]; }; then
+    bad "probe IP $PROBE_IP collides with the gateway or router"; _fp_go=0
+  fi
+  # Liveness gate (panel criterion): an IP that answers ping is NOT spare -
+  # attaching over a live host would ARP-conflict the production dataplane.
+  if [ "$_fp_go" = 1 ] && run_scrubbed "$DOCKER_BIN" exec "$MIHOMO_CONTAINER" ping -c 1 -W 1 "$PROBE_IP" >/dev/null 2>&1; then
+    bad "probe IP $PROBE_IP answers ping - it is IN USE; pick a spare LAN IP"; _fp_go=0
+  fi
+  if [ "$_fp_go" = 1 ]; then
+    _fp_prev="${FULL_PROXY_SOURCES:-}"
+    if [ -n "$_fp_prev" ]; then
+      env_set FULL_PROXY_SOURCES "$_fp_prev,$PROBE_IP"
+    else
+      env_set FULL_PROXY_SOURCES "$PROBE_IP"
+    fi
+    recreate || bad "compose recreate (band on)"
+    load_env || true
+    if grep -q "^  - 'SRC-IP-CIDR,$PROBE_IP/32,Full Proxy'" "$CFG"; then
+      ok "band rule rendered for the probe IP (/32-normalized)"
+    else
+      bad "band rule for $PROBE_IP did not render"
+    fi
+    # The probe container is a stand-in for a real band DEVICE: it joins
+    # the SAME macvlan (a second network on that subnet would trip
+    # docker's IPAM overlap refusal), re-points its default route at the
+    # gateway (gateway + DNS = mihomo, exactly like a DHCP client), and
+    # fetches the 204 endpoint in a short loop so /connections has a live
+    # flow to judge. Reuses the already-present mihomo image (no pull;
+    # busybox ip/route + wget are in its alpine base). Torn down here AND
+    # from on_abort.
+    fp_probe_teardown
+    # shellcheck disable=SC2016 # "$1" expands in the probe container's shell
+    if run_scrubbed "$DOCKER_BIN" run -d --rm --name smg-fp-probe \
+        --network "${TPROXY_NETWORK:-tproxy_network}" --ip "$PROBE_IP" \
+        --dns "${MIHOMO_IP:?}" --cap-add NET_ADMIN \
+        --entrypoint /bin/sh "${MIHOMO_IMAGE:?}" -c \
+        'ip route replace default via "$1" 2>/dev/null || { route del default 2>/dev/null; route add default gw "$1"; }; i=0; while [ "$i" -lt 20 ]; do wget -q -T 4 -O /dev/null http://www.gstatic.com/generate_204 2>/dev/null; sleep 1; i=$((i+1)); done' \
+        _ "$MIHOMO_IP" >/dev/null 2>&1; then
+      _fp_seen=0; _fp_viol=''
+      _fp_i=0
+      while [ "$_fp_i" -lt 12 ]; do
+        _fp_lines=$(ctl_get /connections | fp_conn_lines | grep "^$PROBE_IP|" || true)
+        if [ -n "$_fp_lines" ]; then
+          _fp_seen=1
+          case "$_fp_lines" in *'|nofp'*) _fp_viol="$_fp_lines" ;; esac
+          break
+        fi
+        _fp_i=$((_fp_i + 1)); sleep 1
+      done
+      if [ "$_fp_seen" = 1 ] && [ -z "$_fp_viol" ]; then
+        ok "probe flow from $PROBE_IP rides Full Proxy (chain verified via /connections)"
+      elif [ "$_fp_seen" = 1 ]; then
+        bad "a probe flow from $PROBE_IP bypassed Full Proxy: $(printf '%s' "$_fp_viol" | head -n1)"
+      else
+        bad "no flow from $PROBE_IP observed via /connections within 12s (probe container up, band rule rendered)"
+      fi
+      fp_probe_teardown
+    else
+      bad "probe container failed to start (network ${TPROXY_NETWORK:-tproxy_network}, ip $PROBE_IP)"
+    fi
+    env_set FULL_PROXY_SOURCES "$_fp_prev"
+    recreate || bad "compose recreate (band restore)"
+    load_env || true
+  fi
+elif [ -n "${FULL_PROXY_SOURCES:-}" ]; then
+  echo ">>> FULL_PROXY_SOURCES is live but no --probe-ip was given. Manual"
+  echo ">>> spot-check, from the router console + any band-capable device:"
+  echo ">>>  1) flip the device's fixed-IP reservation INTO the band + reconnect"
+  echo ">>>  2) MetaCubeXD -> Connections: that device's non-LAN flows must"
+  echo ">>>     show 'Full Proxy' in the chain"
+  echo ">>>  3) flip the reservation back + reconnect"
+  printf ">>> Press Enter when checked : "
+  read -r _ans </dev/tty || true
+  ok "A5 manual band spot-check acknowledged (knob live, no --probe-ip)"
+else
+  echo "skipped - FULL_PROXY_SOURCES unset and no --probe-ip (the band is opt-in)"
+  ok "A5 skipped (band feature not in use)"
 fi
 
 say "B: cold start - parked caches + black-holed tunnel resolvers"

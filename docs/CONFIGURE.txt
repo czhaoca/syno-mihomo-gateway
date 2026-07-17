@@ -153,6 +153,25 @@ DNS settings
       TROUBLESHOOTING.txt, "LAN clients bypass the gateway's DNS").
       false renders without the sniffer (pre-1.3.10 behavior).
 
+  FULL_PROXY_SOURCES
+      Optional per-device full-proxy band: comma-separated IPv4
+      addresses/CIDRs (a bare IP means /32; e.g. 192.168.1.240/28).
+      Renders only when set -- unset keeps the rendered config
+      byte-identical (the feature is invisible). When set, a
+      "Full Proxy" selector appears on the dashboard and one
+      SRC-IP-CIDR rule per entry lands immediately after the LAN
+      rule: band devices reach LAN destinations DIRECT, and
+      everything else -- streaming and CN sites alike -- rides
+      Full Proxy (strict semantics). Malformed values refuse to
+      render naming this key -- IPv6 entries, hostnames, octets
+      >255, a prefix >32, duplicates, whitespace, backticks (IPv6
+      is refused on purpose: routable LAN IPv6 routes around the
+      IPv4-only gateway -- see caveat 3 in the "Full-proxy
+      devices" section below). Per-device mode switching is
+      router-side (a DHCP fixed-IP flip), never a gateway restart.
+      See the "Full-proxy devices (FULL_PROXY_SOURCES)" section
+      below.
+
   COUNTRY_GROUPS
       REQUIRED - the dashboard's group model is built from it (an
       empty value refuses to render; start from the shipped default):
@@ -310,6 +329,75 @@ Optional / advanced: tunnel
       tunnel). Takes effect on the next provision or blue-green update
       (sudo sh scripts/gateway.sh update --yes). Empty keeps the current
       behavior. Suggestion: mirror DNS_NAMESERVER.
+
+--------------------------------------------------------------------------
+Full-proxy devices (FULL_PROXY_SOURCES)
+--------------------------------------------------------------------------
+  Optional. Setting FULL_PROXY_SOURCES reserves a small IPv4 band whose
+  devices skip the smart routing above: one SRC-IP-CIDR rule per entry is
+  spliced immediately after the LAN rule, so a band device still reaches
+  LAN destinations DIRECT, but everything else -- streaming and CN sites
+  alike -- rides the "Full Proxy" group (strict semantics: no CN
+  short-circuit for these sources). Unset, nothing renders and the config
+  stays byte-identical -- the feature is invisible until you opt in.
+
+  The "Full Proxy" group is a dashboard selector. Members:
+      * Proxy Mode (the default) -- the band follows whatever the
+        dashboard's Proxy Mode says.
+      * every "<Country> Auto" group -- pin the band's exit country
+        independently of the main Country Pick choice.
+      * REJECT -- the kill switch: one click takes the whole band
+        offline.
+  There is deliberately no DIRECT member: a band device can never be
+  silently un-proxied by a dashboard click -- leaving the band is a
+  router-side act (below), never a selector state.
+
+  Prerequisite: DHCP fixed-IP reservations are the router's job. The
+  gateway does not control leases -- it only matches source IPs. Reserve
+  a small fixed-IP band on your router (e.g. 192.168.1.240/28) and set
+  FULL_PROXY_SOURCES to it.
+
+  Switching a device in or out is router-side -- verified on UniFi
+  (per-client Fixed IP reservation), and any router with per-client DHCP
+  reservations works the same way:
+      1. Flip the device's fixed-IP reservation INTO the band and
+         reconnect the device (toggle Wi-Fi / re-plug) so it picks up
+         the new lease: the device is now full-proxy.
+      2. Flip the reservation back OUT of the band and reconnect: back
+         to normal rule-based routing.
+  No gateway or container restart is ever involved -- mode switching is
+  entirely a router-side lease flip.
+
+  Changing the band itself (the .env value) is a normal .env edit; apply
+  it with "4) Modify an existing deployment"
+  (sudo sh scripts/gateway.sh redeploy --yes). The render gate applies:
+  a malformed value refuses to render, naming FULL_PROXY_SOURCES, and
+  keeps the previous config running. Rejected loudly: IPv6 entries,
+  hostnames, octets >255, a prefix >32, duplicates, whitespace,
+  backticks. IPv6 entries are refused on purpose -- matching is
+  IPv4-only, and routable LAN IPv6 routes around the gateway entirely
+  (caveat 3 below).
+
+  The doctor gained a "full_proxy" check: disabled (knob unused) / ok /
+  parity-drift (the rendered rules no longer match the knob -- your band
+  edit is NOT live, redeploy) / chain-violation (a non-LAN flow from a
+  band source bypassed Full Proxy).
+
+  Caveats:
+      1. CN sites/apps on band devices exit overseas. Under fake-ip the
+         node resolves band devices' domains remotely -- CN domains
+         correctly ride the tunnel; expect CN services to see an
+         overseas exit and degrade accordingly. That is the strict
+         semantics working as designed, not a leak.
+      2. QUIC/UDP fallthrough. A UDP flow whose exit node lacks UDP
+         relay falls through the SRC-IP-CIDR rule at the rule engine --
+         CN-listed destinations then go DIRECT; browsers retry over
+         proxied TCP. The doctor's full_proxy check flags such flows;
+         an opt-in UDP block knob ships only if an airport's UDP proves
+         unreliable.
+      3. The guarantee assumes no routable LAN IPv6 (doctor
+         ipv6_bypass) -- a dual-stack device with global IPv6 routes
+         around the IPv4-only gateway entirely.
 
 --------------------------------------------------------------------------
 Subscription URL
