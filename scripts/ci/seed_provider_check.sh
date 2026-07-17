@@ -57,7 +57,9 @@ chmod +x "$STUB/id"
 # `logs` emits a provider error CARRYING the token URL (the suite asserts the
 # script's excerpt redacts it); `exec ... wget ... URL` answers the controller
 # from canned per-endpoint JSON, switching the All Nodes members after a
-# restart (the spaced name arrives %XX-encoded: All%20Nodes).
+# restart (spaced names arrive %20-encoded: All%20Nodes / Proxy%20Mode; the
+# chain-walk hops arrive fully %XX-encoded, e.g. Country Pick =
+# %43%6f%75%6e%74%72%79%20%50%69%63%6b, JPX = %4a%50%58).
 cat > "$STUB/docker" <<'EOF'
 #!/bin/sh
 STATE="${FAKE_STATE:?}"
@@ -77,10 +79,12 @@ case "$URL" in
     if [ -f "$STATE/restarted" ]; then cat "$STATE/auto_after.json"
     else cat "$STATE/auto_before.json"; fi ;;
   */group/All%20Nodes/*) echo '{}' ;;
-  */proxies/PROXY/delay*)
+  */proxies/Proxy%20Mode/delay*)
     if [ -f "$STATE/delay_ok" ]; then echo '{"delay":42}'
     else echo '{"message":"timeout"}'; fi ;;
-  */proxies/PROXY*) echo '{"all":["All Nodes","DIRECT","REJECT"],"now":"All Nodes"}' ;;
+  */proxies/Proxy%20Mode*) echo '{"all":["Country Pick","DIRECT","REJECT"],"now":"Country Pick"}' ;;
+  */proxies/%43%6f%75%6e%74%72%79%20%50%69%63%6b*) echo '{"all":["JPX"],"now":"JPX"}' ;;
+  */proxies/%4a%50%58*) echo '{"all":["n1","n2"],"now":"n1"}' ;;
   *) echo '{}' ;;
 esac
 exit 0

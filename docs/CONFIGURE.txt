@@ -103,8 +103,11 @@ DNS settings
       unhealthy after deploy. The shipped defaults are mainland-China-safe
       and privacy-hardened (split-horizon v2): every entry is an IP or an
       encrypted DoH URL on an IP (nothing needs resolving first), and an
-      entry ending in #All Nodes is dialed THROUGH the proxy tunnel (via
-      the All Nodes group) instead of directly.
+      entry ending in #All Nodes is dialed THROUGH the proxy tunnel - via
+      the hidden All Nodes group, a full-pool auto-picker kept solely as
+      this DNS anchor (the dashboard does not show it, and DNS keeps
+      working whatever you pick in the dashboard). DNS values from an
+      existing install need no change for the streamlined group model.
       DNS_CN_NAMESERVER / DNS_FOREIGN_NAMESERVER are the split-horizon
       pair: Chinese-list names resolve only domestically, and EVERYTHING
       ELSE - foreign-list names AND names on no list at all - resolves
@@ -150,47 +153,53 @@ DNS settings
       TROUBLESHOOTING.txt, "LAN clients bypass the gateway's DNS").
       false renders without the sniffer (pre-1.3.10 behavior).
 
-  PRIORITY_INCLUDE_FILTER
-      Region scope for the default route (applied FIRST): only airport
-      nodes matching this pattern are eligible for the Priority Nodes
-      group. The shipped default keeps it on Japan, so the latency
-      picker stops hopping between countries (login-sensitive sites
-      flag accounts whose location keeps shifting). Tune the pattern
-      to YOUR airport's naming - a pool with city-only names needs
-      those city words added. If it matches no node, Priority Nodes
-      blocks traffic instead of silently bypassing the proxy (the
-      doctor reports it). Leave empty to render the group without an
-      include filter. Requires PRIORITY_EXCLUDE_FILTER.
-
-  PRIORITY_EXCLUDE_FILTER
-      Airport nodes matching this pattern are removed from the
-      Priority Nodes group, which is the default route (the first
-      entry in the dashboard's PROXY selector). The shipped default
-      excludes Hong Kong nodes - many sites block Hong Kong addresses,
-      and with an HK-heavy plan the latency picker lands on one almost
-      every time. The full, unfiltered "All Nodes" group stays one
-      dashboard click away. If the pattern matches EVERY node,
-      Priority Nodes blocks traffic instead of silently bypassing the
-      proxy (the doctor reports it). Leave empty to render without the
-      Priority Nodes group at all. A backtick is refused. NOTE: this
-      key replaced AUTO_EXCLUDE_FILTER - a leftover line with the old
-      name refuses to render (delete it).
-
   COUNTRY_GROUPS
-      One-click "fastest node in country X" from the dashboard:
-      NAME=regex;NAME=regex creates one auto-selecting group per
-      entry - the panel shows NAME and keeps it on the fastest node
-      whose name matches regex. A regex naming several countries IS
-      a multi-country group. The shipped example fits airports that
-      name nodes in Chinese (美国01, 新加坡05...) - edit the entries
-      to match YOUR airport's naming. A group that matches no node
-      blocks traffic when selected instead of silently bypassing the
-      proxy (the doctor reports it). Names may contain spaces
-      ("Japan Auto") but must not start/end with one, nor reuse
-      All Nodes / Priority Nodes / PROXY / STREAMING / DIRECT /
-      REJECT; backticks and malformed entries refuse to render. Leave
-      empty for no generated groups (your existing config, byte for
-      byte).
+      REQUIRED - the dashboard's group model is built from it (an
+      empty value refuses to render; start from the shipped default):
+      NAME=regex;NAME=regex creates one "<Country> Auto" auto-
+      selecting group per entry - the panel shows NAME and keeps it
+      on the fastest node whose name matches regex - and those groups
+      are the members of the "Country Pick" selector, where you
+      choose the exit country. The FIRST entry is the out-of-box
+      default country (the shipped default puts Japan Auto first). A
+      regex naming several countries IS a multi-country group. The
+      shipped example fits airports that name nodes in Chinese
+      (美国01, 新加坡05...) - edit the entries to match YOUR
+      airport's naming. A group that matches no node blocks traffic
+      when selected instead of silently bypassing the proxy (the
+      doctor flags it; when the empty group is the country
+      Country Pick is riding, default-route traffic is blocked - pick
+      another country there while you fix the pattern). Names may
+      contain spaces ("Japan Auto") but must not start/end with one,
+      nor reuse a built-in, reserved, or retired group name
+      (All Nodes / Country Pick / Proxy Mode / Streaming Sites /
+      DIRECT / REJECT / ... - the render error names the collision;
+      the full list is in .env.example); backticks and malformed
+      entries refuse to render.
+
+  Proxy groups on the dashboard
+      Proxy Mode is the mode selector the routing rules target:
+      default Country Pick, plus DIRECT / REJECT / the raw airport
+      nodes (pin ONE exact node here when a site objects even to
+      same-country IP changes). Streaming Sites is the per-service
+      selector for unlock-sensitive sites (Netflix + the audio
+      services; default Proxy Mode). Country Pick chooses the exit
+      country: its members are the "<Country> Auto" groups above, so
+      general traffic keeps a single exit IP and the exit country
+      never hops on its own. All Nodes still exists but is hidden -
+      it only anchors the DNS detour above. Naming legend:
+      "<X> Auto" = auto-pick, "<X> Mode" = mode selector,
+      "<X> Sites" = site rules, "<X> Pick" = manual choice.
+
+  Removed keys
+      The old priority include/exclude filter pair (and the older
+      AUTO_EXCLUDE_FILTER) are gone - the "<Country> Auto" groups
+      plus Country Pick replace them. A .env still carrying any of
+      those lines refuses to render; the error names the exact lines
+      to delete (the gateway keeps running on its previous config
+      meanwhile). After this upgrade, dashboard selections reset
+      ONCE (saved picks are keyed by group name) - re-pin them in
+      the dashboard.
 
       These settings are for the GATEWAY only. The NAS's OWN DNS lives in
       DSM Control Panel > Network > General and must also point at

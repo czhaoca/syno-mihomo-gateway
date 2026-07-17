@@ -60,7 +60,7 @@ scripts/
     gateway_cli_check.sh      # 通过 PATH 桩测试 gateway.sh CLI 契约
     dsm_installer_check.sh    # 使用伪 Docker 的安装器流程测试
     seed_provider_check.sh    # 订阅缓存恢复工具的封闭式测试
-    proxy_groups_check.sh     # doctor 对过滤型代理分组零节点守卫的封闭式测试
+    proxy_groups_check.sh     # doctor 对生成的国家分组零节点守卫的封闭式测试
     mihomo_entrypoint_check.sh # 入口点“渲染→测试→切换”守门的封闭式测试
     lifecycle_check.sh        # 使用伪 Docker 的盘点/清理安全测试
     lib/assert.sh             # sh 测试套件共享的断言
@@ -146,7 +146,7 @@ EXIT 陷阱不会回收它（`CF_KEEP_CANDIDATE`）。
 | `compose-policy` | `python scripts/ci/compose_policy_check.py` —— 断言 **fail-closed** 的镜像引用：compose 中每个 `image:` 都严格是 `${VAR}`/`${VAR:?msg}`（无默认值、无硬编码引用），且 `.env.example` 定义了这些镜像变量并携带 `REGISTRY_MODE=acr`（ACR 为默认；`docker` 上游是显式可选项，并非被禁止）；同时冻结**容器名契约**——每个服务都必须固定 `container_name:`，核心一对严格为 `mihomo`/`mihomo-ui`，且 `scripts/lib/compose.sh` 的默认值与之一致（改名属于破坏运维契约的变更） |
 | `package-check` | `python scripts/ci/package_check.py` —— 在临时仓库中构建开发、最终用户与 **pi 三种**发布包，证明**任何密钥都不会被打包**（植入的 `.env`/订阅/`config.yaml` 不出现在压缩包的文件名*和*字节中）、校验和正确、最终用户包剔除了开发者/`.md`/CI 文件（含 Pi 移植）、附带安装器与 `.txt` 指南、不含任何身份字符串，且其防泄漏门对注入的泄漏会以失败告终（fail-closed）；pi 包在 enduser 集合之上附带 Pi 移植，身份门禁保持 fail-closed，并容许其运行时所需的上游托管域名 |
 | `privacy-check` | 扫描被跟踪文件和可达 blob，拒绝私有运维标识、凭据、私钥和意外跟踪的运行时文件（+ 该守卫的自测） |
-| `dsm-shell-tests` | 十个在 BusyBox `sh` 下、使用伪 Docker/Compose/服务 CLI 的测试套件：`dsm_installer_check`、`lifecycle_check`、`auto_update_check`、`cloudflared_check`、`generic_update_check`、`gateway_cli_check`、`seed_provider_check`、`proxy_groups_check`（doctor 对过滤型代理分组的零节点守卫）、`mihomo_entrypoint_check`（入口点先渲染到临时文件再 `mihomo -t` 守门：通过才切换、保留上一份好配置并写入脱敏拒绝标记）、`pi_installer_check`（Raspberry Pi 移植的共享接缝）——外加 `validate_release.sh --self-test`，即 NAS 端发布验证助手的测量函数单元检查 |
+| `dsm-shell-tests` | 十个在 BusyBox `sh` 下、使用伪 Docker/Compose/服务 CLI 的测试套件：`dsm_installer_check`、`lifecycle_check`、`auto_update_check`、`cloudflared_check`、`generic_update_check`、`gateway_cli_check`、`seed_provider_check`、`proxy_groups_check`（doctor 对生成的国家分组的零节点守卫——含 `default-empty` 状态：`Country Pick` 正在骑乘的国家分组归零）、`mihomo_entrypoint_check`（入口点先渲染到临时文件再 `mihomo -t` 守门：通过才切换、保留上一份好配置并写入脱敏拒绝标记）、`pi_installer_check`（Raspberry Pi 移植的共享接缝）——外加 `validate_release.sh --self-test`，即 NAS 端发布验证助手的测量函数单元检查 |
 | `shellcheck` | 先对仓库中**每一个** `*.sh` 运行 `sh -n` 语法检查，再对 19 个目标运行 `shellcheck -x`：`install.sh`、`install-pi.sh`、`gateway.sh`、`auto_update.sh`、`pi/auto_update_lite.sh`、`pi/lite_ctl.sh`、`install_scheduler.sh`、`setup_network.sh`、`render_config.sh`、`mihomo_entrypoint.sh`、`package.sh`、`doctor.sh`、`state_diff.sh`、`seed_provider.sh`、`bootstrap.sh`、`lib/container.sh`、`lib/targets.sh`、`lib/geodata.sh`、`validate_release.sh`（被 source 的库在上下文中一并检查） |
 
 ## CLI 契约（生成的文件）

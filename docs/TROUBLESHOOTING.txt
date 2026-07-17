@@ -316,19 +316,23 @@ IPv6 carries traffic around the gateway (leaks persist, Netflix fails)
 Netflix (or another streaming service) says "not available in your region"
 --------------------------------------------------------------------------
   Cause: streaming services blacklist most datacenter exit addresses. The
-         All Nodes group picks nodes by LATENCY, and the fastest node is rarely
-         a streaming-unlock node - the tunnel works, but Netflix refuses
-         its exit. This is a node property, not a rule fault: Netflix is
-         routed deterministically into its own STREAMING selector
-         (default: PROXY, i.e. unchanged behavior until you pin a node).
-  Fix:   open the dashboard > Proxies > STREAMING and pin a node your
-         airport marks as streaming/Netflix-capable (often named NF,
-         "streaming", "unlock"...), then reload the title. Only streaming
-         traffic moves; everything else stays on PROXY.
+         "<Country> Auto" group your Country Pick selection rides picks
+         its node by LATENCY within that country, and the fastest node is
+         rarely a streaming-unlock node - the tunnel works, but Netflix
+         refuses its exit. This is a node property, not a rule fault:
+         Netflix (and the audio services - Spotify, Tidal, Deezer,
+         SoundCloud) is routed deterministically into its own
+         Streaming Sites selector (default: Proxy Mode, i.e. unchanged
+         behavior until you pin a node).
+  Fix:   open the dashboard > Proxies > Streaming Sites and pin a node
+         your airport marks as streaming/Netflix-capable (often named NF,
+         "streaming", "unlock"...) - or pin a "<Country> Auto" group for
+         one-click region pinning - then reload the title. Only streaming
+         traffic moves; everything else stays on Proxy Mode.
          Still failing on an unlock node? Some devices (smart TVs,
          Android Private DNS) bypass the gateway's DNS and connect by raw
-         IP - those flows miss the domain rule and ride PROXY instead,
-         mixing exit addresses, which Netflix also rejects. Turn the
+         IP - those flows miss the domain rule and mix exit addresses,
+         which Netflix also rejects. Turn the
          device's private/custom DNS off so the gateway answers it.
          And if the doctor warns "ipv6_bypass: exposed", fix that first:
          the device streams over the ISP's IPv6 and never reaches the
@@ -344,8 +348,10 @@ Unlisted-domain lookups fail while the airport is down
          exactly what leaked your browsing history to it). Chinese sites
          keep working throughout.
   Fix:   restore the airport (renew / replace the subscription). The DNS
-         detour rides the All Nodes group, so pinning PROXY to DIRECT in the
-         dashboard does NOT break lookups - only a dead subscription
+         detour rides the hidden All Nodes anchor group (the full pool,
+         kept alive solely for DNS - the dashboard does not show it), so
+         pinning Proxy Mode to DIRECT - or an empty Country Pick
+         selection - does NOT break lookups; only a dead subscription
          does. Also, the FIRST lookup of a new site adds one tunneled
          round-trip and the DNS cache resets on restart - brief slowness
          right after a restart is normal.
@@ -353,8 +359,11 @@ Unlisted-domain lookups fail while the airport is down
 --------------------------------------------------------------------------
 Provider has no nodes (foreign sites dead, node list empty)
 --------------------------------------------------------------------------
-  Symptom: the dashboard shows only All Nodes/DIRECT/REJECT - no airport nodes -
-           foreign sites time out while domestic sites work, and the mihomo
+  Symptom: the dashboard shows only the group cards - Proxy Mode /
+           Streaming Sites / Country Pick / your "<Country> Auto" groups -
+           with no airport nodes inside them (All Nodes still exists but
+           is hidden from the dashboard); foreign sites time out while
+           domestic sites work, and the mihomo
            log repeats "[Provider] my-airport pull error".
   Cause:   mihomo cannot fetch the subscription from inside the container
            and has no saved node list (config/proxies/my-airport.yaml) to
@@ -366,6 +375,50 @@ Provider has no nodes (foreign sites dead, node list empty)
            fetch fails with a 4xx code, re-copy the subscription URL from
            your airport's panel (token rotated / plan expired); on a
            timeout the panel is unreachable from your network right now.
+
+--------------------------------------------------------------------------
+The doctor reports an empty country group (default-empty / country-empty)
+--------------------------------------------------------------------------
+  Symptom: the doctor shows "the Country Pick selection '...' has NO
+           nodes" (BROKEN, state default-empty) or "country group(s)
+           match no provider node" (DEGRADED, state country-empty);
+           selecting the named group in the dashboard blocks every
+           connection instead of routing it.
+  Cause:   a COUNTRY_GROUPS pattern matches zero airport nodes.
+           default-empty is the bad one: the empty group is the country
+           Country Pick is currently riding, so default-route traffic is
+           blocked. country-empty means some OTHER country group is
+           empty - the default route still works, but selecting that
+           country would block. Either way the pattern no longer fits
+           the airport's node naming (airports rename nodes without
+           notice). Blocking is by design: fail closed, never a silent
+           direct connection.
+  Fix:     compare the pattern against the live node names (dashboard
+           Proxies view), adjust that COUNTRY_GROUPS entry in .env (see
+           CONFIGURE.txt), then redeploy (install.sh > modify an
+           existing deployment). Stopgap while you fix it: pick another
+           country in the dashboard's Country Pick selector. If the
+           doctor instead reports provider-empty - EVERY group empty -
+           that is "Provider has no nodes" above, not a pattern problem.
+
+--------------------------------------------------------------------------
+Dashboard picks reset once after the group-model upgrade
+--------------------------------------------------------------------------
+  Symptom: after upgrading, every dashboard selection is back to its
+           first entry - your streaming pin and mode choice are gone.
+  Cause:   saved selections are keyed by group name. The upgrade renamed
+           the selectors and removed the old filtered default group, so
+           the saved picks no longer match and each renamed/removed
+           group falls back to its first member. This happens ONCE; new
+           picks persist normally.
+  Fix:     re-pin in the dashboard (Proxy Mode, Streaming Sites,
+           Country Pick). Defaults are sane meanwhile: Country Pick
+           rides your FIRST COUNTRY_GROUPS entry - an existing .env
+           keeps its own order, so your default country is YOUR first
+           entry. If you hand-edit .env instead of re-running the
+           installer: delete the retired filter lines the render error
+           names, make sure COUNTRY_GROUPS is set, and leave the DNS_*
+           values alone - they need no change (see CONFIGURE.txt).
 
 --------------------------------------------------------------------------
 Where to look

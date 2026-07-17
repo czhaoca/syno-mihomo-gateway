@@ -1,10 +1,11 @@
 #!/bin/sh
 # validate_release.sh - on-NAS release validation for a staged bundle.
 # Proves, on the real network, what CI can only prove structurally:
-#   A. the staged bundle deploys and doctor is healthy (incl. the STREAMING
-#      group + netflix rule of v1.3.10);
+#   A. the staged bundle deploys and doctor is healthy (incl. the Streaming
+#      Sites group + netflix rule of v1.3.10, renamed in the group-model
+#      streamline);
 #   B. the saved .env renders the v2 split-horizon config - the ONLY DNS
-#      profile since the proxy-groups-v2 purge - then the filter knobs and
+#      profile since the proxy-groups-v2 purge - then the sniffer and
 #      country groups are refreshed from the shipped .env.example defaults
 #      (policy entries + foreign-by-default core, no fallback dual-query);
 #   C. COLD START: with the node cache and provider cache parked and every
@@ -12,7 +13,7 @@
 #      2026-07 chicken-and-egg, disproven on the wire - and long-tail DNS
 #      FAILS CLOSED (never silently answered by a domestic resolver) while
 #      the policy-pinned hosts keep resolving; then an owner LAN spot-check
-#      (dnsleaktest extended + netflix via the STREAMING group);
+#      (dnsleaktest extended + netflix via the Streaming Sites group);
 #   D. the DNS_GEOIP_NO_RESOLVE flip renders, routes, and reverts.
 #
 # Run on the NAS, in a real terminal (sudo needs a TTY):
@@ -36,7 +37,7 @@
 # every .env key (lib sourcing + load_env), an inherited REPO_ROOT breaks the
 # childrens' lib locators, and docker compose lets process env override
 # --env-file - both bit validation run 2.
-# PROXY-group egress probes fire only after a group-wide url-test kick, and
+# Proxy Mode egress probes fire only after a group-wide url-test kick, and
 # the parked caches are RESTORED after the cold-start block, never dropped:
 # cache.db carries the dashboard-selected node, and the template's All Nodes
 # url-test group is lazy - with the selection wiped and zero LAN traffic
@@ -134,13 +135,15 @@ now_is_real() {
 # urltest_groups - controller /group JSON on stdin -> the url-test pool
 # names, one per line. Every "name" key in /group is a group (member nodes
 # appear only as bare strings inside all[]); dropping the fixed selector and
-# builtin names leaves All Nodes + the epic's filtered groups (Priority
-# Nodes + the .env-driven country set) - DYNAMIC discovery, never a
-# hardcoded list.
+# builtin names (current AND retired - a pre-streamline config may still be
+# live during validation) leaves All Nodes + the .env-driven country set -
+# DYNAMIC discovery, never a hardcoded list.
 # Mirrors the doctor's chk_proxy_groups enumeration (scripts/lib/checks.sh).
 urltest_groups() {
   awk -F'"name":"' '{ for (i = 2; i <= NF; i++) { n = $i; sub(/".*/, "", n); print n } }' \
-    | grep -v -e '^PROXY$' -e '^STREAMING$' -e '^GLOBAL$' -e '^DIRECT$' \
+    | grep -v -e '^Proxy Mode$' -e '^Streaming Sites$' -e '^Country Pick$' \
+              -e '^Full Proxy$' -e '^Priority Nodes$' \
+              -e '^PROXY$' -e '^STREAMING$' -e '^GLOBAL$' -e '^DIRECT$' \
               -e '^REJECT$' -e '^REJECT-DROP$' -e '^PASS$' -e '^COMPATIBLE$'
 }
 
@@ -152,11 +155,30 @@ url_encode() {
     | while IFS= read -r _ue_b; do printf '%%%s' "$_ue_b"; done
 }
 
-# filtered_real_count - real_node_count for the epic's FILTERED groups,
+# filtered_real_count - real_node_count for the generated country groups,
 # which render `empty-fallback: REJECT`: an emptied group reports
 # all:["REJECT"], so BOTH placeholder adapters are excluded (issue #35;
 # same rule as the doctor's _pg_real).
 filtered_real_count() { members_of | grep -v '^COMPATIBLE$' | grep -c -v '^REJECT$'; }
+
+# resolve_now_chain START - follow group "now" members through ctl_get until
+# a non-group answers (bounded walk: the streamlined graph chains Proxy Mode
+# -> Country Pick -> "<Country> Auto" -> node); prints the final member. A
+# member whose /proxies/<name> answer carries an all[] list is itself a
+# group. ctl_get is the injectable transport (--self-test stubs it).
+resolve_now_chain() {
+  _rnc=$(ctl_get "/proxies/$(url_encode "$1")" | effective_now)
+  _rnc_hop=0
+  while [ "$_rnc_hop" -lt 4 ] && [ -n "$_rnc" ]; do
+    _rnc_j=$(ctl_get "/proxies/$(url_encode "$_rnc")")
+    case "$_rnc_j" in
+      *'"all":['*) _rnc=$(printf '%s' "$_rnc_j" | effective_now) ;;
+      *) break ;;
+    esac
+    _rnc_hop=$((_rnc_hop+1))
+  done
+  printf '%s' "$_rnc"
+}
 
 # example_dns KEY - read a shipped default from the release .env.example
 # (the committed script itself must not hardcode DNS servers - CLAUDE.md).
@@ -182,7 +204,7 @@ say() { echo; echo "=== $* ==="; }
 
 # unpark PATH - put PATH back from PATH.v138park (file or directory),
 # replacing whatever the cold run rebuilt; no-op without a park. Run 3
-# dropped the park on pass, which reset the PROXY selector to the group
+# dropped the park on pass, which reset the Proxy Mode selector to the group
 # default and lost the owner's dashboard-selected node.
 unpark() {
   [ -e "$1.v138park" ] || return 0
@@ -210,11 +232,16 @@ self_test() {
   TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 
   # 1) the shipped .env.example carries every key this script reads from it
+  # (the retired PRIORITY_* knobs are deliberately absent - group-model
+  # streamline)
   REL="$ROOT"
   for _k in DNS_NAMESERVER DNS_CN_NAMESERVER \
             DNS_FOREIGN_NAMESERVER DNS_GEOIP_NO_RESOLVE SNIFFER_ENABLE \
-            PRIORITY_INCLUDE_FILTER PRIORITY_EXCLUDE_FILTER COUNTRY_GROUPS; do
+            COUNTRY_GROUPS; do
     if [ -n "$(example_dns "$_k")" ]; then st_ok; else st_bad ".env.example lacks $_k"; fi
+  done
+  for _k in PRIORITY_INCLUDE_FILTER PRIORITY_EXCLUDE_FILTER; do
+    if [ -n "$(example_dns "$_k")" ]; then st_bad ".env.example still ships retired knob $_k"; else st_ok; fi
   done
 
   # 2) rule greps must not be fooled by template comment prose (v1 bug):
@@ -278,13 +305,14 @@ EOF
   #     the encoder independently), and placeholder exclusion counting BOTH
   #     adapters - a live emptied filtered group reports all:["REJECT"]
   #     (the epic's empty-fallback), not COMPATIBLE.
-  _gj='{"proxies":[{"name":"All Nodes","type":"URLTest","all":["n1"]},{"name":"Priority Nodes","type":"URLTest","all":["n1"]},{"name":"Japan Auto","type":"URLTest","all":["n1"]},{"name":"PROXY","type":"Selector","all":["All Nodes"]},{"name":"STREAMING","type":"Selector","all":["PROXY"]},{"name":"GLOBAL","type":"Selector","all":["All Nodes","PROXY"]}]}'
+  _gj='{"proxies":[{"name":"Proxy Mode","type":"Selector","all":["Country Pick","DIRECT","REJECT"]},{"name":"Streaming Sites","type":"Selector","all":["Proxy Mode","Japan Auto","DIRECT"]},{"name":"Country Pick","type":"Selector","all":["Japan Auto"]},{"name":"Japan Auto","type":"URLTest","all":["n1"]},{"name":"All Nodes","type":"URLTest","hidden":true,"all":["n1"]},{"name":"GLOBAL","type":"Selector","all":["All Nodes","Proxy Mode"]}]}'
   _names=$(printf '%s' "$_gj" | urltest_groups)
-  if [ "$_names" = 'All Nodes
-Priority Nodes
-Japan Auto' ]; then st_ok; else st_bad "urltest_groups got: $(printf '%s' "$_names" | tr '\n' ' ')"; fi
+  if [ "$_names" = 'Japan Auto
+All Nodes' ]; then st_ok; else st_bad "urltest_groups got: $(printf '%s' "$_names" | tr '\n' ' ')"; fi
   _e=$(url_encode 'All Nodes')
   if [ "$_e" = '%41%6c%6c%20%4e%6f%64%65%73' ]; then st_ok; else st_bad "url_encode(All Nodes) got: $_e"; fi
+  _e=$(url_encode 'Country Pick')
+  if [ "$_e" = '%43%6f%75%6e%74%72%79%20%50%69%63%6b' ]; then st_ok; else st_bad "url_encode(Country Pick) got: $_e"; fi
   _e=$(url_encode 日本)
   if [ "$_e" = '%e6%97%a5%e6%9c%ac' ]; then st_ok; else st_bad "url_encode(日本) got: $_e"; fi
   _n=$(printf '{"all":["REJECT"],"emptyFallback":"REJECT","now":"REJECT"}' | filtered_real_count)
@@ -300,6 +328,29 @@ Japan Auto' ]; then st_ok; else st_bad "urltest_groups got: $(printf '%s' "$_nam
     if now_is_real "$_m"; then st_bad "now_is_real accepted '$_m'"; else st_ok; fi
   done
   if now_is_real "HK09"; then st_ok; else st_bad "now_is_real rejected a real node"; fi
+
+  # 3c) multi-level egress indirection (group-model streamline): the chain
+  #     walk follows group "now" members through the injectable ctl_get
+  #     transport (Proxy Mode -> Country Pick -> Japan Auto -> node) and
+  #     stops at the first non-group answer; a REJECTing chain resolves to
+  #     the placeholder, which now_is_real then refuses.
+  _enc_pm=$(url_encode 'Proxy Mode')
+  _enc_cp=$(url_encode 'Country Pick')
+  _enc_ja=$(url_encode 'Japan Auto')
+  ctl_get() {
+    case "$1" in
+      "/proxies/$_enc_pm") printf '{"all":["Country Pick","DIRECT","REJECT"],"now":"Country Pick"}' ;;
+      "/proxies/$_enc_cp") printf '{"all":["Japan Auto"],"now":"Japan Auto"}' ;;
+      "/proxies/$_enc_ja") printf '{"all":["JP01","JP02"],"now":"JP01"}' ;;
+      *) printf '{}' ;;
+    esac
+  }
+  _ch=$(resolve_now_chain 'Proxy Mode')
+  if [ "$_ch" = "JP01" ]; then st_ok; else st_bad "resolve_now_chain got '$_ch' (want JP01)"; fi
+  ctl_get() { printf '{"all":["REJECT"],"emptyFallback":"REJECT","now":"REJECT"}'; }
+  _ch=$(resolve_now_chain 'Proxy Mode')
+  if now_is_real "$_ch"; then st_bad "chain walk accepted placeholder '$_ch'"; else st_ok; fi
+  unset -f ctl_get
 
   # 4) .env values are parsed via the repo dotenv parser, which strips quotes
   #    (v1 read them raw and built literal-quote URLs).
@@ -431,13 +482,15 @@ ctl_get() {
 
 # delay_probe GROUP URL - ask mihomo ITSELF to fetch URL through GROUP via
 # the controller delay endpoint (authoritative: the request traverses the
-# real egress path). Retried: nodes may still be health-checking right after
-# a recreate. (Run 2's http_proxy-wget probes were unreliable - busybox wget
-# ignored the proxy, so baidu "passed" direct and gstatic failed direct.)
+# real egress path). The group name is %XX-encoded here, so callers pass the
+# human name ('Proxy Mode', DIRECT). Retried: nodes may still be
+# health-checking right after a recreate. (Run 2's http_proxy-wget probes
+# were unreliable - busybox wget ignored the proxy, so baidu "passed" direct
+# and gstatic failed direct.)
 delay_probe() {
   _dp_i=0
   while [ "$_dp_i" -lt 3 ]; do
-    case "$(ctl_get "/proxies/$1/delay?timeout=5000&url=$2")" in
+    case "$(ctl_get "/proxies/$(url_encode "$1")/delay?timeout=5000&url=$2")" in
       *'"delay"'*) return 0 ;;
     esac
     _dp_i=$((_dp_i+1)); sleep 10
@@ -445,37 +498,43 @@ delay_probe() {
   return 1
 }
 
-# kick_urltest - run a group-wide delay test over the template's All Nodes
-# url-test group (%XX-encoded: the spaced name rides the URL as All%20Nodes)
-# so its node pick rests on fresh data. All Nodes is lazy: with the
-# selection cache wiped and zero LAN traffic since the recreate, its pick
-# can be an untested dead node no real client would ride - run 3 probed
-# exactly that for nine minutes while 9 nodes sat alive. A renamed group
-# makes this a harmless no-op (the PROXY probe still decides).
+# kick_urltest - run a group-wide delay test over the country groups
+# (discovered live) plus the hidden All Nodes anchor so the node picks rest
+# on fresh data. The url-test groups are lazy: with the selection cache
+# wiped and zero LAN traffic since the recreate, a pick can be an untested
+# dead node no real client would ride - run 3 probed exactly that for nine
+# minutes while 9 nodes sat alive. A missing group makes each kick a
+# harmless no-op (the Proxy Mode probe still decides).
 kick_urltest() {
   ctl_get "/group/All%20Nodes/delay?timeout=5000&url=http://www.gstatic.com/generate_204" >/dev/null 2>&1 || true
+  _ku_list=$(ctl_get /group | urltest_groups)
+  while IFS= read -r _ku_g; do
+    [ -n "$_ku_g" ] || continue
+    [ "$_ku_g" = "All Nodes" ] && continue
+    ctl_get "/group/$(url_encode "$_ku_g")/delay?timeout=5000&url=http://www.gstatic.com/generate_204" >/dev/null 2>&1 || true
+  done <<KUEOF
+$_ku_list
+KUEOF
 }
 
-# diag_egress - after a failed PROXY probe, log who is selected and which
-# members actually pass, so a failure is diagnosable from the transcript.
+# diag_egress - after a failed Proxy Mode probe, log who is selected along
+# the chain and which members actually pass, so a failure is diagnosable
+# from the transcript.
 diag_egress() {
-  echo "  diag PROXY group: $(ctl_get /proxies/PROXY)"
+  echo "  diag Proxy Mode group: $(ctl_get /proxies/Proxy%20Mode)"
+  echo "  diag Country Pick group: $(ctl_get /proxies/Country%20Pick)"
   echo "  diag All Nodes group: $(ctl_get /proxies/All%20Nodes)"
-  echo "  diag per-member delay: $(ctl_get "/group/PROXY/delay?timeout=8000&url=http://www.gstatic.com/generate_204")"
+  echo "  diag per-member delay: $(ctl_get "/group/Proxy%20Mode/delay?timeout=8000&url=http://www.gstatic.com/generate_204")"
 }
 
-# egress_via_real_node - the PROXY group's EFFECTIVE member (one level of
-# group indirection resolved: All Nodes or Priority Nodes) is an actual
-# provider node. A delay-probe PASS alone is not egress proof: an empty
-# group degrades to COMPATIBLE (= DIRECT), and gstatic's generate_204
-# answers direct from CN (run 3.5's false PASS).
+# egress_via_real_node - the Proxy Mode group's EFFECTIVE member, resolved
+# through the group chain (Proxy Mode -> Country Pick -> "<Country> Auto" ->
+# node; resolve_now_chain's bounded walk), is an actual provider node. A
+# delay-probe PASS alone is not egress proof: an empty group degrades to
+# COMPATIBLE (= DIRECT), and gstatic's generate_204 answers direct from CN
+# (run 3.5's false PASS).
 egress_via_real_node() {
-  _evn=$(ctl_get /proxies/PROXY | effective_now)
-  case "$_evn" in
-    "All Nodes") _evn=$(ctl_get /proxies/All%20Nodes | effective_now) ;;
-    "Priority Nodes") _evn=$(ctl_get /proxies/Priority%20Nodes | effective_now) ;;
-  esac
-  now_is_real "$_evn"
+  now_is_real "$(resolve_now_chain 'Proxy Mode')"
 }
 
 restore_env() {  # put the pre-validation .env back
@@ -498,28 +557,29 @@ else
   bad "controller probe failed - every later count would be meaningless; aborting"
   exit 3
 fi
-# v1.3.10 routing surface: the STREAMING selector and the deterministic
-# domain rules are static template content - present in EVERY DNS profile.
-case "$(ctl_get /proxies/STREAMING)" in
-  *'"STREAMING"'*) ok "STREAMING group present (dashboard-pinnable)" ;;
-  *) bad "STREAMING group missing from the controller" ;;
+# v1.3.10 routing surface (renamed in the group-model streamline): the
+# Streaming Sites selector and the deterministic domain rules are static
+# template content - present in EVERY DNS profile.
+case "$(ctl_get /proxies/Streaming%20Sites)" in
+  *'"Streaming Sites"'*) ok "Streaming Sites group present (dashboard-pinnable)" ;;
+  *) bad "Streaming Sites group missing from the controller" ;;
 esac
-if grep -q "^  - 'GEOSITE,NETFLIX,STREAMING'" "$CFG"; then
+if grep -q "^  - 'GEOSITE,NETFLIX,Streaming Sites'" "$CFG"; then
   ok "netflix rule rendered at the head of the chain"
 else
-  bad "GEOSITE,NETFLIX,STREAMING rule missing from the render"
+  bad "GEOSITE,NETFLIX,Streaming Sites rule missing from the render"
 fi
 for _svc in SPOTIFY TIDAL DEEZER SOUNDCLOUD; do
-  if grep -q "^  - 'GEOSITE,$_svc,STREAMING'" "$CFG"; then
-    ok "$_svc rule rendered (audio streaming rides STREAMING)"
+  if grep -q "^  - 'GEOSITE,$_svc,Streaming Sites'" "$CFG"; then
+    ok "$_svc rule rendered (audio streaming rides Streaming Sites)"
   else
-    bad "GEOSITE,$_svc,STREAMING rule missing from the render"
+    bad "GEOSITE,$_svc,Streaming Sites rule missing from the render"
   fi
 done
-if grep -q "^  - 'GEOSITE,GEOLOCATION-!CN,PROXY'" "$CFG"; then
-  ok "listed-foreign PROXY rule rendered (skips GEOIP lookups)"
+if grep -q "^  - 'GEOSITE,GEOLOCATION-!CN,Proxy Mode'" "$CFG"; then
+  ok "listed-foreign Proxy Mode rule rendered (skips GEOIP lookups)"
 else
-  bad "GEOSITE,GEOLOCATION-!CN,PROXY rule missing from the render"
+  bad "GEOSITE,GEOLOCATION-!CN,Proxy Mode rule missing from the render"
 fi
 if grep -q "^  - 'GEOIP,LAN,DIRECT,no-resolve'" "$CFG"; then
   ok "LAN-direct rule rendered (private destinations never ride the tunnel)"
@@ -552,10 +612,10 @@ case "$PH" in
   *) echo "note: no panel pin expected (IP-literal subscription host $PH)" ;;
 esac
 
-say "A4: enable split-horizon + sniffer + exclude/country groups from the shipped .env.example defaults"
+say "A4: enable split-horizon + sniffer + country groups from the shipped .env.example defaults"
 cp -p "$ENV_FILE" "$ORIG"
 for _k in DNS_NAMESERVER DNS_CN_NAMESERVER DNS_FOREIGN_NAMESERVER \
-          SNIFFER_ENABLE PRIORITY_INCLUDE_FILTER PRIORITY_EXCLUDE_FILTER COUNTRY_GROUPS; do
+          SNIFFER_ENABLE COUNTRY_GROUPS; do
   _v="$(example_dns "$_k")"
   [ -n "$_v" ] || { bad "no $_k in $REL/.env.example"; exit 3; }
   env_set "$_k" "$_v"
@@ -576,16 +636,16 @@ else
   bad "sniffer block missing from the render (SNIFFER_ENABLE sync failed?)"
 fi
 
-say "A4.5: filtered proxy groups carry real nodes (release gate - fails on empty)"
-# The A4 env just enabled the SHIPPED exclude + country-group defaults, so
-# the groups now rendered are exactly what a new install gets. A filtered
-# group matching ZERO provider nodes means the release's regexes do not fit
-# the validation airport's node names: selecting it REJECTs (fail closed by
-# design), and shipping that as a default is the false-PASS class this
-# script exists to kill - so staging FAILS here (issue #35 DEC-A; the
-# doctor's runtime posture stays warn for country groups). Discovery is
-# live from the controller; the retry absorbs the post-recreate window
-# while the provider cache loads.
+say "A4.5: country groups carry real nodes (release gate - fails on empty)"
+# The A4 env just enabled the SHIPPED country-group defaults, so the groups
+# now rendered are exactly what a new install gets - and Country Pick's
+# members ARE these groups. A generated group matching ZERO provider nodes
+# means the release's regexes do not fit the validation airport's node
+# names: selecting it REJECTs (fail closed by design), and shipping that as
+# a default is the false-PASS class this script exists to kill - so staging
+# FAILS here (issue #35 DEC-A; the doctor's runtime posture stays warn for
+# non-selected country groups). Discovery is live from the controller; the
+# retry absorbs the post-recreate window while the provider cache loads.
 _FG_LIST=$(ctl_get /group | urltest_groups)
 if [ -z "$_FG_LIST" ]; then
   bad "no url-test groups discoverable from the controller (/group)"
@@ -602,17 +662,17 @@ else
       sleep 5
     done
     if [ "$_fn" -gt 0 ]; then
-      ok "filtered group '$_fg': $_fn real node(s)"
+      ok "country group '$_fg': $_fn real node(s)"
     else
-      bad "filtered group '$_fg' matches ZERO provider nodes - the shipped regex does not fit this airport's naming (selection REJECTs; fix PRIORITY_INCLUDE_FILTER/PRIORITY_EXCLUDE_FILTER/COUNTRY_GROUPS in .env.example before release)"
+      bad "country group '$_fg' matches ZERO provider nodes - the shipped regex does not fit this airport's naming (selection REJECTs; fix COUNTRY_GROUPS in .env.example before release)"
     fi
   done <<FGEOF
 $_FG_LIST
 FGEOF
   if [ "$_FG_N" -gt 0 ]; then
-    ok "filtered-group gate covered $_FG_N group(s), discovered live (no hardcoded list)"
+    ok "country-group gate covered $_FG_N group(s), discovered live (no hardcoded list)"
   else
-    echo "note: no filtered groups rendered (exclude/country knobs empty in this env)"
+    bad "no country groups rendered - COUNTRY_GROUPS is REQUIRED and the A4 env just set the shipped default; the render or recreate must have failed"
   fi
 fi
 
@@ -638,7 +698,7 @@ for _i in 1 2 3 4 5 6; do
   [ "$N" -gt 0 ] && break
 done
 kick_urltest
-if delay_probe PROXY "http://www.gstatic.com/generate_204" && egress_via_real_node; then
+if delay_probe 'Proxy Mode' "http://www.gstatic.com/generate_204" && egress_via_real_node; then
   EGRESS=1
 else
   EGRESS=0
@@ -688,7 +748,7 @@ echo ">>>    listed must be your tunnel exit / foreign DoH operators ONLY -"
 echo ">>>    AliDNS (Alibaba) or DNSPod (Tencent) appearing means the"
 echo ">>>    long-tail leak is back."
 echo ">>> 2) Netflix: open any title. If it says 'not available in your"
-echo ">>>    region', open MetaCubeXD -> Proxies -> STREAMING and pin an"
+echo ">>>    region', open MetaCubeXD -> Proxies -> Streaming Sites and pin an"
 echo ">>>    unlock-capable node (All Nodes picks by latency, not by unlock),"
 echo ">>>    then reload the title."
 printf ">>> Press Enter when both are checked : "
@@ -707,10 +767,10 @@ if [ "$SKIP_KNOB" = 0 ]; then
     bad "CN egress via DIRECT failed (baidu delay probe)"
   fi
   kick_urltest
-  if delay_probe PROXY "http://www.gstatic.com/generate_204" && egress_via_real_node; then
-    ok "foreign egress via PROXY (mihomo-fetched gstatic 204 through a real node)"
+  if delay_probe 'Proxy Mode' "http://www.gstatic.com/generate_204" && egress_via_real_node; then
+    ok "foreign egress via Proxy Mode (mihomo-fetched gstatic 204 through a real node)"
   else
-    bad "foreign egress via PROXY failed (probe failed, or effective member is a placeholder/builtin)"
+    bad "foreign egress via Proxy Mode failed (probe failed, or effective member is a placeholder/builtin)"
     diag_egress
   fi
   echo
@@ -721,7 +781,7 @@ if [ "$SKIP_KNOB" = 0 ]; then
   echo ">>>     forum site (.com of a local shop) - it should STILL LOAD, maybe"
   echo ">>>     slower. The dashboard (Connections view) is the referee:"
   echo ">>>       GeoSite(CN) -> DIRECT       = site is on the China list (pick smaller)"
-  echo ">>>       Match -> PROXY[<node>]      = unlisted, riding the proxy (expected)"
+  echo ">>>       Match -> Proxy Mode[...]    = unlisted, riding the proxy (expected)"
   printf ">>> Press Enter when checked (the knob auto-reverts) : "
   read -r _ans </dev/tty || true
   env_set DNS_GEOIP_NO_RESOLVE false

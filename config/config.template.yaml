@@ -105,10 +105,12 @@ dns:
     # list, dialed DIRECT; the listed foreign categories resolve via overseas
     # servers TUNNELED through a proxy group - a '#All Nodes' suffix on a
     # server is mihomo's route-via-group syntax, and All Nodes is the LITERAL
-    # url-test group defined under proxy-groups below (rename both together;
-    # CI enforces the reference). Detouring via All Nodes instead of the PROXY
-    # selector keeps resolution alive even when an operator pins PROXY to
-    # DIRECT in the dashboard. These two entries and the foreign-by-default
+    # hidden url-test group defined LAST under proxy-groups below, kept solely
+    # as this DNS anchor (rename both together; the renderer AND CI validate
+    # every '#group' fragment against the rendered inventory). Detouring via
+    # All Nodes instead of the Proxy Mode selector keeps resolution alive even
+    # when an operator pins Proxy Mode to DIRECT or the picked country group
+    # empties to REJECT. These two entries and the foreign-by-default
     # core below render unconditionally - split-horizon v2 is the only DNS
     # profile, and both lists are REQUIRED in .env.
     'geosite:cn': [ {{DNS_CN_NAMESERVER}} ]
@@ -135,7 +137,7 @@ dns:
 # survived. parse-pure-ip sniffs exactly those flows; override-destination
 # replaces the client-resolved (possibly GFW-poisoned) address so the node
 # re-dials by hostname remotely, which both restores domain routing (incl.
-# the STREAMING group) and neutralizes poisoned client-side answers.
+# the Streaming Sites group) and neutralizes poisoned client-side answers.
 # skip-domain carries the community-standard exclusions that break under
 # SNI override (Xiaomi IoT keep-alive, Apple push).
 sniffer:
@@ -191,78 +193,77 @@ proxy-providers:
 # Rules can only target a proxy or a proxy-group (NEVER a proxy-provider), which is
 # why the catch-all `MATCH,my-airport` crash-looped: `my-airport` is a proxy-provider,
 # not a routable target. These groups consume that provider via `use:`; the MATCH rule
-# below targets the PROXY group instead.
+# below targets the Proxy Mode group instead.
+#
+# Naming legend (the kind-suffix system - documented once, here and in
+# .env.example): "<X> Auto" = an auto-pick url-test group, "<X> Mode" = a
+# mode selector, "<X> Sites" = a site-rule group, "<X> Pick" = a manual
+# choice. Dashboard order = definition order (selectors first - the cards an
+# operator actually touches; hidden machinery last).
 proxy-groups:
-  # All Nodes: lowest-latency node from the FULL provider pool, re-tested on
-  # an interval. tolerance (ms) avoids flapping between near-equal nodes.
-  - name: All Nodes
-    type: url-test
-    use:
-      - my-airport
-    url: "http://www.gstatic.com/generate_204"
-    interval: 300
-    tolerance: 50
-
-# {{PRIORITY_BEGIN}}
-  # Priority Nodes: the region-scoped routing default. PRIORITY_INCLUDE_FILTER
-  # (rendered as filter:, applied FIRST - the shipped default scopes to Japan
-  # so latency switching stops hopping the egress country) keeps only matching
-  # provider nodes; PRIORITY_EXCLUDE_FILTER then subtracts (regexp2, unanchored
-  # substring; the shipped default excludes Hong Kong - many sites block HK
-  # egress while the airport pool is HK-heavy). Listed FIRST in PROXY below;
-  # picking All Nodes in the dashboard restores the full pool with one click.
-  # No url:/interval: - the group inherits the provider health check (zero
-  # extra probe traffic), and the DNS '#All Nodes' detour stays on All Nodes,
-  # so LAN-wide resolution never depends on the filtered pool. empty-fallback
-  # REJECT fails CLOSED when the filter matches every node: traffic is
-  # blocked, never silently handed to the Direct-typed COMPATIBLE placeholder
-  # (an unproxied-uplink leak).
-  - name: Priority Nodes
-    type: url-test
-    use:
-      - my-airport
-    filter: "{{PRIORITY_INCLUDE_FILTER}}"
-    exclude-filter: "{{PRIORITY_EXCLUDE_FILTER}}"
-    empty-fallback: REJECT
-
-# {{PRIORITY_END}}
-# {{COUNTRY_GROUPS}}
-  # PROXY: dashboard-facing selector and the rule target. Defaults to its
-  # first member (Priority Nodes with the shipped exclude knob, All Nodes
-  # otherwise); an operator can pin a specific provider node (surfaced via
-  # use:), force DIRECT (bypass), or REJECT (block) from MetaCubeXD.
-  - name: PROXY
+  # Proxy Mode: the dashboard-facing mode selector and the rule target
+  # (GEOSITE/MATCH below). Defaults to Country Pick - a stable exit COUNTRY
+  # instead of the old full-pool latency race that hopped exit countries and
+  # tripped site bot-protection. An operator can pin one exact provider node
+  # (surfaced via use: - the only complete fix when a site objects to
+  # same-country IP hops too), force DIRECT (bypass), or REJECT (block)
+  # from MetaCubeXD.
+  - name: Proxy Mode
     type: select
     proxies:
-# {{PRIORITYMEMBER_BEGIN}}
-      - Priority Nodes
-# {{PRIORITYMEMBER_END}}
-      - All Nodes
-# {{COUNTRY_MEMBERS_PROXY}}
+      - Country Pick
       - DIRECT
       - REJECT
     use:
       - my-airport
 
-  # STREAMING: per-service selector for unlock-sensitive sites (the GEOSITE
-  # rules below send netflix + the audio services here). First member PROXY =
-  # day-one behavior is identical to a single-group config; pin a
-  # streaming-unlock node - or a country group for one-click Netflix-region
-  # pinning - from MetaCubeXD to move ONLY streaming traffic. All Nodes picks
-  # by latency, which is rarely an unlock node (the "Netflix says not
-  # available" class); Priority Nodes follows the stable-region default.
-  - name: STREAMING
+  # Streaming Sites: per-service selector for unlock-sensitive SITES (the
+  # GEOSITE rules below send netflix + the audio services here). First member
+  # Proxy Mode = day-one behavior is identical to a single-group config; pin
+  # a streaming-unlock node - or a country auto group for one-click
+  # Netflix-region pinning - from MetaCubeXD to move ONLY streaming traffic.
+  - name: Streaming Sites
     type: select
     proxies:
-      - PROXY
-# {{PRIORITYSTREAM_BEGIN}}
-      - Priority Nodes
-# {{PRIORITYSTREAM_END}}
-      - All Nodes
+      - Proxy Mode
 # {{COUNTRY_MEMBERS_STREAMING}}
       - DIRECT
     use:
       - my-airport
+
+  # Country Pick: choose the exit COUNTRY. Its members ARE the generated
+  # "<Country> Auto" groups from COUNTRY_GROUPS (REQUIRED in .env - the
+  # render refuses without it): the selected country's url-test holds ONE
+  # node at a time, so general traffic keeps a single exit IP until that
+  # group re-picks within the same country. Defaults to the FIRST
+  # COUNTRY_GROUPS entry (.env.example ships Japan Auto first). No DIRECT/
+  # REJECT here - bypass and block are Proxy Mode decisions; an empty picked
+  # group fails CLOSED (REJECT) rather than leaking.
+  - name: Country Pick
+    type: select
+    proxies:
+# {{COUNTRY_MEMBERS_PICK}}
+
+# Generated "<Country> Auto" url-test groups: one per COUNTRY_GROUPS entry
+# (fastest provider node matching the entry's regex; empty-fallback REJECT
+# fails closed; tolerance avoids flapping between near-equal nodes; no own
+# url:/interval: - the provider health check supplies the delay data).
+# {{COUNTRY_GROUPS}}
+  # All Nodes: full-pool url-test kept SOLELY as the DNS detour anchor - the
+  # '#All Nodes' fragments in DNS_FOREIGN_NAMESERVER (every deployed .env)
+  # ride it, so LAN-wide resolution never depends on a dashboard pick or a
+  # filtered pool. hidden: true is a display flag only (MetaCubeXD filters
+  # hidden groups); the group stays alive and routable. Rename or remove
+  # ONLY together with every '#All Nodes' fragment - the renderer and CI
+  # both validate the reference.
+  - name: All Nodes
+    type: url-test
+    hidden: true
+    use:
+      - my-airport
+    url: "http://www.gstatic.com/generate_204"
+    interval: 300
+    tolerance: 50
 
 # Rules - deterministic domain routing first, IP fallthrough last.
 rules:
@@ -280,16 +281,16 @@ rules:
   # catalogs, same pinning needs. (each service is a subset of
   # geolocation-!cn - these rules must come first; apple-music is
   # deliberately absent: CN storefront risk, and youtube-music rides
-  # geosite:youtube -> PROXY.)
-  - 'GEOSITE,NETFLIX,STREAMING'
-  - 'GEOSITE,SPOTIFY,STREAMING'
-  - 'GEOSITE,TIDAL,STREAMING'
-  - 'GEOSITE,DEEZER,STREAMING'
-  - 'GEOSITE,SOUNDCLOUD,STREAMING'
+  # geosite:youtube -> Proxy Mode.)
+  - 'GEOSITE,NETFLIX,Streaming Sites'
+  - 'GEOSITE,SPOTIFY,Streaming Sites'
+  - 'GEOSITE,TIDAL,Streaming Sites'
+  - 'GEOSITE,DEEZER,Streaming Sites'
+  - 'GEOSITE,SOUNDCLOUD,Streaming Sites'
   - 'GEOSITE,CN,DIRECT'
   # Listed-foreign domains ride the proxy WITHOUT any local DNS resolution:
   # the GEOIP rule below never sees them - a privacy and a latency win.
-  - 'GEOSITE,GEOLOCATION-!CN,PROXY'
+  - 'GEOSITE,GEOLOCATION-!CN,Proxy Mode'
   # GEOIP needs a destination IP, so by default mihomo RESOLVES every remaining
   # domain via the DNS chain above just to evaluate this rule. Under
   # split-horizon v2 that lookup rides the tunneled foreign list (private);
@@ -300,4 +301,4 @@ rules:
   # Trade-off: CN domains MISSED by geosite:cn above lose their direct
   # short-circuit and ride the proxy via MATCH instead.
   - 'GEOIP,CN,DIRECT{{GEOIP_NO_RESOLVE}}'
-  - 'MATCH,PROXY'
+  - 'MATCH,Proxy Mode'

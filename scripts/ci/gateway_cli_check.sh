@@ -69,23 +69,27 @@ case "$1" in
       *sys/class/net*) exit "${FAKE_TUN_IF_RC:-0}" ;;
       *'/version'*) exit "${FAKE_CTL_RC:-0}" ;;
       # proxy_groups controller endpoints (chk_proxy_groups): /group lists the
-      # groups; per-group /proxies/<name> URLs arrive %XX-encoded byte by byte
+      # groups; /proxies/Country%20Pick supplies the "now" selection; per-group
+      # /proxies/<name> URLs arrive %XX-encoded byte by byte
       # (All Nodes=%41%6c%6c%20%4e%6f%64%65%73,
-      # Priority Nodes=%50%72%69%6f%72%69%74%79%20%4e%6f%64%65%73, JPX=%4a%50%58 -
-      # spaces ride as %20; the encodings are no longer prefixes of each
-      # other, but the specific-before-generic case order is kept).
+      # Country Pick=%43%6f%75%6e%74%72%79%20%50%69%63%6b, JPX=%4a%50%58,
+      # USX=%55%53%58 - spaces ride as %20; the specific-before-generic case
+      # order is kept). default-empty = the SELECTED country group (JPX, the
+      # Country Pick "now") is empty; country-empty = the non-selected USX is.
       *'/group'*)
         case "${FAKE_PG_MODE:-healthy}" in
-          preepic) printf '{"proxies":[{"name":"All Nodes","type":"URLTest","all":["n1","n2"]},{"name":"PROXY","type":"Selector","all":["All Nodes","DIRECT","REJECT"]},{"name":"STREAMING","type":"Selector","all":["PROXY","All Nodes","DIRECT"]},{"name":"GLOBAL","type":"Selector","all":["All Nodes","PROXY"]}]}' ;;
-          *) printf '{"proxies":[{"name":"All Nodes","type":"URLTest","all":["n1","n2"]},{"name":"Priority Nodes","type":"URLTest","all":["n1"]},{"name":"JPX","type":"URLTest","all":["n1"]},{"name":"PROXY","type":"Selector","all":["Priority Nodes","All Nodes","JPX","DIRECT","REJECT"]},{"name":"STREAMING","type":"Selector","all":["PROXY","All Nodes","JPX","DIRECT"]},{"name":"GLOBAL","type":"Selector","all":["All Nodes","PROXY"]}]}' ;;
+          prestream) printf '{"proxies":[{"name":"All Nodes","type":"URLTest","all":["n1","n2"]},{"name":"PROXY","type":"Selector","all":["All Nodes","DIRECT","REJECT"]},{"name":"STREAMING","type":"Selector","all":["PROXY","All Nodes","DIRECT"]},{"name":"GLOBAL","type":"Selector","all":["All Nodes","PROXY"]}]}' ;;
+          *) printf '{"proxies":[{"name":"Proxy Mode","type":"Selector","all":["Country Pick","DIRECT","REJECT"]},{"name":"Streaming Sites","type":"Selector","all":["Proxy Mode","JPX","USX","DIRECT"]},{"name":"Country Pick","type":"Selector","all":["JPX","USX"]},{"name":"JPX","type":"URLTest","all":["n1"]},{"name":"USX","type":"URLTest","all":["n1"]},{"name":"All Nodes","type":"URLTest","hidden":true,"all":["n1","n2"]},{"name":"GLOBAL","type":"Selector","all":["All Nodes","Proxy Mode"]}]}' ;;
         esac ;;
-      *'/proxies/%50%72%69%6f%72%69%74%79%20%4e%6f%64%65%73'*)
+      *'/proxies/%43%6f%75%6e%74%72%79%20%50%69%63%6b'*)
+        printf '{"all":["JPX","USX"],"now":"JPX"}' ;;
+      *'/proxies/%4a%50%58'*)
         if [ "${FAKE_PG_MODE:-healthy}" = default-empty ]; then
           printf '{"all":["REJECT"],"now":"REJECT"}'
         else
           printf '{"all":["n1"],"now":"n1"}'
         fi ;;
-      *'/proxies/%4a%50%58'*)
+      *'/proxies/%55%53%58'*)
         case "${FAKE_PG_MODE:-healthy}" in
           country-empty|default-empty) printf '{"all":["REJECT"],"now":"REJECT"}' ;;
           *) printf '{"all":["n1"],"now":"n1"}' ;;
@@ -215,6 +219,7 @@ DNS_DEFAULT_NAMESERVER=1.1.1.1
 DNS_NAMESERVER=1.1.1.1
 DNS_CN_NAMESERVER=1.1.1.1
 DNS_FOREIGN_NAMESERVER=1.1.1.1
+COUNTRY_GROUPS=JPX=jp
 EXPECTED_ARCH=$HOST_ARCH
 TUN_ENABLE=false
 TUN_AUTO_REDIRECT=false
@@ -715,19 +720,21 @@ if [ "$_fp_run" = 1 ]; then
     && grep -q 'COUNTRY_GROUPS' "$TMP/derr" \
     && ok || fail "proxy_groups-country-empty parity (json=$_jrc human=$_hrc)"
 
-  # proxy_groups default-empty (Priority Nodes matches no node): BROKEN both, rc 3
+  # proxy_groups default-empty (the Country Pick selection matches no node):
+  # BROKEN both, rc 3, error names the selected group
   FAKE_PG_MODE=default-empty; export FAKE_PG_MODE
   dpar
   jval proxy_groups default-empty && [ "$_jrc" = 3 ] && [ "$_hrc" = 3 ] \
-    && grep -q 'ERROR.*Priority Nodes' "$TMP/derr" \
+    && grep -q 'ERROR.*Country Pick' "$TMP/derr" \
+    && grep -q 'ERROR.*JPX' "$TMP/derr" \
     && ok || fail "proxy_groups-default-empty parity (json=$_jrc human=$_hrc)"
 
-  # proxy_groups pre-epic config (no filtered groups rendered): ok both, rc 0
-  FAKE_PG_MODE=preepic; export FAKE_PG_MODE
+  # proxy_groups pre-streamline config (no country groups live): ok both, rc 0
+  FAKE_PG_MODE=prestream; export FAKE_PG_MODE
   dpar
   jval proxy_groups ok && [ "$_jrc" = 0 ] && [ "$_hrc" = 0 ] \
-    && grep -q 'no filtered proxy groups' "$TMP/dout" \
-    && ok || fail "proxy_groups-preepic parity (json=$_jrc human=$_hrc)"
+    && grep -q 'pre-streamline' "$TMP/dout" \
+    && ok || fail "proxy_groups-prestream parity (json=$_jrc human=$_hrc)"
   unset FAKE_PG_MODE
 
   # config_rejected (the entrypoint gate's marker exists, #38): the last
@@ -803,6 +810,7 @@ DNS_DEFAULT_NAMESERVER=1.1.1.1
 DNS_NAMESERVER=1.1.1.1
 DNS_CN_NAMESERVER=1.1.1.1
 DNS_FOREIGN_NAMESERVER=1.1.1.1
+COUNTRY_GROUPS=JPX=jp
 EXPECTED_ARCH=$HOST_ARCH
 TUN_ENABLE=false
 TUN_AUTO_REDIRECT=false

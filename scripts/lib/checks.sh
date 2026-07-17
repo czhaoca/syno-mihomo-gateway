@@ -267,18 +267,22 @@ chk_ipv6_bypass() {
   fi
 }
 
-# proxy_groups - zero-node guard for the FILTERED url-test groups (#34).
-# A filter matching zero provider nodes is only observable at runtime: the
-# epic renders every filtered group (Priority Nodes + the COUNTRY_GROUPS set) with
-# empty-fallback REJECT, so an emptied group blackholes its traffic instead
-# of silently leaking DIRECT - either way the operator finds out HERE.
-# Group discovery is DYNAMIC from the controller (/group), never a hardcoded
-# list; counting excludes BOTH placeholder adapters: COMPATIBLE (mihomo's
-# default for an empty group - Direct-typed, the leak class) and REJECT (our
-# empty-fallback). DEC-A cold-start grace: when EVERY url-test group is
-# empty the provider itself has no nodes (cold start or dead subscription) -
-# report that single condition with the seeding runbook instead of blaming
-# the filters. A config with no filtered groups at all (pre-epic .env) is ok.
+# proxy_groups - zero-node guard for the generated "<Country> Auto" url-test
+# groups (#34, reworked for the group-model streamline #45). A regex matching
+# zero provider nodes is only observable at runtime: every generated group
+# renders empty-fallback REJECT, so an emptied group blackholes its traffic
+# instead of silently leaking DIRECT - either way the operator finds out
+# HERE. Group discovery is DYNAMIC from the controller (/group), never a
+# hardcoded list; counting excludes BOTH placeholder adapters: COMPATIBLE
+# (mihomo's default for an empty group - Direct-typed, the leak class) and
+# REJECT (our empty-fallback). DEC-A cold-start grace: when EVERY url-test
+# group is empty the provider itself has no nodes (cold start or dead
+# subscription) - report that single condition with the seeding runbook
+# instead of blaming the filters. default-empty = the country group the
+# Country Pick selector is CURRENTLY riding has zero nodes (the routing
+# default is dead - bad); any OTHER empty country group is a warn. A live
+# config with no country groups (a pre-streamline render still running) is
+# reported ok with a note.
 #
 # _pg_ctl PATH - controller GET from INSIDE the container (a macvlan child
 # is unreachable from its own host); bearer token over stdin, never argv.
@@ -311,32 +315,39 @@ chk_proxy_groups() {
     CHECK_VALUE=unknown CHECK_SEV=silent
     return 0
   fi
+  # The routing default: the country group Country Pick is currently riding
+  # ("now"). Empty when no Country Pick group exists (a pre-streamline
+  # config still live) - the default-empty state is then unjudgeable.
+  _pg_now="$(_pg_ctl "/proxies/$(_pg_enc 'Country Pick')" \
+    | sed -n 's/.*"now":"\([^"]*\)".*/\1/p')"
   # Every "name" key in /group is a group name (member nodes appear only as
   # bare strings inside all[]). Group names may carry interior spaces (the
-  # line-wise read below is space-safe) and cannot shadow the builtins
-  # skipped below.
+  # line-wise read below is space-safe) and cannot shadow the reserved
+  # names skipped below (the retired PROXY/STREAMING stay skipped so a
+  # pre-streamline config never miscounts its selectors as country groups).
   _pg_names="$(printf '%s' "$_pg_raw" \
     | awk -F'"name":"' '{ for (i = 2; i <= NF; i++) { n = $i; sub(/".*/, "", n); print n } }')"
-  _pg_have_autox=0; _pg_autox_empty=0; _pg_country_n=0
+  _pg_country_n=0; _pg_default_empty=0
   _pg_empty=''; _pg_any_real=0
   while IFS= read -r _pg_n; do
     [ -n "$_pg_n" ] || continue
     case "$_pg_n" in
-      PROXY|STREAMING|GLOBAL|DIRECT|REJECT|REJECT-DROP|PASS|COMPATIBLE) continue ;;
+      'Proxy Mode'|'Streaming Sites'|'Country Pick'|'Full Proxy'|'Priority Nodes'|PROXY|STREAMING|GLOBAL|DIRECT|REJECT|REJECT-DROP|PASS|COMPATIBLE) continue ;;
     esac
     _pg_c="$(_pg_real "$_pg_n")"; _pg_c=${_pg_c:-0}
     [ "$_pg_c" -gt 0 ] && _pg_any_real=1
     case "$_pg_n" in
       'All Nodes') : ;;  # full pool - its emptiness IS the provider condition below
-      'Priority Nodes')
-        _pg_have_autox=1
-        [ "$_pg_c" -eq 0 ] && _pg_autox_empty=1 ;;
       *)
         _pg_country_n=$((_pg_country_n + 1))
         if [ "$_pg_c" -eq 0 ]; then
-          # '|' frames the check record - never let a crafted name break it
-          _pg_sane="$(printf '%s' "$_pg_n" | tr '|' '/')"
-          _pg_empty="${_pg_empty:+$_pg_empty, }$_pg_sane"
+          if [ -n "$_pg_now" ] && [ "$_pg_n" = "$_pg_now" ]; then
+            _pg_default_empty=1
+          else
+            # '|' frames the check record - never let a crafted name break it
+            _pg_sane="$(printf '%s' "$_pg_n" | tr '|' '/')"
+            _pg_empty="${_pg_empty:+$_pg_empty, }$_pg_sane"
+          fi
         fi ;;
     esac
   done <<PGEOF
@@ -348,15 +359,16 @@ PGEOF
     CHECK_HINT="      seed the provider from the host: sudo sh scripts/seed_provider.sh - see docs/troubleshooting.md (Provider has no nodes)"
     return 0
   fi
-  if [ "$_pg_have_autox" -eq 0 ] && [ "$_pg_country_n" -eq 0 ]; then
+  if [ "$_pg_country_n" -eq 0 ]; then
     CHECK_VALUE=ok CHECK_SEV=ok
-    CHECK_DETAIL="no filtered proxy groups rendered (PRIORITY_EXCLUDE_FILTER/COUNTRY_GROUPS unset)"
+    CHECK_DETAIL="no country groups visible from the controller (a pre-streamline config is still live; redeploy renders the Country Pick model)"
     return 0
   fi
-  if [ "$_pg_autox_empty" -eq 1 ]; then
+  if [ "$_pg_default_empty" -eq 1 ]; then
+    _pg_now_sane="$(printf '%s' "$_pg_now" | tr '|' '/')"
     CHECK_VALUE=default-empty CHECK_SEV=bad
-    CHECK_DETAIL="default route Priority Nodes has NO nodes - the PRIORITY_INCLUDE_FILTER/PRIORITY_EXCLUDE_FILTER pair matches no provider node, so Priority Nodes traffic is REJECTED (fail closed)${_pg_empty:+; empty country group(s): $_pg_empty}"
-    CHECK_HINT="      fix PRIORITY_INCLUDE_FILTER / PRIORITY_EXCLUDE_FILTER in .env and redeploy: sudo sh ./install.sh (Redeploy); stopgap: pick 'All Nodes' in the dashboard PROXY selector"
+    CHECK_DETAIL="the Country Pick selection '$_pg_now_sane' has NO nodes - its COUNTRY_GROUPS regex matches no provider node, so default-route traffic is REJECTED (fail closed)${_pg_empty:+; other empty country group(s): $_pg_empty}"
+    CHECK_HINT="      tune the COUNTRY_GROUPS regex(es) in .env and redeploy: sudo sh ./install.sh (Redeploy); stopgap: pick another country in the dashboard Country Pick selector"
     return 0
   fi
   if [ -n "$_pg_empty" ]; then
@@ -366,7 +378,7 @@ PGEOF
     return 0
   fi
   CHECK_VALUE=ok CHECK_SEV=ok
-  CHECK_DETAIL="filtered proxy groups all have real nodes (Priority Nodes${_pg_country_n:+ + $_pg_country_n country group(s)})"
+  CHECK_DETAIL="country groups all have real nodes ($_pg_country_n group(s)${_pg_now:+; Country Pick riding '$(printf '%s' "$_pg_now" | tr '|' '/')'})"
 }
 
 # config_rejected - consumer of the entrypoint gate's rejection marker (#38,

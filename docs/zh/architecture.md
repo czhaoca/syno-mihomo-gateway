@@ -174,8 +174,12 @@ config/config.template.yaml ──(scripts/render_config.sh)──► ../syno-mi
 `{{TUN_BEGIN}}`/`{{TUN_END}}` 围起的 `tun:` 块，`{{TUN_AUTO_REDIRECT}}` 则是一个被替换的
 令牌（两者都按严格的 `true`/`false` 校验），分域解析对决定渲染哪套围栏 DNS 核心——
 设置时为境外优先的 v2，未设时为传统 `nameserver`+`fallback` 核心（见
-[配置](configuration.md)）。路由是静态 `rules:` 列表（私网目标最先直连，流媒体 → 可固定
-的 `STREAMING` 选择器，国内直连，境外列表 → `PROXY`，GEOIP 兜底），另有可选的嗅探围栏
+[配置](configuration.md)）。路由是静态 `rules:` 列表（私网目标最先直连，流媒体——视频
+与音频服务——→ 可固定的 `Streaming Sites` 选择器，国内直连，境外列表 → `Proxy Mode`
+选择器，GEOIP 兜底）。`Proxy Mode` 默认指向 `Country Pick`，其成员是由**必填**的
+`COUNTRY_GROUPS` 键生成的 `<Country> Auto` url-test 分组——常规流量骑乘所选国家分组
+持有的那一个节点，出口国家因此绝不会自行跳变；隐藏的 `All Nodes` 全池分组只为充当
+DNS 绕行锚点而保留（见[配置](configuration.md)）。另有可选的嗅探围栏
 （`SNIFFER_ENABLE`）从裸 IP 连接恢复域名，让绕过网关 DNS 的客户端仍按域名路由。
 CI 运行的也是**同一个脚本**
 （`scripts/ci/render_check.py`），因此渲染路径实际上是经过测试的。由于渲染发生在容器

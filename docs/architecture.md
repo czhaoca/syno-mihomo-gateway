@@ -188,8 +188,13 @@ config/config.template.yaml ──(scripts/render_config.sh)──► ../syno-mi
 token (both validated as strict `true`/`false`), and the split-horizon pair selects which
 fenced DNS core renders — foreign-by-default v2 when set, the legacy `nameserver`+`fallback`
 core when unset (see [Configuration](configuration.md)). Routing is the static `rules:` list
-(LAN/private destinations direct first, streaming → the pinnable `STREAMING` selector, CN
-direct, listed-foreign → `PROXY`, GEOIP fallthrough), plus an optional sniffer fence
+(LAN/private destinations direct first, streaming (video + audio services) → the pinnable
+`Streaming Sites` selector, CN direct, listed-foreign → the `Proxy Mode` selector, GEOIP
+fallthrough). `Proxy Mode` defaults to `Country Pick`, whose members are the `<Country> Auto`
+url-test groups generated from the **required** `COUNTRY_GROUPS` key — general traffic rides
+the one node the picked country's group holds, so the exit country never hops on its own; a
+hidden `All Nodes` full-pool group survives solely as the DNS detour anchor (see
+[Configuration](configuration.md)). Rendering also carries an optional sniffer fence
 (`SNIFFER_ENABLE`) that recovers hostnames from raw-IP flows so DNS-bypassing clients still
 route by domain. The **same script** is what CI runs
 (`scripts/ci/render_check.py`), so the rendering path is actually tested. Because rendering

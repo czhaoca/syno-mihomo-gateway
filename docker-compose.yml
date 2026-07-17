@@ -41,17 +41,18 @@ services:
       - DNS_FOREIGN_NAMESERVER=${DNS_FOREIGN_NAMESERVER:-}
       - DNS_GEOIP_NO_RESOLVE=${DNS_GEOIP_NO_RESOLVE:-false}
       - SNIFFER_ENABLE=${SNIFFER_ENABLE:-false}
-      # Priority Nodes filters: include region-scopes the pool (applied
-      # first; ships Japan), exclude subtracts (ships HK). Non-empty exclude
-      # renders the group as PROXY's first member; the ':-' defaults keep
-      # compose warning-free when unset.
+      # Retirement tripwires (group-model streamline; the #40 DEC-B
+      # fail-loud pattern): the Priority Nodes category was removed, and
+      # these are passed through ONLY so the renderer refuses loudly when a
+      # stale .env still sets a retired knob - never a silent route change.
       - PRIORITY_INCLUDE_FILTER=${PRIORITY_INCLUDE_FILTER:-}
       - PRIORITY_EXCLUDE_FILTER=${PRIORITY_EXCLUDE_FILTER:-}
-      # Legacy-name tripwire (#40 DEC-B): passed through ONLY so the renderer
-      # fails loud when a stale .env still sets the old knob name.
       - AUTO_EXCLUDE_FILTER=${AUTO_EXCLUDE_FILTER:-}
-      # Per-country auto-selection groups ('NAME=regex;...' spec); same
-      # empty-means-off pass-through contract.
+      # Per-country auto-selection groups ('NAME=regex;...' spec) - REQUIRED:
+      # Country Pick's members ARE the generated groups, so the renderer
+      # refuses an unset/empty spec (the ':-' keeps compose warning-free; the
+      # renderer owns the loud failure and the entrypoint gate keeps the
+      # previous config running).
       - COUNTRY_GROUPS=${COUNTRY_GROUPS:-}
       # Transparent-gateway TUN is ON by default (stack: system keeps the controller
       # reachable - mihomo #1493). LAN devices set their gateway + DNS to MIHOMO_IP and
@@ -63,13 +64,14 @@ services:
 
     # Entrypoint: render to a TEMP config via the shared, CI-tested renderer,
     # gate it with `mihomo -t`, and swap it over the live config.yaml only on
-    # green. A hand-edited .env that poisons the render (e.g. an invalid
-    # PRIORITY_INCLUDE_FILTER/PRIORITY_EXCLUDE_FILTER/COUNTRY_GROUPS pattern,
-    # which panics mihomo at
-    # startup) can no longer crash-loop the gateway or destroy the last-good
-    # config: the previous config keeps running and .config.yaml.rejected
-    # marks the rejection. First boot with a bad config still fails hard. See
-    # scripts/mihomo_entrypoint.sh and docs/development.md.
+    # green. A hand-edited .env that poisons the render (an invalid
+    # COUNTRY_GROUPS pattern that would panic mihomo at startup, a missing
+    # required knob, a dangling '#group' DNS detour, or a stale retired knob
+    # tripping the wire above) can no longer crash-loop the gateway or
+    # destroy the last-good config: the previous config keeps running and
+    # .config.yaml.rejected marks the rejection. First boot with a bad
+    # config still fails hard. See scripts/mihomo_entrypoint.sh and
+    # docs/development.md.
     entrypoint:
       - /bin/sh
       - /scripts/mihomo_entrypoint.sh

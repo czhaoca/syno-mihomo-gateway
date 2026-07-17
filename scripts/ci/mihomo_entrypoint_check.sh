@@ -34,14 +34,16 @@ TREE="$TMP/syno-mihomo-gateway"
 mkdir -p "$TREE"
 cp -R "$ROOT/scripts" "$TREE/scripts"
 
-# DNS fixture values come from .env.example so the suite hardcodes no
-# nameserver (CLAUDE.md rule); the renderer only needs them non-empty.
+# DNS + country-group fixture values come from .env.example so the suite
+# hardcodes no nameserver (CLAUDE.md rule); the renderer needs them non-empty
+# (COUNTRY_GROUPS is REQUIRED since the group-model streamline).
 DNSD=$(sed -n 's/^DNS_DEFAULT_NAMESERVER=//p' "$ROOT/.env.example")
 DNSN=$(sed -n 's/^DNS_NAMESERVER=//p' "$ROOT/.env.example")
 DNSC=$(sed -n 's/^DNS_CN_NAMESERVER=//p' "$ROOT/.env.example")
 DNSFO=$(sed -n 's/^DNS_FOREIGN_NAMESERVER=//p' "$ROOT/.env.example")
-[ -n "$DNSD" ] && [ -n "$DNSN" ] && [ -n "$DNSC" ] && [ -n "$DNSFO" ] \
-  || { echo "FAIL: could not read DNS fixtures from .env.example" >&2; exit 1; }
+CGRP=$(sed -n 's/^COUNTRY_GROUPS=//p' "$ROOT/.env.example")
+[ -n "$DNSD" ] && [ -n "$DNSN" ] && [ -n "$DNSC" ] && [ -n "$DNSFO" ] && [ -n "$CGRP" ] \
+  || { echo "FAIL: could not read DNS/COUNTRY_GROUPS fixtures from .env.example" >&2; exit 1; }
 
 SUB_URL='https://air.example.com/api/v1/sub?token=hunter2secret'
 SECRET='ctlsek-9x-fixture'
@@ -82,6 +84,7 @@ run_ep() { # STATE [ENV=VAL ...] - run the entrypoint hermetically; rc in $EP_RC
     CONTROLLER_PORT=9090 CONTROLLER_SECRET="$SECRET" \
     DNS_DEFAULT_NAMESERVER="$DNSD" DNS_NAMESERVER="$DNSN" \
     DNS_CN_NAMESERVER="$DNSC" DNS_FOREIGN_NAMESERVER="$DNSFO" \
+    COUNTRY_GROUPS="$CGRP" \
     "$@" \
     sh "$TREE/scripts/mihomo_entrypoint.sh" > "$OUT_F" 2>&1 || EP_RC=$?
 }
@@ -98,6 +101,7 @@ env -i PATH="/usr/bin:/bin" MIHOMO_CONFIG_DIR="$REF" \
   CONTROLLER_PORT=9090 CONTROLLER_SECRET="$SECRET" \
   DNS_DEFAULT_NAMESERVER="$DNSD" DNS_NAMESERVER="$DNSN" \
   DNS_CN_NAMESERVER="$DNSC" DNS_FOREIGN_NAMESERVER="$DNSFO" \
+  COUNTRY_GROUPS="$CGRP" \
   sh "$TREE/scripts/render_config.sh" > /dev/null 2>&1 \
   || { echo "FAIL: reference render failed" >&2; exit 1; }
 
@@ -175,10 +179,11 @@ fi
 grep -q 'hunter2secret' "$ST/started.env" \
   && fail "t-reject: subscription token leaked into the exec'd mihomo environment" || ok
 
-# 6) rider 2 - renderer rejects (backtick knob) + last-good: cause-distinct
+# 6) rider 2 - renderer rejects (backtick country spec) + last-good:
+#    cause-distinct
 ST=$(new_state rrej)
 printf 'OLD SENTINEL\n' > "$ST/cfg/config.yaml"
-run_ep "$ST" PRIORITY_EXCLUDE_FILTER='bad`tick'
+run_ep "$ST" COUNTRY_GROUPS='日本=bad`tick'
 [ "$EP_RC" = 0 ] && ok || fail "render-reject: want rc 0 (running on last-good), got $EP_RC: $(cat "$OUT_F")"
 printf 'OLD SENTINEL\n' | cmp -s - "$ST/cfg/config.yaml" \
   && ok || fail "render-reject: live config.yaml must be byte-unchanged"
@@ -200,7 +205,7 @@ sed -n 1p "$ST/cfg/.config.yaml.rejected" | grep -q '^reason: config-test-failed
 
 # 8) first boot + renderer reject: hard fail, cause-distinct marker
 ST=$(new_state bootrrej)
-run_ep "$ST" PRIORITY_EXCLUDE_FILTER='bad`tick'
+run_ep "$ST" COUNTRY_GROUPS='日本=bad`tick'
 [ "$EP_RC" != 0 ] && [ ! -f "$ST/started.log" ] \
   && ok || fail "first-boot render-reject: want nonzero rc and no start"
 sed -n 1p "$ST/cfg/.config.yaml.rejected" | grep -q '^reason: render-failed$' \

@@ -20,7 +20,6 @@ TMP="$CFG_DIR/.config.yaml.tmp"
 PRE="$CFG_DIR/.config.yaml.pre"
 PRE2="$CFG_DIR/.config.yaml.pre2"
 PRE4="$CFG_DIR/.config.yaml.pre4"
-PRE5="$CFG_DIR/.config.yaml.pre5"
 PRE6="$CFG_DIR/.config.yaml.pre6"
 CG_GROUPS_FRAG="$CFG_DIR/.country_groups.frag"
 CG_MEMBERS_FRAG="$CFG_DIR/.country_members.frag"
@@ -67,69 +66,38 @@ case "$SNIFFER_ENABLE" in
   true|false) : ;;
   *) echo "ERROR: SNIFFER_ENABLE must be true or false" >&2; exit 1 ;;
 esac
-# Legacy-name tripwire (the knob was renamed, proxy-groups-v2 #40 DEC-B):
-# compose still passes the OLD name through ONLY so a stale .env fails LOUD
-# here instead of silently rendering without the Priority Nodes group. The
-# old value is never used (no fallback semantics - owner decision).
+# Retirement tripwires (group-model streamline; the owner-ratified fail-loud
+# pattern from proxy-groups-v2 #40 DEC-B): the Priority Nodes category was
+# REMOVED - Country Pick over the "<Country> Auto" groups is the routing
+# default now. Compose still passes the retired knobs through ONLY so a
+# stale .env fails LOUD here instead of silently rendering a different
+# default route. The old values are never used (no fallback semantics).
 : "${AUTO_EXCLUDE_FILTER:=}"
 if [ -n "$AUTO_EXCLUDE_FILTER" ]; then
-  echo "ERROR: AUTO_EXCLUDE_FILTER was renamed - set PRIORITY_EXCLUDE_FILTER in .env (and delete the AUTO_EXCLUDE_FILTER line)" >&2
+  echo "ERROR: AUTO_EXCLUDE_FILTER was removed (as was its successor PRIORITY_EXCLUDE_FILTER) - the '<Country> Auto' groups + Country Pick replace the filtered default; delete the line from .env (see docs/release-notes)" >&2
   exit 1
 fi
-# Automatic-selection exclusion: a non-empty regexp2 pattern renders the
-# Priority Nodes sibling group (nodes matching the pattern removed) as
-# PROXY's first member. Empty/unset renders WITHOUT the group, byte-identical to the
-# pre-feature output (upgrade compat; .env.example ships an HK default for
-# new installs). An INVALID pattern panics mihomo at startup, so the two
-# statically-detectable poison classes fail the render here: a backtick
-# (mihomo's multi-pattern separator - never valid inside one pattern) and a
-# whitespace-only value (an effectively-empty pattern matches - and would
-# exclude - every node).
 : "${PRIORITY_EXCLUDE_FILTER:=}"
-if [ -n "$PRIORITY_EXCLUDE_FILTER" ]; then
-  case "$PRIORITY_EXCLUDE_FILTER" in
-    *\`*)
-      echo "ERROR: PRIORITY_EXCLUDE_FILTER must not contain a backtick (mihomo's multi-pattern separator; an invalid pattern crashes mihomo at startup)" >&2
-      exit 1 ;;
-  esac
-  case "$PRIORITY_EXCLUDE_FILTER" in
-    *[![:space:]]*) : ;;
-    *)
-      echo "ERROR: PRIORITY_EXCLUDE_FILTER is whitespace-only - set a real pattern, or leave it empty/unset to disable the Priority Nodes group" >&2
-      exit 1 ;;
-  esac
-fi
-# Region scoping (include filter, #40): keeps only matching provider nodes
-# in Priority Nodes, applied BEFORE the exclude filter. Only meaningful when
-# the group renders at all, so include-without-exclude refuses loudly rather
-# than being silently ignored. Same regexp2 poison classes as above.
 : "${PRIORITY_INCLUDE_FILTER:=}"
-if [ -n "$PRIORITY_INCLUDE_FILTER" ]; then
-  if [ -z "$PRIORITY_EXCLUDE_FILTER" ]; then
-    echo "ERROR: PRIORITY_INCLUDE_FILTER is set but PRIORITY_EXCLUDE_FILTER is unset - the Priority Nodes group only renders with the exclude knob set" >&2
-    exit 1
-  fi
-  case "$PRIORITY_INCLUDE_FILTER" in
-    *\`*)
-      echo "ERROR: PRIORITY_INCLUDE_FILTER must not contain a backtick (mihomo's multi-pattern separator; an invalid pattern crashes mihomo at startup)" >&2
-      exit 1 ;;
-  esac
-  case "$PRIORITY_INCLUDE_FILTER" in
-    *[![:space:]]*) : ;;
-    *)
-      echo "ERROR: PRIORITY_INCLUDE_FILTER is whitespace-only - set a real pattern, or leave it empty/unset to render without a filter: line" >&2
-      exit 1 ;;
-  esac
+if [ -n "$PRIORITY_EXCLUDE_FILTER" ] || [ -n "$PRIORITY_INCLUDE_FILTER" ]; then
+  echo "ERROR: PRIORITY_INCLUDE_FILTER/PRIORITY_EXCLUDE_FILTER were removed - the '<Country> Auto' groups + Country Pick replace Priority Nodes; delete both lines from .env (see docs/release-notes)" >&2
+  exit 1
 fi
 # Country groups: 'NAME=regex;NAME=regex' generates one url-test group per
 # entry (nodes matching the regexp2 pattern; a multi-country regex IS the
-# multi-country group) spliced into the PROXY and STREAMING selectors in
-# spec order. Empty/unset renders WITHOUT any generated group, byte-identical
-# to the pre-feature output. Validation is up here with the other knobs; the
-# fragment build lives below yaml_dq() (it needs the escaper). Every poison
-# class fails BEFORE anything is written: an invalid pattern panics mihomo at
-# startup, and a name shadowing a built-in group corrupts routing.
+# multi-country group), spliced as Country Pick's members and into the
+# Streaming Sites selector in spec order. The spec is REQUIRED: Country
+# Pick's members ARE the generated groups, so an absent or empty spec (a
+# stale pre-country .env passes '' through compose) refuses to render.
+# Validation is up here with the other knobs; the fragment build lives below
+# yaml_dq() (it needs the escaper). Every poison class fails BEFORE anything
+# is written: an invalid pattern panics mihomo at startup, and a name
+# shadowing a built-in or reserved group corrupts routing.
 : "${COUNTRY_GROUPS:=}"
+if [ -z "$COUNTRY_GROUPS" ]; then
+  echo "ERROR: COUNTRY_GROUPS must be set in .env - Country Pick's members ARE the generated '<Country> Auto' groups; start from the .env.example default and tune the regexes to your airport's node names" >&2
+  exit 1
+fi
 if [ -n "$COUNTRY_GROUPS" ]; then
   case "$COUNTRY_GROUPS" in
     *\`*)
@@ -170,9 +138,14 @@ if [ -n "$COUNTRY_GROUPS" ]; then
         echo "ERROR: COUNTRY_GROUPS name '$_cg_name' contains whitespace other than interior spaces" >&2
         exit 1 ;;
     esac
+    # Reserved names: the current selectors + the hidden DNS anchor, 'Full
+    # Proxy' (reserved ahead for the per-device-full-proxy epic), the
+    # RETIRED legacy names (a user group named 'Priority Nodes' or PROXY
+    # would resurrect a name the docs history still associates with old
+    # semantics), and mihomo's built-in adapters.
     case "$_cg_name" in
-      'All Nodes'|'Priority Nodes'|PROXY|STREAMING|DIRECT|REJECT|REJECT-DROP|PASS|COMPATIBLE|GLOBAL)
-        echo "ERROR: COUNTRY_GROUPS name '$_cg_name' collides with a built-in group/adapter" >&2
+      'All Nodes'|'Country Pick'|'Proxy Mode'|'Streaming Sites'|'Full Proxy'|'Priority Nodes'|PROXY|STREAMING|DIRECT|REJECT|REJECT-DROP|PASS|COMPATIBLE|GLOBAL)
+        echo "ERROR: COUNTRY_GROUPS name '$_cg_name' collides with a built-in, reserved, or retired group/adapter name" >&2
         exit 1 ;;
     esac
     case "$_cg_re" in
@@ -198,6 +171,47 @@ for _v in DNS_DEFAULT_NAMESERVER DNS_NAMESERVER \
           DNS_CN_NAMESERVER DNS_FOREIGN_NAMESERVER; do
   eval "_val=\${$_v:-}"
   [ -n "$_val" ] || { echo "ERROR: $_v must be set in .env (see .env.example)" >&2; exit 1; }
+done
+
+# DNS detour fragments must name a group THIS render will actually produce
+# (or an explicit DIRECT): mihomo does not validate '#group' fragments at
+# parse time - a stale name (e.g. '#Priority Nodes' from a pre-streamline
+# .env) just makes every lookup through that resolver die at runtime,
+# silently. Fail the render loud instead, naming the variable. The rendered
+# set = the static groups + the COUNTRY_GROUPS names (validated above).
+_dv_groups=";Proxy Mode;Streaming Sites;Country Pick;All Nodes;DIRECT;"
+_cg_old_ifs=$IFS; IFS=';'
+set -f
+# shellcheck disable=SC2086  # deliberate ';' field split of the spec
+set -- $COUNTRY_GROUPS
+set +f
+IFS=$_cg_old_ifs
+for _cg_entry in "$@"; do
+  _dv_groups="$_dv_groups${_cg_entry%%=*};"
+done
+for _dv_var in DNS_DEFAULT_NAMESERVER DNS_NAMESERVER \
+               DNS_CN_NAMESERVER DNS_FOREIGN_NAMESERVER; do
+  eval "_dv_val=\${$_dv_var:-}"
+  _dv_old_ifs=$IFS; IFS=','
+  set -f
+  # shellcheck disable=SC2086,SC2154  # deliberate ',' field split; _dv_val is eval-assigned above
+  set -- $_dv_val
+  set +f
+  IFS=$_dv_old_ifs
+  for _dv_e in "$@"; do
+    case "$_dv_e" in
+      *'#'*) : ;;
+      *) continue ;;
+    esac
+    _dv_frag=${_dv_e##*#}
+    _dv_frag=${_dv_frag%%\&*}
+    case "$_dv_groups" in
+      *";$_dv_frag;"*) : ;;
+      *)
+        echo "ERROR: $_dv_var detours '#$_dv_frag' but no such proxy group renders - valid detours are Proxy Mode, Streaming Sites, Country Pick, All Nodes, DIRECT, or a COUNTRY_GROUPS name (a stale '#Priority Nodes' means a pre-streamline .env; see docs/release-notes)" >&2
+        exit 1 ;;
+    esac
+  done
 done
 
 [ -f "$TEMPLATE" ] || { echo "ERROR: template not found: $TEMPLATE" >&2; exit 1; }
@@ -255,37 +269,36 @@ esc() { printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/&/\\\&/g' -e 's/|/\\|/g'; 
 #   \" is only meaningful inside double quotes.
 yaml_dq() { printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'; }
 
-# Country-group fragment build (spec validated up top with the other knobs;
-# nothing here can fail). Two files: the group blocks (each ending in a blank
-# line so the insertion leaves the original spacing) and the selector member
-# lines, both inserted RAW at their {{COUNTRY_*}} marker lines below - names
-# and regexes pass through yaml_dq only (no sed replacement is involved, so
-# esc() is not needed and the pattern arrives verbatim).
-if [ -n "$COUNTRY_GROUPS" ]; then
-  : > "$CG_GROUPS_FRAG"
-  : > "$CG_MEMBERS_FRAG"
-  _cg_old_ifs=$IFS; IFS=';'
-  set -f
-  # shellcheck disable=SC2086  # deliberate ';' field split of the spec
-  set -- $COUNTRY_GROUPS
-  set +f
-  IFS=$_cg_old_ifs
-  for _cg_entry in "$@"; do
-    _cg_name=${_cg_entry%%=*}
-    _cg_re=${_cg_entry#*=}
-    {
-      printf '  - name: "%s"\n' "$(yaml_dq "$_cg_name")"
-      printf '    type: url-test\n'
-      printf '    use:\n'
-      printf '      - my-airport\n'
-      printf '    filter: "%s"\n' "$(yaml_dq "$_cg_re")"
-      printf '    empty-fallback: REJECT\n'
-      printf '    tolerance: 50\n'
-      printf '\n'
-    } >> "$CG_GROUPS_FRAG"
-    printf '      - "%s"\n' "$(yaml_dq "$_cg_name")" >> "$CG_MEMBERS_FRAG"
-  done
-fi
+# Country-group fragment build (spec validated up top with the other knobs -
+# REQUIRED, so this always runs; nothing here can fail). Two files: the group
+# blocks (each ending in a blank line so the insertion leaves the original
+# spacing) and the selector member lines, inserted RAW at their {{COUNTRY_*}}
+# marker lines below - names and regexes pass through yaml_dq only (no sed
+# replacement is involved, so esc() is not needed and the pattern arrives
+# verbatim).
+: > "$CG_GROUPS_FRAG"
+: > "$CG_MEMBERS_FRAG"
+_cg_old_ifs=$IFS; IFS=';'
+set -f
+# shellcheck disable=SC2086  # deliberate ';' field split of the spec
+set -- $COUNTRY_GROUPS
+set +f
+IFS=$_cg_old_ifs
+for _cg_entry in "$@"; do
+  _cg_name=${_cg_entry%%=*}
+  _cg_re=${_cg_entry#*=}
+  {
+    printf '  - name: "%s"\n' "$(yaml_dq "$_cg_name")"
+    printf '    type: url-test\n'
+    printf '    use:\n'
+    printf '      - my-airport\n'
+    printf '    filter: "%s"\n' "$(yaml_dq "$_cg_re")"
+    printf '    empty-fallback: REJECT\n'
+    printf '    tolerance: 50\n'
+    printf '\n'
+  } >> "$CG_GROUPS_FRAG"
+  printf '      - "%s"\n' "$(yaml_dq "$_cg_name")" >> "$CG_MEMBERS_FRAG"
+done
 
 # Pass 1 - fenced-block inclusion. Each block is fenced by '# {{X_BEGIN}}' /
 # '# {{X_END}}' marker lines. Disabled: delete the whole fenced range. Enabled:
@@ -309,45 +322,19 @@ if [ "$SNIFFER_ENABLE" = true ]; then
 else
   sed -e '/{{SNIFFER_BEGIN}}/,/{{SNIFFER_END}}/d' "$PRE2" > "$PRE4"
 fi
-#   PRIORITY blocks - the Priority Nodes group and its PROXY + STREAMING
-#                     member lines switch TOGETHER on PRIORITY_EXCLUDE_FILTER
-#                     being non-empty (validated above). The include filter is
-#                     a single token LINE inside the group: deleted when the
-#                     include knob is unset, substituted in pass 2 when set.
-if [ -n "$PRIORITY_EXCLUDE_FILTER" ]; then
-  if [ -n "$PRIORITY_INCLUDE_FILTER" ]; then
-    sed -e '/{{PRIORITY_BEGIN}}/d' -e '/{{PRIORITY_END}}/d' \
-        -e '/{{PRIORITYMEMBER_BEGIN}}/d' -e '/{{PRIORITYMEMBER_END}}/d' \
-        -e '/{{PRIORITYSTREAM_BEGIN}}/d' -e '/{{PRIORITYSTREAM_END}}/d' "$PRE4" > "$PRE5"
-  else
-    sed -e '/{{PRIORITY_BEGIN}}/d' -e '/{{PRIORITY_END}}/d' \
-        -e '/{{PRIORITYMEMBER_BEGIN}}/d' -e '/{{PRIORITYMEMBER_END}}/d' \
-        -e '/{{PRIORITYSTREAM_BEGIN}}/d' -e '/{{PRIORITYSTREAM_END}}/d' \
-        -e '/{{PRIORITY_INCLUDE_FILTER}}/d' "$PRE4" > "$PRE5"
-  fi
-else
-  sed -e '/{{PRIORITY_BEGIN}}/,/{{PRIORITY_END}}/d' \
-      -e '/{{PRIORITYMEMBER_BEGIN}}/,/{{PRIORITYMEMBER_END}}/d' \
-      -e '/{{PRIORITYSTREAM_BEGIN}}/,/{{PRIORITYSTREAM_END}}/d' "$PRE4" > "$PRE5"
-fi
 #   COUNTRY markers - single marker lines, not fences: replaced by the
-#                     generated group/member fragments when the spec is set
-#                     (awk raw-inserts the files - deterministic across
-#                     GNU/BSD/BusyBox, unlike the sed r+d interplay), deleted
-#                     when unset so the render stays byte-identical.
-if [ -n "$COUNTRY_GROUPS" ]; then
-  awk -v groups="$CG_GROUPS_FRAG" -v members="$CG_MEMBERS_FRAG" '
-    function emit(f,  l) { while ((getline l < f) > 0) print l; close(f) }
-    index($0, "{{COUNTRY_GROUPS}}")            { emit(groups); next }
-    index($0, "{{COUNTRY_MEMBERS_PROXY}}")     { emit(members); next }
-    index($0, "{{COUNTRY_MEMBERS_STREAMING}}") { emit(members); next }
-    { print }
-  ' "$PRE5" > "$PRE6"
-else
-  sed -e '/{{COUNTRY_GROUPS}}/d' \
-      -e '/{{COUNTRY_MEMBERS_PROXY}}/d' \
-      -e '/{{COUNTRY_MEMBERS_STREAMING}}/d' "$PRE5" > "$PRE6"
-fi
+#                     generated group/member fragments (awk raw-inserts the
+#                     files - deterministic across GNU/BSD/BusyBox, unlike
+#                     the sed r+d interplay). The spec is REQUIRED, so this
+#                     always runs: Country Pick's members and the Streaming
+#                     Sites splice come from the same member fragment.
+awk -v groups="$CG_GROUPS_FRAG" -v members="$CG_MEMBERS_FRAG" '
+  function emit(f,  l) { while ((getline l < f) > 0) print l; close(f) }
+  index($0, "{{COUNTRY_GROUPS}}")            { emit(groups); next }
+  index($0, "{{COUNTRY_MEMBERS_PICK}}")      { emit(members); next }
+  index($0, "{{COUNTRY_MEMBERS_STREAMING}}") { emit(members); next }
+  { print }
+' "$PRE4" > "$PRE6"
 
 # Pass 2 - token substitution (a disabled fence simply leaves no token behind;
 # EXTERNAL_UI_DIR renders inside a YAML double-quoted scalar like the secret).
@@ -364,10 +351,8 @@ sed \
   -e "s|{{GEOIP_NO_RESOLVE}}|$(esc "$GEOIP_NO_RESOLVE")|g" \
   -e "s|{{TUN_AUTO_REDIRECT}}|$(esc "$TUN_AUTO_REDIRECT")|g" \
   -e "s|{{EXTERNAL_UI_DIR}}|$(esc "$(yaml_dq "$EXTERNAL_UI_DIR")")|g" \
-  -e "s|{{PRIORITY_EXCLUDE_FILTER}}|$(esc "$(yaml_dq "$PRIORITY_EXCLUDE_FILTER")")|g" \
-  -e "s|{{PRIORITY_INCLUDE_FILTER}}|$(esc "$(yaml_dq "$PRIORITY_INCLUDE_FILTER")")|g" \
   "$PRE6" > "$TMP"
-rm -f "$PRE" "$PRE2" "$PRE4" "$PRE5" "$PRE6" \
+rm -f "$PRE" "$PRE2" "$PRE4" "$PRE6" \
       "$CG_GROUPS_FRAG" "$CG_MEMBERS_FRAG"
 mv "$TMP" "$OUT"
 echo "Rendered $OUT"

@@ -175,6 +175,9 @@ sudo sh ./install.sh
 - [ ] `sudo ./scripts/setup_network.sh` 成功（已创建 macvlan + TUN）。
 - [ ] 引导安装器报告容器健康。
 - [ ] 从**非 NAS** 的局域网设备打开 `http://<NAS_IP>:<WEB_UI_PORT>` 能访问面板。
+- [ ] 分阶段验证器（`sudo sh scripts/validate_release.sh`）通过——它的 A4.5 门会从控制器
+      实时发现 url-test 分组，任何生成的国家分组（某条 `COUNTRY_GROUPS`）匹配不到任何
+      机场节点时**判定发布失败**。
 
 ## 更新离线安装
 

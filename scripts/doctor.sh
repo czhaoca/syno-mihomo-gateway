@@ -59,9 +59,10 @@ render_human() {
 
   # Optional egress probe (human mode only; --egress). The bearer token must
   # not ride the host-visible docker exec argv (the project's no-secrets-on-
-  # argv rule): hand it over on stdin.
+  # argv rule): hand it over on stdin. The rule target's spaced name rides
+  # the URL %20-encoded (Proxy Mode -> Proxy%20Mode).
   if [ "$CHECK_EGRESS" -eq 1 ] && [ "$_rh_broken" -eq 0 ]; then
-    _rh_url="http://127.0.0.1:${CONTROLLER_PORT:-9090}/proxies/PROXY/delay?timeout=5000&url=http://www.gstatic.com/generate_204"
+    _rh_url="http://127.0.0.1:${CONTROLLER_PORT:-9090}/proxies/Proxy%20Mode/delay?timeout=5000&url=http://www.gstatic.com/generate_204"
     _rh_header=""
     [ -n "${CONTROLLER_SECRET:-}" ] && _rh_header="Authorization: Bearer ${CONTROLLER_SECRET}"
     if "$DOCKER_BIN" exec "$MIHOMO_CONTAINER" sh -c 'command -v wget >/dev/null 2>&1' 2>/dev/null; then

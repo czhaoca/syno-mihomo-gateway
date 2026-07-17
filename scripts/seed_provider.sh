@@ -115,14 +115,31 @@ if [ "$N" -eq 0 ]; then
 fi
 echo "OK: provider loaded $N nodes from the seeded cache"
 
-# Informational egress check through the group (after a url-test round). The
-# effective member must be a REAL node: an empty group degrades to COMPATIBLE
-# (= DIRECT), and gstatic's generate_204 answers direct from CN.
+# Informational egress check through the rule target (after a url-test
+# round). The effective member must be a REAL node: an empty group degrades
+# to COMPATIBLE (= DIRECT), and gstatic's generate_204 answers direct from
+# CN. The chain is now MULTI-LEVEL (Proxy Mode -> Country Pick -> "<Country>
+# Auto" -> node), so resolve "now" through the groups with a bounded walk: a
+# member whose /proxies/<name> answer carries an all[] list is itself a
+# group - follow its own "now". Names ride the URL %XX-encoded byte by byte
+# (enc_name mirrors the doctor's _pg_enc; spaces and CJK are both safe).
+enc_name() {
+  printf '%s' "$1" | od -An -v -tx1 | tr ' ' '\n' | grep -v '^$' \
+    | while IFS= read -r _en_b; do printf '%%%s' "$_en_b"; done
+}
 GSTATIC="http://www.gstatic.com/generate_204"
 ctl_get "/group/All%20Nodes/delay?timeout=8000&url=$GSTATIC" >/dev/null 2>&1 || true
-_now=$(ctl_get /proxies/PROXY | sed -n 's/.*"now":"\([^"]*\)".*/\1/p')
-[ "$_now" = "All Nodes" ] && _now=$(ctl_get /proxies/All%20Nodes | sed -n 's/.*"now":"\([^"]*\)".*/\1/p')
-case "$(ctl_get "/proxies/PROXY/delay?timeout=5000&url=$GSTATIC")" in
+_now=$(ctl_get /proxies/Proxy%20Mode | sed -n 's/.*"now":"\([^"]*\)".*/\1/p')
+_hop=0
+while [ "$_hop" -lt 4 ] && [ -n "$_now" ]; do
+  _nj=$(ctl_get "/proxies/$(enc_name "$_now")")
+  case "$_nj" in
+    *'"all":['*) _now=$(printf '%s' "$_nj" | sed -n 's/.*"now":"\([^"]*\)".*/\1/p') ;;
+    *) break ;;
+  esac
+  _hop=$((_hop+1))
+done
+case "$(ctl_get "/proxies/Proxy%20Mode/delay?timeout=5000&url=$GSTATIC")" in
   *'"delay"'*)
     case "$_now" in
       ''|COMPATIBLE|DIRECT|REJECT|REJECT-DROP|PASS)
@@ -130,7 +147,8 @@ case "$(ctl_get "/proxies/PROXY/delay?timeout=5000&url=$GSTATIC")" in
       *) echo "OK: foreign egress via $_now - test a foreign site from a LAN device" ;;
     esac ;;
   *)
-    echo "WARN: nodes loaded but the group probe failed - pick a node in the"
-    echo "      dashboard (Proxies -> PROXY) and retest from a LAN device" ;;
+    echo "WARN: nodes loaded but the group probe failed - pick a country (or"
+    echo "      node) in the dashboard (Proxies -> Proxy Mode / Country Pick)"
+    echo "      and retest from a LAN device" ;;
 esac
 exit 0

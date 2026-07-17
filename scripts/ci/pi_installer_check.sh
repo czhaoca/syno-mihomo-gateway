@@ -112,10 +112,11 @@ render_tpl() {
     CONTROLLER_PORT=9090 CONTROLLER_SECRET='' \
     DNS_DEFAULT_NAMESERVER='192.0.2.53' DNS_NAMESERVER='192.0.2.53' \
     DNS_CN_NAMESERVER='192.0.2.53' DNS_FOREIGN_NAMESERVER='192.0.2.54' \
+    COUNTRY_GROUPS='JPX=jp' \
     TUN_ENABLE="$_rt_tun"
     export MIHOMO_CONFIG_DIR MIHOMO_TEMPLATE CONTROLLER_PORT CONTROLLER_SECRET \
       DNS_DEFAULT_NAMESERVER DNS_NAMESERVER DNS_CN_NAMESERVER \
-      DNS_FOREIGN_NAMESERVER TUN_ENABLE
+      DNS_FOREIGN_NAMESERVER COUNTRY_GROUPS TUN_ENABLE
     unset EXTERNAL_UI_DIR
     if [ -n "$_rt_extui" ]; then EXTERNAL_UI_DIR="$_rt_extui"; export EXTERNAL_UI_DIR; fi
     sh "$ROOT/scripts/render_config.sh" >/dev/null
@@ -470,6 +471,7 @@ printf 'Default=https://sub.example.com/api?token=abc\n' > "$TD/lite-rt/config/s
   env_set DNS_NAMESERVER 192.0.2.53
   env_set DNS_CN_NAMESERVER 192.0.2.53
   env_set DNS_FOREIGN_NAMESERVER 192.0.2.54
+  env_set COUNTRY_GROUPS 'JPX=jp'
   pi_lite_render_unit
 ) >/dev/null 2>&1 || die "round-trip fixture setup failed"
 grep -qF 'pa$$word' "$TD/lite-rt/.env" || die "env_set did not compose-escape the fixture secret"
@@ -877,6 +879,7 @@ mk_ctl_sandbox() {
     printf 'CONTROLLER_PORT=9090\n'
     printf 'DNS_DEFAULT_NAMESERVER=192.0.2.53\nDNS_NAMESERVER=192.0.2.53\n'
     printf 'DNS_CN_NAMESERVER=192.0.2.53\nDNS_FOREIGN_NAMESERVER=192.0.2.54\n'
+    printf 'COUNTRY_GROUPS=JPX=jp\n'
   } > "$_mcs/.env"
 }
 

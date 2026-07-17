@@ -53,20 +53,24 @@ _ctrl_get() {
 
 # proxy_egress_probe - EXTRA GUARD: a mihomo "Running + controller OK" health gate
 # does NOT prove the proxy can actually reach the internet. Ask mihomo to GET a
-# test URL THROUGH the rule target (the PROXY group) via the controller's delay
-# API, so a "started but every node times out" state (dead / expired / blocked
-# subscription nodes) is surfaced NOW with a clear diagnosis, not later as failing
-# traffic. Warns; never fails the deploy (the gateway itself is correctly set up).
+# test URL THROUGH the rule target (the Proxy Mode group) via the controller's
+# delay API, so a "started but every node times out" state (dead / expired /
+# blocked subscription nodes) is surfaced NOW with a clear diagnosis, not later
+# as failing traffic. Warns; never fails the deploy (the gateway itself is
+# correctly set up). The spaced group name is %20-encoded onto the URL only
+# (matching the doctor's probe of the same spaced name); messages keep the
+# human name.
 proxy_egress_probe() {
   [ -n "${DOCKER_BIN:-}" ] || return 0
-  _eg_grp="${EGRESS_TEST_GROUP:-PROXY}"
+  _eg_grp="${EGRESS_TEST_GROUP:-Proxy Mode}"
   _eg_url="${EGRESS_TEST_URL:-http://www.gstatic.com/generate_204}"
   _eg_to="${EGRESS_TEST_TIMEOUT_MS:-5000}"
   if ! "$DOCKER_BIN" exec "$MIHOMO_CONTAINER" sh -c 'command -v wget >/dev/null 2>&1 || command -v curl >/dev/null 2>&1' 2>/dev/null; then
     ui_info "$(msg info_egress_skip)"
     return 0
   fi
-  _eg_api="http://127.0.0.1:${CONTROLLER_PORT:-9090}/proxies/${_eg_grp}/delay?timeout=${_eg_to}&url=${_eg_url}"
+  _eg_enc="$(printf '%s' "$_eg_grp" | sed 's/ /%20/g')"
+  _eg_api="http://127.0.0.1:${CONTROLLER_PORT:-9090}/proxies/${_eg_enc}/delay?timeout=${_eg_to}&url=${_eg_url}"
   _eg_hdr=""
   [ -n "${CONTROLLER_SECRET:-}" ] && _eg_hdr="Authorization: Bearer ${CONTROLLER_SECRET}"
   ui_info "$(msgf info_egress_test "$_eg_url")"
