@@ -87,6 +87,8 @@ LX="$REPO_ROOT/scripts/linux"
 # --- the linux overlay (never sourced by install.sh or install-pi.sh) ----------
 # shellcheck source=scripts/linux/i18n_linux.sh
 . "$LX/i18n_linux.sh"
+# shellcheck source=scripts/linux/preflight_linux.sh
+. "$LX/preflight_linux.sh"
 
 # Restore terminal echo if a secret prompt or Ctrl-C left it off; on interrupt
 # also reap the config staging dir (holds the subscription URL) and the
