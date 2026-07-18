@@ -51,11 +51,13 @@ steps:
   - name: package-check
     image: python:3.12-slim
     commands:
-      # Hermetic safeguard test: builds BOTH the dev and the enduser release bundles in
-      # throwaway repos and proves neither can ship a secret (.env / subscription /
+      # Hermetic safeguard test: builds the dev, enduser, and linux release bundles in
+      # throwaway repos and proves none can ship a secret (.env / subscription /
       # config.yaml); the enduser bundle also prunes every developer/.md/CI file, ships
       # the installer + .txt guides, contains no identity string, and its leak-gate fails
-      # closed on an injected leak. Needs git to run the real packager.
+      # closed on an injected leak; the linux bundle carries both generic entries with
+      # the identity gate still fail-closed (--profile pi = warned alias). Needs git to
+      # run the real packager.
       - apt-get update -qq && apt-get install -y -qq --no-install-recommends git >/dev/null
       - python scripts/ci/package_check.py
 

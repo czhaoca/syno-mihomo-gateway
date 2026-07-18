@@ -11,10 +11,13 @@ checkout), then invokes the REAL scripts/package.sh and bootstrap.sh and asserts
   * every package.sh guard fires - tracked secret, dirty tree, non-git dir;
   * bootstrap.sh seeds .env (mode 600) + subscription from the examples, restores
     the exec bit the .zip extraction drops, and is idempotent (no clobber);
-  * the pi profile ships the enduser set PLUS the Raspberry-Pi port (DEC-R4,
-    issue #31): its IDENTITY gate still fails closed, while the FORGE hostnames
-    the pi runtime's upstream download URLs need are tolerated there - and only
-    there, never in the enduser bundle.
+  * the linux profile ships the enduser set PLUS the generic-Linux port - both
+    entry points (install-pi.sh + install-linux.sh) with their script trees
+    (DEC-2, issue #49, carrying DEC-R4/#31): its IDENTITY gate still fails
+    closed, while the FORGE hostnames the port's upstream download URLs need
+    are tolerated there - and only there, never in the enduser bundle; and
+    --profile pi is a warned deprecated alias producing the identical -linux
+    artifacts (DEC-A, #49).
 
 Mirrors scripts/ci/render_check.py: exercise the REAL scripts (a reimplementation
 would miss the very bugs this guards against), fail() -> exit 1, print OK: on pass.
@@ -59,7 +62,7 @@ MUST_EXCLUDE = [
 # Forbidden substrings mirror scripts/package.sh's leak-gate (case-insensitive).
 # DEC-R3 (issue #31): IDENTITY strings are forbidden in EVERY gated profile;
 # FORGE hostnames are additionally forbidden in the enduser bundle only (the
-# pi bundle legitimately carries upstream release-download URLs).
+# linux bundle legitimately carries upstream release-download URLs).
 IDENTITY_SUBSTRINGS = [
     "czhaoca", "chao.zhao", "nimbus", "docker-china-sync",
     "woodpecker", "aliyun_name_space", "yvr" + "lab",
@@ -98,6 +101,10 @@ ENDUSER_MUST_EXCLUDE = [
     PREFIX + "scripts/pi/lite.sh",
     PREFIX + "docs/INSTALL-PI.txt",
     PREFIX + "docs/INSTALL-PI.zh.txt",
+    PREFIX + "scripts/pi/detect.sh",
+    PREFIX + "install-linux.sh",
+    PREFIX + "scripts/linux/preflight_linux.sh",
+    PREFIX + "scripts/linux/i18n_linux.sh",
     PREFIX + "scripts/cli/spec.yaml",
     PREFIX + "docs/cli.md",
     PREFIX + "README.md",
@@ -111,17 +118,23 @@ ENDUSER_MUST_EXCLUDE = [
     PREFIX + "scripts/package.sh",
 ]
 
-# --- pi profile (the enduser set PLUS the Raspberry-Pi port; DEC-R4, #31) ------
-# Derived, not copied: the pi lists differ from the enduser lists by exactly
-# the four pi paths, mirroring package.sh's PI_EXCLUDES derivation.
-PI_EXTRA_INCLUDE = [
+# --- linux profile (the enduser set PLUS the generic-Linux port; DEC-2, #49) ---
+# Derived, not copied: the linux lists differ from the enduser lists by exactly
+# the generic-port paths, mirroring package.sh's LINUX_EXCLUDES derivation.
+# Both port dirs carry TWO fixture files each so a narrowed (single-file)
+# exclude pathspec regression cannot slip past the membership checks.
+LINUX_EXTRA_INCLUDE = [
     PREFIX + "install-pi.sh",
     PREFIX + "scripts/pi/lite.sh",
+    PREFIX + "scripts/pi/detect.sh",
     PREFIX + "docs/INSTALL-PI.txt",
     PREFIX + "docs/INSTALL-PI.zh.txt",
+    PREFIX + "install-linux.sh",
+    PREFIX + "scripts/linux/preflight_linux.sh",
+    PREFIX + "scripts/linux/i18n_linux.sh",
 ]
-PI_MUST_INCLUDE = ENDUSER_MUST_INCLUDE + PI_EXTRA_INCLUDE
-PI_MUST_EXCLUDE = [p for p in ENDUSER_MUST_EXCLUDE if p not in PI_EXTRA_INCLUDE]
+LINUX_MUST_INCLUDE = ENDUSER_MUST_INCLUDE + LINUX_EXTRA_INCLUDE
+LINUX_MUST_EXCLUDE = [p for p in ENDUSER_MUST_EXCLUDE if p not in LINUX_EXTRA_INCLUDE]
 
 
 def fail(msg):
@@ -347,10 +360,19 @@ def build_enduser_fixture(root: Path):
     (root / "scripts" / "pi").mkdir(parents=True)
     (root / "scripts" / "pi" / "lite.sh").write_text(
         "#!/bin/sh\nURL=https://github.com/MetaCubeX/mihomo/releases\n:\n")
-    # The Pi guides ship with the Pi profile, not the DSM bundle (their
+    (root / "scripts" / "pi" / "detect.sh").write_text("#!/bin/sh\n:\n")
+    # The Pi guides ship with the linux profile, not the DSM bundle (their
     # installer is pruned above; a guide for an absent installer is noise).
     (root / "docs" / "INSTALL-PI.txt").write_text("Raspberry Pi install guide.\n")
     (root / "docs" / "INSTALL-PI.zh.txt").write_text("Raspberry Pi install guide (zh).\n")
+    # The generic-Linux entry drives the same engine; it ships via the linux
+    # profile only. Its forge-URL decoy makes an unpruned DSM bundle FAIL the
+    # leak-gate rather than ship it silently.
+    (root / "install-linux.sh").write_text("#!/bin/sh\n# generic Linux installer over the pi engine\n:\n")
+    (root / "scripts" / "linux").mkdir(parents=True)
+    (root / "scripts" / "linux" / "preflight_linux.sh").write_text(
+        "#!/bin/sh\n# macvlan guard; engine downloads from https://github.com/MetaCubeX\n:\n")
+    (root / "scripts" / "linux" / "i18n_linux.sh").write_text("#!/bin/sh\n:\n")
     (root / "scripts" / "cli").mkdir(parents=True)
     (root / "scripts" / "cli" / "spec.yaml").write_text(
         "# CLI contract spec - dev-only; see github.com/czhaoca upstream\n")
@@ -401,44 +423,45 @@ def check_enduser_archive(path: Path):
         fail(f"{label}: enduser bundle contains an email-like string {m.group(0)!r}")
 
 
-def check_pi_archive(path: Path):
+def check_linux_archive(path: Path):
     label = path.name
     names = archive_names(path)
-    for want in PI_MUST_INCLUDE:
+    for want in LINUX_MUST_INCLUDE:
         if want not in names:
-            fail(f"{label}: pi bundle missing required entry {want}")
-    for bad in PI_MUST_EXCLUDE:
+            fail(f"{label}: linux bundle missing required entry {want}")
+    for bad in LINUX_MUST_EXCLUDE:
         if bad in names:
-            fail(f"{label}: pi bundle shipped an excluded file {bad}")
+            fail(f"{label}: linux bundle shipped an excluded file {bad}")
     for n in names:
         if n.endswith(".md"):
-            fail(f"{label}: pi bundle ships a .md doc: {n}")
+            fail(f"{label}: linux bundle ships a .md doc: {n}")
         if n.startswith(PREFIX + "scripts/ci/"):
-            fail(f"{label}: pi bundle ships scripts/ci: {n}")
+            fail(f"{label}: linux bundle ships scripts/ci: {n}")
         if n.startswith(PREFIX + "scripts/cli/"):
-            fail(f"{label}: pi bundle ships the CLI spec dir scripts/cli: {n}")
+            fail(f"{label}: linux bundle ships the CLI spec dir scripts/cli: {n}")
         if n.startswith(PREFIX + "docs/zh/"):
-            fail(f"{label}: pi bundle ships docs/zh: {n}")
+            fail(f"{label}: linux bundle ships docs/zh: {n}")
     blob = archive_blob(path)
     for sentinel in (ENV_SENTINEL, SUB_SENTINEL):
         if sentinel.encode() in blob:
-            fail(f"{label}: SECRET LEAK - sentinel {sentinel!r} in the pi bundle")
+            fail(f"{label}: SECRET LEAK - sentinel {sentinel!r} in the linux bundle")
     text = blob.decode("utf-8", "ignore")
     low = text.lower()
     for s in IDENTITY_SUBSTRINGS:
         if s in low:
-            fail(f"{label}: pi bundle contains forbidden identity string {s!r}")
+            fail(f"{label}: linux bundle contains forbidden identity string {s!r}")
     if "https://github.com/" not in text:
-        fail(f"{label}: pi bundle lost its functional upstream download URL")
+        fail(f"{label}: linux bundle lost its functional upstream download URL")
     m = EMAIL_RE.search(text)
     if m:
-        fail(f"{label}: pi bundle contains an email-like string {m.group(0)!r}")
+        fail(f"{label}: linux bundle contains an email-like string {m.group(0)!r}")
 
 
 def check_enduser(base: Path):
     """Build the enduser bundle in its own fixture and assert prune + no-leak, then
-    prove the leak-gate FIRES (exit 3, no artifact) when a kept file carries an
-    identity string."""
+    prove the leak-gate FIRES (exit 3, no artifact) when a kept file carries a
+    forge hostname (which the linux profile must tolerate on the same tree) or
+    an identity string."""
     eu = base / "enduser"
     eu.mkdir()
     build_enduser_fixture(eu)
@@ -457,8 +480,27 @@ def check_enduser(base: Path):
         check_enduser_archive(art)
         check_checksum(art)
 
-    # Leak-gate must FIRE: inject a forbidden string into a KEPT, tracked file.
+    # FORGE direction of the split (criterion 3, #49): a forge hostname in a
+    # KEPT, tracked file must abort the enduser build, while the linux profile
+    # tolerates the very same tree. This is what proves leak_scan's FORGE
+    # branch exists - the built-archive scans above are trivially forge-free.
     cmp_path = eu / "docker-compose.yml"
+    cmp_path.write_text(cmp_path.read_text() + "# upstream: https://github.com/example/thing\n")
+    git(["commit", "-aqm", "inject forge ref"], cwd=eu)
+    rf = run(["sh", str(pkg), "--version", "9.9.9-forge"])
+    if rf.returncode != 3:
+        fail(f"enduser forge-gate: expected exit 3 on an injected forge hostname, got {rf.returncode}")
+    if (dist / "syno-mihomo-gateway-9.9.9-forge.tar.gz").exists() or \
+       (dist / "syno-mihomo-gateway-9.9.9-forge.zip").exists():
+        fail("enduser forge-gate fired but still wrote an artifact")
+    if "github" not in (rf.stdout + rf.stderr).lower():
+        fail("enduser forge-gate fired but did not name the offending string")
+    rl = run(["sh", str(pkg), "--profile", "linux", "--version", "9.9.9-forge-lx"])
+    if rl.returncode != 0:
+        fail(f"linux profile rejected the forge hostname the split should tolerate "
+             f"(exit {rl.returncode}): {rl.stderr.strip()}")
+
+    # IDENTITY leak-gate must FIRE on top of the tolerated forge ref.
     cmp_path.write_text(cmp_path.read_text() + "# mirror via docker-china-sync\n")
     git(["commit", "-aqm", "inject leak"], cwd=eu)
     r2 = run(["sh", str(pkg), "--version", "9.9.9-leak"])
@@ -471,42 +513,77 @@ def check_enduser(base: Path):
         fail("leak-gate fired but did not name the offending string")
 
 
-def check_pi(base: Path):
-    """Build the pi bundle (the enduser superset; DEC-R4) from the same fixture
-    tree - its pi decoys become shipped content - and assert the pi files ship,
-    the forge URL the pi runtime needs survives (the gate tolerates it), and an
-    injected IDENTITY string still fails the build closed."""
-    pi = base / "pi"
-    pi.mkdir()
-    build_enduser_fixture(pi)
-    pkg = pi / "scripts" / "package.sh"
-    dist = pi / "dist"
+def check_linux(base: Path):
+    """Build the linux bundle (the enduser superset carrying both generic
+    entries; DEC-2, #49) from the same fixture tree - its port decoys become
+    shipped content - and assert the port files ship, the forge URL the runtime
+    needs survives (the gate tolerates it), --profile pi is a warned alias
+    producing the identical -linux artifacts (DEC-A), and an injected IDENTITY
+    string still fails the build closed."""
+    lx = base / "linux"
+    lx.mkdir()
+    build_enduser_fixture(lx)
+    pkg = lx / "scripts" / "package.sh"
+    dist = lx / "dist"
 
-    r = run(["sh", str(pkg), "--profile", "pi", "--version", "9.9.9-pi"])
+    r = run(["sh", str(pkg), "--profile", "linux", "--version", "9.9.9-lx"])
     if r.returncode != 0:
-        fail(f"pi build failed (exit {r.returncode}): {r.stderr.strip()}")
-    tar = dist / "syno-mihomo-gateway-pi-9.9.9-pi.tar.gz"
-    zp = dist / "syno-mihomo-gateway-pi-9.9.9-pi.zip"
+        fail(f"linux build failed (exit {r.returncode}): {r.stderr.strip()}")
+    tar = dist / "syno-mihomo-gateway-linux-9.9.9-lx.tar.gz"
+    zp = dist / "syno-mihomo-gateway-linux-9.9.9-lx.zip"
     for f in (tar, zp):
         if not f.exists():
-            fail(f"pi artifact missing: {f.name}")
+            fail(f"linux artifact missing: {f.name}")
     for art in (tar, zp):
-        check_pi_archive(art)
+        check_linux_archive(art)
         check_checksum(art)
 
-    # The IDENTITY gate must still FIRE for the pi profile: inject an identity
+    # DEC-A (#49): --profile pi is a deprecated alias - it must warn, produce
+    # -linux artifacts (never -pi), and rebuild the byte-identical bundle: the
+    # alias rerun uses the SAME version, so git archive of the same commit must
+    # overwrite each artifact with exactly the same bytes.
+    saved = {a.name: a.read_bytes() for a in (tar, zp)}
+    r2 = run(["sh", str(pkg), "--profile", "pi", "--version", "9.9.9-lx"])
+    if r2.returncode != 0:
+        fail(f"--profile pi alias build failed (exit {r2.returncode}): {r2.stderr.strip()}")
+    if "deprecated" not in (r2.stdout + r2.stderr).lower():
+        fail("--profile pi alias did not warn about deprecation")
+    if (dist / "syno-mihomo-gateway-pi-9.9.9-lx.tar.gz").exists() or \
+       (dist / "syno-mihomo-gateway-pi-9.9.9-lx.zip").exists():
+        fail("--profile pi alias wrote a -pi artifact")
+    for a in (tar, zp):
+        if not a.exists():
+            fail(f"--profile pi alias artifact missing: {a.name}")
+        if a.read_bytes() != saved[a.name]:
+            fail(f"--profile pi alias rebuild of {a.name} is not byte-identical")
+        check_checksum(a)  # the rebuild rewrote the .sha256 sidecars too
+
+    # The --profile=pi equals-form spelling must take the same alias path.
+    r3 = run(["sh", str(pkg), "--profile=pi", "--version", "9.9.9-alias-eq", "--no-tar"])
+    if r3.returncode != 0:
+        fail(f"--profile=pi (equals form) build failed (exit {r3.returncode}): {r3.stderr.strip()}")
+    if "deprecated" not in (r3.stdout + r3.stderr).lower():
+        fail("--profile=pi (equals form) did not warn about deprecation")
+    if (dist / "syno-mihomo-gateway-pi-9.9.9-alias-eq.zip").exists():
+        fail("--profile=pi (equals form) wrote a -pi artifact")
+    eq_zip = dist / "syno-mihomo-gateway-linux-9.9.9-alias-eq.zip"
+    if not eq_zip.exists():
+        fail("--profile=pi (equals form) did not produce a -linux zip artifact")
+    check_checksum(eq_zip)
+
+    # The IDENTITY gate must still FIRE for the linux profile: inject an identity
     # string into a kept, tracked file -> exit 3, no artifact, string named.
-    cmp_path = pi / "docker-compose.yml"
+    cmp_path = lx / "docker-compose.yml"
     cmp_path.write_text(cmp_path.read_text() + "# mirror via docker-china-sync\n")
-    git(["commit", "-aqm", "inject identity leak"], cwd=pi)
-    r2 = run(["sh", str(pkg), "--profile", "pi", "--version", "9.9.9-pileak"])
-    if r2.returncode != 3:
-        fail(f"pi leak-gate: expected exit 3 on an injected identity leak, got {r2.returncode}")
-    if (dist / "syno-mihomo-gateway-pi-9.9.9-pileak.tar.gz").exists() or \
-       (dist / "syno-mihomo-gateway-pi-9.9.9-pileak.zip").exists():
-        fail("pi leak-gate fired but still wrote an artifact")
-    if "docker-china-sync" not in (r2.stdout + r2.stderr):
-        fail("pi leak-gate fired but did not name the offending string")
+    git(["commit", "-aqm", "inject identity leak"], cwd=lx)
+    r3 = run(["sh", str(pkg), "--profile", "linux", "--version", "9.9.9-lxleak"])
+    if r3.returncode != 3:
+        fail(f"linux leak-gate: expected exit 3 on an injected identity leak, got {r3.returncode}")
+    if (dist / "syno-mihomo-gateway-linux-9.9.9-lxleak.tar.gz").exists() or \
+       (dist / "syno-mihomo-gateway-linux-9.9.9-lxleak.zip").exists():
+        fail("linux leak-gate fired but still wrote an artifact")
+    if "docker-china-sync" not in (r3.stdout + r3.stderr):
+        fail("linux leak-gate fired but did not name the offending string")
 
 
 def main():
@@ -547,16 +624,18 @@ def main():
         # enduser profile: curated, identity-free distribution.
         check_enduser(base)
 
-        # pi profile: the enduser superset that carries the Raspberry-Pi port.
-        check_pi(base)
+        # linux profile: the enduser superset that carries both generic entries.
+        check_linux(base)
 
     print("OK: dev archive ships templates+scripts but no secret bytes (zip & tar.gz); "
           "checksums verify; tracked-secret/dirty/non-git guards fire; bootstrap.sh seeds "
           "config (mode 600), restores +x, is idempotent. enduser profile prunes all "
-          "developer/.md/CI files, ships the installer + .txt guides, leaks no identity "
-          "string or secret, and its leak-gate fails closed on an injected leak. pi "
-          "profile ships the Pi port on top of the enduser set, keeps the identity gate "
-          "fail-closed, and tolerates the upstream forge URLs the Pi runtime needs.")
+          "developer/.md/CI files (incl. both generic-Linux entries), ships the installer "
+          "+ .txt guides, leaks no identity string or secret, and its leak-gate fails "
+          "closed on an injected leak. linux profile ships the Pi + generic-Linux ports "
+          "on top of the enduser set, keeps the identity gate fail-closed, tolerates the "
+          "upstream forge URLs the runtime needs, and accepts --profile pi as a warned "
+          "alias building the identical -linux bundle.")
 
 
 if __name__ == "__main__":

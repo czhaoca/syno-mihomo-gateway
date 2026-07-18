@@ -25,8 +25,9 @@
 
 ## 1. 获取发布压缩包（在能联网的机器上）
 
-**捷径 —— 直接下载。**每个 GitHub 发布版本都已发布下面列出的正好四个产物
-（zip、tar.gz 以及两个 `.sha256` 校验和文件）。在任意一台能访问 github.com 的机器上，
+**捷径 —— 直接下载。**每个 GitHub 发布版本都已发布下面列出的四个 DSM 包产物
+（zip、tar.gz 以及两个 `.sha256` 校验和文件），另有通用 Linux 移植的四个
+`syno-mihomo-gateway-linux-*` 附件。在任意一台能访问 github.com 的机器上，
 下载最新发布版本的附件，然后直接跳到第 2 步 —— 无需 clone，也无需构建。
 
 **或者自己从 clone 构建**：
@@ -64,12 +65,15 @@ dist/syno-mihomo-gateway-<版本>.tar.gz.sha256
   在 NAS 上，手册是 `docs/README.txt`、`INSTALL.txt`、`CONFIGURE.txt`、`TROUBLESHOOTING.txt`、
   `AUTO-UPDATE.txt` 和 `CLI.txt`（另有 `.zh.txt` 中文版本）。本页 —— 连同[安装](installation.md)
   以及本指南中所有其他 `.md` 交叉链接 —— 都**不在**包内；请在联网机器上或在线阅读 `.md` 手册。
-- **`--profile pi`** —— 在 enduser 集合之上**加入 Raspberry Pi 移植**：`install-pi.sh`、
-  `scripts/pi/`，以及 `docs/INSTALL-PI.txt` / `docs/INSTALL-PI.zh.txt` 指南。产物命名为
-  `syno-mihomo-gateway-pi-<版本>.{zip,tar.gz}`（包内根目录名相同），两种包可以并存于 dist/。
-  Pi 运行时需要从上游 releases 下载 mihomo/面板产物，因此仅此 profile 容许打包文件中出现
-  通用代码托管域名；下方的身份门禁依然完整生效。在 Pi 上解压后运行
-  `sudo sh ./install-pi.sh`（见包内 `docs/INSTALL-PI.txt`）。
+- **`--profile linux`** —— 在 enduser 集合之上**加入通用 Linux 移植**：两个入口脚本
+  （`install-pi.sh` 与 `install-linux.sh`）、`scripts/pi/`、`scripts/linux/`，以及
+  `docs/INSTALL-PI.txt` / `docs/INSTALL-PI.zh.txt` 指南。产物命名为
+  `syno-mihomo-gateway-linux-<版本>.{zip,tar.gz}`（包内根目录名相同），两种包可以并存于 dist/。
+  该移植的运行时需要从上游 releases 下载 mihomo/面板产物，因此仅此 profile 容许打包文件中出现
+  通用代码托管域名；下方的身份门禁依然完整生效。在目标主机上解压后运行
+  `sudo sh ./install-linux.sh`（Raspberry Pi 上运行 `sudo sh ./install-pi.sh`；见包内
+  `docs/INSTALL-PI.txt`）。`--profile pi` 仍被接受为已弃用的别名：它会给出警告，
+  然后构建同一个包。
 - **`--profile dev`** —— 完整的 git 跟踪目录树（文档、CI、元数据）。内部使用；CI 的打包检查
   构建的就是它。
 
@@ -83,12 +87,12 @@ dist/syno-mihomo-gateway-<版本>.tar.gz.sha256
   `logs/` 下的任何文件被 git 跟踪（`git archive` 会把它打进包里），则拒绝；请先用
   `git rm --cached <path>` 取消跟踪。
 - **不是 git 检出目录** —— 必须在源码 clone 中运行，不能在解压出的发布包里运行。
-- **身份泄露门禁**（enduser 与 pi profile）—— 在写出任何产物之前，会扫描暂存目录树中的
+- **身份泄露门禁**（enduser 与 linux profile）—— 在写出任何产物之前，会扫描暂存目录树中的
   开发者/身份识别字符串（外加一个邮箱地址正则）。任何命中都会以 `IDENTITY LEAK` 中止，
   指出违规字符串和文件，并且**不写出任何产物**。修复方法是从违规的*被跟踪*文件中清除
   该字符串、提交后重新构建 —— 不修复直接重跑不会有任何变化。禁止列表是分组的：**身份**
-  字符串在两种精选 profile 中都被禁止；通用**代码托管域名**在 enduser 包中禁止、在 pi 包中
-  容许（其运行时需要可用的上游下载地址）。
+  字符串在两种精选 profile 中都被禁止；通用**代码托管域名**在 enduser 包中禁止、在 linux
+  包中容许（其运行时需要可用的上游下载地址）。
 
 其他参数：`--no-zip` / `--no-tar` 跳过对应产物（两个同时传是错误）。
 

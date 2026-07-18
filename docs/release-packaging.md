@@ -26,9 +26,10 @@ images via your ACR mirror** — and the NAS never needs to reach github.com or 
 
 ## 1. Get the release zip (on a machine with access)
 
-**Fast path — download it.** Every GitHub release already publishes exactly the four artifacts
-listed below (zip, tar.gz, and both `.sha256` sidecars). On any machine that can reach github.com,
-download the latest release's assets and skip straight to step 2 — no clone, no build.
+**Fast path — download it.** Every GitHub release already publishes the four DSM-bundle artifacts
+listed below (zip, tar.gz, and both `.sha256` sidecars), alongside the generic-Linux port's four
+`syno-mihomo-gateway-linux-*` assets. On any machine that can reach github.com, download the
+latest release's assets and skip straight to step 2 — no clone, no build.
 
 **Or build it yourself** from a clone:
 
@@ -69,13 +70,16 @@ built with `git archive`, so it contains **only tracked files** — your `.env`,
   `.zh.txt` Chinese variants). This page — and [Installation](installation.md), and every other
   `.md` cross-link in this guide — is **not** in the bundle; read the `.md` manual on the
   connected machine or online.
-- **`--profile pi`** — the enduser set **plus the Raspberry Pi port**: `install-pi.sh`,
-  `scripts/pi/`, and the `docs/INSTALL-PI.txt` / `docs/INSTALL-PI.zh.txt` guides. Artifacts are
-  named `syno-mihomo-gateway-pi-<version>.{zip,tar.gz}` (same in-archive folder name), so both
-  bundles can sit side by side. The Pi runtime downloads mihomo/dashboard artifacts from upstream
-  releases, so this profile — and only this profile — tolerates generic code-forge hostnames in
-  shipped files; the identity gate below still applies in full. On the Pi, unpack and run
-  `sudo sh ./install-pi.sh` (see the bundled `docs/INSTALL-PI.txt`).
+- **`--profile linux`** — the enduser set **plus the generic-Linux port**: both entry points
+  (`install-pi.sh` and `install-linux.sh`), `scripts/pi/`, `scripts/linux/`, and the
+  `docs/INSTALL-PI.txt` / `docs/INSTALL-PI.zh.txt` guides. Artifacts are named
+  `syno-mihomo-gateway-linux-<version>.{zip,tar.gz}` (same in-archive folder name), so both
+  bundles can sit side by side. The port's runtime downloads mihomo/dashboard artifacts from
+  upstream releases, so this profile — and only this profile — tolerates generic code-forge
+  hostnames in shipped files; the identity gate below still applies in full. On the target host,
+  unpack and run `sudo sh ./install-linux.sh` (on a Raspberry Pi: `sudo sh ./install-pi.sh`; see
+  the bundled `docs/INSTALL-PI.txt`). `--profile pi` is accepted as a deprecated alias: it warns,
+  then builds this same bundle.
 - **`--profile dev`** — the full tracked tree (docs, CI, metadata). Internal use; it is what CI's
   package check builds.
 
@@ -89,13 +93,13 @@ built with `git archive`, so it contains **only tracked files** — your `.env`,
   anything under `logs/` is tracked by git (`git archive` would ship it); untrack with
   `git rm --cached <path>` first.
 - **Not a git checkout** — it must run from the source clone, not an unpacked release bundle.
-- **Identity leak-gate** (enduser and pi profiles) — before writing any artifact, the staged tree
-  is scanned for developer/identifying strings (plus an email-address regex). Any hit aborts with
-  `IDENTITY LEAK`, names the offending string and file, and writes **no artifact**. The fix is to
-  scrub the string from the offending *tracked* file, commit, and rebuild — re-running without a
-  fix changes nothing. The forbidden list is split: **identity** strings are forbidden in both
-  curated profiles, while generic **forge hostnames** are forbidden in the enduser bundle but
-  tolerated in the pi bundle (its runtime needs functional upstream download URLs).
+- **Identity leak-gate** (enduser and linux profiles) — before writing any artifact, the staged
+  tree is scanned for developer/identifying strings (plus an email-address regex). Any hit aborts
+  with `IDENTITY LEAK`, names the offending string and file, and writes **no artifact**. The fix
+  is to scrub the string from the offending *tracked* file, commit, and rebuild — re-running
+  without a fix changes nothing. The forbidden list is split: **identity** strings are forbidden
+  in both curated profiles, while generic **forge hostnames** are forbidden in the enduser bundle
+  but tolerated in the linux bundle (its runtime needs functional upstream download URLs).
 
 Other flags: `--no-zip` / `--no-tar` skip one artifact (passing both is an error).
 

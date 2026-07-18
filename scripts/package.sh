@@ -12,11 +12,14 @@
 #                      the interactive installer + the plain-text guides, with all
 #                      developer/internal files removed and a leak-gate that fails
 #                      the build if any identifying string would ship.
-#   --profile pi       the enduser set PLUS the Raspberry-Pi port (install-pi.sh,
-#                      scripts/pi, the INSTALL-PI guides). Same identity gate;
-#                      generic forge hostnames are tolerated here because the Pi
-#                      runtime downloads from upstream releases (DEC-R3, #31).
-#                      Artifacts are named syno-mihomo-gateway-pi-<version>.*.
+#   --profile linux    the enduser set PLUS the generic-Linux port: both entry
+#                      points (install-pi.sh + install-linux.sh), scripts/pi,
+#                      scripts/linux, and the INSTALL-PI guides (DEC-2, #49).
+#                      Same identity gate; generic forge hostnames are tolerated
+#                      here because the port's runtime downloads from upstream
+#                      releases (DEC-R3, #31). Artifacts are named
+#                      syno-mihomo-gateway-linux-<version>.*. `--profile pi` is
+#                      a deprecated alias for this profile (DEC-A, #49).
 #
 # Container images are intentionally out of scope here - they reach the NAS via a
 # registry mirror, not this zip.
@@ -27,7 +30,7 @@
 #
 # POSIX /bin/sh, ASCII only, no `set -e` (explicit return-code checks).
 #
-# Usage: scripts/package.sh [--profile dev|enduser|pi] [--version X.Y.Z]
+# Usage: scripts/package.sh [--profile dev|enduser|linux] [--version X.Y.Z]
 #                           [--allow-dirty] [--no-zip] [--no-tar]
 # Output: dist/syno-mihomo-gateway-<version>.{tar.gz,zip} (+ .sha256 sidecars)
 
@@ -46,20 +49,21 @@ DO_TAR=1
 PROFILE=enduser
 
 # Files removed from the --profile enduser bundle: developer/CI/internal metadata,
-# the maintainer-only packager, and the Raspberry-Pi port (it ships via its own
-# profile when that epic releases, and its functional upstream download URLs
+# the maintainer-only packager, and the generic-Linux port (both entry points;
+# it ships via its own profile, and its functional upstream download URLs
 # would trip the leak-gate below). The leak-gate is the belt-and-suspenders
 # that fails the build if any identifying string survives anyway. ('.' = include
 # everything tracked, then subtract.) No entry contains a space.
-ENDUSER_EXCLUDES=". :(exclude)README.md :(exclude)AGENTS.md :(exclude)CLAUDE.md :(exclude).woodpecker.yml :(exclude).gitignore :(exclude)docs/*.md :(exclude)docs/zh :(exclude)scripts/ci :(exclude)scripts/cli :(exclude)scripts/package.sh :(exclude)install-pi.sh :(exclude)scripts/pi :(exclude)docs/INSTALL-PI.txt :(exclude)docs/INSTALL-PI.zh.txt"
+ENDUSER_EXCLUDES=". :(exclude)README.md :(exclude)AGENTS.md :(exclude)CLAUDE.md :(exclude).woodpecker.yml :(exclude).gitignore :(exclude)docs/*.md :(exclude)docs/zh :(exclude)scripts/ci :(exclude)scripts/cli :(exclude)scripts/package.sh :(exclude)install-pi.sh :(exclude)scripts/pi :(exclude)docs/INSTALL-PI.txt :(exclude)docs/INSTALL-PI.zh.txt :(exclude)install-linux.sh :(exclude)scripts/linux"
 
-# The pi bundle is the enduser set PLUS the Raspberry-Pi port: derived, not
-# copied, so the two pathspecs can never diverge anywhere else (DEC-R4, #31).
-PI_EXCLUDES=""
+# The linux bundle is the enduser set PLUS the generic-Linux port (both entry
+# points and their script trees): derived, not copied, so the two pathspecs can
+# never diverge anywhere else (DEC-R4 #31; DEC-2 #49).
+LINUX_EXCLUDES=""
 for _tok in $ENDUSER_EXCLUDES; do
   case "$_tok" in
-    ':(exclude)install-pi.sh'|':(exclude)scripts/pi'|':(exclude)docs/INSTALL-PI.txt'|':(exclude)docs/INSTALL-PI.zh.txt') : ;;
-    *) PI_EXCLUDES="${PI_EXCLUDES}${PI_EXCLUDES:+ }$_tok" ;;
+    ':(exclude)install-pi.sh'|':(exclude)scripts/pi'|':(exclude)docs/INSTALL-PI.txt'|':(exclude)docs/INSTALL-PI.zh.txt'|':(exclude)install-linux.sh'|':(exclude)scripts/linux') : ;;
+    *) LINUX_EXCLUDES="${LINUX_EXCLUDES}${LINUX_EXCLUDES:+ }$_tok" ;;
   esac
 done
 
@@ -73,9 +77,10 @@ usage() {
   cat >&2 <<'EOF'
 Usage: scripts/package.sh [options]
 
-  --profile dev|enduser|pi  enduser (default) = curated self-contained distribution;
-                          pi = enduser set + the Raspberry-Pi port (-pi artifacts);
-                          dev = full tracked tree for internal use
+  --profile dev|enduser|linux  enduser (default) = curated self-contained distribution;
+                          linux = enduser set + the generic-Linux port, both
+                          entry points (-linux artifacts; 'pi' is a deprecated
+                          alias); dev = full tracked tree for internal use
   --version X.Y.Z         Override the version (default: ./VERSION, else git describe)
   --allow-dirty           Package even with uncommitted changes (archives HEAD)
   --no-zip                Skip the .zip artifact
@@ -105,14 +110,15 @@ emit_sha256() {
 # leak_scan <dir> <profile> - grep the assembled tree for forbidden strings.
 # The IDENTITY set (personal/infra identifiers + the email regex catch-all) is
 # forbidden in EVERY gated profile; the FORGE set (generic code-forge hostnames)
-# is additionally forbidden everywhere EXCEPT the pi profile, whose runtime
-# legitimately downloads from upstream releases (DEC-R3, #31). Fixed strings
-# match case-insensitively. Keep scripts/ci/package_check.py's split in sync.
+# is additionally forbidden everywhere EXCEPT the linux profile, whose runtime
+# legitimately downloads from upstream releases (DEC-R3 #31; DEC-2 #49). Fixed
+# strings match case-insensitively. Keep scripts/ci/package_check.py's split in
+# sync.
 leak_scan() {
   _dir="$1"; _lprofile="$2"; _hit=0
   _private_site='yvr''lab'
   set -- czhaoca chao.zhao Nimbus docker-china-sync woodpecker ALIYUN_NAME_SPACE "$_private_site"
-  if [ "$_lprofile" != pi ]; then
+  if [ "$_lprofile" != linux ]; then
     set -- "$@" github gitlab bitbucket gitea git@
   fi
   for _s in "$@"; do
@@ -156,9 +162,16 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
+# DEC-A (#49): 'pi' is a deprecated alias for the renamed linux profile - warn,
+# then build the identical -linux bundle so existing invocations keep working.
+if [ "$PROFILE" = pi ]; then
+  log_warn "--profile pi is deprecated; use --profile linux (same bundle, -linux artifacts)."
+  PROFILE=linux
+fi
+
 case "$PROFILE" in
-  dev|enduser|pi) : ;;
-  *) log_error "--profile must be 'dev', 'enduser', or 'pi' (got '$PROFILE')"; exit "$EXIT_CONFIG" ;;
+  dev|enduser|linux) : ;;
+  *) log_error "--profile must be 'dev', 'enduser', or 'linux' (got '$PROFILE')"; exit "$EXIT_CONFIG" ;;
 esac
 
 # --- guard: must run from the source git checkout, not an extracted release ---
@@ -204,19 +217,19 @@ fi
 
 mkdir -p "$DIST" || { log_error "cannot create $DIST"; exit "$EXIT_CONFIG"; }
 
-# The pi artifacts carry a distinct stem so both curated bundles can sit in
+# The linux artifacts carry a distinct stem so both curated bundles can sit in
 # dist/ side by side; the in-archive root dir (PREFIX) is identical.
 ARTIFACT_STEM="syno-mihomo-gateway"
-[ "$PROFILE" = pi ] && ARTIFACT_STEM="syno-mihomo-gateway-pi"
+[ "$PROFILE" = linux ] && ARTIFACT_STEM="syno-mihomo-gateway-linux"
 TARBALL="$DIST/${ARTIFACT_STEM}-${VERSION}.tar.gz"
 ZIPFILE="$DIST/${ARTIFACT_STEM}-${VERSION}.zip"
 built=0
 
-if [ "$PROFILE" = enduser ] || [ "$PROFILE" = pi ]; then
+if [ "$PROFILE" = enduser ] || [ "$PROFILE" = linux ]; then
   # Stage the curated tree (tracked-only, excludes applied) and prove it carries
   # no forbidden string BEFORE writing any artifact.
   ARCHIVE_EXCLUDES="$ENDUSER_EXCLUDES"
-  [ "$PROFILE" = pi ] && ARCHIVE_EXCLUDES="$PI_EXCLUDES"
+  [ "$PROFILE" = linux ] && ARCHIVE_EXCLUDES="$LINUX_EXCLUDES"
   STAGE="$(mktemp -d "${TMPDIR:-/tmp}/smg-pkg.XXXXXX")" || { log_error "mktemp failed"; exit "$EXIT_CONFIG"; }
   # shellcheck disable=SC2064  # expand STAGE now so the trap removes this exact dir
   trap "rm -rf \"$STAGE\"" EXIT INT TERM
@@ -280,7 +293,7 @@ log_info "release ${VERSION} (${PROFILE}) ready in ${DIST}:"
 ls -lh "$DIST" >&2
 case "$PROFILE" in
   enduser) log_info "Next: transfer to the NAS, unpack into the Docker shared folder, run 'sh ./install.sh'." ;;
-  pi)      log_info "Next: transfer to the Pi, unpack, run 'sudo sh ./install-pi.sh' (see docs/INSTALL-PI.txt)." ;;
-  *)       log_info "dev bundle (internal). For the distributable archives use: --profile enduser or --profile pi" ;;
+  linux)   log_info "Next: transfer to the target host, unpack, run 'sudo sh ./install-linux.sh' (on a Pi: 'sudo sh ./install-pi.sh'; see docs/INSTALL-PI.txt)." ;;
+  *)       log_info "dev bundle (internal). For the distributable archives use: --profile enduser or --profile linux" ;;
 esac
 exit "$EXIT_OK"

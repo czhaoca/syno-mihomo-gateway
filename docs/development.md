@@ -150,7 +150,7 @@ Runs on push/PR to `main` and `master`:
 | `render-config` | `python scripts/ci/render_check.py` — runs the **real** renderer against a fixture URL with a `Name=` prefix + `&` params and asserts the URL round-trips exactly; also enforces the no-hardcoded-DNS rule |
 | `cli-contract` | `python scripts/ci/cli_contract_check.py` — byte-diffs the committed `help.sh`/`cli.md` (en+zh)/`CLI.txt` (en+zh) against a fresh regeneration from `scripts/cli/spec.yaml`, and asserts the spec's exit codes match `common.sh`, its verb set matches `gateway.sh`'s dispatch, and `gateway.sh --help` serves the spec text verbatim |
 | `compose-policy` | `python scripts/ci/compose_policy_check.py` — asserts **fail-closed** image refs: every compose `image:` is exactly `${VAR}`/`${VAR:?msg}` (no defaults, no hardcoded refs) and `.env.example` defines the image vars and ships `REGISTRY_MODE=acr` (ACR default; `docker` upstream is an explicit opt-in, not forbidden); also freezes the **container-name contract** — every service pins `container_name:`, the core pair is exactly `mihomo`/`mihomo-ui`, and `scripts/lib/compose.sh`'s defaults mirror them (a rename is a breaking operator-contract change) |
-| `package-check` | `python scripts/ci/package_check.py` — builds the dev, enduser, **and pi** bundles in throwaway repos and proves **no secret can ship** (planted `.env`/subscription/`config.yaml` absent from the archives' names *and* bytes), checksums verify, the enduser bundle prunes developer/`.md`/CI files (including the Pi port), ships the installer + `.txt` guides, contains no identity string, and its leak-gate fails closed on an injected leak; the pi bundle ships the Pi port on top of the enduser set, keeps the identity gate fail-closed, and tolerates the upstream forge URLs its runtime needs |
+| `package-check` | `python scripts/ci/package_check.py` — builds the dev, enduser, **and linux** bundles in throwaway repos and proves **no secret can ship** (planted `.env`/subscription/`config.yaml` absent from the archives' names *and* bytes), checksums verify, the enduser bundle prunes developer/`.md`/CI files (including both generic-Linux entries), ships the installer + `.txt` guides, contains no identity string, and its leak-gate fails closed on an injected leak; the linux bundle ships the Pi + generic-Linux ports on top of the enduser set, keeps the identity gate fail-closed, tolerates the upstream forge URLs its runtime needs, and accepts `--profile pi` as a warned deprecated alias building the identical `-linux` artifacts |
 | `privacy-check` | Scans tracked files and reachable blobs for private operational identifiers, credentials, private keys, and accidentally tracked runtime files (+ the gate's self-test) |
 | `dsm-shell-tests` | Twelve BusyBox `sh` suites with fake Docker/Compose/service CLIs: `dsm_installer_check`, `lifecycle_check`, `auto_update_check`, `cloudflared_check`, `generic_update_check`, `gateway_cli_check`, `seed_provider_check`, `proxy_groups_check` (the doctor's zero-node guard for the generated country groups — incl. the `default-empty` state, the country `Country Pick` is riding gone empty), `full_proxy_check` (the doctor's per-device full-proxy band guard — knob/render parity both directions, the `/connections` chain scan incl. the LAN-destination exemption and the UDP/QUIC fallthrough flag, plus the proxy_groups unknown short-circuit fixture), `mihomo_entrypoint_check` (the entrypoint's render-to-temp + `mihomo -t` gate: swap on green, last-good fallback + scrubbed rejection marker), `pi_installer_check` (the Raspberry Pi port's shared seams), `linux_installer_check` (the generic-Linux entry: install-linux.sh sourcing, the i18n delta overlay incl. the catalog no-Pi-branding sweep, the lite_ctl output rebranding with exit-code preservation, the menu dispatch into the pi engine, plus the macvlan-viability guard — virt/cloud detection, warn + explicit ack, decline steers to lite, choke points at both the pre-deployment cleanup (ack before any teardown) and create_network — the `EXPECTED_ARCH` auto-pin on the generic flow, and the docker-default registry wizard writing only the user `.env`, incl. closing the express fast-path bypass) — plus `validate_release.sh --self-test`, the unit checks of the on-NAS release-validation helper's measurement functions |
 | `shellcheck` | `sh -n` parse-checks **every** `*.sh` in the repo, then `shellcheck -x` on 22 targets: `install.sh`, `install-pi.sh`, `install-linux.sh`, `gateway.sh`, `auto_update.sh`, `pi/auto_update_lite.sh`, `pi/lite_ctl.sh`, `install_scheduler.sh`, `setup_network.sh`, `render_config.sh`, `mihomo_entrypoint.sh`, `package.sh`, `doctor.sh`, `state_diff.sh`, `seed_provider.sh`, `bootstrap.sh`, `lib/container.sh`, `lib/targets.sh`, `lib/geodata.sh`, `linux/i18n_linux.sh`, `linux/preflight_linux.sh`, `validate_release.sh` (sourced libs followed in-context) |
@@ -176,7 +176,7 @@ Maintainers produce the offline bundle consumed in [Release Zip](release-packagi
 
 ```bash
 sh scripts/package.sh                         # curated DSM end-user bundle (default)
-sh scripts/package.sh --profile pi            # enduser set + the Raspberry-Pi port (-pi artifacts)
+sh scripts/package.sh --profile linux         # enduser set + the generic-Linux port (-linux artifacts; 'pi' is a warned alias)
 sh scripts/package.sh --profile dev           # full internal/developer bundle
 sh scripts/package.sh --version 1.2.12         # override the VERSION file
 ```
@@ -191,13 +191,13 @@ sh scripts/package.sh --version 1.2.12         # override the VERSION file
 - Safeguards: `package.sh` refuses to build if a secret path is tracked, and CI's `package-check`
   (`scripts/ci/package_check.py`) proves the archive ships no secret on every push.
 - The default (enduser) profile prunes developer/CI files via the `ENDUSER_EXCLUDES` pathspec in
-  `package.sh` (README.md, AGENTS.md, `docs/*.md`, `docs/zh`, `scripts/ci`, `scripts/cli`, the Pi
-  port, …) and ships the `.txt` guides + `install.sh`; a `leak_scan` identity gate greps the
-  staged tree for forbidden strings and **fails closed**. The pi profile's `PI_EXCLUDES` is
-  **derived** from `ENDUSER_EXCLUDES` (minus exactly the four Pi paths), and the forbidden list
-  is split: identity strings apply to both curated profiles, forge hostnames to enduser only.
-  When adding tracked files or forbidden strings, keep `scripts/package.sh` and
-  `scripts/ci/package_check.py` in sync (both carry the split).
+  `package.sh` (README.md, AGENTS.md, `docs/*.md`, `docs/zh`, `scripts/ci`, `scripts/cli`, the
+  Pi + generic-Linux ports, …) and ships the `.txt` guides + `install.sh`; a `leak_scan` identity
+  gate greps the staged tree for forbidden strings and **fails closed**. The linux profile's
+  `LINUX_EXCLUDES` is **derived** from `ENDUSER_EXCLUDES` (minus exactly the six generic-port
+  paths), and the forbidden list is split: identity strings apply to both curated profiles, forge
+  hostnames to enduser only. When adding tracked files or forbidden strings, keep
+  `scripts/package.sh` and `scripts/ci/package_check.py` in sync (both carry the split).
 
 ### Shipping a release
 
@@ -206,13 +206,18 @@ caught live bugs CI could not):
 
 1. Commit to `master` and push.
 2. Wait for **green Woodpecker CI** on that exact commit.
-3. Build the enduser bundle: `sh scripts/package.sh`.
-4. Deploy and validate the bundle **on the production NAS before tagging** — walk
+3. Build both curated bundles: `sh scripts/package.sh` and `sh scripts/package.sh --profile linux`.
+4. Deploy and validate the enduser bundle **on the production NAS before tagging** — walk
    [Release Zip › Verify](release-packaging.md#6-verify) as the acceptance gate.
 5. Tag the exact SHA that was validated.
-6. Publish the GitHub release with the four bundle assets (zip, tar.gz, and both `.sha256`
-   sidecars).
+6. Publish the GitHub release with the eight bundle assets (each bundle's zip, tar.gz, and both
+   `.sha256` sidecars).
 7. Delete the prior release **and** its tag — only the latest release is kept.
+
+> **Release-notes note for the first post-rename release:** the former
+> `syno-mihomo-gateway-pi-*` assets now ship as `syno-mihomo-gateway-linux-*` (the linux bundle
+> carries both `install-pi.sh` and `install-linux.sh`). Under keep-only-latest the old `-pi`
+> download links disappear — call the rename out in the release notes.
 
 ## Agent-assisted deploys need a temporary sudo grant
 
