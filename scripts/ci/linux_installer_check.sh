@@ -22,7 +22,12 @@
 #     flow, the fresh-seed image-ref blanking that closes the express-path
 #     wizard bypass, and the docker-default registry wizard (acr selectable +
 #     arch notice, with a tail-parity tripwire against the stock wizard) - all
-#     of which write ONLY the sandbox user .env, never a tracked file.
+#     of which write ONLY the sandbox user .env, never a tracked file;
+#   * (#50) the platform-conditional remediation phrasing (DEC-A plain vars):
+#     both entries set + export INSTALLER_ENTRY/PLATFORM_LABEL, generic runs
+#     of the shared hint/remediation surfaces name install-linux.sh with no
+#     DSM UI wording, and the unset default keeps every DSM string
+#     byte-identical (golden compares pin the literals).
 # Style matches pi_installer_check.sh: BusyBox ash, mktemp sandbox, function
 # fakes; never mutates the host. Later epic tickets (#49+) extend this file.
 # shellcheck disable=SC1091 # sources resolve via $ROOT at runtime
@@ -556,7 +561,411 @@ cmp -s "$ROOT/.env.example" "$TD/snap.env.example" \
 cmp -s "$ROOT/docker-compose.yml" "$TD/snap.docker-compose.yml" \
   && ok || fail "guard/wizard runs modified the committed docker-compose.yml"
 
+# =============================================================================
+# Ticket #50 - platform-conditional remediation phrasing (INSTALLER_ENTRY +
+# PLATFORM_LABEL, DEC-A: plain vars). Vars set to the linux entry -> the
+# shared runtime hints name install-linux.sh and drop the DSM UI wording;
+# vars UNSET -> byte-identical DSM text (golden compares pin the literals).
+# =============================================================================
+
+# --- the entries set + export both platform vars ---------------------------------
+run_entry_vars() {  # $1 = entry file; prints parent|child views of both vars
+  sh -c '
+    cd "$1" || exit 9
+    INSTALL_SOURCE_ONLY=1 SMG_INSTALL_ROOT="$1"
+    export INSTALL_SOURCE_ONLY SMG_INSTALL_ROOT
+    . "./$2" || exit 9
+    printf "%s|%s|" "${INSTALLER_ENTRY:-}" "${PLATFORM_LABEL:-}"
+    sh -c "printf \"%s|%s\" \"\${INSTALLER_ENTRY:-}\" \"\${PLATFORM_LABEL:-}\""
+  ' _ "$ROOT" "$1" 2>/dev/null
+}
+_out="$(run_entry_vars install-linux.sh)" || _out=''
+[ "$_out" = 'install-linux.sh|linux|install-linux.sh|linux' ] \
+  && ok || fail "install-linux.sh sets + exports the platform vars (got: $_out)"
+_out="$(run_entry_vars install-pi.sh)" || _out=''
+[ "$_out" = 'install-pi.sh|pi|install-pi.sh|pi' ] \
+  && ok || fail "install-pi.sh sets + exports the platform vars (got: $_out)"
+
+# --- the menu loop persists the platform vars into an existing user .env ---------
+run_persist_menu() {  # $1 = ENV_FILE for the sandboxed menu run
+  sh -c '
+    cd "$1" || exit 9
+    INSTALL_SOURCE_ONLY=1 SMG_INSTALL_ROOT="$1"
+    export INSTALL_SOURCE_ONLY SMG_INSTALL_ROOT
+    . ./install-linux.sh || exit 9
+    ENV_FILE="$2"
+    _lm_banner() { :; }
+    ui_say() { :; }
+    ui_menu_select() { UI_MENU_INDEX=6; }
+    main_menu_linux
+  ' _ "$ROOT" "$1" >/dev/null 2>&1
+}
+printf 'TUN_ENABLE=true\n' > "$TD/pv50.env"
+run_persist_menu "$TD/pv50.env" || :
+grep -q '^INSTALLER_ENTRY="install-linux.sh"' "$TD/pv50.env" \
+  && ok || fail "menu loop persists INSTALLER_ENTRY into the user .env"
+grep -q '^PLATFORM_LABEL="linux"' "$TD/pv50.env" \
+  && ok || fail "menu loop persists PLATFORM_LABEL into the user .env"
+grep -q '^TUN_ENABLE=true' "$TD/pv50.env" \
+  && ok || fail "persistence keeps the existing .env content"
+run_persist_menu "$TD/pv50-none.env" || :
+[ ! -f "$TD/pv50-none.env" ] \
+  && ok || fail "persistence never creates a missing .env (seed_config owns that)"
+
+# --- checks.sh hint family: generic phrasing with the vars set -------------------
+mkdir -p "$TD/p50-cfg"
+printf 'reason: render-failed\ntime: 2026-07-17T00:00:00\n' > "$TD/p50-cfg/.config.yaml.rejected"
+_out="$( (
+  . "$ROOT/scripts/lib/checks.sh"
+  INSTALLER_ENTRY=install-linux.sh PLATFORM_LABEL=linux
+  ENV_FILE="$TD/p50-absent.env"
+  chk_env; printf '%s\n%s\n' "$CHECK_DETAIL" "$CHECK_HINT"
+  resolv_conf_probe() { printf 'no-answer 192.0.2.53'; return 1; }
+  chk_host_dns; printf '%s\n' "$CHECK_DETAIL"
+  CONFIG_STATE_DIR="$TD/p50-cfg"
+  chk_config_rejected; printf '%s\n' "$CHECK_HINT"
+  scheduler_task_deployed() { return 1; }
+  chk_update_task; printf '%s\n' "$CHECK_DETAIL"
+  chk_boot_task; printf '%s\n' "$CHECK_DETAIL"
+) 2>/dev/null )" || _out=''
+assert_contains "chk_env (generic): hint names the linux entry" "$_out" 'run: sudo sh ./install-linux.sh'
+assert_not_contains "chk_env (generic): no DSM entry name" "$_out" './install.sh'
+assert_contains "chk_host_dns (generic): points at the host resolver config" "$_out" '/etc/resolv.conf'
+assert_contains "chk_config_rejected (generic): redeploy hint names the linux entry" "$_out" 'redeploy: sudo sh ./install-linux.sh (Redeploy)'
+assert_contains "chk_update_task (generic): points at the CLI crontab path" "$_out" 'gateway.sh cron --apply-crontab'
+assert_not_contains "chk_update_task (generic): no install_scheduler pointer" "$_out" 'install_scheduler'
+assert_contains "chk_boot_task (generic): boot task wording" "$_out" 'no boot task runs scripts/setup_network.sh'
+assert_not_contains "checks.sh (generic): hint family clean of DSM" "$_out" 'DSM'
+assert_not_contains "checks.sh (generic): no Boot-up branding" "$_out" 'Boot-up'
+
+# --- checks.sh golden: vars unset = byte-identical DSM text ----------------------
+_g="$( (
+  . "$ROOT/scripts/lib/checks.sh"
+  unset INSTALLER_ENTRY PLATFORM_LABEL
+  ENV_FILE="$TD/p50-absent.env"
+  chk_env; printf '%s' "$CHECK_HINT"
+) 2>/dev/null )" || _g=''
+[ "$_g" = '      the release tree is unpacked but not configured - run: sudo sh ./install.sh' ] \
+  && ok || fail "golden: chk_env DSM hint byte-identical (got: $_g)"
+_g="$( (
+  . "$ROOT/scripts/lib/checks.sh"
+  unset INSTALLER_ENTRY PLATFORM_LABEL
+  resolv_conf_probe() { printf 'no-answer 192.0.2.53'; return 1; }
+  chk_host_dns; printf '%s' "$CHECK_DETAIL"
+) 2>/dev/null )" || _g=''
+[ "$_g" = 'host DNS resolver(s) not answering: 192.0.2.53 - set reachable resolvers in DSM Control Panel > Network (domestic ones on a filtered network)' ] \
+  && ok || fail "golden: chk_host_dns DSM detail byte-identical (got: $_g)"
+_g="$( (
+  . "$ROOT/scripts/lib/checks.sh"
+  unset INSTALLER_ENTRY PLATFORM_LABEL
+  scheduler_task_deployed() { return 1; }
+  chk_update_task; printf '%s\n' "$CHECK_DETAIL"
+  chk_boot_task; printf '%s' "$CHECK_DETAIL"
+) 2>/dev/null )" || _g=''
+[ "$_g" = 'no scheduled task runs scripts/auto_update.sh - see: sh scripts/install_scheduler.sh
+no Boot-up task runs scripts/setup_network.sh - TUN/macvlan will not self-heal after a reboot' ] \
+  && ok || fail "golden: chk_update_task/chk_boot_task DSM details byte-identical (got: $_g)"
+_g="$( (
+  . "$ROOT/scripts/lib/checks.sh"
+  unset INSTALLER_ENTRY PLATFORM_LABEL
+  CONFIG_STATE_DIR="$TD/p50-cfg"
+  chk_config_rejected; printf '%s' "$CHECK_HINT"
+) 2>/dev/null )" || _g=''
+[ "$_g" = '      read the scrubbed marker: cat <data-dir>/config/.config.yaml.rejected - fix the named value in .env, then redeploy: sudo sh ./install.sh (Redeploy); a green render clears this automatically' ] \
+  && ok || fail "golden: chk_config_rejected DSM hint byte-identical (got: $_g)"
+
+# --- the remaining redeploy-hint sites (panel cycle-1 advisory: revert-proof) ----
+# chk_dns_privacy (v1 residual), chk_full_proxy (parity drift) and
+# chk_proxy_groups (default-empty) each carry the ${INSTALLER_ENTRY} hint;
+# cover every one so a revert of any single site fails CI.
+mkdir -p "$TD/p50-dnsv1"
+printf "    'geosite:cn':\n  fallback:\n" > "$TD/p50-dnsv1/config.yaml"
+run_hint_trio() {  # $1 = 'set'|'unset'; prints the three hints
+  (
+    . "$ROOT/scripts/lib/checks.sh"
+    if [ "$1" = set ]; then
+      INSTALLER_ENTRY=install-linux.sh PLATFORM_LABEL=linux
+    else
+      unset INSTALLER_ENTRY PLATFORM_LABEL
+    fi
+    CONFIG_STATE_DIR="$TD/p50-dnsv1"
+    chk_dns_privacy; printf '%s\n' "$CHECK_HINT"
+    FULL_PROXY_SOURCES='192.0.2.10'
+    chk_full_proxy; printf '%s\n' "$CHECK_HINT"
+    _pg_ctl() {
+      case "$1" in
+        /group) printf '{"proxies":[{"name":"Country Pick"},{"name":"JP Auto"},{"name":"US Auto"}]}' ;;
+        *) printf '{"now":"JP Auto","all":["REJECT"]}' ;;
+      esac
+    }
+    _pg_real() { case "$1" in 'JP Auto') echo 0 ;; *) echo 3 ;; esac; }
+    chk_proxy_groups; printf '%s\n' "$CHECK_HINT"
+  ) 2>/dev/null
+}
+_out="$(run_hint_trio set)" || _out=''
+assert_contains "chk_dns_privacy (generic): v1 hint names the linux entry" "$_out" 're-render onto the v2 core: sudo sh ./install-linux.sh (Redeploy)'
+assert_contains "chk_full_proxy (generic): drift hint names the linux entry" "$_out" 're-render: sudo sh ./install-linux.sh (Redeploy)'
+assert_contains "chk_proxy_groups (generic): default-empty hint names the linux entry" "$_out" 'redeploy: sudo sh ./install-linux.sh (Redeploy)'
+assert_not_contains "hint trio (generic): no DSM entry name" "$_out" './install.sh'
+_g="$(run_hint_trio unset)" || _g=''
+assert_contains "golden: chk_dns_privacy DSM v1 hint" "$_g" 're-render onto the v2 core: sudo sh ./install.sh (Redeploy)'
+assert_contains "golden: chk_full_proxy DSM drift hint" "$_g" 're-render: sudo sh ./install.sh (Redeploy); if the render was refused, config_rejected names the reason'
+assert_contains "golden: chk_proxy_groups DSM default-empty hint" "$_g" 'redeploy: sudo sh ./install.sh (Redeploy); stopgap: pick another country in the dashboard Country Pick selector'
+
+# --- registry.sh phrase sites: generic wording (functions are in-process) --------
+_out="$( (
+  PLATFORM_LABEL=linux
+  LOG_FILE=/dev/null
+  DOCKER_BIN=/nonexistent-docker
+  docker_daemon_ready || :
+  detect_compose() { return 1; }
+  wait_for_docker_ready 1 1 || :
+  check_network || :
+  EXPECTED_ARCH=mips
+  check_arch_expectation || :
+  TUN_AUTO_REDIRECT=true MIHOMO_IMAGE=reg.example/m:l
+  mihomo_auto_redirect_probe || :
+) 2>&1 )" || _out=''
+assert_contains "docker_daemon_ready (generic): names the Docker service" "$_out" 'start the Docker service and run this task as root'
+assert_contains "wait_for_docker_ready (generic): waits for Docker" "$_out" 'waiting for Docker (0s/1s)'
+assert_contains "check_network (generic): boot wording" "$_out" '(or schedule it at boot)'
+assert_contains "check_arch_expectation (generic): host wording" "$_out" 'but this host is'
+assert_contains "auto_redirect probe (generic): host kernel wording" "$_out" 'incompatible with this host kernel/image'
+assert_not_contains "registry.sh (generic): clean of Container Manager" "$_out" 'Container Manager'
+assert_not_contains "registry.sh (generic): clean of DSM" "$_out" 'DSM'
+assert_not_contains "registry.sh (generic): clean of NAS" "$_out" 'NAS'
+
+# --- registry.sh golden: vars unset = byte-identical DSM text --------------------
+_g="$( (
+  unset INSTALLER_ENTRY PLATFORM_LABEL
+  LOG_FILE=/dev/null
+  DOCKER_BIN=/nonexistent-docker
+  docker_daemon_ready || :
+  detect_compose() { return 1; }
+  wait_for_docker_ready 1 1 || :
+  check_network || :
+  EXPECTED_ARCH=mips
+  check_arch_expectation || :
+  TUN_AUTO_REDIRECT=true MIHOMO_IMAGE=reg.example/m:l
+  mihomo_auto_redirect_probe || :
+) 2>&1 )" || _g=''
+assert_contains "golden: docker_daemon_ready DSM text" "$_g" 'Docker daemon is unavailable; start Container Manager and run this task as root'
+assert_contains "golden: wait_for_docker_ready DSM text" "$_g" 'waiting for Container Manager/Docker (0s/1s)'
+assert_contains "golden: check_network DSM text" "$_g" "docker network 'tproxy_network' not found. Run scripts/setup_network.sh (or add a DSM boot-up task)."
+assert_contains "golden: check_arch_expectation DSM text" "$_g" 'EXPECTED_ARCH=mips but this NAS is'
+assert_contains "golden: auto_redirect probe DSM text" "$_g" 'TUN auto-redirect is incompatible with this DSM kernel/image; set TUN_AUTO_REDIRECT=false'
+
+# --- installer preflight pf_docker: diagnose text follows the platform -----------
+_out="$( (
+  PLATFORM_LABEL=linux INSTALLER_LANG=en
+  detect_compose() { DOCKER_BIN=/nonexistent-docker; return 0; }
+  pf_docker || :
+) 2>&1 )" || _out=''
+assert_contains "pf_docker (generic): names the Docker service" "$_out" 'start the Docker service and run this installer as root'
+assert_not_contains "pf_docker (generic): no Container Manager" "$_out" 'Container Manager'
+_g="$( (
+  unset INSTALLER_ENTRY PLATFORM_LABEL
+  INSTALLER_LANG=en
+  detect_compose() { DOCKER_BIN=/nonexistent-docker; return 0; }
+  pf_docker || :
+) 2>&1 )" || _g=''
+assert_contains "golden: pf_docker DSM text" "$_g" 'start Container Manager and run this installer as root'
+
+# --- notify.sh: the undelivered-notification warn follows the platform -----------
+_out="$( (
+  . "$ROOT/scripts/lib/notify.sh"
+  PLATFORM_LABEL=linux LOG_FILE=/dev/null NOTIFY_WEBHOOK_URL=''
+  notify 'T50' 'body' || :
+) 2>&1 )" || _out=''
+assert_contains "notify (generic): undelivered warn keeps the webhook advice" "$_out" 'set NOTIFY_WEBHOOK_URL'
+assert_not_contains "notify (generic): no DSM Task Scheduler advice" "$_out" 'DSM'
+_g="$( (
+  . "$ROOT/scripts/lib/notify.sh"
+  unset INSTALLER_ENTRY PLATFORM_LABEL
+  LOG_FILE=/dev/null NOTIFY_WEBHOOK_URL=''
+  notify 'T50' 'body' || :
+) 2>&1 )" || _g=''
+assert_contains "golden: notify undelivered DSM advice" "$_g" \
+  "notification NOT delivered - enable DSM Task Scheduler 'send run details' email or set NOTIFY_WEBHOOK_URL in .env"
+
+# --- gateway.sh CLI: cron print, crontab hint, missing-.env hint, status IP ------
+mkdir -p "$TD/gw50-data"
+printf 'PARENT_INTERFACE="nonexist0"\n' > "$TD/gw50.env"
+printf 'PARENT_INTERFACE="nonexist0"\nPLATFORM_LABEL="linux"\nINSTALLER_ENTRY="install-linux.sh"\n' > "$TD/gw50b.env"
+_out="$(GATEWAY_DATA_DIR="$TD/gw50-data" ENV_FILE="$TD/gw50.env" \
+    INSTALLER_ENTRY=install-linux.sh PLATFORM_LABEL=linux \
+    sh "$ROOT/scripts/gateway.sh" cron 2>&1)" || :
+assert_contains "gateway cron (generic env vars): scheduler-neutral print" "$_out" 'Scheduled-task command:'
+assert_not_contains "gateway cron (generic): no DSM Task Scheduler" "$_out" 'DSM Task Scheduler'
+_out="$(GATEWAY_DATA_DIR="$TD/gw50-data" ENV_FILE="$TD/gw50b.env" \
+    sh "$ROOT/scripts/gateway.sh" cron 2>&1)" || :
+assert_contains "gateway cron (.env-borne vars): the persisted keys drive the text" "$_out" 'Scheduled-task command:'
+_out="$(GATEWAY_DATA_DIR="$TD/gw50-data" ENV_FILE="$TD/gw50.env" \
+    sh "$ROOT/scripts/gateway.sh" cron 2>&1)" || :
+assert_contains "golden: gateway cron DSM print" "$_out" 'DSM Task Scheduler command: '
+_out="$(GATEWAY_DATA_DIR="$TD/gw50-data" ENV_FILE="$TD/gw50b.env" CRONTAB_FILE="$TD/no-such-crontab" \
+    sh "$ROOT/scripts/gateway.sh" cron --apply-crontab --yes 2>&1)" || :
+assert_contains "gateway --apply-crontab (generic): cron/systemd hint" "$_out" 'schedule scripts/auto_update.sh'
+assert_not_contains "gateway --apply-crontab (generic): no DSM Task Scheduler" "$_out" 'DSM Task Scheduler'
+_out="$(GATEWAY_DATA_DIR="$TD/gw50-data" ENV_FILE="$TD/gw50.env" CRONTAB_FILE="$TD/no-such-crontab" \
+    sh "$ROOT/scripts/gateway.sh" cron --apply-crontab --yes 2>&1)" || :
+assert_contains "golden: gateway --apply-crontab DSM hint" "$_out" 'use DSM Task Scheduler (sh scripts/install_scheduler.sh)'
+_out="$(GATEWAY_DATA_DIR="$TD/gw50-data" ENV_FILE="$TD/gw50-none.env" INSTALLER_ENTRY=install-linux.sh \
+    sh "$ROOT/scripts/gateway.sh" deploy --dry-run 2>&1)" || :
+assert_contains "gateway missing-.env (generic): names the linux entry" "$_out" "run 'sh ./install-linux.sh' once"
+_out="$(GATEWAY_DATA_DIR="$TD/gw50-data" ENV_FILE="$TD/gw50-none.env" \
+    sh "$ROOT/scripts/gateway.sh" deploy --dry-run 2>&1)" || :
+assert_contains "golden: gateway missing-.env DSM hint" "$_out" "run 'sh ./install.sh' once, or create it from .env.example"
+_out="$(GATEWAY_DATA_DIR="$TD/gw50-data" ENV_FILE="$TD/gw50.env" PLATFORM_LABEL=linux \
+    sh "$ROOT/scripts/gateway.sh" status 2>&1)" || :
+assert_contains "gateway status (generic): host-IP placeholder" "$_out" '<host-IP>'
+assert_not_contains "gateway status (generic): no NAS-IP placeholder" "$_out" '<NAS-IP>'
+_out="$(GATEWAY_DATA_DIR="$TD/gw50-data" ENV_FILE="$TD/gw50.env" \
+    sh "$ROOT/scripts/gateway.sh" status 2>&1)" || :
+assert_contains "golden: gateway status NAS-IP placeholder" "$_out" '<NAS-IP>'
+# _gw_report (the deploy-path placeholder twin; gateway_cli_check stubs it, so
+# it gets its own sourced-mode coverage here - panel cycle-1 advisory)
+run_gw_report() {  # $1 = 'set'|'unset'
+  (
+    GATEWAY_SOURCE_ONLY=1
+    GATEWAY_SELF_DIR="$ROOT/scripts"
+    export GATEWAY_SOURCE_ONLY GATEWAY_SELF_DIR
+    . "$ROOT/scripts/gateway.sh"
+    if [ "$1" = set ]; then PLATFORM_LABEL=linux; else unset PLATFORM_LABEL INSTALLER_ENTRY; fi
+    LOG_FILE=/dev/null
+    detect_parent_interface() { :; }
+    _iface_ipv4() { :; }
+    PARENT_INTERFACE='' MIHOMO_IP=192.0.2.2
+    _gw_report
+  ) 2>/dev/null
+}
+_out="$(run_gw_report set)" || _out=''
+assert_contains "_gw_report (generic): host-IP placeholder" "$_out" '<host-IP>'
+assert_not_contains "_gw_report (generic): no NAS-IP placeholder" "$_out" '<NAS-IP>'
+_g="$(run_gw_report unset)" || _g=''
+assert_contains "golden: _gw_report NAS-IP placeholder" "$_g" 'dashboard: http://<NAS-IP>:8080'
+
+# --- doctor.sh end to end: the generic run is clean of every DSM needle ----------
+# CONFIG_STATE_DIR/SUBSCRIPTION_FILE are pinned to an empty sandbox: the suite
+# process exports its own (common.sh:28), and a dev machine's real data dir
+# would otherwise leak state into the doctor output.
+_out="$(GATEWAY_DATA_DIR="$TD/gw50-data" ENV_FILE="$TD/gw50-none.env" \
+    CONFIG_STATE_DIR="$TD/gw50-cfg" SUBSCRIPTION_FILE="$TD/gw50-cfg/subscription.txt" \
+    INSTALLER_ENTRY=install-linux.sh PLATFORM_LABEL=linux \
+    sh "$ROOT/scripts/doctor.sh" 2>&1)" || :
+assert_contains "doctor (generic): entry hint names install-linux.sh" "$_out" 'run: sudo sh ./install-linux.sh'
+for _needle in 'DSM Control Panel' 'Container Manager' 'DSM Task Scheduler' 'this NAS' 'Boot-up task'; do
+  assert_not_contains "doctor (generic): clean of: $_needle" "$_out" "$_needle"
+done
+_out="$(GATEWAY_DATA_DIR="$TD/gw50-data" ENV_FILE="$TD/gw50-none.env" \
+    CONFIG_STATE_DIR="$TD/gw50-cfg" SUBSCRIPTION_FILE="$TD/gw50-cfg/subscription.txt" \
+    sh "$ROOT/scripts/doctor.sh" 2>&1)" || :
+assert_contains "golden: doctor DSM entry hint" "$_out" 'run: sudo sh ./install.sh'
+
+# --- auto_update.sh abort notice: the notify body follows the platform -----------
+# The webhook payload is the only place the notify BODY surfaces; a PATH-
+# appended fake curl records it (auto_update.sh PREPENDS the system dirs, and
+# the alpine CI adjudicator ships no real curl - same environment assumption
+# as the fake-ss case above). DOCKER_READY_TIMEOUT=0 + no docker binary makes
+# the preflight abort at wait_for_docker_ready deterministically.
+mkdir -p "$TD/au50-data" "$TD/au50-bin"
+cat > "$TD/au50-bin/curl" <<'EOF'
+#!/bin/sh
+_prev=''
+for _a in "$@"; do
+  [ "$_prev" = '-d' ] && printf '%s\n' "$_a" >> "${SMG_T50_PAYLOAD:?}"
+  _prev="$_a"
+done
+cat >/dev/null
+exit 0
+EOF
+chmod +x "$TD/au50-bin/curl"
+au50_env() {  # $1 = extra .env lines appended to the valid updater fixture
+  {
+    printf 'UPDATE_ENABLED=true\nPULL_RETRIES=1\nPULL_RETRY_DELAY=0\n'
+    printf 'DOCKER_READY_TIMEOUT=0\nDOCKER_READY_INTERVAL=1\n'
+    printf 'HEALTH_RETRIES=1\nHEALTH_INTERVAL=0\nHEALTH_MAX_RESTARTS=1\n'
+    printf 'CF_HEALTH_TIMEOUT=1\nLOG_KEEP=1\nLOG_MAX_BYTES=99999\n'
+    printf 'TUN_AUTO_REDIRECT=false\nEXPECTED_ARCH=amd64\n'
+    printf 'MIHOMO_IMAGE="reg.example/m:l"\nMETACUBEXD_IMAGE="reg.example/u:l"\n'
+    printf 'UPDATE_IMAGES="reg.example/m:l reg.example/u:l"\n'
+    printf 'NOTIFY_WEBHOOK_URL="http://127.0.0.1:9/hook"\n'
+    printf '%s' "$1"
+  } > "$TD/au50-data/.env"
+}
+au50_env 'PLATFORM_LABEL="linux"
+INSTALLER_ENTRY="install-linux.sh"
+'
+: > "$TD/au50-payload-gx"
+( GATEWAY_DATA_DIR="$TD/au50-data" ENV_FILE="$TD/au50-data/.env" \
+  SMG_T50_PAYLOAD="$TD/au50-payload-gx" \
+  PATH="$PATH:$TD/au50-bin" sh "$ROOT/scripts/auto_update.sh" --dry-run ) >/dev/null 2>&1 || :
+grep -q 'Docker did not become ready.' "$TD/au50-payload-gx" 2>/dev/null \
+  && ok || fail "auto_update (generic .env): abort notice drops Container Manager"
+grep -q 'Container Manager' "$TD/au50-payload-gx" 2>/dev/null \
+  && fail "auto_update (generic .env): notify body still names Container Manager" || ok
+au50_env ''
+: > "$TD/au50-payload-dsm"
+( GATEWAY_DATA_DIR="$TD/au50-data" ENV_FILE="$TD/au50-data/.env" \
+  SMG_T50_PAYLOAD="$TD/au50-payload-dsm" \
+  PATH="$PATH:$TD/au50-bin" sh "$ROOT/scripts/auto_update.sh" --dry-run ) >/dev/null 2>&1 || :
+grep -q 'Container Manager/Docker did not become ready.' "$TD/au50-payload-dsm" 2>/dev/null \
+  && ok || fail "golden: auto_update DSM abort notice byte-identical"
+# The EXPECTED_ARCH abort notice (panel cycle-1 advisory): a fake docker that
+# satisfies the readiness gate lets the run reach check_arch_expectation,
+# where EXPECTED_ARCH=mips can never match a real host.
+cat > "$TD/au50-bin/docker" <<'EOF'
+#!/bin/sh
+case "$1" in compose) exit 0 ;; info) exit 0 ;; *) exit 1 ;; esac
+EOF
+chmod +x "$TD/au50-bin/docker"
+au50_env 'EXPECTED_ARCH=mips
+PLATFORM_LABEL="linux"
+INSTALLER_ENTRY="install-linux.sh"
+'
+: > "$TD/au50-payload-arch-gx"
+( GATEWAY_DATA_DIR="$TD/au50-data" ENV_FILE="$TD/au50-data/.env" \
+  SMG_T50_PAYLOAD="$TD/au50-payload-arch-gx" \
+  PATH="$PATH:$TD/au50-bin" sh "$ROOT/scripts/auto_update.sh" --dry-run ) >/dev/null 2>&1 || :
+grep -q 'EXPECTED_ARCH does not match this host.' "$TD/au50-payload-arch-gx" 2>/dev/null \
+  && ok || fail "auto_update (generic .env): arch abort notice says host"
+grep -q 'this NAS' "$TD/au50-payload-arch-gx" 2>/dev/null \
+  && fail "auto_update (generic .env): arch abort notice still says NAS" || ok
+au50_env 'EXPECTED_ARCH=mips
+'
+: > "$TD/au50-payload-arch-dsm"
+( GATEWAY_DATA_DIR="$TD/au50-data" ENV_FILE="$TD/au50-data/.env" \
+  SMG_T50_PAYLOAD="$TD/au50-payload-arch-dsm" \
+  PATH="$PATH:$TD/au50-bin" sh "$ROOT/scripts/auto_update.sh" --dry-run ) >/dev/null 2>&1 || :
+grep -q 'EXPECTED_ARCH does not match this NAS.' "$TD/au50-payload-arch-dsm" 2>/dev/null \
+  && ok || fail "golden: auto_update DSM arch abort notice byte-identical"
+rm -f "$TD/au50-bin/docker"
+
+# --- setup_network.sh: the inconsistency abort names the platform entry ----------
+# Needs root for the TUN mknod step, which the alpine CI adjudicator provides;
+# the fake docker (PATH-prepended) satisfies detect_compose + daemon_ready, and
+# the invalid subnet/router pair forces the validate_network_plan abort.
+mkdir -p "$TD/sn50-data" "$TD/sn50-bin"
+cat > "$TD/sn50-bin/docker" <<'EOF'
+#!/bin/sh
+case "$1" in compose) exit 0 ;; info) exit 0 ;; *) exit 1 ;; esac
+EOF
+chmod +x "$TD/sn50-bin/docker"
+printf 'PARENT_INTERFACE="nonexist0"\nSUBNET_CIDR="299.0.0.0/33"\nROUTER_IP="not-an-ip"\nPLATFORM_LABEL="linux"\nINSTALLER_ENTRY="install-linux.sh"\n' \
+  > "$TD/sn50-data/.env"
+_out="$( ( GATEWAY_DATA_DIR="$TD/sn50-data" ENV_FILE="$TD/sn50-data/.env" \
+  PATH="$TD/sn50-bin:$PATH" \
+  sh "$ROOT/scripts/setup_network.sh" ) 2>&1 )" || :
+assert_contains "setup_network (generic .env): abort names the linux entry" "$_out" 'sh ./install-linux.sh'
+assert_not_contains "setup_network (generic .env): no DSM entry name" "$_out" './install.sh'
+printf 'PARENT_INTERFACE="nonexist0"\nSUBNET_CIDR="299.0.0.0/33"\nROUTER_IP="not-an-ip"\n' \
+  > "$TD/sn50-data/.env"
+_out="$( ( GATEWAY_DATA_DIR="$TD/sn50-data" ENV_FILE="$TD/sn50-data/.env" \
+  PATH="$TD/sn50-bin:$PATH" \
+  sh "$ROOT/scripts/setup_network.sh" ) 2>&1 )" || :
+assert_contains "golden: setup_network DSM abort hint" "$_out" 'sh ./install.sh'
+
 # --- summary --------------------------------------------------------------------
 printf 'linux_installer_check: %d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ] || exit 1
-echo "OK: install-linux entry + i18n delta overlay + pi-engine dispatch + macvlan guard/auto-pin/registry wizard verified"
+echo "OK: install-linux entry + i18n delta overlay + pi-engine dispatch + macvlan guard/auto-pin/registry wizard + platform-conditional phrasing verified"

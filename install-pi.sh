@@ -83,6 +83,27 @@ PI="$REPO_ROOT/scripts/pi"
 # shellcheck source=scripts/pi/flow_lite.sh
 . "$PI/flow_lite.sh"
 
+# --- platform vars (#50, DEC-A plain vars) --------------------------------------
+# The shared runtime scripts render their remediation text from these two
+# vars; unset - the DSM path never sets them - keeps today's DSM wording
+# byte-for-byte. Exported so the child surfaces this menu spawns (doctor.sh,
+# gateway.sh, lite_ctl.sh) inherit them; persisted into the user .env below
+# so standalone/cron runs keep the generic phrasing too.
+INSTALLER_ENTRY=install-pi.sh
+PLATFORM_LABEL=pi
+export INSTALLER_ENTRY PLATFORM_LABEL
+
+# _pi_persist_platform_vars - best-effort .env carry (install-linux.sh's
+# _lx_persist_platform_vars twin): silent on any failure, never creates .env.
+_pi_persist_platform_vars() {
+  [ -f "$ENV_FILE" ] && [ -w "$ENV_FILE" ] || return 0
+  [ "$(env_get INSTALLER_ENTRY 2>/dev/null)" = "$INSTALLER_ENTRY" ] \
+    && [ "$(env_get PLATFORM_LABEL 2>/dev/null)" = "$PLATFORM_LABEL" ] && return 0
+  env_set INSTALLER_ENTRY "$INSTALLER_ENTRY" >/dev/null 2>&1 || return 0
+  env_set PLATFORM_LABEL "$PLATFORM_LABEL" >/dev/null 2>&1 || :
+  return 0
+}
+
 # Restore terminal echo if a secret prompt or Ctrl-C left it off; on interrupt
 # also reap the config staging dir (holds the subscription URL) and close the
 # loop like install.sh does.
@@ -157,6 +178,7 @@ pi_menu_status_flow() {
 
 main_menu_pi() {
   while :; do
+    _pi_persist_platform_vars
     ui_say ""
     ui_say "${C_BOLD}$(msg pi_title)${C_RESET}"
     _pm_banner

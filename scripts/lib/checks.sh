@@ -31,6 +31,13 @@
 # Requires common.sh, registry.sh, network.sh, compose.sh, geodata.sh,
 # cloudflared.sh, resolve.sh, scheduler.sh sourced first (both entry points
 # already source them). POSIX/BusyBox sh; no bashisms.
+#
+# Platform-conditional phrasing (#50, DEC-A plain vars): remediation text
+# renders from INSTALLER_ENTRY (entry-script name in rerun/redeploy hints)
+# and PLATFORM_LABEL (dsm | linux | pi - selects DSM-UI vs generic wording).
+# install-linux.sh / install-pi.sh set + persist them; the DSM path never
+# does, so UNSET keeps today's DSM wording byte-for-byte (CI golden-compares
+# pin that). Text selection only - never gate/severity/value changes.
 
 chk_env() {
   if [ -f "$ENV_FILE" ] && dotenv_load "$ENV_FILE" >/dev/null 2>&1; then
@@ -40,9 +47,9 @@ chk_env() {
   CHECK_VALUE=broken CHECK_SEV=bad
   if [ ! -f "$ENV_FILE" ]; then
     CHECK_DETAIL=".env is missing: $ENV_FILE"
-    CHECK_HINT="      the release tree is unpacked but not configured - run: sudo sh ./install.sh"
+    CHECK_HINT="      the release tree is unpacked but not configured - run: sudo sh ./${INSTALLER_ENTRY:-install.sh}"
   else
-    CHECK_DETAIL=".env is present but does not parse - fix the reported line or re-run: sudo sh ./install.sh"
+    CHECK_DETAIL=".env is present but does not parse - fix the reported line or re-run: sudo sh ./${INSTALLER_ENTRY:-install.sh}"
   fi
 }
 
@@ -146,7 +153,10 @@ chk_update_task() {
   case "$?" in
     0) CHECK_VALUE=ok CHECK_SEV=ok CHECK_DETAIL="auto-update task is scheduled" ;;
     1) CHECK_VALUE=missing CHECK_SEV=warn
-       CHECK_DETAIL="no scheduled task runs scripts/auto_update.sh - see: sh scripts/install_scheduler.sh" ;;
+       case "${PLATFORM_LABEL:-dsm}" in
+         dsm) CHECK_DETAIL="no scheduled task runs scripts/auto_update.sh - see: sh scripts/install_scheduler.sh" ;;
+         *)   CHECK_DETAIL="no scheduled task runs scripts/auto_update.sh - see: sudo sh scripts/gateway.sh cron --apply-crontab --yes" ;;
+       esac ;;
     *) CHECK_VALUE=unknown CHECK_SEV=silent ;;
   esac
 }
@@ -156,7 +166,10 @@ chk_boot_task() {
   case "$?" in
     0) CHECK_VALUE=ok CHECK_SEV=ok CHECK_DETAIL="boot self-heal task is scheduled (setup_network.sh)" ;;
     1) CHECK_VALUE=missing CHECK_SEV=warn
-       CHECK_DETAIL="no Boot-up task runs scripts/setup_network.sh - TUN/macvlan will not self-heal after a reboot" ;;
+       case "${PLATFORM_LABEL:-dsm}" in
+         dsm) CHECK_DETAIL="no Boot-up task runs scripts/setup_network.sh - TUN/macvlan will not self-heal after a reboot" ;;
+         *)   CHECK_DETAIL="no boot task runs scripts/setup_network.sh - TUN/macvlan will not self-heal after a reboot" ;;
+       esac ;;
     *) CHECK_VALUE=unknown CHECK_SEV=silent ;;
   esac
 }
@@ -188,7 +201,11 @@ chk_host_dns() {
   case "$?" in
     0) CHECK_VALUE=ok CHECK_SEV=ok CHECK_DETAIL="host DNS resolvers answer" ;;
     1) CHECK_VALUE=degraded CHECK_SEV=warn
-       CHECK_DETAIL="host DNS resolver(s) not answering: ${_ch_out##* } - set reachable resolvers in DSM Control Panel > Network (domestic ones on a filtered network)" ;;
+       case "${PLATFORM_LABEL:-dsm}" in
+         dsm) _ch_where='DSM Control Panel > Network' ;;
+         *)   _ch_where='/etc/resolv.conf or your network manager' ;;
+       esac
+       CHECK_DETAIL="host DNS resolver(s) not answering: ${_ch_out##* } - set reachable resolvers in $_ch_where (domestic ones on a filtered network)" ;;
     *) CHECK_VALUE=unknown CHECK_SEV=silent ;;
   esac
 }
@@ -220,7 +237,7 @@ chk_dns_privacy() {
     if grep -q '^  fallback:' "$_cdp" 2>/dev/null; then
       CHECK_VALUE=v1 CHECK_SEV=warn
       CHECK_DETAIL="DNS split-horizon v1 residual - the fallback dual-query still copies long-tail lookups to the domestic resolvers"
-      CHECK_HINT="      re-render onto the v2 core: sudo sh ./install.sh (Redeploy)"
+      CHECK_HINT="      re-render onto the v2 core: sudo sh ./${INSTALLER_ENTRY:-install.sh} (Redeploy)"
     else
       CHECK_VALUE=v2 CHECK_SEV=ok
       CHECK_DETAIL="DNS privacy: split-horizon v2 (foreign-by-default) - domestic resolvers see only CN-listed domains"
@@ -228,7 +245,7 @@ chk_dns_privacy() {
   else
     CHECK_VALUE=legacy CHECK_SEV=warn
     CHECK_DETAIL="legacy DNS profile - the domestic resolvers see every hostname mihomo resolves"
-    CHECK_HINT="      a stale pre-v2 render is on disk - re-render onto the v2 core: sudo sh ./install.sh (Redeploy)"
+    CHECK_HINT="      a stale pre-v2 render is on disk - re-render onto the v2 core: sudo sh ./${INSTALLER_ENTRY:-install.sh} (Redeploy)"
   fi
 }
 
@@ -379,7 +396,7 @@ chk_full_proxy() {
   if [ "$_cfp_want" != "$_cfp_lines" ]; then
     CHECK_VALUE=parity-drift CHECK_SEV=warn
     CHECK_DETAIL="the rendered SRC-IP-CIDR band differs from FULL_PROXY_SOURCES - the band edit is NOT live (stale render)"
-    CHECK_HINT="      re-render: sudo sh ./install.sh (Redeploy); if the render was refused, config_rejected names the reason"
+    CHECK_HINT="      re-render: sudo sh ./${INSTALLER_ENTRY:-install.sh} (Redeploy); if the render was refused, config_rejected names the reason"
     return 0
   fi
   _cfp_n=$(printf '%s\n' "$_cfp_want" | sed '/^$/d' | wc -l | tr -d ' ')
@@ -522,7 +539,7 @@ PGEOF
     _pg_now_sane="$(printf '%s' "$_pg_now" | tr '|' '/')"
     CHECK_VALUE=default-empty CHECK_SEV=bad
     CHECK_DETAIL="the Country Pick selection '$_pg_now_sane' has NO nodes - its COUNTRY_GROUPS regex matches no provider node, so default-route traffic is REJECTED (fail closed)${_pg_empty:+; other empty country group(s): $_pg_empty}"
-    CHECK_HINT="      tune the COUNTRY_GROUPS regex(es) in .env and redeploy: sudo sh ./install.sh (Redeploy); stopgap: pick another country in the dashboard Country Pick selector"
+    CHECK_HINT="      tune the COUNTRY_GROUPS regex(es) in .env and redeploy: sudo sh ./${INSTALLER_ENTRY:-install.sh} (Redeploy); stopgap: pick another country in the dashboard Country Pick selector"
     return 0
   fi
   if [ -n "$_pg_empty" ]; then
@@ -565,7 +582,7 @@ chk_config_rejected() {
   esac
   CHECK_SEV=bad
   CHECK_DETAIL="the last config render was REJECTED (${_crj_reason:-unreadable reason}${_crj_time:+, $_crj_time}) - mihomo is running on the PREVIOUS config and the latest .env/subscription edit is NOT applied"
-  CHECK_HINT="      read the scrubbed marker: cat <data-dir>/config/.config.yaml.rejected - fix the named value in .env, then redeploy: sudo sh ./install.sh (Redeploy); a green render clears this automatically"
+  CHECK_HINT="      read the scrubbed marker: cat <data-dir>/config/.config.yaml.rejected - fix the named value in .env, then redeploy: sudo sh ./${INSTALLER_ENTRY:-install.sh} (Redeploy); a green render clears this automatically"
   return 0
 }
 

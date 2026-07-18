@@ -90,6 +90,31 @@ LX="$REPO_ROOT/scripts/linux"
 # shellcheck source=scripts/linux/preflight_linux.sh
 . "$LX/preflight_linux.sh"
 
+# --- platform vars (#50, DEC-A plain vars) --------------------------------------
+# The shared runtime scripts (checks.sh, registry.sh, gateway.sh, doctor.sh,
+# auto_update.sh, setup_network.sh, notify.sh) render their remediation text
+# from these two vars; unset - the DSM path never sets them - keeps today's
+# DSM wording byte-for-byte. Exported so the child surfaces this menu spawns
+# (doctor.sh, gateway.sh, lite_ctl.sh) inherit them.
+INSTALLER_ENTRY=install-linux.sh
+PLATFORM_LABEL=linux
+export INSTALLER_ENTRY PLATFORM_LABEL
+
+# _lx_persist_platform_vars - best-effort: carry the platform vars into the
+# user .env once it exists (seed_config owns creating it), so standalone and
+# cron runs - which load .env but never transit this entry - keep the generic
+# phrasing too. Called each menu iteration (the deploy flows create .env
+# mid-session). Silent on any failure: the exports above still cover this
+# session, and a non-root browse of the menu must not print write errors.
+_lx_persist_platform_vars() {
+  [ -f "$ENV_FILE" ] && [ -w "$ENV_FILE" ] || return 0
+  [ "$(env_get INSTALLER_ENTRY 2>/dev/null)" = "$INSTALLER_ENTRY" ] \
+    && [ "$(env_get PLATFORM_LABEL 2>/dev/null)" = "$PLATFORM_LABEL" ] && return 0
+  env_set INSTALLER_ENTRY "$INSTALLER_ENTRY" >/dev/null 2>&1 || return 0
+  env_set PLATFORM_LABEL "$PLATFORM_LABEL" >/dev/null 2>&1 || :
+  return 0
+}
+
 # Restore terminal echo if a secret prompt or Ctrl-C left it off; on interrupt
 # also reap the config staging dir (holds the subscription URL) and the
 # lite_ctl filter buffer, and close the loop like install.sh does.
@@ -188,6 +213,7 @@ linux_menu_status_flow() {
 
 main_menu_linux() {
   while :; do
+    _lx_persist_platform_vars
     ui_say ""
     ui_say "${C_BOLD}$(msg pi_title)${C_RESET}"
     _lm_banner

@@ -3,10 +3,11 @@
 # ensure /dev/net/tun exists and (re)create the "tproxy_network" macvlan with an
 # AUTO-detected parent interface. Idempotent; safe to run on every boot.
 #
-# Intended for the DSM Task Scheduler "Boot-up" trigger (User = root) so the
-# macvlan + TUN device survive a reboot. For first-time, INTERACTIVE setup
+# Intended for a boot-time trigger as root (DSM Task Scheduler "Boot-up" on
+# Synology; cron @reboot / a systemd unit on generic hosts) so the macvlan +
+# TUN device survive a reboot. For first-time, INTERACTIVE setup
 # (choosing/typing the interface, configuring .env, ACR login, deploy) run the
-# guided installer instead:  sh ./install.sh
+# guided installer instead:  sh ./install.sh (sh ./install-linux.sh generic)
 #
 # POSIX /bin/sh (DSM BusyBox). NO bashisms - the real logic lives in the shared,
 # CI-shellchecked scripts/lib/network.sh. Needs root (mknod/chmod, docker network).
@@ -50,7 +51,7 @@ echo "[2/4] Selecting LAN interface..."
 PARENT_INTERFACE="${PARENT_INTERFACE:-$(detect_parent_interface "${ROUTER_IP:-}")}"
 if [ -z "$PARENT_INTERFACE" ]; then
   log_error "could not auto-detect the LAN interface."
-  log_error "Run the guided installer to pick/enter it:  sh ./install.sh"
+  log_error "Run the guided installer to pick/enter it:  sh ./${INSTALLER_ENTRY:-install.sh}"
   exit "$EXIT_CONFIG"
 fi
 echo "      Using interface: $PARENT_INTERFACE"
@@ -64,7 +65,7 @@ warn_if_ovs_parent "$PARENT_INTERFACE"
 
 if ! validate_network_plan "$PARENT_INTERFACE" "${SUBNET_CIDR:-}" \
     "${ROUTER_IP:-}" "${MIHOMO_IP:-}"; then
-  log_error "network settings are inconsistent; run sh ./install.sh and re-enter them"
+  log_error "network settings are inconsistent; run sh ./${INSTALLER_ENTRY:-install.sh} and re-enter them"
   exit "$EXIT_CONFIG"
 fi
 

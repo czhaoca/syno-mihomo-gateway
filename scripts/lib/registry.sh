@@ -32,7 +32,12 @@ docker_daemon_ready() {
   if "$DOCKER_BIN" info >/dev/null 2>&1; then
     return 0
   fi
-  log_error "Docker daemon is unavailable; start Container Manager and run this task as root"
+  # Platform-conditional phrasing (#50): unset PLATFORM_LABEL = the DSM
+  # wording byte-for-byte (same rule at every case site in this file).
+  case "${PLATFORM_LABEL:-dsm}" in
+    dsm) log_error "Docker daemon is unavailable; start Container Manager and run this task as root" ;;
+    *)   log_error "Docker daemon is unavailable; start the Docker service and run this task as root" ;;
+  esac
   return 1
 }
 
@@ -48,7 +53,10 @@ wait_for_docker_ready() {
       return 0
     fi
     [ "$_wr_elapsed" -ge "$_wr_timeout" ] && break
-    log_warn "waiting for Container Manager/Docker (${_wr_elapsed}s/${_wr_timeout}s)"
+    case "${PLATFORM_LABEL:-dsm}" in
+      dsm) log_warn "waiting for Container Manager/Docker (${_wr_elapsed}s/${_wr_timeout}s)" ;;
+      *)   log_warn "waiting for Docker (${_wr_elapsed}s/${_wr_timeout}s)" ;;
+    esac
     sleep "$_wr_interval"
     _wr_elapsed=$((_wr_elapsed + _wr_interval))
   done
@@ -162,7 +170,10 @@ host_arch() {
 check_arch_expectation() {
   _h="$(host_arch)"
   if [ "$_h" != "$EXPECTED_ARCH" ]; then
-    log_error "EXPECTED_ARCH=$EXPECTED_ARCH but this NAS is $_h"
+    case "${PLATFORM_LABEL:-dsm}" in
+      dsm) log_error "EXPECTED_ARCH=$EXPECTED_ARCH but this NAS is $_h" ;;
+      *)   log_error "EXPECTED_ARCH=$EXPECTED_ARCH but this host is $_h" ;;
+    esac
     return 1
   fi
   return 0
@@ -171,7 +182,10 @@ check_arch_expectation() {
 check_network() {
   _net="${TPROXY_NETWORK:-tproxy_network}"
   if ! "$DOCKER_BIN" network inspect "$_net" >/dev/null 2>&1; then
-    log_error "docker network '$_net' not found. Run scripts/setup_network.sh (or add a DSM boot-up task)."
+    case "${PLATFORM_LABEL:-dsm}" in
+      dsm) log_error "docker network '$_net' not found. Run scripts/setup_network.sh (or add a DSM boot-up task)." ;;
+      *)   log_error "docker network '$_net' not found. Run scripts/setup_network.sh (or schedule it at boot)." ;;
+    esac
     return 1
   fi
   # Verify the macvlan parent still matches the live interface (best-effort; needs `ip`).
@@ -295,7 +309,10 @@ mihomo_auto_redirect_probe() {
     log_info "TUN auto-redirect compatibility probe passed"
     return 0
   fi
-  log_error "TUN auto-redirect is incompatible with this DSM kernel/image; set TUN_AUTO_REDIRECT=false"
+  case "${PLATFORM_LABEL:-dsm}" in
+    dsm) log_error "TUN auto-redirect is incompatible with this DSM kernel/image; set TUN_AUTO_REDIRECT=false" ;;
+    *)   log_error "TUN auto-redirect is incompatible with this host kernel/image; set TUN_AUTO_REDIRECT=false" ;;
+  esac
   return 1
 }
 

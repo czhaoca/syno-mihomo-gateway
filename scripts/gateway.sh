@@ -108,7 +108,7 @@ _gw_stack_state() {
 
 _gw_load_config() {
   [ -f "$ENV_FILE" ] || _gw_fail "$EXIT_CONFIG" \
-    ".env not found at $ENV_FILE - run 'sh ./install.sh' once, or create it from .env.example"
+    ".env not found at $ENV_FILE - run 'sh ./${INSTALLER_ENTRY:-install.sh}' once, or create it from .env.example"
   load_env
   if [ "$GW_DRY_RUN" = 0 ]; then
     if [ -n "$GW_IFACE" ]; then
@@ -293,7 +293,13 @@ _gw_deploy_stack() {
 _gw_report() {
   _gwr_pi="${PARENT_INTERFACE:-$(detect_parent_interface "${ROUTER_IP:-}")}"
   _gwr_nas="$(_iface_ipv4 "$_gwr_pi" 2>/dev/null)"
-  [ -n "$_gwr_nas" ] || _gwr_nas='<NAS-IP>'
+  if [ -z "$_gwr_nas" ]; then
+    # Platform-conditional placeholder (#50): unset PLATFORM_LABEL = DSM text.
+    case "${PLATFORM_LABEL:-dsm}" in
+      dsm) _gwr_nas='<NAS-IP>' ;;
+      *)   _gwr_nas='<host-IP>' ;;
+    esac
+  fi
   log_info "gateway deployed: dashboard http://$_gwr_nas:${WEB_UI_PORT:-8080}  backend ${MIHOMO_IP}:${CONTROLLER_PORT:-9090}"
   printf 'dashboard: http://%s:%s\n' "$_gwr_nas" "${WEB_UI_PORT:-8080}"
   printf 'backend:   %s:%s\n' "$MIHOMO_IP" "${CONTROLLER_PORT:-9090}"
@@ -449,7 +455,12 @@ gateway_status() {
 
   _gws_pi="${PARENT_INTERFACE:-$(detect_parent_interface "${ROUTER_IP:-}" 2>/dev/null)}"
   _gws_nas="$(_iface_ipv4 "$_gws_pi" 2>/dev/null)"
-  [ -n "$_gws_nas" ] || _gws_nas='<NAS-IP>'
+  if [ -z "$_gws_nas" ]; then
+    case "${PLATFORM_LABEL:-dsm}" in
+      dsm) _gws_nas='<NAS-IP>' ;;
+      *)   _gws_nas='<host-IP>' ;;
+    esac
+  fi
   _gws_url="http://$_gws_nas:${WEB_UI_PORT:-8080}"
 
   if [ "$GW_JSON" = 1 ]; then
@@ -511,7 +522,13 @@ render_json() {
 
 _gw_apply_crontab() {
   _gac_ct="${CRONTAB_FILE:-/etc/crontab}"
-  [ -f "$_gac_ct" ] || _gw_fail "$EXIT_CONFIG" "no crontab at $_gac_ct - use DSM Task Scheduler (sh scripts/install_scheduler.sh)"
+  if [ ! -f "$_gac_ct" ]; then
+    # Platform-conditional phrasing (#50): unset PLATFORM_LABEL = DSM text.
+    case "${PLATFORM_LABEL:-dsm}" in
+      dsm) _gw_fail "$EXIT_CONFIG" "no crontab at $_gac_ct - use DSM Task Scheduler (sh scripts/install_scheduler.sh)" ;;
+      *)   _gw_fail "$EXIT_CONFIG" "no crontab at $_gac_ct - install cron, or schedule scripts/auto_update.sh with a systemd timer" ;;
+    esac
+  fi
   _gac_sched="$(cron_normalize "$(env_get UPDATE_SCHEDULE 2>/dev/null || echo '0 2 * * *')")" \
     || _gw_fail "$EXIT_CONFIG" "UPDATE_SCHEDULE is not a valid five-field cron expression"
   _gac_cmd="$(scheduler_update_command)" || return "$EXIT_CONFIG"
@@ -579,7 +596,10 @@ gateway_cron() {
       "$(env_get UPDATE_SCHEDULE 2>/dev/null || echo unset)" \
       "$(env_get UPDATE_TZ 2>/dev/null || echo system)" \
       "$(env_get UPDATE_ENABLED 2>/dev/null || echo true)"
-    printf 'DSM Task Scheduler command: %s\n' "$(scheduler_update_command 2>/dev/null || echo '<resolve after deploy>')"
+    case "${PLATFORM_LABEL:-dsm}" in
+      dsm) printf 'DSM Task Scheduler command: %s\n' "$(scheduler_update_command 2>/dev/null || echo '<resolve after deploy>')" ;;
+      *)   printf 'Scheduled-task command: %s\n' "$(scheduler_update_command 2>/dev/null || echo '<resolve after deploy>')" ;;
+    esac
     printf 'Or apply a crontab entry:   gateway.sh cron --apply-crontab --yes (as root)\n'
   fi
   return 0

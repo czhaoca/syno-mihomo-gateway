@@ -99,8 +99,13 @@ pf_docker() {
     return 1
   }
   if ! "$DOCKER_BIN" info >/dev/null 2>&1; then
-    diagnose "Docker is installed but the daemon is unavailable" \
-      "start Container Manager and run this installer as root"
+    # Platform-conditional phrasing (#50): unset PLATFORM_LABEL = DSM wording.
+    case "${PLATFORM_LABEL:-dsm}" in
+      dsm) diagnose "Docker is installed but the daemon is unavailable" \
+             "start Container Manager and run this installer as root" ;;
+      *)   diagnose "Docker is installed but the daemon is unavailable" \
+             "start the Docker service and run this installer as root" ;;
+    esac
     return 1
   fi
   ui_ok "$(msg ok_docker_compose)"

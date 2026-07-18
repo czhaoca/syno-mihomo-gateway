@@ -1,5 +1,5 @@
 #!/bin/sh
-# Read-only DSM diagnostics for the Mihomo gateway.
+# Read-only host diagnostics for the Mihomo gateway (DSM + generic Linux).
 # Exit: 0 structurally healthy | 2 degraded optional service/egress | 3 broken.
 
 PATH="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"

@@ -1,7 +1,9 @@
 #!/bin/sh
-# auto_update.sh - DSM-side image puller + safe redeployer for the mihomo gateway.
+# auto_update.sh - scheduler-driven image puller + safe redeployer for the
+# mihomo gateway.
 #
-# Run by Synology DSM Task Scheduler (as root). Pulls the images listed in
+# Run as root by DSM Task Scheduler on Synology, or cron/systemd on generic
+# Linux hosts (#50). Pulls the images listed in
 # UPDATE_IMAGES plus every enrolled generic target (lib/targets.sh) from
 # Alibaba ACR, detects which actually changed, and applies serially, lowest
 # blast radius first (DEC-5: generic -> cloudflared -> compose gateway LAST):
@@ -247,8 +249,21 @@ validate_update_config || {
 }
 
 # --- Preflight (abort touching nothing on any failure) ---
-wait_for_docker_ready || { notify "Mihomo Gateway: update aborted" "Container Manager/Docker did not become ready."; exit "$EXIT_CONFIG"; }
-check_arch_expectation || { notify "Mihomo Gateway: update aborted" "EXPECTED_ARCH does not match this NAS."; exit "$EXIT_CONFIG"; }
+# Platform-conditional phrasing (#50): unset PLATFORM_LABEL = DSM wording.
+wait_for_docker_ready || {
+  case "${PLATFORM_LABEL:-dsm}" in
+    dsm) notify "Mihomo Gateway: update aborted" "Container Manager/Docker did not become ready." ;;
+    *)   notify "Mihomo Gateway: update aborted" "Docker did not become ready." ;;
+  esac
+  exit "$EXIT_CONFIG"
+}
+check_arch_expectation || {
+  case "${PLATFORM_LABEL:-dsm}" in
+    dsm) notify "Mihomo Gateway: update aborted" "EXPECTED_ARCH does not match this NAS." ;;
+    *)   notify "Mihomo Gateway: update aborted" "EXPECTED_ARCH does not match this host." ;;
+  esac
+  exit "$EXIT_CONFIG"
+}
 check_tun            || { notify "Mihomo Gateway: update aborted" "/dev/net/tun missing - run setup_network.sh."; exit "$EXIT_CONFIG"; }
 check_network        || { notify "Mihomo Gateway: update aborted" "tproxy_network missing/mismatched - run setup_network.sh."; exit "$EXIT_CONFIG"; }
 compose_config_check || { notify "Mihomo Gateway: update aborted" "Docker Compose configuration is invalid."; exit "$EXIT_CONFIG"; }

@@ -63,6 +63,11 @@ notify() {
   elif [ "$_dsm" -eq 1 ]; then
     log_info "notification handed to DSM push (unverifiable on DSM 7 - rely on Task Scheduler email or set NOTIFY_WEBHOOK_URL): $_title"
   else
-    log_warn "notification NOT delivered - enable DSM Task Scheduler 'send run details' email or set NOTIFY_WEBHOOK_URL in .env: $_title"
+    # Platform-conditional phrasing (#50): unset PLATFORM_LABEL = DSM wording.
+    # (The DSM-push branch above only fires where synodsmnotify exists.)
+    case "${PLATFORM_LABEL:-dsm}" in
+      dsm) log_warn "notification NOT delivered - enable DSM Task Scheduler 'send run details' email or set NOTIFY_WEBHOOK_URL in .env: $_title" ;;
+      *)   log_warn "notification NOT delivered - set NOTIFY_WEBHOOK_URL in .env, or rely on your scheduler's mail-on-error (cron MAILTO / systemd OnFailure): $_title" ;;
+    esac
   fi
 }
