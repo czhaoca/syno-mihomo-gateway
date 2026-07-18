@@ -63,9 +63,11 @@ here for steps 2-8. Full procedure: [Release Zip](release-packaging.md).
   back on failure.
 - **Manual:** steps 2–8 below — edit `.env` yourself, run `setup_network.sh`, then drive
   `docker compose` directly.
-- **Raspberry Pi (no Synology)?** This page is the DSM walkthrough — the Pi has its own
-  additive installer (`sudo sh ./install-pi.sh`), a hardware/RAM sizing matrix, and a
-  bare-metal mode for small boards: [Installation — Raspberry Pi](installation-pi.md).
+- **No Synology?** This page is the DSM walkthrough — a generic Linux host (amd64/arm64)
+  or a Raspberry Pi has its own additive installer (`sudo sh ./install-linux.sh`; on a Pi
+  `sudo sh ./install-pi.sh`), support tiers, a hardware/RAM sizing matrix, and a bare-metal
+  mode for small or macvlan-hostile hosts:
+  [Installation — Generic Linux & Raspberry Pi](installation-linux.md).
 
 ### Guided install (recommended)
 

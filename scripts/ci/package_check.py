@@ -99,8 +99,8 @@ ENDUSER_MUST_INCLUDE = [
 ENDUSER_MUST_EXCLUDE = [
     PREFIX + "install-pi.sh",
     PREFIX + "scripts/pi/lite.sh",
-    PREFIX + "docs/INSTALL-PI.txt",
-    PREFIX + "docs/INSTALL-PI.zh.txt",
+    PREFIX + "docs/INSTALL-LINUX.txt",
+    PREFIX + "docs/INSTALL-LINUX.zh.txt",
     PREFIX + "scripts/pi/detect.sh",
     PREFIX + "install-linux.sh",
     PREFIX + "scripts/linux/preflight_linux.sh",
@@ -127,8 +127,8 @@ LINUX_EXTRA_INCLUDE = [
     PREFIX + "install-pi.sh",
     PREFIX + "scripts/pi/lite.sh",
     PREFIX + "scripts/pi/detect.sh",
-    PREFIX + "docs/INSTALL-PI.txt",
-    PREFIX + "docs/INSTALL-PI.zh.txt",
+    PREFIX + "docs/INSTALL-LINUX.txt",
+    PREFIX + "docs/INSTALL-LINUX.zh.txt",
     PREFIX + "install-linux.sh",
     PREFIX + "scripts/linux/preflight_linux.sh",
     PREFIX + "scripts/linux/i18n_linux.sh",
@@ -361,10 +361,11 @@ def build_enduser_fixture(root: Path):
     (root / "scripts" / "pi" / "lite.sh").write_text(
         "#!/bin/sh\nURL=https://github.com/MetaCubeX/mihomo/releases\n:\n")
     (root / "scripts" / "pi" / "detect.sh").write_text("#!/bin/sh\n:\n")
-    # The Pi guides ship with the linux profile, not the DSM bundle (their
-    # installer is pruned above; a guide for an absent installer is noise).
-    (root / "docs" / "INSTALL-PI.txt").write_text("Raspberry Pi install guide.\n")
-    (root / "docs" / "INSTALL-PI.zh.txt").write_text("Raspberry Pi install guide (zh).\n")
+    # The generic-Linux guides (#51: the INSTALL-PI pair renamed) ship with the
+    # linux profile, not the DSM bundle (their installers are pruned above; a
+    # guide for absent installers is noise).
+    (root / "docs" / "INSTALL-LINUX.txt").write_text("Generic Linux / Raspberry Pi install guide.\n")
+    (root / "docs" / "INSTALL-LINUX.zh.txt").write_text("Generic Linux / Raspberry Pi install guide (zh).\n")
     # The generic-Linux entry drives the same engine; it ships via the linux
     # profile only. Its forge-URL decoy makes an unpruned DSM bundle FAIL the
     # leak-gate rather than ship it silently.

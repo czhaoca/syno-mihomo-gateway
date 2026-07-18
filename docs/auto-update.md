@@ -341,10 +341,10 @@ controller probe, TUN link when enabled — the shared `HEALTH_RETRIES` / `HEALT
 the next scheduled run retries cleanly; a restore that itself fails is reported as `MANUAL
 ATTENTION`, never as a successful rollback.
 
-Scheduling is `install-pi.sh` menu item 3 — one managed `/etc/crontab` line (there is no DSM
-Task Scheduler on a Pi); a compose-mode Pi schedules the standard `auto_update.sh` above,
-unchanged. Walkthrough and the mirror/sideload story:
-[Installation — Raspberry Pi](installation-pi.md#automatic-updates-on-a-pi).
+Scheduling is installer menu item 3 — one managed `/etc/crontab` line (there is no DSM
+Task Scheduler on these hosts); a compose-mode host schedules the standard `auto_update.sh`
+above, unchanged. Walkthrough and the mirror/sideload story:
+[Installation — Generic Linux & Raspberry Pi](installation-linux.md#automatic-updates).
 
 ## Upstream behavior references
 

@@ -7,16 +7,29 @@ Manual: **Architecture** · [Installation](installation.md) · [Release Zip](rel
 
 ## What this is
 
-A transparent proxy **gateway** for a Synology NAS. [Mihomo](https://github.com/MetaCubeX/mihomo)
+A transparent proxy **gateway** — born on a Synology NAS, and deployable on any
+Docker-capable Linux host (amd64 + arm64). [Mihomo](https://github.com/MetaCubeX/mihomo)
 (Clash Meta) runs in a privileged container with its **own LAN IP** (Docker macvlan), so any
 device on the home network can route through it just by setting that IP as its gateway/DNS —
 no client software required. [MetaCubeXD](https://github.com/MetaCubeX/metacubexd) is a web
 dashboard for managing Mihomo.
 
-The deployment target is **mainland China**, where Docker Hub / ghcr.io are blocked. By
-default (`REGISTRY_MODE=acr`) image updates therefore flow through a two-stage pipeline
-(mirror → pull) described below; `REGISTRY_MODE=docker` is an opt-in that pulls upstream
-registries directly, for a NAS with unfiltered internet access.
+| Platform | Compose mode (this page's topology) | Lite mode (no Docker) | Support tier |
+|---|---|---|---|
+| **Synology DSM** | ✓ — the canonical deployment | — | **Required owner validation** |
+| **Raspberry Pi** | ✓ (64-bit OS, wired Ethernet) | ✓ | Experimental |
+| **Generic Linux (amd64/arm64)** | ✓ (64-bit OS, wired Ethernet, macvlan-viable network) | ✓ | Experimental |
+
+Tier definitions and the per-platform walkthrough:
+[Installation — Generic Linux & Raspberry Pi](installation-linux.md#support-tiers).
+
+### Canonical deployment: Synology DSM
+
+The canonical deployment is a **Synology NAS in mainland China**, where Docker Hub /
+ghcr.io are blocked. By default (`REGISTRY_MODE=acr`) image updates therefore flow through a
+two-stage pipeline (mirror → pull) described below; `REGISTRY_MODE=docker` is an opt-in that
+pulls upstream registries directly, for a host with unfiltered internet access (and the
+default the generic-Linux installer offers).
 
 ## Components
 
@@ -31,12 +44,13 @@ registries directly, for a NAS with unfiltered internet access.
 | **data directory** | **sibling dir** `../syno-mihomo-gateway-data` | Persistent runtime state (`GATEWAY_DATA_DIR`): the live `.env`, rendered config, logs, updater state. Survives replacing the release directory. See below. |
 | **docker-china-sync** | sibling repo `../docker-china-sync` | GitHub Actions on a self-hosted runner; mirrors upstream images → Alibaba ACR nightly. The "push" side of the pipeline (used when `REGISTRY_MODE=acr`, the default). |
 
-The same components also run on a **Raspberry Pi** (`sh ./install-pi.sh` — additive; the DSM
-path above is untouched) in one of two flavors: *compose parity* (this exact container
-topology on wired macvlan) or *bare-metal lite* (the mihomo binary under systemd, serving the
-dashboard itself via `external-ui` — no Docker, no macvlan; the Pi's own IP is the clients'
-gateway/DNS). Hardware floors and mode selection:
-[Installation — Raspberry Pi](installation-pi.md#hardware--mode-matrix).
+The same components also run on a **generic Linux host or Raspberry Pi**
+(`sh ./install-linux.sh` / `sh ./install-pi.sh` — additive entries; the DSM path above is
+untouched) in one of two flavors: *compose parity* (this exact container topology on wired
+macvlan) or *bare-metal lite* (the mihomo binary under systemd, serving the dashboard itself
+via `external-ui` — no Docker, no macvlan; the host's own IP is the clients' gateway/DNS).
+Hardware floors and mode selection:
+[Installation — Generic Linux & Raspberry Pi](installation-linux.md#hardware--mode-matrix).
 
 ## Persistent data directory
 

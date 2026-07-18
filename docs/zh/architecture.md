@@ -7,15 +7,28 @@
 
 ## 这是什么
 
-一个面向群晖 NAS 的透明代理**网关**。[Mihomo](https://github.com/MetaCubeX/mihomo)
+一个透明代理**网关** —— 诞生于群晖 NAS，同样可以部署在任何能运行 Docker 的 Linux 主机
+（amd64 + arm64）上。[Mihomo](https://github.com/MetaCubeX/mihomo)
 （Clash Meta）运行在一个拥有**自己 LAN IP** 的特权容器中（Docker macvlan），因此家庭网络中
 的任何设备只需把该 IP 设为自己的网关/DNS，即可经由它进行路由——无需任何客户端软件。
 [MetaCubeXD](https://github.com/MetaCubeX/metacubexd) 是用于管理 Mihomo 的 Web
 仪表盘。
 
-部署目标是**中国大陆**，那里 Docker Hub / ghcr.io 被屏蔽。因此在默认情况下
-（`REGISTRY_MODE=acr`），镜像更新通过下文所述的两阶段流水线（镜像同步 → 拉取）进行；
-`REGISTRY_MODE=docker` 是一个可选项，直接拉取上游镜像仓库，适用于外网不受限的 NAS。
+| 平台 | Compose 模式（本页拓扑） | Lite 模式（无 Docker） | 支持层级 |
+|---|---|---|---|
+| **群晖 DSM** | ✓ —— 权威部署 | — | **必须经所有者验证** |
+| **树莓派** | ✓（64 位系统，有线以太网） | ✓ | 实验性 |
+| **通用 Linux（amd64/arm64）** | ✓（64 位系统、有线以太网、macvlan 可行的网络） | ✓ | 实验性 |
+
+层级定义与各平台完整流程见
+[安装 — 通用 Linux 与树莓派](installation-linux.md#支持层级)。
+
+### 权威部署：群晖 DSM
+
+权威部署目标是位于**中国大陆**的群晖 NAS，那里 Docker Hub / ghcr.io 被屏蔽。因此在默认
+情况下（`REGISTRY_MODE=acr`），镜像更新通过下文所述的两阶段流水线（镜像同步 → 拉取）
+进行；`REGISTRY_MODE=docker` 是一个可选项，直接拉取上游镜像仓库，适用于外网不受限的
+主机（也是通用 Linux 安装器提供的默认值）。
 
 ## 组件
 
@@ -30,11 +43,12 @@
 | **数据目录** | **同级目录** `../syno-mihomo-gateway-data` | 持久化的运行时状态（`GATEWAY_DATA_DIR`）：生效的 `.env`、渲染出的配置、日志、更新器状态。替换发布目录后仍然保留。见下文。 |
 | **docker-china-sync** | 同级仓库 `../docker-china-sync` | 在自托管 runner 上运行的 GitHub Actions；每晚将上游镜像同步 → 阿里云 ACR。即流水线的"推送"端（在默认的 `REGISTRY_MODE=acr` 下使用）。 |
 
-同一套组件也能跑在**树莓派**上（`sh ./install-pi.sh`——附加入口；上面的 DSM 路径不受
-影响），有两种形态：*compose 同构*（在有线 macvlan 上照搬这套容器拓扑）或*裸机 lite*
-（mihomo 二进制在 systemd 下运行，并经 `external-ui` 自己托管面板——没有 Docker、没有
-macvlan；客户端的网关/DNS 就是树莓派自己的 IP）。硬件下限与模式选择见
-[安装 — 树莓派](installation-pi.md#硬件与模式矩阵)。
+同一套组件也能跑在**通用 Linux 主机或树莓派**上（`sh ./install-linux.sh` /
+`sh ./install-pi.sh`——附加入口；上面的 DSM 路径不受影响），有两种形态：*compose 同构*
+（在有线 macvlan 上照搬这套容器拓扑）或*裸机 lite*（mihomo 二进制在 systemd 下运行，
+并经 `external-ui` 自己托管面板——没有 Docker、没有 macvlan；客户端的网关/DNS 就是主机
+自己的 IP）。硬件下限与模式选择见
+[安装 — 通用 Linux 与树莓派](installation-linux.md#硬件与模式矩阵)。
 
 ## 持久数据目录
 

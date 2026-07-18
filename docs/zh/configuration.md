@@ -209,7 +209,7 @@ dry-run 标志、updated/unchanged/failed/rolled-back 计数与名称——由 `
 
 ### 树莓派 lite 模式
 
-由 [`install-pi.sh`](installation-pi.md) 与 lite 更新器使用；在 DSM 上无害且不生效
+由[通用 Linux/树莓派安装器](installation-linux.md)与 lite 更新器使用；在 DSM 上无害且不生效
 （`.env.example` 中以注释形式提供）。
 
 | 键 | 说明 | 默认值 / 示例 |

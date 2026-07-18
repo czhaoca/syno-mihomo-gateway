@@ -366,6 +366,6 @@ doctor 报告国家分组为空（default-empty / country-empty）
                    auto-update.log（计划更新）、gateway.log（gateway.sh；若
                    gateway.sh 先运行过，这些名字会链接到同一个共享文件）。
   * 设置：         ../syno-mihomo-gateway-data（见 CONFIGURE.zh.txt）。
-  * 树莓派：       用 install-pi.sh 安装的？树莓派特有的故障见
-                   INSTALL-PI.zh.txt（"如果出了问题"一节）。
+  * Linux/树莓派： 用 install-linux.sh 或 install-pi.sh 安装的？平台特有的
+                   故障见 INSTALL-LINUX.zh.txt（"如果出了问题"一节）。
   * 修改并重新部署：install.sh -> 4) 修改已有部署。

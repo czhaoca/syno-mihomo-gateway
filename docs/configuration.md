@@ -221,7 +221,7 @@ the gate is running + stable restarts + the image's own healthcheck when defined
 
 ### Raspberry Pi lite mode
 
-Consumed by [`install-pi.sh`](installation-pi.md) and the lite updater; harmless and unused
+Consumed by the [generic-Linux/Pi installers](installation-linux.md) and the lite updater; harmless and unused
 on DSM (`.env.example` ships them commented out).
 
 | Key | Description | Default / Example |

@@ -14,7 +14,8 @@
 #                      the build if any identifying string would ship.
 #   --profile linux    the enduser set PLUS the generic-Linux port: both entry
 #                      points (install-pi.sh + install-linux.sh), scripts/pi,
-#                      scripts/linux, and the INSTALL-PI guides (DEC-2, #49).
+#                      scripts/linux, and the INSTALL-LINUX guides (DEC-2, #49;
+#                      renamed from INSTALL-PI in #51).
 #                      Same identity gate; generic forge hostnames are tolerated
 #                      here because the port's runtime downloads from upstream
 #                      releases (DEC-R3, #31). Artifacts are named
@@ -54,7 +55,7 @@ PROFILE=enduser
 # would trip the leak-gate below). The leak-gate is the belt-and-suspenders
 # that fails the build if any identifying string survives anyway. ('.' = include
 # everything tracked, then subtract.) No entry contains a space.
-ENDUSER_EXCLUDES=". :(exclude)README.md :(exclude)AGENTS.md :(exclude)CLAUDE.md :(exclude).woodpecker.yml :(exclude).gitignore :(exclude)docs/*.md :(exclude)docs/zh :(exclude)scripts/ci :(exclude)scripts/cli :(exclude)scripts/package.sh :(exclude)install-pi.sh :(exclude)scripts/pi :(exclude)docs/INSTALL-PI.txt :(exclude)docs/INSTALL-PI.zh.txt :(exclude)install-linux.sh :(exclude)scripts/linux"
+ENDUSER_EXCLUDES=". :(exclude)README.md :(exclude)AGENTS.md :(exclude)CLAUDE.md :(exclude).woodpecker.yml :(exclude).gitignore :(exclude)docs/*.md :(exclude)docs/zh :(exclude)scripts/ci :(exclude)scripts/cli :(exclude)scripts/package.sh :(exclude)install-pi.sh :(exclude)scripts/pi :(exclude)docs/INSTALL-LINUX.txt :(exclude)docs/INSTALL-LINUX.zh.txt :(exclude)install-linux.sh :(exclude)scripts/linux"
 
 # The linux bundle is the enduser set PLUS the generic-Linux port (both entry
 # points and their script trees): derived, not copied, so the two pathspecs can
@@ -62,7 +63,7 @@ ENDUSER_EXCLUDES=". :(exclude)README.md :(exclude)AGENTS.md :(exclude)CLAUDE.md 
 LINUX_EXCLUDES=""
 for _tok in $ENDUSER_EXCLUDES; do
   case "$_tok" in
-    ':(exclude)install-pi.sh'|':(exclude)scripts/pi'|':(exclude)docs/INSTALL-PI.txt'|':(exclude)docs/INSTALL-PI.zh.txt'|':(exclude)install-linux.sh'|':(exclude)scripts/linux') : ;;
+    ':(exclude)install-pi.sh'|':(exclude)scripts/pi'|':(exclude)docs/INSTALL-LINUX.txt'|':(exclude)docs/INSTALL-LINUX.zh.txt'|':(exclude)install-linux.sh'|':(exclude)scripts/linux') : ;;
     *) LINUX_EXCLUDES="${LINUX_EXCLUDES}${LINUX_EXCLUDES:+ }$_tok" ;;
   esac
 done
@@ -293,7 +294,7 @@ log_info "release ${VERSION} (${PROFILE}) ready in ${DIST}:"
 ls -lh "$DIST" >&2
 case "$PROFILE" in
   enduser) log_info "Next: transfer to the NAS, unpack into the Docker shared folder, run 'sh ./install.sh'." ;;
-  linux)   log_info "Next: transfer to the target host, unpack, run 'sudo sh ./install-linux.sh' (on a Pi: 'sudo sh ./install-pi.sh'; see docs/INSTALL-PI.txt)." ;;
+  linux)   log_info "Next: transfer to the target host, unpack, run 'sudo sh ./install-linux.sh' (on a Pi: 'sudo sh ./install-pi.sh'; see docs/INSTALL-LINUX.txt)." ;;
   *)       log_info "dev bundle (internal). For the distributable archives use: --profile enduser or --profile linux" ;;
 esac
 exit "$EXIT_OK"

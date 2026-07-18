@@ -1,12 +1,14 @@
-# Syno-Mihomo-Gateway (群晖 DSM 透明网关)
+# Syno-Mihomo-Gateway (透明代理网关)
 
 [English Docs](../README.md)
 
-在群晖 NAS 上"拉取即用"地部署 **Mihomo (Clash Meta)** 透明网关。家中任意设备（Apple TV、iPhone、
+"拉取即用"地部署 **Mihomo (Clash Meta)** 透明网关 —— 诞生于**群晖 NAS**，同样可以跑在**任何能
+运行 Docker 的 Linux 主机（amd64 + arm64）**上，包括树莓派。家中任意设备（Apple TV、iPhone、
 游戏机）只需把网关/DNS 指向该容器的局域网 IP 即可科学上网，无需安装客户端。**MetaCubeXD** 提供
-网页管理面板。为**中国大陆**设计：镜像更新默认走 Docker Hub/ghcr → 阿里云 ACR → 你的 NAS 的
-流水线（`REGISTRY_MODE=docker` 可选择在无封锁的 NAS 上直接拉取上游镜像），并由群晖计划任务保持
-自动、安全、可自愈地更新。
+网页管理面板。NAS 仍是权威的、每个发布都经过验证的部署目标（其余平台为实验性 ——
+[支持层级](zh/installation-linux.md#支持层级)）。为**中国大陆**设计：镜像更新默认走
+Docker Hub/ghcr → 阿里云 ACR → 你的 NAS 的流水线（`REGISTRY_MODE=docker` 可选择在无封锁的主机上
+直接拉取上游镜像），并由群晖计划任务保持自动、安全、可自愈地更新。
 
 ## 功能特点
 - 🚀 **自动化脚本** — 自动检测群晖网络接口（`eth0` / `ovs_eth0`）。
@@ -26,7 +28,7 @@
 |---|---|
 | [架构](zh/architecture.md) | 组件、镜像同步→拉取流水线、macvlan 网络模型、安全模型 |
 | [安装](zh/installation.md) | 完整的群晖部署流程（SSH、网络、首次启动、面板） |
-| [安装 — 树莓派](zh/installation-pi.md) | 没有群晖？树莓派移植：compose 同构或裸机 lite、硬件与内存选型矩阵、镜像/离线安装 |
+| [安装 — 通用 Linux 与树莓派](zh/installation-linux.md) | 没有群晖？通用 Linux 移植（amd64 + arm64）：compose 同构或裸机 lite、支持层级、树莓派硬件与内存选型矩阵、镜像/离线安装 |
 | [离线发布包](zh/release-packaging.md) | GitHub 被封锁时的离线安装：构建压缩包，在 NAS 上解压，无需 git |
 | [配置](zh/configuration.md) | **完整 `.env` 参考**、模板、订阅、规则 |
 | [自动更新](zh/auto-update.md) | ACR 配置、运行流程、健康检查/回滚、通用已登记目标、cloudflared 蓝绿、退出码 |
@@ -54,8 +56,9 @@
 > **NAS 无法访问 GitHub（中国大陆）？** 请改用
 > [离线发布包](zh/release-packaging.md)，无需第 1 步的 git clone。
 >
-> **完全没有群晖设备？** 网关也能跑在**树莓派**上（`sh ./install-pi.sh`）——
-> 硬件选型矩阵与完整流程见[安装 — 树莓派](zh/installation-pi.md)。
+> **完全没有群晖设备？** 网关也能跑在**任何能运行 Docker 的 Linux 主机**上
+> （`sh ./install-linux.sh`），树莓派则用 `sh ./install-pi.sh` —— 支持层级、硬件选型
+> 与完整流程见[安装 — 通用 Linux 与树莓派](zh/installation-linux.md)。
 
 ```bash
 # 1. 下载（在群晖上，通过 SSH）

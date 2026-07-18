@@ -1,13 +1,16 @@
-# Syno-Mihomo-Gateway (Synology DSM Transparent Proxy)
+# Syno-Mihomo-Gateway (Transparent Proxy Gateway)
 
 [中文文档 (Chinese Docs)](docs/README_ZH.md)
 
-A "git-pull-and-run" way to deploy **Mihomo (Clash Meta)** on a Synology NAS as a transparent
-gateway. Any device at home (Apple TV, iPhone, consoles) can route through it just by setting its
+A "git-pull-and-run" way to deploy **Mihomo (Clash Meta)** as a transparent gateway — born on a
+**Synology NAS**, and it runs on **any Docker-capable Linux host (amd64 + arm64)**, Raspberry Pi
+included. Any device at home (Apple TV, iPhone, consoles) can route through it just by setting its
 gateway/DNS to the container's LAN IP — no client software. **MetaCubeXD** provides a web
-dashboard. Built for **mainland China**: by default image updates flow Docker Hub/ghcr → Alibaba
-ACR → your NAS (`REGISTRY_MODE=docker` opts in to pulling upstream directly on an unfiltered NAS),
-and a DSM-scheduled job keeps everything current and safely self-healing.
+dashboard. The NAS remains the canonical, release-validated deployment (the other platforms are
+experimental — [support tiers](docs/installation-linux.md#support-tiers)). Built for **mainland
+China**: by default image updates flow Docker Hub/ghcr → Alibaba ACR → your NAS
+(`REGISTRY_MODE=docker` opts in to pulling upstream directly on an unfiltered host), and a
+DSM-scheduled job keeps everything current and safely self-healing.
 
 ## Features
 - 🚀 **Automated setup** — auto-detects the Synology interface (`eth0` / `ovs_eth0`).
@@ -29,7 +32,7 @@ and a DSM-scheduled job keeps everything current and safely self-healing.
 |---|---|
 | [Architecture](docs/architecture.md) | components, the mirror→pull pipeline, the macvlan model, the safety model |
 | [Installation](docs/installation.md) | full DSM walkthrough (SSH, network, first run, dashboard) |
-| [Installation — Raspberry Pi](docs/installation-pi.md) | no Synology? the Pi port: compose parity or bare-metal lite, the hardware & RAM sizing matrix, mirror/offline installs |
+| [Installation — Generic Linux & Raspberry Pi](docs/installation-linux.md) | no Synology? the generic Linux port (amd64 + arm64): compose parity or bare-metal lite, support tiers, the Pi hardware & RAM sizing matrix, mirror/offline installs |
 | [Release Zip](docs/release-packaging.md) | offline install where GitHub is blocked: build a zip, unpack on the NAS, no git |
 | [Configuration](docs/configuration.md) | **complete `.env` reference**, template, subscription, rules |
 | [Auto-Update](docs/auto-update.md) | ACR setup, the run sequence, health-gate/rollback, generic enrolled targets, cloudflared blue-green, exit codes |
@@ -60,8 +63,10 @@ and a DSM-scheduled job keeps everything current and safely self-healing.
 > **No GitHub on the NAS (mainland China)?** Use the
 > [release zip](docs/release-packaging.md) instead of step 1's clone.
 >
-> **No Synology at all?** The gateway also runs on a **Raspberry Pi** (`sh ./install-pi.sh`) —
-> hardware sizing matrix and walkthrough: [Installation — Raspberry Pi](docs/installation-pi.md).
+> **No Synology at all?** The gateway also runs on **any Docker-capable Linux host**
+> (`sh ./install-linux.sh`) or a **Raspberry Pi** (`sh ./install-pi.sh`) — support tiers,
+> hardware sizing, and walkthrough:
+> [Installation — Generic Linux & Raspberry Pi](docs/installation-linux.md).
 
 ```bash
 # 1. Clone (on the NAS, over SSH)

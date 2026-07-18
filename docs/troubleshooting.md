@@ -379,6 +379,43 @@ Build/Update to "fix" it - that bypasses the digest gate, health gate, and rollb
 created a Project entry manually, delete the Project (not the containers) and manage the stack
 via the installer/CLI only.
 
+## Generic Linux: macvlan-hostile host (cloud VM / VPC / Wi-Fi)
+
+**Symptom:** `install-linux.sh` warned "virtualized/cloud host detected … macvlan children
+often cannot forward LAN traffic here" — or compose mode deployed cleanly but no LAN device
+can reach `MIHOMO_IP` (ping/ARP dead), typically on a cloud VM (AWS/GCP/Alibaba/…) or under
+a hypervisor vswitch.
+
+**Cause:** macvlan puts the gateway on a second, unknown MAC address on the host's port.
+Cloud VPCs filter frames from unknown source MACs, and some hypervisor vswitches drop them —
+the container comes up healthy but its frames never reach the LAN. Wi-Fi breaks the same
+way ([macvlan on Wi-Fi refused](#pi-macvlan-on-wi-fi-wlan0-refused)).
+
+**Fix:** lite mode is the sanctioned answer on these hosts — re-run the installer, choose
+**Deploy** (the mode wizard runs there; Redeploy keeps the saved compose flavor), and pick
+lite: the gateway binds the host's own IP, no macvlan involved. Afterwards take the stranded
+compose pair down (`docker compose --env-file ../syno-mihomo-gateway-data/.env down`) and
+point clients at the host's IP. The guard's detection is a heuristic;
+on a bridged home-lab VM (Proxmox/ESXi with MAC filtering off) where macvlan does work,
+acknowledge the warning and keep compose. Background:
+[Installation — Generic Linux & Raspberry Pi](installation-linux.md#macvlan-hostile-hosts-cloud--vm).
+
+## Generic Linux: which image source (REGISTRY_MODE)?
+
+**Symptom:** unsure whether to pick `docker` or `acr` in the `install-linux.sh` image
+wizard — or pulls fail right after picking one.
+
+**Cause:** the two sources serve different networks. `docker` pulls the upstream public
+registries (Docker Hub / ghcr.io) via multi-arch manifests — works out of the box on any
+unfiltered network, blocked in mainland China. `acr` pulls your private Alibaba ACR mirror —
+the mainland-China answer, but it needs your own mirror pipeline, and the default pipeline
+copies amd64 only.
+
+**Fix:** outside mainland China keep the wizard's `docker` default. In mainland China pick
+`acr` and set up the mirror pipeline ([Auto-Update › ACR setup](auto-update.md#acr-setup));
+on an arm64 host also mirror arm64 first — the next entry's guard fires on any arm64 host,
+not just Pis.
+
 ## Pi: ACR image not mirrored for arm64
 
 **Symptom:** on a Raspberry Pi in compose mode (`install-pi.sh`), the deploy/update fails at
@@ -394,7 +431,7 @@ copy of the images yet.
 `REGISTRY_MODE=docker` on an unfiltered network. Same guard as
 [Architecture mismatch (ARM NAS)](#architecture-mismatch-arm-nas): the refusal is the
 protection, not the bug. Background:
-[Installation — Raspberry Pi](installation-pi.md#compose-mode-on-a-pi).
+[Installation — Generic Linux & Raspberry Pi](installation-linux.md#compose-mode).
 
 ## Pi lite: update rolled back
 

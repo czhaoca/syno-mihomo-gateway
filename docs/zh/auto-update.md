@@ -310,10 +310,10 @@ sudo sh scripts/auto_update.sh --dry-run
 **连同版本状态**，因此下一次计划运行会干净地重试；连恢复都失败时上报
 `MANUAL ATTENTION`，绝不谎报回滚成功。
 
-计划任务由 `install-pi.sh` 菜单第 3 项设置——维护 `/etc/crontab` 中受管的一行（树莓派
-上没有 DSM 任务计划）；compose 模式的树莓派安排的是上文的标准 `auto_update.sh`，
-原样不动。完整流程与镜像/离线预放置见
-[安装 — 树莓派](installation-pi.md#树莓派上的自动更新)。
+计划任务由安装器菜单第 3 项设置——维护 `/etc/crontab` 中受管的一行（这些主机上没有
+DSM 任务计划）；compose 模式的主机安排的是上文的标准 `auto_update.sh`，原样不动。
+完整流程与镜像/离线预放置见
+[安装 — 通用 Linux 与树莓派](installation-linux.md#自动更新)。
 
 ## 上游行为参考
 

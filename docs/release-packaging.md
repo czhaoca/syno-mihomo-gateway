@@ -72,13 +72,13 @@ built with `git archive`, so it contains **only tracked files** — your `.env`,
   connected machine or online.
 - **`--profile linux`** — the enduser set **plus the generic-Linux port**: both entry points
   (`install-pi.sh` and `install-linux.sh`), `scripts/pi/`, `scripts/linux/`, and the
-  `docs/INSTALL-PI.txt` / `docs/INSTALL-PI.zh.txt` guides. Artifacts are named
+  `docs/INSTALL-LINUX.txt` / `docs/INSTALL-LINUX.zh.txt` guides. Artifacts are named
   `syno-mihomo-gateway-linux-<version>.{zip,tar.gz}` (same in-archive folder name), so both
   bundles can sit side by side. The port's runtime downloads mihomo/dashboard artifacts from
   upstream releases, so this profile — and only this profile — tolerates generic code-forge
   hostnames in shipped files; the identity gate below still applies in full. On the target host,
   unpack and run `sudo sh ./install-linux.sh` (on a Raspberry Pi: `sudo sh ./install-pi.sh`; see
-  the bundled `docs/INSTALL-PI.txt`). `--profile pi` is accepted as a deprecated alias: it warns,
+  the bundled `docs/INSTALL-LINUX.txt`). `--profile pi` is accepted as a deprecated alias: it warns,
   then builds this same bundle.
 - **`--profile dev`** — the full tracked tree (docs, CI, metadata). Internal use; it is what CI's
   package check builds.

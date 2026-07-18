@@ -67,12 +67,12 @@ dist/syno-mihomo-gateway-<版本>.tar.gz.sha256
   以及本指南中所有其他 `.md` 交叉链接 —— 都**不在**包内；请在联网机器上或在线阅读 `.md` 手册。
 - **`--profile linux`** —— 在 enduser 集合之上**加入通用 Linux 移植**：两个入口脚本
   （`install-pi.sh` 与 `install-linux.sh`）、`scripts/pi/`、`scripts/linux/`，以及
-  `docs/INSTALL-PI.txt` / `docs/INSTALL-PI.zh.txt` 指南。产物命名为
+  `docs/INSTALL-LINUX.txt` / `docs/INSTALL-LINUX.zh.txt` 指南。产物命名为
   `syno-mihomo-gateway-linux-<版本>.{zip,tar.gz}`（包内根目录名相同），两种包可以并存于 dist/。
   该移植的运行时需要从上游 releases 下载 mihomo/面板产物，因此仅此 profile 容许打包文件中出现
   通用代码托管域名；下方的身份门禁依然完整生效。在目标主机上解压后运行
   `sudo sh ./install-linux.sh`（Raspberry Pi 上运行 `sudo sh ./install-pi.sh`；见包内
-  `docs/INSTALL-PI.txt`）。`--profile pi` 仍被接受为已弃用的别名：它会给出警告，
+  `docs/INSTALL-LINUX.txt`）。`--profile pi` 仍被接受为已弃用的别名：它会给出警告，
   然后构建同一个包。
 - **`--profile dev`** —— 完整的 git 跟踪目录树（文档、CI、元数据）。内部使用；CI 的打包检查
   构建的就是它。
