@@ -11,7 +11,7 @@
 flow_redeploy() {
   ui_step "$(msg step_redeploy)"
   if ! is_root; then
-    diagnose "redeployment requires root privileges" "re-run: sudo sh ./install.sh"
+    diagnose "redeployment requires root privileges" "re-run: sudo sh ./${INSTALLER_ENTRY:-install.sh}"
     return 1
   fi
   if [ ! -f "$ENV_FILE" ]; then

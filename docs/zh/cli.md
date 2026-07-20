@@ -2,7 +2,7 @@
 
 <!-- 本页由 scripts/cli/spec.yaml 生成——请勿手工编辑。重新生成：python3 scripts/ci/cli_contract_check.py --write -->
 
-Synology DSM 上 Mihomo 透明代理网关的非交互命令入口。其他程序（DSM 任务计划、脚本、CI）可直接调用这些子命令；交互式安装器（sh ./install.sh） 是基于同一套函数的向导前端。
+Synology DSM 上 Mihomo 透明代理网关的非交互命令入口。其他程序（DSM 任务计划、脚本、CI）可直接调用这些子命令；交互式安装器（sh ./install.sh 或对应平台入口 install-linux.sh / install-pi.sh）是基于同一套函数的向导前端。
 
 ## 调用方式
 

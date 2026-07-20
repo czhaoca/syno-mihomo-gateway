@@ -11,7 +11,7 @@
 apply_changes() {
   ui_step "$(msg step_apply)"
   if ! is_root; then
-    diagnose "applying changes requires root privileges" "re-run: sudo sh ./install.sh"
+    diagnose "applying changes requires root privileges" "re-run: sudo sh ./${INSTALLER_ENTRY:-install.sh}"
     return 1
   fi
   load_env

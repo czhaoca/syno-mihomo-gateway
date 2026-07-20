@@ -9,7 +9,7 @@ usage() {
   cat <<'SMG_HELP_EOF'
 Usage: sh ./scripts/gateway.sh <verb> [options]
 
-Non-interactive command surface for the Mihomo transparent-proxy gateway on Synology DSM. Other procedures (DSM Task Scheduler, scripts, CI) call these verbs directly; the interactive installer (sh ./install.sh) is the guided front-end over the same functions.
+Non-interactive command surface for the Mihomo transparent-proxy gateway on Synology DSM. Other procedures (DSM Task Scheduler, scripts, CI) call these verbs directly; the interactive installer (sh ./install.sh, or the platform entry install-linux.sh / install-pi.sh) is the guided front-end over the same functions.
 
 Verbs:
   deploy     Bring the gateway up end-to-end from the saved .env (derives image refs when absent).

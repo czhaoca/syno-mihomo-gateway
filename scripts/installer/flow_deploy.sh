@@ -272,7 +272,13 @@ report_success() {
   [ -n "$_rs_parent" ] \
     || _rs_parent="$(detect_parent_interface "${ROUTER_IP:-}")"
   _rs_nas_ip="$(_iface_ipv4 "$_rs_parent")"
-  [ -n "$_rs_nas_ip" ] || _rs_nas_ip='<NAS-IP>'
+  if [ -z "$_rs_nas_ip" ]; then
+    # Platform-conditional placeholder (#53): unset PLATFORM_LABEL = DSM text.
+    case "${PLATFORM_LABEL:-dsm}" in
+      dsm) _rs_nas_ip='<NAS-IP>' ;;
+      *)   _rs_nas_ip='<host-IP>' ;;
+    esac
+  fi
 
   ui_step "$(msg step_deploy_done)"
   ui_ok  "$(msg ok_gateway_up)"
@@ -315,7 +321,7 @@ flow_deploy() {
   ui_step "$(msg step_deploy_e2e)"
 
   if ! is_root; then
-    diagnose "deployment requires root privileges" "re-run: sudo sh ./install.sh"
+    diagnose "deployment requires root privileges" "re-run: sudo sh ./${INSTALLER_ENTRY:-install.sh}"
     return 1
   fi
 

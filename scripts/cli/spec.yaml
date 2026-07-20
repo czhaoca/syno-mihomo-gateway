@@ -14,12 +14,13 @@ meta:
     en: >-
       Non-interactive command surface for the Mihomo transparent-proxy gateway
       on Synology DSM. Other procedures (DSM Task Scheduler, scripts, CI) call
-      these verbs directly; the interactive installer (sh ./install.sh) is the
-      guided front-end over the same functions.
+      these verbs directly; the interactive installer (sh ./install.sh, or the
+      platform entry install-linux.sh / install-pi.sh) is the guided front-end
+      over the same functions.
     zh: >-
       Synology DSM 上 Mihomo 透明代理网关的非交互命令入口。其他程序（DSM
-      任务计划、脚本、CI）可直接调用这些子命令；交互式安装器（sh ./install.sh）
-      是基于同一套函数的向导前端。
+      任务计划、脚本、CI）可直接调用这些子命令；交互式安装器（sh ./install.sh
+      或对应平台入口 install-linux.sh / install-pi.sh）是基于同一套函数的向导前端。
   logs:
     en: >-
       Logs: gateway.sh writes <data-dir>/logs/gateway.log (lines carry verb=

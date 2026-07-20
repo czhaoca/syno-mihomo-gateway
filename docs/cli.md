@@ -2,7 +2,7 @@
 
 <!-- This page is GENERATED from scripts/cli/spec.yaml - DO NOT EDIT. Regenerate: python3 scripts/ci/cli_contract_check.py --write -->
 
-Non-interactive command surface for the Mihomo transparent-proxy gateway on Synology DSM. Other procedures (DSM Task Scheduler, scripts, CI) call these verbs directly; the interactive installer (sh ./install.sh) is the guided front-end over the same functions.
+Non-interactive command surface for the Mihomo transparent-proxy gateway on Synology DSM. Other procedures (DSM Task Scheduler, scripts, CI) call these verbs directly; the interactive installer (sh ./install.sh, or the platform entry install-linux.sh / install-pi.sh) is the guided front-end over the same functions.
 
 ## Invocation
 

@@ -27,7 +27,13 @@
 #     both entries set + export INSTALLER_ENTRY/PLATFORM_LABEL, generic runs
 #     of the shared hint/remediation surfaces name install-linux.sh with no
 #     DSM UI wording, and the unset default keeps every DSM string
-#     byte-identical (golden compares pin the literals).
+#     byte-identical (golden compares pin the literals);
+#   * (#53) the stock-catalog DSM/NAS keys that transit the generic path
+#     (preflight, wizards, flow_deploy diagnostics + report) resolve to
+#     generic phrasing through the linux chain (en+zh, stock %s arity kept),
+#     and flow_deploy's two hardcoded platform literals (the non-root rerun
+#     hint, the report IP placeholder) follow the platform vars with the DSM
+#     output golden-pinned.
 # Style matches pi_installer_check.sh: BusyBox ash, mktemp sandbox, function
 # fakes; never mutates the host. Later epic tickets (#49+) extend this file.
 # shellcheck disable=SC1091 # sources resolve via $ROOT at runtime
@@ -94,16 +100,21 @@ _lx_zh_keys="$(sed -n '/^_msg_zh_linux()/,/^}/p' "$ROOT/scripts/linux/i18n_linux
   && ok || fail "linux i18n en/zh key sets are identical"
 _pi_en_keys="$(sed -n '/^_msg_en_pi()/,/^}/p' "$ROOT/scripts/pi/i18n_pi.sh" | sed -n 's/^    \([a-z0-9_]*\)).*/\1/p' | sort)"
 [ -n "$_pi_en_keys" ] || die "could not extract the pi key list"
+_stock_en_keys="$(sed -n '/^_msg_en()/,/^}/p' "$ROOT/scripts/installer/i18n.sh" | sed -n 's/^    \([a-z0-9_]*\)).*/\1/p' | sort)"
+[ -n "$_stock_en_keys" ] || die "could not extract the stock key list"
 # lx_-prefixed keys are linux-NATIVE additions (#48 guard/wizard phrasing), not
-# overrides - they are exempt from the pi-table membership check; every other
-# key must exist in the pi table (a typo'd override would silently never fire).
+# overrides - they are exempt from the membership check; every other key must
+# exist in the pi table or the stock catalog (#53 widened the invariant: the
+# DSM/NAS wording overrides target stock keys, which the pi table never
+# carried) - a typo'd override would silently never fire.
 _lx_orphans=''
 for _k in $_lx_en_keys; do
   case "$_k" in lx_*) continue ;; esac
-  printf '%s\n' "$_pi_en_keys" | grep -qx "$_k" || _lx_orphans="$_lx_orphans $_k"
+  printf '%s\n%s\n' "$_pi_en_keys" "$_stock_en_keys" | grep -qx "$_k" \
+    || _lx_orphans="$_lx_orphans $_k"
 done
 [ -z "$_lx_orphans" ] \
-  && ok || fail "delta overlay overrides keys absent from the pi table:$_lx_orphans"
+  && ok || fail "delta overlay overrides keys absent from the pi + stock tables:$_lx_orphans"
 
 # --- branding sweep: every pi key resolved through the linux chain is clean ------
 # The pi catalog is the full user-facing surface the generic path transits;
@@ -123,6 +134,52 @@ done
 for _needle in 'Raspberry' 'install-pi.sh' '本 Pi' 'Pi 指南' '连接 Pi' 'Pi 3' 'Pi 1' 'Raspberry Pi OS'; do
   assert_not_contains "zh generic catalog clean of: $_needle" "$_blob_zh" "$_needle"
 done
+
+# --- #53: reachable stock DSM/NAS keys resolve generic through the linux chain ---
+# The reachability audit (work-order #53, Task 1 + panel cycle 1): stock-
+# catalog keys with DSM/NAS wording OR an embedded DSM entry name that fire
+# on flows the generic entry reaches - preflight (pf_docker/pf_arch, via
+# deploy AND Modify), pi_check_location (diag_resolve_self_fix), the wizards
+# (wizard_express / wizard_env), and flow_deploy's diagnostics + success
+# report (incl. the filtered-group finding, diag_pg_default_fix). Verified
+# NOT reachable from install-linux.sh, so deliberately absent:
+# check_location's other keys (the entry calls pi_check_location),
+# rerun_dsm_hint (sudo_rerun_hint is overlaid), ask_unfiltered (the overlay
+# wizard_images drops the stock scare-fallback, #48 DEC-4), and the whole
+# flow_cron.sh cluster (pi_flow_cron is crontab-only). The stock catalog
+# legitimately keeps DSM wording for the DSM-only keys, so the sweep is
+# scoped to exactly this audited set.
+_53_keys='diag_no_docker_fix diag_resolve_self_fix warn_arch
+info_ip_suggest_scan q_web_port diag_pull_fail_fix diag_arch_mismatch_fix
+diag_auto_redirect rep_dashboard rep_warn_isolation rep_reach_test
+diag_pg_default_fix'
+_blob53_en=''; _blob53_zh=''
+for _k in $_53_keys; do
+  _r_en="$( (INSTALLER_LANG=en; msg "$_k") )"
+  _r_zh="$( (INSTALLER_LANG=zh; msg "$_k") )"
+  { [ -n "$_r_en" ] && [ "$_r_en" != "$_k" ] && [ -n "$_r_zh" ] && [ "$_r_zh" != "$_k" ]; } \
+    && ok || fail "#53 reachable key resolves in both languages: $_k"
+  # %s arity must match the stock template - the call sites pass stock-arity args
+  _n_en="$(printf '%s' "$_r_en" | grep -o '%s' | wc -l | tr -d ' 	')"
+  _n_zh="$(printf '%s' "$_r_zh" | grep -o '%s' | wc -l | tr -d ' 	')"
+  _n_st="$(printf '%s' "$( (INSTALLER_LANG=en; _msg_en "$_k") )" | grep -o '%s' | wc -l | tr -d ' 	')"
+  { [ "$_n_en" = "$_n_st" ] && [ "$_n_zh" = "$_n_st" ]; } \
+    && ok || fail "#53 $_k: %s arity drifted (en=$_n_en zh=$_n_zh stock=$_n_st)"
+  _blob53_en="$_blob53_en
+$_r_en"
+  _blob53_zh="$_blob53_zh
+$_r_zh"
+done
+for _needle in 'DSM' 'NAS' 'Container Manager' './install.sh'; do
+  assert_not_contains "en reachable stock keys clean of: $_needle" "$_blob53_en" "$_needle"
+done
+for _needle in 'DSM' 'NAS' '群晖' 'Container Manager' './install.sh'; do
+  assert_not_contains "zh reachable stock keys clean of: $_needle" "$_blob53_zh" "$_needle"
+done
+# One real call site end to end: pf_arch's diagnose rides the overridden key.
+_out="$( (INSTALLER_LANG=en; EXPECTED_ARCH=mips; host_arch() { echo amd64; }; pf_arch) 2>&1 )" || :
+assert_contains "pf_arch (generic chain): host wording" "$_out" "this host is 'amd64'"
+assert_not_contains "pf_arch (generic chain): no NAS wording" "$_out" 'NAS'
 
 # --- rerun hints name install-linux.sh -------------------------------------------
 # The pi overlay's sudo_rerun_hint delegates to pi_sudo_rerun_hint BY NAME at
@@ -964,6 +1021,86 @@ _out="$( ( GATEWAY_DATA_DIR="$TD/sn50-data" ENV_FILE="$TD/sn50-data/.env" \
   PATH="$TD/sn50-bin:$PATH" \
   sh "$ROOT/scripts/setup_network.sh" ) 2>&1 )" || :
 assert_contains "golden: setup_network DSM abort hint" "$_out" 'sh ./install.sh'
+
+# =============================================================================
+# Ticket #53 rider - the hardcoded platform literals in the shared flows
+# follow the platform vars (#50 pattern): the non-root rerun hints of
+# flow_deploy / flow_redeploy / apply_changes (panel cycle-1 C2: all three
+# are reachable from the linux menu) and flow_deploy's success-report IP
+# placeholder. DSM output (vars unset) stays byte-identical.
+# =============================================================================
+
+run_fd_nonroot() {  # $1 = 'set'|'unset' platform vars  $2 = flow function
+  sh -c '
+    cd "$1" || exit 9
+    INSTALL_SOURCE_ONLY=1 SMG_INSTALL_ROOT="$1"
+    export INSTALL_SOURCE_ONLY SMG_INSTALL_ROOT
+    . ./install-linux.sh || exit 9
+    if [ "$2" = unset ]; then unset INSTALLER_ENTRY PLATFORM_LABEL; fi
+    INSTALLER_LANG=en
+    ui_step() { :; }
+    is_root() { return 1; }
+    "$3"
+  ' _ "$ROOT" "$1" "$2" 2>&1
+}
+for _fn in flow_deploy flow_redeploy apply_changes; do
+  _out="$(run_fd_nonroot set "$_fn")" || :
+  assert_contains "$_fn non-root (generic): names the linux entry" "$_out" 're-run: sudo sh ./install-linux.sh'
+  assert_not_contains "$_fn non-root (generic): no DSM entry name" "$_out" './install.sh'
+  _g="$(run_fd_nonroot unset "$_fn")" || :
+  assert_contains "golden: $_fn non-root DSM hint byte-identical" "$_g" 're-run: sudo sh ./install.sh'
+done
+
+# network.sh's stale-network refusal follows the platform (panel cycle-2 D1);
+# the message serves gateway.sh/setup_network.sh/netscan.sh, which all read
+# the #50 vars from the persisted user .env. Functions run in-process.
+run_net_refusal() {  # $1 = 'set'|'unset' platform vars
+  (
+    if [ "$1" = set ]; then INSTALLER_ENTRY=install-linux.sh; else unset INSTALLER_ENTRY PLATFORM_LABEL; fi
+    LOG_FILE=/dev/null
+    SUBNET_CIDR=192.0.2.0/24 ROUTER_IP=192.0.2.1 TPROXY_NETWORK=t53net
+    macvlan_matches() { return 1; }
+    network_exists() { return 0; }
+    recreate_macvlan eth0
+  ) 2>&1
+}
+_rc=0; _out="$(run_net_refusal set)" || _rc=$?
+[ "$_rc" != 0 ] \
+  && ok || fail "stale-network refusal (generic): recreate_macvlan really refuses (rc=$_rc)"
+assert_contains "stale-network refusal (generic): the refusal branch fired" "$_out" 'refusing implicit removal'
+assert_contains "stale-network refusal (generic): names the linux entry" "$_out" 'run install-linux.sh and choose'
+assert_not_contains "stale-network refusal (generic): no DSM entry name" "$_out" 'run install.sh and'
+_rc=0; _g="$(run_net_refusal unset)" || _rc=$?
+[ "$_rc" != 0 ] \
+  && ok || fail "stale-network refusal (golden): recreate_macvlan really refuses (rc=$_rc)"
+assert_contains "golden: stale-network refusal DSM text byte-identical" "$_g" 'run install.sh and choose automatic or manual network cleanup'
+
+# CLI help summary (GENERATED from scripts/cli/spec.yaml) names the platform
+# entries alongside install.sh - static prose, same on every platform.
+expect_success "CLI help summary names the platform entries" \
+  grep -q 'install-linux.sh / install-pi.sh' "$ROOT/scripts/lib/help.sh"
+
+run_fd_report() {  # $1 = 'set'|'unset' platform vars; prints report_success
+  sh -c '
+    cd "$1" || exit 9
+    INSTALL_SOURCE_ONLY=1 SMG_INSTALL_ROOT="$1"
+    export INSTALL_SOURCE_ONLY SMG_INSTALL_ROOT
+    . ./install-linux.sh || exit 9
+    if [ "$2" = unset ]; then unset INSTALLER_ENTRY PLATFORM_LABEL; fi
+    INSTALLER_LANG=en
+    ui_step() { :; }; ui_ok() { :; }
+    detect_parent_interface() { :; }
+    _iface_ipv4() { :; }
+    _report_verify_table() { :; }
+    CHOSEN_IFACE='' PARENT_INTERFACE='' MIHOMO_IP=192.0.2.2
+    report_success
+  ' _ "$ROOT" "$1" 2>&1
+}
+_out="$(run_fd_report set)" || _out=''
+assert_contains "report_success (generic): host-IP placeholder" "$_out" 'http://<host-IP>:'
+assert_not_contains "report_success (generic): no NAS-IP placeholder" "$_out" '<NAS-IP>'
+_g="$(run_fd_report unset)" || _g=''
+assert_contains "golden: report_success NAS-IP placeholder byte-identical" "$_g" 'http://<NAS-IP>:'
 
 # --- summary --------------------------------------------------------------------
 printf 'linux_installer_check: %d passed, %d failed\n' "$PASS" "$FAIL"

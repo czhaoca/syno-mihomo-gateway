@@ -365,7 +365,7 @@ recreate_macvlan() {
 
   if network_exists "$_name"; then
     log_error "docker network '$_name' exists with different settings; refusing implicit removal"
-    log_error "run install.sh and choose automatic or manual network cleanup"
+    log_error "run ${INSTALLER_ENTRY:-install.sh} and choose automatic or manual network cleanup"
     return 1
   fi
 
