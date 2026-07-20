@@ -138,7 +138,8 @@ Pre-decided defaults carried from the research (not re-decidable in tickets):
 
 ## Work breakdown
 
-Six tickets, TDD-ordered (Sequence 10–60):
+Six tickets staged, TDD-ordered (Sequence 10–60); a seventh — the stock-catalog i18n
+overlay #53 — was spliced at Sequence 55 by #50 (see the Outcomes map below):
 
 1. **feat(linux): install-linux.sh additive entry + scripts/linux overlay + seeded
    linux_installer_check** — the entry sources the same lib/installer modules as
@@ -186,6 +187,52 @@ Six tickets, TDD-ordered (Sequence 10–60):
 - **R5** Docs rename breaks inbound `installation-pi.md` links — pointer stub (Seq 50).
 - **R6** No real-hardware validation for the generic tier — accepted (experimental tier,
   Pi-G3 pattern); revisit on promotion.
+
+### Outcomes (recorded 2026-07-19 by #52, the epic's release-verification tail)
+
+Closed-issue map for the evidence links: Seq10=#47, 20=#48, 30=#49, 40=#50, 50=#51, 55=#53
+(the stock-catalog overlay #50 staged), 60=#52 (this tail). This section is the local/CI
+evidence layer only: the owner-run staged validation on the real NAS remains the pre-tag
+gate (docs/development.md "Cutting a release").
+
+- **R1 — closed with evidence** (#48 close comment): shipped guard = `systemd-detect-virt
+  --vm` first, `/sys/class/dmi` vendor/product fallback whose needles match VM/cloud product
+  combos (avoids bare-metal false positives on Surface/Chromebook vendor strings); warn +
+  explicit ack, never hard refusal — a decline steers to lite, and the ack resolves BEFORE
+  any teardown (cleanup-side choke point, plus the `create_network` safety net). Firing
+  rules, ack, and both choke points CI-asserted in `linux_installer_check`. Residual
+  detection imprecision is absorbed by the warn+ack posture by design.
+- **R2 — accepted-open, mitigated** (#49 close comment; this ticket): under keep-only-latest
+  the old `syno-mihomo-gateway-pi-*` download links 404 once the next release ships;
+  `--profile pi` stays a warned deprecated alias building the identical `-linux` artifacts.
+  Drafted release-notes line for the next release body (mirrors the development.md
+  "Release-notes note"): "Renamed: the Raspberry Pi bundle is now the generic-Linux bundle —
+  download `syno-mihomo-gateway-linux-<version>.*` (it ships both `install-pi.sh` and
+  `install-linux.sh`); the former `syno-mihomo-gateway-pi-*` assets are gone under
+  keep-only-latest."
+- **R3 — closed with evidence** (#48 close comment; re-proven by #52): the registry wizard
+  writes `REGISTRY_MODE=docker` only to the user's `.env` (never creating it, never touching
+  committed files); committed `.env.example` stays `acr`. `compose_policy_check.py` +
+  `render_check.py` were green at #48 close and again in this ticket's full gate.
+- **R4 — closed with evidence** (#50 and #53 close comments): the DSM branch stayed
+  byte-identical through both phrasing tickets — `dsm_installer_check.sh` passed UNMODIFIED
+  before and after each (golden pins assert that unset platform vars render the stock DSM
+  text); green again in this ticket's 12-suite run.
+- **R5 — closed with evidence** (#51 close comment): en-only pointer stub kept at
+  `docs/installation-pi.md`; #51's full markdown link/anchor sweep reported 0 broken
+  references after the 4-file rename.
+- **R6 — OPEN: accepted (experimental tier).** No real-hardware generic-Linux validation
+  exists (the pi brief's G3 pattern); the support matrix in `docs/installation-linux.md`
+  marks the generic tier experimental. Revisit on promotion.
+
+#52's own evidence (2026-07-19, v1.5.0 bundles built at `89f83b7`): both profiles built; all
+four archives unpacked with every `.sha256` sidecar verifying; the linux trees ship both
+entry points + `scripts/linux/` + `scripts/pi/` + the INSTALL-LINUX txt pair with zero `.md`
+files; the enduser trees exclude every one of those paths; tar and zip trees byte-identical
+per profile; the 50 bundled scripts are `sh -n`-clean and all three entry points source
+under `INSTALL_SOURCE_ONLY=1` in alpine ash (bundle self-contained); full local gate green
+(12 suites + `validate_release.sh --self-test`, render/cli-contract/package/privacy/
+compose-policy checks, compose render, shellcheck's 22 targets, repo-wide `sh -n` sweep).
 
 ## Constraints carried into every ticket
 
