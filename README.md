@@ -64,7 +64,7 @@ DSM-scheduled job keeps everything current and safely self-healing.
 > [release zip](docs/release-packaging.md) instead of step 1's clone.
 >
 > **No Synology at all?** The gateway also runs on **any Docker-capable Linux host**
-> (`sh ./install-linux.sh`) or a **Raspberry Pi** (`sh ./install-pi.sh`) — support tiers,
+> (`sudo sh ./install-linux.sh`) or a **Raspberry Pi** (`sudo sh ./install-pi.sh`) — support tiers,
 > hardware sizing, and walkthrough:
 > [Installation — Generic Linux & Raspberry Pi](docs/installation-linux.md).
 

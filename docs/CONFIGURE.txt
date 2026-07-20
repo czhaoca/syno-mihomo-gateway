@@ -239,9 +239,10 @@ Image source
       Where images are pulled from:
         acr    - (DEFAULT) pulls from YOUR private image mirror. Recommended
                  in mainland China where the big public registries are
-                 blocked.
-        docker - upstream public registries. Only works on a NAS with
-                 unfiltered internet.
+                 blocked; the default on Synology and install-pi.sh.
+        docker - upstream public registries (multi-arch). Needs unfiltered
+                 internet access; on generic Linux hosts this is the
+                 default install-linux.sh offers.
 
   MIHOMO_TAG / METACUBEXD_TAG / CF_TAG
       Image tags for each component. Default "latest".
@@ -293,8 +294,10 @@ Automatic updates
       retry interval. Defaults: 120 / 5.
 
   EXPECTED_ARCH
-      The expected CPU architecture: amd64 or arm64. Set this to match your
-      NAS to catch architecture mismatches early.
+      The expected CPU architecture: amd64, arm64, or arm (32-bit, e.g. an
+      armv7 Raspberry Pi). Set this to match your machine to catch
+      architecture mismatches early; install-linux.sh and install-pi.sh
+      pin it to the host automatically.
 
   NOTIFY_WEBHOOK_URL
       Optional webhook URL (Bark / Gotify / Slack-compatible JSON POST) for
@@ -311,6 +314,33 @@ Automatic updates
       (default 7). A relative UPDATE_LOG lands under the data directory:
       the default ./logs/auto-update.log means
       ../syno-mihomo-gateway-data/logs/auto-update.log.
+
+--------------------------------------------------------------------------
+Lite mode (generic Linux / Raspberry Pi)
+--------------------------------------------------------------------------
+  Used by the generic Linux / Raspberry Pi installers (install-linux.sh /
+  install-pi.sh) and the lite updater. Harmless and unused on a Synology
+  NAS (.env.example ships them commented out).
+
+  GH_MIRROR
+      Mirror prefix applied to the upstream release-download URLs (the
+      mihomo program, the dashboard, latest-tag resolution), as
+      <mirror>/<full-upstream-url>. Empty = direct connection.
+
+  MIHOMO_VERSION
+      Pin the mihomo release tag for lite installs and updates. Empty
+      means "latest".
+
+  MIHOMO_SHA256
+      Optional integrity anchor for a PINNED release (upstream publishes
+      no checksums): when set, the downloaded archive must match before
+      anything is installed. Strongly recommended whenever downloads ride
+      a third-party mirror.
+
+  EXTERNAL_UI_DIR
+      Folder mihomo serves the dashboard from. Rendered into the config
+      only when set: the lite wizard sets it; the Synology/compose path
+      leaves it unset so its rendered config stays byte-identical.
 
 --------------------------------------------------------------------------
 Optional / advanced: tunnel

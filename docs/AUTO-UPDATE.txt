@@ -10,6 +10,12 @@ You set this up from the installer:
       sudo sh ./install.sh
       -> 3) Set up automatic updates (cron)
 
+Linux / Raspberry Pi: installed with install-linux.sh or install-pi.sh?
+Scheduling is that installer's menu item 3 too - one managed line in
+/etc/crontab (there is no DSM Task Scheduler on those hosts), and lite
+mode schedules the lite binary updater instead. See INSTALL-LINUX.txt
+section 5; the DSM Task Scheduler guidance below does not apply there.
+
 --------------------------------------------------------------------------
 Choosing the time and timezone
 --------------------------------------------------------------------------

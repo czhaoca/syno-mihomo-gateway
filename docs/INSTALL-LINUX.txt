@@ -196,7 +196,10 @@ If something fails
     warning the installer showed). Re-run the installer, choose Deploy,
     and pick LITE mode - it binds the host's own IP and needs no special
     network treatment. (The mode choice lives in Deploy; Redeploy keeps
-    the saved compose flavor.)
+    the saved compose flavor. On a VM/cloud host, Redeploy and Modify
+    re-show the macvlan warning before touching anything - declining
+    there aborts safely, with the existing deployment left intact;
+    switch modes via Deploy.)
   * Compose pull fails / "arch mismatch ... refusing to deploy":
     with the "acr" source your mirror namespace has no arm64 images yet
     - see the IMPORTANT note in 4a. The refusal is the guard protecting

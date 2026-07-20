@@ -114,13 +114,19 @@ and deploy compose as usual. See
 1. A **systemd-based Linux** (Raspberry Pi OS or another Debian-family distro is the tested
    path). For compose mode the OS must be **64-bit**.
 2. **Root / sudo** — deployment needs the TUN device, port 53, and (compose mode) Docker.
-3. `curl` or `wget`. Resolving the *latest* mihomo release tag in lite mode needs `curl`
-   specifically — or pin `MIHOMO_VERSION` and either works.
+3. `curl` or `wget`. Lite mode resolves *latest* release tags with `curl` specifically —
+   for both the mihomo binary and the dashboard. A `MIHOMO_VERSION` pin covers only the
+   binary: on a `curl`-less host, also pre-place the dashboard archive
+   (`../syno-mihomo-gateway-data/ui/compressed-dist.tgz` — see the
+   [offline sideload](#gh_mirror-and-offline-sideload)) or install `curl`.
 4. **Compose mode only:** Docker Engine + compose v2, **wired Ethernet**, and a
    [macvlan-viable network](#macvlan-hostile-hosts-cloud--vm).
 5. Get the code onto the host — `git clone` or the offline
    [release zip](release-packaging.md). Unlike DSM there is **no required location**: any
    writable directory works (the installer checks writability, nothing else).
+6. **Automatic updates only:** a system cron that reads `/etc/crontab` (present by default
+   on Debian-family distros incl. Raspberry Pi OS; install `cron`/`cronie` on distros that
+   ship without one — menu item 3 fails loudly when `/etc/crontab` is absent).
 
 ## Run the installer
 
@@ -189,7 +195,8 @@ the dashboard is served by mihomo itself at `http://<host-IP>:<CONTROLLER_PORT>/
 port `9090`).
 
 The wizard asks for: controller port and dashboard secret (same keep/`-`-to-clear semantics
-as the DSM installer), the three DNS lists, timezone, then the lite-only artifact settings —
+as the DSM installer), the two DNS lists (bootstrap + domestic; the split-horizon pair ships
+pre-set in `.env` and is not prompted), timezone, then the lite-only artifact settings —
 [`GH_MIRROR`](#gh_mirror-and-offline-sideload), an optional `MIHOMO_VERSION` pin, and (only
 alongside a pin) an optional `MIHOMO_SHA256` integrity anchor. Your subscription is prompted
 with the stock subscription wizard. If something else already listens on port 53 (a stock
@@ -225,8 +232,8 @@ Lite-mode artifacts (the mihomo binary, the dashboard archive, the latest-tag re
 download from the upstream Git host, which many networks block. Two escape hatches:
 
 **Mirror prefix.** Set `GH_MIRROR` in `.env` to a gh-proxy-style mirror and every download
-URL is prefixed with it (`<mirror>/<full-upstream-url>`); empty means direct. The
-Chinese-locale wizard suggests this at the prompt. Pick your own mirror host — a public
+URL is prefixed with it (`<mirror>/<full-upstream-url>`); empty means direct. The wizard
+suggests this at the prompt. Pick your own mirror host — a public
 gh-proxy instance or one you run; the choice stays in your gitignored `.env`. When your
 downloads ride a third-party mirror, pin `MIHOMO_VERSION` **and** set `MIHOMO_SHA256`
 (upstream publishes no checksums; the pin + sha256 anchor is what makes a tampering mirror a
@@ -262,13 +269,15 @@ sh scripts/pi/lite_ctl.sh {status|doctor|start|stop|update [--dry-run|--force]}
   link, port-53 occupancy (naming the conflicting process), and whether the auto-update
   cron entry is actually deployed.
 - `start` / `stop` — root-gated wrappers over the systemd unit.
-- `update` — runs the [lite binary updater](auto-update.md#raspberry-pi-lite-mode-binary-updater)
+- `update` — runs the
+  [lite binary updater](auto-update.md#lite-mode-binary-updater-generic-linux--raspberry-pi)
   in the foreground with the same flags cron uses.
 
 ## Automatic updates
 
 Menu item **3 (Cron)** schedules the updater for **either** flavor — there is no DSM Task
-Scheduler on these hosts, so it manages one line in `/etc/crontab` (kept idempotent:
+Scheduler on these hosts, so it manages one line in `/etc/crontab` (the file must already
+exist — see [Prerequisites](#prerequisites); kept idempotent:
 re-running with a new time replaces the managed line, foreign lines are never touched). It
 asks for a daily `HH:MM`, the updater timezone, and the `UPDATE_ENABLED` kill-switch, then
 installs the entry for the recorded install mode — `scripts/auto_update.sh` (compose,
@@ -279,7 +288,7 @@ The lite updater mirrors the compose updater's operational contract — lock, ki
 `--dry-run`/`--force`, rotating log, last-run JSON, notifications, exit codes — and rolls
 back to the previous binary (and previous version state) when the new one fails the health
 gate, so a bad release retries cleanly on the next scheduled run. Details:
-[Auto-Update › Raspberry Pi lite-mode binary updater](auto-update.md#raspberry-pi-lite-mode-binary-updater).
+[Auto-Update › Lite-mode binary updater](auto-update.md#lite-mode-binary-updater-generic-linux--raspberry-pi).
 
 ## Low-RAM operations
 

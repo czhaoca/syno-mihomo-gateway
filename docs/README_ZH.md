@@ -57,7 +57,7 @@ Docker Hub/ghcr → 阿里云 ACR → 你的 NAS 的流水线（`REGISTRY_MODE=d
 > [离线发布包](zh/release-packaging.md)，无需第 1 步的 git clone。
 >
 > **完全没有群晖设备？** 网关也能跑在**任何能运行 Docker 的 Linux 主机**上
-> （`sh ./install-linux.sh`），树莓派则用 `sh ./install-pi.sh` —— 支持层级、硬件选型
+> （`sudo sh ./install-linux.sh`），树莓派则用 `sudo sh ./install-pi.sh` —— 支持层级、硬件选型
 > 与完整流程见[安装 — 通用 Linux 与树莓派](zh/installation-linux.md)。
 
 ```bash

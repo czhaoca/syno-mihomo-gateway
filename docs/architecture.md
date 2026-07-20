@@ -45,7 +45,7 @@ default the generic-Linux installer offers).
 | **docker-china-sync** | sibling repo `../docker-china-sync` | GitHub Actions on a self-hosted runner; mirrors upstream images → Alibaba ACR nightly. The "push" side of the pipeline (used when `REGISTRY_MODE=acr`, the default). |
 
 The same components also run on a **generic Linux host or Raspberry Pi**
-(`sh ./install-linux.sh` / `sh ./install-pi.sh` — additive entries; the DSM path above is
+(`sudo sh ./install-linux.sh` / `sudo sh ./install-pi.sh` — additive entries; the DSM path above is
 untouched) in one of two flavors: *compose parity* (this exact container topology on wired
 macvlan) or *bare-metal lite* (the mihomo binary under systemd, serving the dashboard itself
 via `external-ui` — no Docker, no macvlan; the host's own IP is the clients' gateway/DNS).

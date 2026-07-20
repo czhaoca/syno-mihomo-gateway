@@ -146,6 +146,9 @@ against the three resolved refs (see [Auto-Update](auto-update.md#image-refs)).
 > `${METACUBEXD_IMAGE:?}`, so `docker compose up` **fails loudly** if a ref is unset rather than
 > pulling something unexpected. `REGISTRY_MODE` ships as `acr` (the safe default for mainland China,
 > where the public registries are blocked); set `docker` only on a NAS with unfiltered internet.
+> The generic-Linux installer (`install-linux.sh`) defaults **new** installs to `docker` — the
+> upstream images are multi-arch, so arm64 hosts need no mirror pipeline; the committed
+> `.env.example` keeps the `acr` default either way.
 
 | Key | Req | Description | Example |
 |---|:--:|---|---|
@@ -174,7 +177,7 @@ against the three resolved refs (see [Auto-Update](auto-update.md#image-refs)).
 | `UPDATE_IMAGES` | Space-separated image refs to check/pull. Both Compose refs are required; when `CF_IMAGE` is non-empty it is required too. The installer persists concrete resolved refs. | `"${MIHOMO_IMAGE} ${METACUBEXD_IMAGE} ${CF_IMAGE}"` |
 | `UPDATE_SCHEDULE` | Five-field numeric cron expression used to configure DSM Task Scheduler / the fallback crontab. It is range-validated before output. **Quote it.** | `"0 2 * * *"` |
 | `UPDATE_TZ` | Timezone used for updater log timestamps. The DSM trigger itself follows the NAS Regional Options timezone. | `Asia/Shanghai` |
-| `EXPECTED_ARCH` | Guard against the amd64-only mirror landing on an ARM box. `amd64` / `arm64` / `arm` (32-bit, e.g. an armv7 Raspberry Pi). The Pi installer pins it to the host automatically. | `amd64` |
+| `EXPECTED_ARCH` | Guard against the amd64-only mirror landing on an ARM box. `amd64` / `arm64` / `arm` (32-bit, e.g. an armv7 Raspberry Pi). The Pi and generic-Linux installers pin it to the host automatically; only the DSM path keeps the `amd64` default. | `amd64` |
 
 ### Generic auto-update targets
 
@@ -218,6 +221,8 @@ the gate is running + stable restarts + the image's own healthcheck when defined
 | `LOG_KEEP` | Rotated log generations to keep. | `7` |
 | `TZ` | Container timezone. | `Asia/Shanghai` |
 | `INSTALLER_LANG` | Language of the `install.sh` UI (`en` or `zh`). The installer's first screen sets it; saved here so re-runs skip the prompt. | `en` |
+| `INSTALLER_ENTRY` | **Auto-managed platform key** — you normally never set it by hand. `install-linux.sh` / `install-pi.sh` set + export it to their own entry name and best-effort persist it into your `.env` (never creating the file), so standalone runs (`doctor.sh`, `gateway.sh`, `auto_update.sh`, cron) name the right installer in remediation hints. Unset — the DSM path never sets it — keeps the `install.sh` wording. Deliberately not in `.env.example`. | *(unset)* |
+| `PLATFORM_LABEL` | The **auto-managed** sibling of `INSTALLER_ENTRY`: `linux` / `pi` switches the shared scripts' remediation text to generic wording; unset = DSM wording. Set + persisted the same way; deleting it only flips standalone-run hints back to DSM phrasing until the next installer run restores it. | *(unset)* |
 
 ### Raspberry Pi lite mode
 

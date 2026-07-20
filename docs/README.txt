@@ -29,6 +29,11 @@ device on the LAN, never from the NAS itself.
 
 Quick start (5 lines)
 ---------------------
+Not on a Synology NAS? The gateway also runs on any Docker-capable Linux
+host (amd64/arm64) or a Raspberry Pi - in the Linux bundle, run
+sudo sh ./install-linux.sh (on a Pi: sudo sh ./install-pi.sh) and read
+INSTALL-LINUX.txt instead. The steps below are the Synology path.
+
 1. Place this folder inside your Docker shared folder (typically
    /volume1/docker; your volume number may differ).
 2. Open a terminal there and run:   sudo sh ./install.sh
@@ -86,6 +91,8 @@ After deploying
 Where to read next
 ------------------
   * INSTALL.txt          - detailed step-by-step install
+  * INSTALL-LINUX.txt    - generic Linux / Raspberry Pi install
+                           (Linux bundle only)
   * CONFIGURE.txt        - the .env settings reference
   * AUTO-UPDATE.txt      - scheduling automatic updates
   * TROUBLESHOOTING.txt  - symptoms and fixes

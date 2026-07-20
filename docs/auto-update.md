@@ -321,11 +321,11 @@ container:
 sudo sh scripts/auto_update.sh --dry-run
 ```
 
-## Raspberry Pi lite-mode binary updater
+## Lite-mode binary updater (generic Linux & Raspberry Pi)
 
-The Raspberry Pi port's bare-metal **lite mode** has no images to update, so it ships a
-sibling updater — `scripts/pi/auto_update_lite.sh` — that updates the **native mihomo
-binary** while mirroring this page's operational contract: the same lock, `UPDATE_ENABLED`
+Bare-metal **lite mode** — on a generic-Linux host or a Raspberry Pi — has no images to
+update, so it ships a sibling updater — `scripts/pi/auto_update_lite.sh` — that updates
+the **native mihomo binary** while mirroring this page's operational contract: the same lock, `UPDATE_ENABLED`
 kill-switch, `--dry-run` / `--force`, rotating log (`logs/auto-update.log` under the data
 directory), `NOTIFY_*` notifications, and exit codes `0/2/3/4`. Its last-run record lives at
 `state/lite/last-run.json` (same JSON shape as `state/last-run.json`), beside the installed

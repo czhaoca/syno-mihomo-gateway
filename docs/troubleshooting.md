@@ -114,7 +114,9 @@ containers up.
 
 **Symptom:** `setup_network.sh` (or the installer) logs
 `docker network 'tproxy_network' exists with different settings; refusing implicit removal` /
-`run install.sh and choose automatic or manual network cleanup`; or the updater preflight aborts
+`run <installer> and choose automatic or manual network cleanup` (the installer name matches
+your entry: `install.sh` on DSM, `install-linux.sh` / `install-pi.sh` on the generic/Pi
+hosts); or the updater preflight aborts
 (code `3`) with `macvlan parent mismatch: network='…' live='…'` or
 `macvlan configuration drift: expected parent=… subnet=… gateway=…`.
 
@@ -122,9 +124,11 @@ containers up.
 routing — typically the parent interface changed (`eth0` ↔ `ovs_eth0`) or `SUBNET_CIDR`/`ROUTER_IP`
 was edited. The scripts refuse to delete a mismatched network implicitly.
 
-**Fix:** re-run `sh ./install.sh` and choose automatic (or manual) network cleanup when prompted.
-Or, if you are sure nothing else uses the network, remove it yourself (stop attached containers
-first): `docker network rm tproxy_network && sudo ./scripts/setup_network.sh`, then redeploy.
+**Fix:** re-run your installer (`sh ./install.sh` on DSM; `sudo sh ./install-linux.sh` /
+`sudo sh ./install-pi.sh` on generic Linux/Pi) and choose automatic (or manual) network cleanup
+when prompted. Or, if you are sure nothing else uses the network, remove it yourself (stop
+attached containers first): `docker network rm tproxy_network && sudo ./scripts/setup_network.sh`,
+then redeploy.
 
 ## Dashboard can't connect to the backend
 

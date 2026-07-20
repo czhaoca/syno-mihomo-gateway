@@ -192,8 +192,9 @@ DNS 设置
   REGISTRY_MODE
       镜像从何处拉取：
         acr    -（默认）从你自己的私有镜像源拉取。在主流公共仓库被封锁的
-                 中国大陆推荐使用。
-        docker - 上游公共仓库。仅在网络不受限的 NAS 上可用。
+                 中国大陆推荐使用；也是群晖与 install-pi.sh 的默认值。
+        docker - 上游公共仓库（多架构）。需要不受限的网络；在通用 Linux
+                 主机上它是 install-linux.sh 提供的默认选项。
 
   MIHOMO_TAG / METACUBEXD_TAG / CF_TAG
       各组件的镜像标签。默认 "latest"。
@@ -242,8 +243,9 @@ DNS 设置
       计划或开机任务等待 Container Manager 的秒数和重试间隔。默认 120 / 5。
 
   EXPECTED_ARCH
-      期望的 CPU 架构：amd64 或 arm64。设为与你的 NAS 一致，以便尽早发现
-      架构不匹配。
+      期望的 CPU 架构：amd64、arm64 或 arm（32 位，例如 armv7 树莓派）。
+      设为与你的机器一致，以便尽早发现架构不匹配；install-linux.sh 与
+      install-pi.sh 会自动把它固定为主机架构。
 
   NOTIFY_WEBHOOK_URL
       可选的 webhook 地址（Bark / Gotify / 兼容 Slack 的 JSON POST），用于
@@ -259,6 +261,28 @@ DNS 设置
       更新器的轮转日志文件及保留的轮转份数（默认 7）。UPDATE_LOG 为相对
       路径时会放到数据目录下：默认值 ./logs/auto-update.log 实际是
       ../syno-mihomo-gateway-data/logs/auto-update.log。
+
+--------------------------------------------------------------------------
+Lite 模式（通用 Linux / 树莓派）
+--------------------------------------------------------------------------
+  由通用 Linux / 树莓派安装器（install-linux.sh / install-pi.sh）与 lite
+  更新器使用。在群晖 NAS 上无害且不生效（.env.example 中以注释形式
+  提供）。
+
+  GH_MIRROR
+      施加在上游发布下载地址上的镜像前缀（mihomo 程序、面板、最新版本
+      号解析），形如 <镜像站>/<完整上游地址>。留空 = 直连。
+
+  MIHOMO_VERSION
+      固定 lite 安装/更新使用的 mihomo 发布版本号。留空表示"最新"。
+
+  MIHOMO_SHA256
+      固定版本时可选的完整性锚点（上游不发布校验和）：设置后，下载的
+      压缩包必须匹配才会安装。下载经过第三方镜像时强烈建议设置。
+
+  EXTERNAL_UI_DIR
+      mihomo 托管面板的目录。仅在设置时渲染进配置：lite 向导会设置它，
+      群晖/compose 路径保持不设，其渲染结果因此逐字节不变。
 
 --------------------------------------------------------------------------
 可选 / 进阶：隧道

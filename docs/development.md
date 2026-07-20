@@ -15,6 +15,8 @@ docker-compose.yml            # mihomo (macvlan, privileged) + metacubexd (bridg
 VERSION                       # release version (stamped into the package.sh artifact name)
 bootstrap.sh                  # offline-install first-run helper (seeds .env, restores exec bits)
 install.sh                    # interactive installer (menu: Deploy/Redeploy/Cron/Modify/Status)
+install-pi.sh                 # Raspberry Pi entry: same menu, driving the scripts/pi/ engine
+install-linux.sh              # generic-Linux entry: the pi engine + the scripts/linux/ overlay
 config/
   config.template.yaml        # mihomo config with {{PLACEHOLDERS}}
   subscription.txt.example    # subscription template (live copy: ../syno-mihomo-gateway-data/config/)
@@ -36,6 +38,16 @@ scripts/
     wizards.sh / envedit.sh   # per-key prompts; dotenv-safe .env editing
     preprocess.sh             # per-resource cleanup menus; the decision policy lives in lib/resolve.sh
     flow_*.sh                 # menu-item flows: deploy, redeploy, modify, cron, targets
+  pi/                         # Raspberry Pi engine (shared by install-pi.sh + install-linux.sh)
+    detect.sh / preflight.sh  # hardware banner + mode wizard; arch pin, wlan/ARMv6 guards
+    i18n_pi.sh                # EN/中文 strings for the Pi/Linux entries
+    lite.sh / flow_lite.sh    # bare-metal lite mode: fetch/verify ladder + install flow
+    flow_compose.sh           # compose-mode wrapper over the DSM deploy pipeline
+    lite_ctl.sh               # lite day-2 CLI: status/doctor/start/stop/update
+    auto_update_lite.sh       # lite binary updater (the cron entry point)
+  linux/                      # generic-Linux overlay (sourced only by install-linux.sh)
+    i18n_linux.sh             # generic-phrasing i18n delta over the Pi catalogs
+    preflight_linux.sh        # macvlan-viability guard + docker-default registry wizard
   lib/
     common.sh                 # env load, logging+rotation, mkdir lock, exit codes
     registry.sh               # preflight (compose/arch/network/tun), ACR login, pull + change detect, TUN redirect probe
@@ -53,7 +65,7 @@ scripts/
     render_check.py           # CI: runs the real renderer + structural/rule assertions
     cli_contract_check.py     # CI: spec.yaml vs committed artifacts byte-diff (--write regenerates)
     compose_policy_check.py   # CI: fail-closed image refs + REGISTRY_MODE=acr default
-    package_check.py          # CI: builds both bundles in throwaway repos, proves no secret ships
+    package_check.py          # CI: builds the dev, enduser + linux bundles in throwaway repos, proves no secret ships
     privacy_check.py          # tracked-content/history privacy gate (+ privacy_check_test.py)
     auto_update_check.sh      # fake-Docker TDD suite for scheduler/update/rollback paths
     cloudflared_check.sh      # fake-Docker TDD suite for blue-green behavior
@@ -64,6 +76,9 @@ scripts/
     proxy_groups_check.sh     # hermetic suite for the doctor's country-group zero-node guard
     mihomo_entrypoint_check.sh # hermetic suite for the entrypoint's render->test->swap gate
     lifecycle_check.sh        # fake-Docker inventory/cleanup safety suite
+    full_proxy_check.sh       # hermetic suite for the doctor's per-device full-proxy band guard
+    pi_installer_check.sh     # fake-Docker suite for the Raspberry Pi port's shared seams
+    linux_installer_check.sh  # fake-Docker suite for the generic-Linux entry + overlay
     lib/assert.sh             # shared assertions for the sh suites
 .woodpecker.yml               # CI: 9 blocking steps (see the CI table below)
 docs/                         # manual (EN) + docs/zh mirrors (中文) + docs/*.txt enduser guides
@@ -263,7 +278,7 @@ docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck-alpine:stable \
 # compose renders (non-destructive, same as CI - never touches your real .env)
 docker compose --env-file .env.example config --quiet
 
-# release packaging safeguard (hermetic; builds both bundles in temp repos, needs git)
+# release packaging safeguard (hermetic; builds the dev, enduser + linux bundles in temp repos, needs git)
 python3 scripts/ci/package_check.py
 
 # the twelve fake-Docker/PATH-stub TDD suites CI runs, plus the

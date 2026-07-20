@@ -104,15 +104,18 @@ TUN 会一直失效，直到容器重启。
 
 **症状：** `setup_network.sh`（或安装器）记录
 `docker network 'tproxy_network' exists with different settings; refusing implicit removal` /
-`run install.sh and choose automatic or manual network cleanup`；或更新器预检中止（退出码 `3`），
+`run <安装器> and choose automatic or manual network cleanup`（安装器名字随入口而定：DSM 上是
+`install.sh`，通用 Linux/树莓派主机上是 `install-linux.sh` / `install-pi.sh`）；或更新器预检
+中止（退出码 `3`），
 并提示 `macvlan parent mismatch: network='…' live='…'` 或
 `macvlan configuration drift: expected parent=… subnet=… gateway=…`。
 
 **原因：** 现有 docker 网络的父接口/子网/网关与 `.env` 或实际路由不再一致——通常是父接口发生了变化
 （`eth0` ↔ `ovs_eth0`），或 `SUBNET_CIDR`/`ROUTER_IP` 被修改过。脚本拒绝隐式删除不匹配的网络。
 
-**修复：** 重新运行 `sh ./install.sh`，并在提示时选择自动（或手动）网络清理。或者，如果你确定
-没有其他组件在使用该网络，也可以自行删除（先停止挂接的容器）：
+**修复：** 重新运行你的安装器（DSM 上 `sh ./install.sh`；通用 Linux/树莓派上
+`sudo sh ./install-linux.sh` / `sudo sh ./install-pi.sh`），并在提示时选择自动（或手动）网络清理。
+或者，如果你确定没有其他组件在使用该网络，也可以自行删除（先停止挂接的容器）：
 `docker network rm tproxy_network && sudo ./scripts/setup_network.sh`，然后重新部署。
 
 ## 仪表盘无法连接后端

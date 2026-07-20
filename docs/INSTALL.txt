@@ -4,6 +4,11 @@ Installing the Mihomo Gateway
 This guide walks you through installing the gateway on a Synology NAS from
 this release bundle.
 
+Not on a Synology NAS? This guide is the DSM walkthrough - a generic
+Linux host (amd64/arm64) or a Raspberry Pi has its own installer
+(sudo sh ./install-linux.sh; on a Pi sudo sh ./install-pi.sh), described
+in INSTALL-LINUX.txt (ships in the Linux bundle).
+
 Requirements: DSM 7.2 or newer (7.3.1+ recommended) with Container Manager
 installed. IMPORTANT: after deployment the containers appear in Container
 Manager's "Container" tab (viewing is fine), but NEVER manage this stack from

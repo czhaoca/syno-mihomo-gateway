@@ -3,6 +3,11 @@
 
 本指南引导你使用此发布包在群晖 NAS 上安装网关。
 
+不在群晖 NAS 上？本指南只针对 DSM 流程——通用 Linux 主机（amd64/arm64）
+或树莓派有自己的安装器（sudo sh ./install-linux.sh；树莓派上用
+sudo sh ./install-pi.sh），详见 INSTALL-LINUX.zh.txt（随 Linux 发布包
+提供）。
+
 环境要求：DSM 7.2 或更新版本（推荐 7.3.1+），并已安装 Container Manager。
 重要：部署完成后，容器会出现在 Container Manager 的“容器”页签（查看没有
 问题），但绝不要通过“项目（Project）”页签管理本栈——其“构建/更新”会在没有

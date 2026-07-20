@@ -15,6 +15,8 @@ docker-compose.yml            # mihomo（macvlan，特权）+ metacubexd（bridg
 VERSION                       # 发布版本（打进 package.sh 产物文件名）
 bootstrap.sh                  # 离线安装首次运行辅助脚本（生成 .env、恢复执行位）
 install.sh                    # 交互式安装器（菜单：Deploy/Redeploy/Cron/Modify/Status）
+install-pi.sh                 # 树莓派入口：同一菜单，驱动 scripts/pi/ 引擎
+install-linux.sh              # 通用 Linux 入口：pi 引擎 + scripts/linux/ 覆盖层
 config/
   config.template.yaml        # 带 {{PLACEHOLDERS}} 的 mihomo 配置
   subscription.txt.example    # 订阅模板（实际副本：../syno-mihomo-gateway-data/config/）
@@ -35,6 +37,16 @@ scripts/
     wizards.sh / envedit.sh   # 逐项提示；dotenv 安全的 .env 编辑
     preprocess.sh             # 分资源清理菜单；决策策略位于 lib/resolve.sh
     flow_*.sh                 # 菜单项流程：deploy、redeploy、modify、cron、targets
+  pi/                         # 树莓派引擎（install-pi.sh 与 install-linux.sh 共用）
+    detect.sh / preflight.sh  # 硬件横幅 + 模式向导；架构固定、wlan/ARMv6 守卫
+    i18n_pi.sh                # 树莓派/Linux 入口的 EN/中文字符串
+    lite.sh / flow_lite.sh    # 裸机 lite 模式：下载/校验阶梯 + 安装流程
+    flow_compose.sh           # 包装 DSM 部署流水线的 compose 模式流程
+    lite_ctl.sh               # lite 日常运维 CLI：status/doctor/start/stop/update
+    auto_update_lite.sh       # lite 二进制更新器（cron 入口）
+  linux/                      # 通用 Linux 覆盖层（仅由 install-linux.sh 加载）
+    i18n_linux.sh             # 覆盖树莓派字符串目录的通用措辞 i18n 增量
+    preflight_linux.sh        # macvlan 可行性守卫 + docker 默认镜像源向导
   lib/
     common.sh                 # env 加载、日志+轮转、mkdir 锁、退出码
     registry.sh               # 预检（compose/架构/网络/tun）、ACR 登录、拉取+变更检测、TUN 重定向探测
@@ -52,7 +64,7 @@ scripts/
     render_check.py           # CI：运行真实渲染器 + 结构/规则断言
     cli_contract_check.py     # CI：spec.yaml 与已提交产物逐字节比对（--write 重新生成）
     compose_policy_check.py   # CI：fail-closed 镜像引用 + REGISTRY_MODE=acr 默认值
-    package_check.py          # CI：在临时仓库中构建两种发布包，证明不打包任何密钥
+    package_check.py          # CI：在临时仓库中构建 dev、enduser、linux 三种发布包，证明不打包任何密钥
     privacy_check.py          # 被跟踪内容/历史隐私守卫（+ privacy_check_test.py）
     auto_update_check.sh      # 使用伪 Docker 的计划/更新/回滚 TDD 测试
     cloudflared_check.sh      # 使用伪 Docker 的蓝绿行为 TDD 测试
@@ -63,6 +75,9 @@ scripts/
     proxy_groups_check.sh     # doctor 对生成的国家分组零节点守卫的封闭式测试
     mihomo_entrypoint_check.sh # 入口点“渲染→测试→切换”守门的封闭式测试
     lifecycle_check.sh        # 使用伪 Docker 的盘点/清理安全测试
+    full_proxy_check.sh       # doctor 每设备全代理网段守卫的封闭式测试
+    pi_installer_check.sh     # 使用伪 Docker 的树莓派移植共享接缝测试
+    linux_installer_check.sh  # 使用伪 Docker 的通用 Linux 入口 + 覆盖层测试
     lib/assert.sh             # sh 测试套件共享的断言
 .woodpecker.yml               # CI：9 个阻断式步骤（见下方 CI 表格）
 docs/                         # 手册（EN）+ docs/zh 中文镜像 + docs/*.txt 最终用户指南
@@ -254,7 +269,7 @@ docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck-alpine:stable \
 # compose 渲染（非破坏性，与 CI 相同——绝不触碰你的真实 .env）
 docker compose --env-file .env.example config --quiet
 
-# 发布打包安全保障（封闭环境；在临时仓库中构建两种包，需要 git）
+# 发布打包安全保障（封闭环境；在临时仓库中构建 dev、enduser、linux 三种包，需要 git）
 python3 scripts/ci/package_check.py
 
 # CI 运行的十二个伪 Docker/PATH 桩 TDD 测试套件，外加发布验证助手的
