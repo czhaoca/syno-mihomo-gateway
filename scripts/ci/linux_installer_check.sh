@@ -999,9 +999,19 @@ grep -q 'EXPECTED_ARCH does not match this NAS.' "$TD/au50-payload-arch-dsm" 2>/
 rm -f "$TD/au50-bin/docker"
 
 # --- setup_network.sh: the inconsistency abort names the platform entry ----------
-# Needs root for the TUN mknod step, which the alpine CI adjudicator provides;
-# the fake docker (PATH-prepended) satisfies detect_compose + daemon_ready, and
-# the invalid subnet/router pair forces the validate_network_plan abort.
+# The fake docker (PATH-prepended) satisfies detect_compose + daemon_ready, and
+# the invalid subnet/router pair forces the validate_network_plan abort. The
+# end-to-end run must first pass ensure_tun_device, which needs a REAL
+# /dev/net/tun: local docker grants CAP_MKNOD, but Woodpecker step containers
+# do not - so best-effort create the device and SKIP when the environment
+# cannot (gateway_cli_check doctor-parity precedent); the local docker
+# adjudicator (docs/development.md) keeps full coverage.
+if [ ! -c /dev/net/tun ]; then
+  mkdir -p /dev/net 2>/dev/null || :
+  mknod /dev/net/tun c 10 200 2>/dev/null || :
+fi
+if [ -c /dev/net/tun ]; then
+
 mkdir -p "$TD/sn50-data" "$TD/sn50-bin"
 cat > "$TD/sn50-bin/docker" <<'EOF'
 #!/bin/sh
@@ -1021,6 +1031,10 @@ _out="$( ( GATEWAY_DATA_DIR="$TD/sn50-data" ENV_FILE="$TD/sn50-data/.env" \
   PATH="$TD/sn50-bin:$PATH" \
   sh "$ROOT/scripts/setup_network.sh" ) 2>&1 )" || :
 assert_contains "golden: setup_network DSM abort hint" "$_out" 'sh ./install.sh'
+
+else
+  echo "SKIP: setup_network platform-entry aborts need mknod for /dev/net/tun - adjudicate in local docker (docs/development.md)" >&2
+fi
 
 # =============================================================================
 # Ticket #53 rider - the hardcoded platform literals in the shared flows
