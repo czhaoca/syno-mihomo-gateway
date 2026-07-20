@@ -235,9 +235,42 @@ def check_checksum(art: Path):
     if not side.exists():
         fail(f"missing checksum sidecar for {art.name}")
     digest = hashlib.sha256(art.read_bytes()).hexdigest()
-    recorded = side.read_text().split()[0]
+    parts = side.read_text().split()
+    recorded = parts[0]
     if digest != recorded:
         fail(f"checksum mismatch for {art.name}: sidecar {recorded} != actual {digest}")
+    # BusyBox `sha256sum -c` needs the recorded name to be the artifact
+    # basename (emit_sha256's cd-subshell contract); a build-host absolute
+    # path here would break the NAS-side verify and the documented operator
+    # command. Coreutils binary mode may prefix the name with '*'.
+    if len(parts) < 2 or parts[1].lstrip("*") != art.name:
+        fail(f"checksum sidecar for {art.name} records the wrong filename: "
+             f"{parts[1:] or ['<missing>']} (sha256sum -c would fail)")
+
+
+def check_leak_list_parity():
+    """package.sh's hand-maintained leak lists are the gate's single source
+    (its leak_scan comment demands this file stays in sync), but the
+    injection proofs below fire only one representative per class - so pin
+    the exact list lines here: a silent edit to either list or to the email
+    catch-all fails this suite instead of shipping a weakened gate."""
+    text = PACKAGER.read_text()
+    private_assign = "_private_site=" + "'yvr'" + "'lab'"
+    if private_assign not in text:
+        fail("package.sh leak_scan: obfuscated private-site assignment missing or changed")
+    identity_line = ('set -- czhaoca chao.zhao Nimbus docker-china-sync '
+                     'woodpecker ALIYUN_NAME_SPACE "$_private_site"')
+    if identity_line not in text:
+        fail("package.sh leak_scan IDENTITY list changed - update "
+             "IDENTITY_SUBSTRINGS and this suite's pins in the same change")
+    forge_line = 'set -- "$@" github gitlab bitbucket gitea git@'
+    if forge_line not in text:
+        fail("package.sh leak_scan FORGE list changed - update "
+             "FORGE_SUBSTRINGS and this suite's pins in the same change")
+    email_grep = r"grep -rInE -e '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z][A-Za-z]+'"
+    if email_grep not in text:
+        fail("package.sh leak_scan email catch-all changed or removed - "
+             "update EMAIL_RE and this pin in the same change")
 
 
 def check_bootstrap(tar: Path, nas: Path):
@@ -352,6 +385,15 @@ def build_enduser_fixture(root: Path):
     (root / ".woodpecker.yml").write_text("steps:\n  test:\n    image: alpine\n")
     (root / "docs" / "installation.md").write_text("git clone https://github.com/czhaoca/x.git\n")
     (root / "docs" / "zh" / "installation.md").write_text("clone https://github.com/czhaoca/x\n")
+    # Deliberately identity-FREE subdirectory .md decoys: only the recursive
+    # ':(exclude)docs/*.md' pathspec (non-FNM_PATHNAME wildmatch) prunes them,
+    # never the leak-gate - so a maintenance edit that narrows the token to
+    # top-level-only matching fails the .md blanket scans below instead of
+    # silently shipping internal docs in the forge-tolerant linux bundle.
+    (root / "docs" / "brainstorms").mkdir(parents=True)
+    (root / "docs" / "brainstorms" / "notes.md").write_text("internal design notes - never ships\n")
+    (root / "docs" / "release-notes").mkdir(parents=True)
+    (root / "docs" / "release-notes" / "v0.0.0.md").write_text("internal release notes - never ships\n")
     (root / "scripts" / "ci" / "check.py").write_text("# woodpecker ci helper\n")
     # The Pi port carries FUNCTIONAL upstream download URLs that the leak-gate
     # forbids in shipped files; the enduser profile must prune it entirely, or
@@ -513,6 +555,21 @@ def check_enduser(base: Path):
     if "docker-china-sync" not in (r2.stdout + r2.stderr):
         fail("leak-gate fired but did not name the offending string")
 
+    # EMAIL catch-all (the regex path, distinct from the fixed strings): an
+    # address in a kept file must be caught too. The tree still carries the
+    # earlier injections, so the discriminating assert is the [email] label
+    # only leak_scan's regex grep produces.
+    cmp_path.write_text(cmp_path.read_text() + "# contact: ops@example.com\n")
+    git(["commit", "-aqm", "inject email"], cwd=eu)
+    r5 = run(["sh", str(pkg), "--version", "9.9.9-mail"])
+    if r5.returncode != 3:
+        fail(f"email-gate: expected exit 3 on an injected email address, got {r5.returncode}")
+    if (dist / "syno-mihomo-gateway-9.9.9-mail.tar.gz").exists() or \
+       (dist / "syno-mihomo-gateway-9.9.9-mail.zip").exists():
+        fail("email-gate fired but still wrote an artifact")
+    if "LEAK [email]" not in (r5.stdout + r5.stderr):
+        fail("email-gate did not label the [email] hit")
+
 
 def check_linux(base: Path):
     """Build the linux bundle (the enduser superset carrying both generic
@@ -591,6 +648,7 @@ def main():
     for p in (PACKAGER, BOOTSTRAP, GITIGNORE):
         if not p.exists():
             fail(f"missing repo file under test: {p}")
+    check_leak_list_parity()
 
     with tempfile.TemporaryDirectory() as base_s:
         base = Path(base_s)

@@ -1125,6 +1125,35 @@ printf '%s\n' pi-compose > "$TD/ctl-menu/state/install-mode"
 grep -q 'COMPOSE2' "$TD/ctl-menu/dispatch.log" 2>/dev/null \
   && ok || fail "status menu: pi-compose marker keeps the compose inspection"
 
+# --- #50 platform vars: main_menu_pi persists them into an existing user .env ----
+# Review-round mutation gap: dropping the _pi_persist_platform_vars call from
+# main_menu_pi passed every suite, yet the persisted keys are what keep the
+# standalone/cron surfaces (doctor.sh, gateway.sh, auto_update.sh - they load
+# .env without transiting this entry) on pi phrasing. Mirrors
+# linux_installer_check's run_persist_menu.
+mkdir -p "$TD/pv50-data"
+printf 'TUN_ENABLE=true\n' > "$TD/pv50-data/.env"
+( GATEWAY_DATA_DIR="$TD/pv50-data"; ENV_FILE="$TD/pv50-data/.env"
+  INSTALL_SOURCE_ONLY=1; SMG_INSTALL_ROOT="$ROOT"
+  . "$ROOT/install-pi.sh" || exit 97
+  ui_say() { :; }; _pm_banner() { :; }
+  ui_menu_select() { UI_MENU_INDEX=6; }
+  main_menu_pi ) >/dev/null 2>&1 || :
+grep -q '^INSTALLER_ENTRY="install-pi.sh"' "$TD/pv50-data/.env" \
+  && ok || fail "menu loop persists INSTALLER_ENTRY into the user .env"
+grep -q '^PLATFORM_LABEL="pi"' "$TD/pv50-data/.env" \
+  && ok || fail "menu loop persists PLATFORM_LABEL into the user .env"
+grep -q '^TUN_ENABLE=true' "$TD/pv50-data/.env" \
+  && ok || fail "persistence keeps the existing .env content"
+( GATEWAY_DATA_DIR="$TD/pv50-data"; ENV_FILE="$TD/pv50-data/none.env"
+  INSTALL_SOURCE_ONLY=1; SMG_INSTALL_ROOT="$ROOT"
+  . "$ROOT/install-pi.sh" || exit 97
+  ui_say() { :; }; _pm_banner() { :; }
+  ui_menu_select() { UI_MENU_INDEX=6; }
+  main_menu_pi ) >/dev/null 2>&1 || :
+[ ! -f "$TD/pv50-data/none.env" ] \
+  && ok || fail "persistence never creates a missing .env (seed_config owns that)"
+
 # --- summary --------------------------------------------------------------------
 printf 'pi_installer_check: %d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ] || exit 1

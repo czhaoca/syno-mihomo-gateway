@@ -270,8 +270,11 @@ grep -q 'COMPOSE2' "$TD/lx-data/dispatch.log" 2>/dev/null \
   && ok || fail "status menu: pi-compose marker keeps the compose inspection"
 
 # --- entry: user-facing literals name the right entry ----------------------------
+# Anchor to the full echo text: the bare 'sh ./install-linux.sh' needle also
+# lives in the entry's header comment, which made this check tautological
+# (review round: deleting the runtime hint still passed).
 expect_success "non-TTY hint names install-linux.sh" \
-  grep -q 'sh ./install-linux.sh' "$ROOT/install-linux.sh"
+  grep -q 'interactive - run it in a terminal:  sh ./install-linux.sh' "$ROOT/install-linux.sh"
 
 # --- lite_ctl subprocess output: Pi literals rebranded, exit code preserved ------
 # lite_ctl.sh is frozen and runs as a CHILD process (it sources its own
@@ -769,6 +772,35 @@ assert_contains "golden: chk_dns_privacy DSM v1 hint" "$_g" 're-render onto the 
 assert_contains "golden: chk_full_proxy DSM drift hint" "$_g" 're-render: sudo sh ./install.sh (Redeploy); if the render was refused, config_rejected names the reason'
 assert_contains "golden: chk_proxy_groups DSM default-empty hint" "$_g" 'redeploy: sudo sh ./install.sh (Redeploy); stopgap: pick another country in the dashboard Country Pick selector'
 
+# --- checks.sh remaining hint sites: parse-fail .env + legacy DNS profile --------
+# (review round: neither branch was exercised in either platform mode - a
+# revert of either hint to a hardcoded install.sh shipped silently)
+printf 'THIS LINE DOES NOT PARSE\n' > "$TD/p50-bad.env"
+mkdir -p "$TD/p50-legacy"
+printf 'rules:\n' > "$TD/p50-legacy/config.yaml"
+run_hint_pair() {  # $1 = 'set'|'unset'; prints chk_env detail + dns hint
+  (
+    . "$ROOT/scripts/lib/checks.sh"
+    if [ "$1" = set ]; then
+      INSTALLER_ENTRY=install-linux.sh PLATFORM_LABEL=linux
+    else
+      unset INSTALLER_ENTRY PLATFORM_LABEL
+    fi
+    ENV_FILE="$TD/p50-bad.env"
+    chk_env; printf '%s\n' "$CHECK_DETAIL"
+    CONFIG_STATE_DIR="$TD/p50-legacy"
+    chk_dns_privacy; printf '%s\n' "$CHECK_HINT"
+  ) 2>/dev/null
+}
+_out="$(run_hint_pair set)" || _out=''
+assert_contains "chk_env parse-fail (generic): re-run names the linux entry" "$_out" 'does not parse - fix the reported line or re-run: sudo sh ./install-linux.sh'
+assert_contains "chk_dns_privacy legacy (generic): re-render names the linux entry" "$_out" 'stale pre-v2 render is on disk - re-render onto the v2 core: sudo sh ./install-linux.sh (Redeploy)'
+assert_not_contains "parse-fail/legacy pair (generic): no DSM entry name" "$_out" './install.sh'
+_g="$(run_hint_pair unset)" || _g=''
+assert_contains "golden: chk_env parse-fail DSM re-run hint" "$_g" 'does not parse - fix the reported line or re-run: sudo sh ./install.sh'
+assert_contains "golden: chk_dns_privacy legacy DSM hint" "$_g" 're-render onto the v2 core: sudo sh ./install.sh (Redeploy)'
+assert_not_contains "golden: parse-fail/legacy pair clean of linux entry" "$_g" 'install-linux.sh'
+
 # --- registry.sh phrase sites: generic wording (functions are in-process) --------
 _out="$( (
   PLATFORM_LABEL=linux
@@ -811,6 +843,13 @@ assert_contains "golden: wait_for_docker_ready DSM text" "$_g" 'waiting for Cont
 assert_contains "golden: check_network DSM text" "$_g" "docker network 'tproxy_network' not found. Run scripts/setup_network.sh (or add a DSM boot-up task)."
 assert_contains "golden: check_arch_expectation DSM text" "$_g" 'EXPECTED_ARCH=mips but this NAS is'
 assert_contains "golden: auto_redirect probe DSM text" "$_g" 'TUN auto-redirect is incompatible with this DSM kernel/image; set TUN_AUTO_REDIRECT=false'
+# Additive-leak pins (review round): the goldens above are substring checks,
+# so a generic line ADDED to the DSM branch would pass them - prove the unset
+# run is also clean of every generic-only needle.
+for _needle in 'start the Docker service' 'waiting for Docker (' \
+    '(or schedule it at boot)' 'but this host is' 'this host kernel/image'; do
+  assert_not_contains "golden: registry.sh DSM output clean of: $_needle" "$_g" "$_needle"
+done
 
 # --- installer preflight pf_docker: diagnose text follows the platform -----------
 _out="$( (
@@ -827,6 +866,7 @@ _g="$( (
   pf_docker || :
 ) 2>&1 )" || _g=''
 assert_contains "golden: pf_docker DSM text" "$_g" 'start Container Manager and run this installer as root'
+assert_not_contains "golden: pf_docker DSM clean of generic phrasing" "$_g" 'start the Docker service'
 
 # --- notify.sh: the undelivered-notification warn follows the platform -----------
 _out="$( (
@@ -844,6 +884,7 @@ _g="$( (
 ) 2>&1 )" || _g=''
 assert_contains "golden: notify undelivered DSM advice" "$_g" \
   "notification NOT delivered - enable DSM Task Scheduler 'send run details' email or set NOTIFY_WEBHOOK_URL in .env"
+assert_not_contains "golden: notify DSM clean of generic scheduler advice" "$_g" 'cron MAILTO'
 
 # --- gateway.sh CLI: cron print, crontab hint, missing-.env hint, status IP ------
 mkdir -p "$TD/gw50-data"
@@ -860,6 +901,7 @@ assert_contains "gateway cron (.env-borne vars): the persisted keys drive the te
 _out="$(GATEWAY_DATA_DIR="$TD/gw50-data" ENV_FILE="$TD/gw50.env" \
     sh "$ROOT/scripts/gateway.sh" cron 2>&1)" || :
 assert_contains "golden: gateway cron DSM print" "$_out" 'DSM Task Scheduler command: '
+assert_not_contains "golden: gateway cron DSM clean of generic print" "$_out" 'Scheduled-task command:'
 _out="$(GATEWAY_DATA_DIR="$TD/gw50-data" ENV_FILE="$TD/gw50b.env" CRONTAB_FILE="$TD/no-such-crontab" \
     sh "$ROOT/scripts/gateway.sh" cron --apply-crontab --yes 2>&1)" || :
 assert_contains "gateway --apply-crontab (generic): cron/systemd hint" "$_out" 'schedule scripts/auto_update.sh'
@@ -867,12 +909,14 @@ assert_not_contains "gateway --apply-crontab (generic): no DSM Task Scheduler" "
 _out="$(GATEWAY_DATA_DIR="$TD/gw50-data" ENV_FILE="$TD/gw50.env" CRONTAB_FILE="$TD/no-such-crontab" \
     sh "$ROOT/scripts/gateway.sh" cron --apply-crontab --yes 2>&1)" || :
 assert_contains "golden: gateway --apply-crontab DSM hint" "$_out" 'use DSM Task Scheduler (sh scripts/install_scheduler.sh)'
+assert_not_contains "golden: gateway --apply-crontab DSM clean of generic hint" "$_out" 'schedule scripts/auto_update.sh'
 _out="$(GATEWAY_DATA_DIR="$TD/gw50-data" ENV_FILE="$TD/gw50-none.env" INSTALLER_ENTRY=install-linux.sh \
     sh "$ROOT/scripts/gateway.sh" deploy --dry-run 2>&1)" || :
 assert_contains "gateway missing-.env (generic): names the linux entry" "$_out" "run 'sh ./install-linux.sh' once"
 _out="$(GATEWAY_DATA_DIR="$TD/gw50-data" ENV_FILE="$TD/gw50-none.env" \
     sh "$ROOT/scripts/gateway.sh" deploy --dry-run 2>&1)" || :
 assert_contains "golden: gateway missing-.env DSM hint" "$_out" "run 'sh ./install.sh' once, or create it from .env.example"
+assert_not_contains "golden: gateway missing-.env DSM clean of linux entry" "$_out" 'install-linux.sh'
 _out="$(GATEWAY_DATA_DIR="$TD/gw50-data" ENV_FILE="$TD/gw50.env" PLATFORM_LABEL=linux \
     sh "$ROOT/scripts/gateway.sh" status 2>&1)" || :
 assert_contains "gateway status (generic): host-IP placeholder" "$_out" '<host-IP>'
@@ -880,6 +924,7 @@ assert_not_contains "gateway status (generic): no NAS-IP placeholder" "$_out" '<
 _out="$(GATEWAY_DATA_DIR="$TD/gw50-data" ENV_FILE="$TD/gw50.env" \
     sh "$ROOT/scripts/gateway.sh" status 2>&1)" || :
 assert_contains "golden: gateway status NAS-IP placeholder" "$_out" '<NAS-IP>'
+assert_not_contains "golden: gateway status DSM clean of host-IP placeholder" "$_out" '<host-IP>'
 # _gw_report (the deploy-path placeholder twin; gateway_cli_check stubs it, so
 # it gets its own sourced-mode coverage here - panel cycle-1 advisory)
 run_gw_report() {  # $1 = 'set'|'unset'
@@ -901,6 +946,7 @@ assert_contains "_gw_report (generic): host-IP placeholder" "$_out" '<host-IP>'
 assert_not_contains "_gw_report (generic): no NAS-IP placeholder" "$_out" '<NAS-IP>'
 _g="$(run_gw_report unset)" || _g=''
 assert_contains "golden: _gw_report NAS-IP placeholder" "$_g" 'dashboard: http://<NAS-IP>:8080'
+assert_not_contains "golden: _gw_report DSM clean of host-IP placeholder" "$_g" '<host-IP>'
 
 # --- doctor.sh end to end: the generic run is clean of every DSM needle ----------
 # CONFIG_STATE_DIR/SUBSCRIPTION_FILE are pinned to an empty sandbox: the suite
@@ -918,6 +964,7 @@ _out="$(GATEWAY_DATA_DIR="$TD/gw50-data" ENV_FILE="$TD/gw50-none.env" \
     CONFIG_STATE_DIR="$TD/gw50-cfg" SUBSCRIPTION_FILE="$TD/gw50-cfg/subscription.txt" \
     sh "$ROOT/scripts/doctor.sh" 2>&1)" || :
 assert_contains "golden: doctor DSM entry hint" "$_out" 'run: sudo sh ./install.sh'
+assert_not_contains "golden: doctor DSM clean of linux entry" "$_out" 'install-linux.sh'
 
 # --- auto_update.sh abort notice: the notify body follows the platform -----------
 # The webhook payload is the only place the notify BODY surfaces; a PATH-
@@ -1031,6 +1078,7 @@ _out="$( ( GATEWAY_DATA_DIR="$TD/sn50-data" ENV_FILE="$TD/sn50-data/.env" \
   PATH="$TD/sn50-bin:$PATH" \
   sh "$ROOT/scripts/setup_network.sh" ) 2>&1 )" || :
 assert_contains "golden: setup_network DSM abort hint" "$_out" 'sh ./install.sh'
+assert_not_contains "golden: setup_network DSM clean of linux entry" "$_out" 'install-linux.sh'
 
 else
   echo "SKIP: setup_network platform-entry aborts need mknod for /dev/net/tun - adjudicate in local docker (docs/development.md)" >&2
@@ -1062,7 +1110,8 @@ for _fn in flow_deploy flow_redeploy apply_changes; do
   assert_contains "$_fn non-root (generic): names the linux entry" "$_out" 're-run: sudo sh ./install-linux.sh'
   assert_not_contains "$_fn non-root (generic): no DSM entry name" "$_out" './install.sh'
   _g="$(run_fd_nonroot unset "$_fn")" || :
-  assert_contains "golden: $_fn non-root DSM hint byte-identical" "$_g" 're-run: sudo sh ./install.sh'
+  assert_contains "golden: $_fn non-root DSM hint" "$_g" 're-run: sudo sh ./install.sh'
+  assert_not_contains "golden: $_fn non-root DSM clean of linux entry" "$_g" 'install-linux.sh'
 done
 
 # network.sh's stale-network refusal follows the platform (panel cycle-2 D1);
@@ -1087,7 +1136,8 @@ assert_not_contains "stale-network refusal (generic): no DSM entry name" "$_out"
 _rc=0; _g="$(run_net_refusal unset)" || _rc=$?
 [ "$_rc" != 0 ] \
   && ok || fail "stale-network refusal (golden): recreate_macvlan really refuses (rc=$_rc)"
-assert_contains "golden: stale-network refusal DSM text byte-identical" "$_g" 'run install.sh and choose automatic or manual network cleanup'
+assert_contains "golden: stale-network refusal DSM text" "$_g" 'run install.sh and choose automatic or manual network cleanup'
+assert_not_contains "golden: stale-network refusal DSM clean of linux entry" "$_g" 'install-linux.sh'
 
 # CLI help summary (GENERATED from scripts/cli/spec.yaml) names the platform
 # entries alongside install.sh - static prose, same on every platform.
@@ -1114,7 +1164,8 @@ _out="$(run_fd_report set)" || _out=''
 assert_contains "report_success (generic): host-IP placeholder" "$_out" 'http://<host-IP>:'
 assert_not_contains "report_success (generic): no NAS-IP placeholder" "$_out" '<NAS-IP>'
 _g="$(run_fd_report unset)" || _g=''
-assert_contains "golden: report_success NAS-IP placeholder byte-identical" "$_g" 'http://<NAS-IP>:'
+assert_contains "golden: report_success NAS-IP placeholder" "$_g" 'http://<NAS-IP>:'
+assert_not_contains "golden: report_success DSM clean of host-IP placeholder" "$_g" '<host-IP>'
 
 # --- summary --------------------------------------------------------------------
 printf 'linux_installer_check: %d passed, %d failed\n' "$PASS" "$FAIL"
