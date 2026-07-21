@@ -97,7 +97,7 @@ upgrade path.
 
 | Observer | Sees | What changes it |
 |---|---|---|
-| Domestic resolver operators — AliDNS (Alibaba), DNSPod (Tencent) | CN-listed domain names over encrypted DoH, plus the bootstrap pins (geodata mirror, health-check host, airport panel, node hostnames). **Nothing else** — foreign-listed and long-tail names never arrive here, and a dnsleaktest.com extended test from a LAN client shows no domestic resolver. | Unsetting the split-horizon pair (legacy profile) sends **all** names here — pre-v1.3.10 renders also leaked the long tail via the `GEOIP,CN` lookup + fallback dual-query; `doctor` reports the profile as `dns_privacy`. |
+| Domestic resolver operators — AliDNS (Alibaba), DNSPod (Tencent) | CN-listed domain names over encrypted DoH, plus the bootstrap pins (geodata mirror, health-check host, airport panel, node hostnames). **Nothing else** — foreign-listed and long-tail names never arrive here, and a dnsleaktest.com extended test from a LAN client shows no domestic resolver. | The split-horizon pair cannot be unset (the render refuses); the retired legacy profile sent **all** names here — pre-v1.3.10 renders also leaked the long tail via the `GEOIP,CN` lookup + fallback dual-query; `doctor` reports the rendered profile as `dns_privacy`. |
 | Your ISP / anyone on the wire path | Only that the gateway talks DoH to well-known resolver IPs — the query names are encrypted, and the tunneled entries do not even appear as DNS on the wire. | Plain-UDP entries (e.g. bare `223.5.5.5` in `DNS_NAMESERVER`) would put names back on the wire; the shipped defaults avoid that. |
 | Airport (proxy) operator | The foreign connections it proxies anyway, which include your tunneled DNS (now covering the long tail too). The subscription-refresh fetch is dialed direct (recorded residual — its SNI is wire-visible). | Inherent to proxying — choose the airport accordingly. |
 | Foreign DoH vendors — Cloudflare, Google | Foreign-listed **and long-tail** domain names, arriving **through the tunnel** (they observe the airport's exit IP, not your home IP). | The vendor set in `DNS_FOREIGN_NAMESERVER` is yours to edit. |
@@ -116,8 +116,8 @@ hostnames only — three more hosts must resolve **before any node is up** or a 
 never bootstrap: the geodata mirror, the health-check host `www.gstatic.com` (delay probes and
 the empty-group `COMPATIBLE` placeholder dial it DIRECT), and your airport panel itself (its
 hostname is derived from `subscription.txt` at render time). All are pinned in
-`nameserver-policy` to `DNS_NAMESERVER` (domestic, dialed direct) in **every** mode — legacy and
-split-horizon alike, no knob — and the mirror + panel are excluded from fake-ip. Without the pins
+`nameserver-policy` to `DNS_NAMESERVER` (domestic, dialed direct) unconditionally — split-horizon
+v2 is the only profile, no knob — and the mirror + panel are excluded from fake-ip. Without the pins
 these hosts would resolve through a tunnel that does not exist yet, and the provider could never
 fetch its node list (the 2026-07-12 outage). An IP-literal subscription host needs no DNS, so the
 panel pin is skipped automatically; the provider also caches its node list at the stable path
@@ -127,7 +127,11 @@ fetch is impossible (see
 
 The shipped `.env.example` defaults match the mainland-China posture of `REGISTRY_MODE=acr`
 (split-horizon v2 on, everything encrypted, foreign + long-tail path tunneled); on an unfiltered
-network `1.1.1.1,8.8.8.8` everywhere — with the split-horizon pair left unset — is fine. These
+network you may set every list to plain foreign resolvers (e.g. `1.1.1.1,8.8.8.8`); at minimum,
+switch the split-horizon pair — which must never be left unset (the render refuses) — to the
+foreign servers without the `#All Nodes` detour. A fresh install's network scan applies that
+pair variant automatically when it probes as unfiltered (the bootstrap lists stay as shipped;
+`SMG_SCAN_*` variables override the scan endpoints or force a verdict). These
 settings configure the **gateway** — the NAS's own resolvers (DSM Control Panel → Network) must
 be reachable too, and `doctor` probes them (`host_dns`) and reports the rendered profile
 (`dns_privacy`). Deploys also pre-seed the geo databases via CDN mirrors (`GEODATA_MIRRORS`

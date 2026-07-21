@@ -199,9 +199,10 @@ config/config.template.yaml ──(scripts/render_config.sh)──► ../syno-mi
 `../syno-mihomo-gateway-data/config/subscription.txt`) and the `.env`-provided tokens
 (`CONTROLLER_*`, `DNS_*`, `TUN_*`) into the template: `TUN_ENABLE` keeps or deletes the
 `{{TUN_BEGIN}}`/`{{TUN_END}}`-fenced `tun:` block, `{{TUN_AUTO_REDIRECT}}` is a substituted
-token (both validated as strict `true`/`false`), and the split-horizon pair selects which
-fenced DNS core renders — foreign-by-default v2 when set, the legacy `nameserver`+`fallback`
-core when unset (see [Configuration](configuration.md)). Routing is the static `rules:` list
+token (both validated as strict `true`/`false`), and the split-horizon pair
+(`DNS_CN_NAMESERVER` + `DNS_FOREIGN_NAMESERVER`) feeds the foreign-by-default v2 DNS core —
+the only DNS profile: both lists are required, and a render without them refuses with the
+missing variable named (see [Configuration](configuration.md)). Routing is the static `rules:` list
 (LAN/private destinations direct first, streaming (video + audio services) → the pinnable
 `Streaming Sites` selector, CN direct, listed-foreign → the `Proxy Mode` selector, GEOIP
 fallthrough). `Proxy Mode` defaults to `Country Pick`, whose members are the `<Country> Auto`

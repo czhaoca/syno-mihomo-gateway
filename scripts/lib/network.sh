@@ -73,6 +73,99 @@ resolv_conf_probe() {
   [ "$_rcp_dead" -eq 0 ]
 }
 
+# --- install-network classifier (#54) -----------------------------------------
+# Classifies the install network so the image wizard can pre-decide the image
+# source and the split-horizon DNS variant without asking; anything short of a
+# conclusive verdict stays 'unknown' -> the manual question. Endpoints stay
+# hostname-based, neutral, and env-overridable (gstatic precedent); the variant
+# VALUES are never here - the wizard derives them from .env.example.
+
+# _scan_have TOOL - existence probe, split out as the test seam.
+_scan_have() { command -v "$1" >/dev/null 2>&1; }
+
+# _scan_http_204 URL TIMEOUT - probe URL dialed DIRECT and grade the answer.
+# Asserting the code (not mere connect success) keeps captive portals and
+# transparent proxies - which complete handshakes and answer 200-with-a-body -
+# from faking an "unfiltered" verdict.
+#   rc 0 = VERIFIED HTTP 204 (curl reads the status code)
+#   rc 1 = failed / not a 204-shaped answer
+#   rc 2 = no fetch tool (mirrors geodata.sh's curl-or-wget posture)
+#   rc 3 = 204-SHAPED but unverifiable: BusyBox wget exposes no status code,
+#          so an empty-body success is only evidence of a live path - callers
+#          must never treat it as a conclusive 204.
+_scan_http_204() {
+  _sh_u="$1"; _sh_t="${2:-5}"
+  if _scan_have curl; then
+    [ "$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout "$_sh_t" \
+         --max-time "$_sh_t" "$_sh_u" 2>/dev/null)" = 204 ]
+  elif _scan_have wget; then
+    _sh_body="$(wget -q -T "$_sh_t" -O - "$_sh_u" 2>/dev/null)" || return 1
+    [ -z "$_sh_body" ] || return 1
+    return 3
+  else
+    return 2
+  fi
+}
+
+# _scan_http_any URL TIMEOUT - 0 iff URL answers ANY HTTP status; only a
+# connect/TLS failure counts as blocked (docker.io answers 401 unauthenticated,
+# which is still "reachable"). BusyBox wget treats non-2xx as failure, so a
+# wget-only host may under-report reach - callers degrade to the manual menu.
+_scan_http_any() {
+  _sa_u="$1"; _sa_t="${2:-5}"
+  if _scan_have curl; then
+    curl -sS -o /dev/null --connect-timeout "$_sa_t" --max-time "$_sa_t" "$_sa_u" 2>/dev/null
+  elif _scan_have wget; then
+    wget -q -T "$_sa_t" -O /dev/null "$_sa_u" 2>/dev/null
+  else
+    return 2
+  fi
+}
+
+# scan_network_filtering - print exactly one of: unfiltered | filtered | unknown.
+#   foreign 204 direct                   -> unfiltered
+#   foreign blocked + control 204 direct -> filtered (egress alive, foreign cut)
+#   both dead, or no fetch tool          -> unknown (never guess without evidence)
+# SMG_SCAN_FORCE=unfiltered|filtered|unknown skips probing (operator escape
+# hatch for VPN'd/captive networks + the CI seam). Endpoint/timeout overrides:
+# SMG_SCAN_FOREIGN_URL (default google's own generate_204 - the CN-blocked
+# differential; gstatic's is served by CN edges and cannot differentiate),
+# SMG_SCAN_CONTROL_URL (default gstatic generate_204 - reachable control),
+# SMG_SCAN_TIMEOUT (seconds).
+scan_network_filtering() {
+  case "${SMG_SCAN_FORCE:-}" in
+    unfiltered|filtered|unknown) printf '%s' "$SMG_SCAN_FORCE"; return 0 ;;
+  esac
+  _sn_t="${SMG_SCAN_TIMEOUT:-5}"
+  _scan_http_204 "${SMG_SCAN_FOREIGN_URL:-https://www.google.com/generate_204}" "$_sn_t"
+  _sn_rc=$?
+  case "$_sn_rc" in
+    0) printf 'unfiltered'; return 0 ;;
+    # No tool, or wget's unverifiable 204-shape: 'unfiltered' silently flips
+    # the DNS variant + registry, so it demands a VERIFIED 204 - everything
+    # short of that stays inconclusive (the manual question is the fallback).
+    2|3) printf 'unknown'; return 0 ;;
+  esac
+  _scan_http_204 "${SMG_SCAN_CONTROL_URL:-http://www.gstatic.com/generate_204}" "$_sn_t"
+  _sn_ctl=$?
+  # 'filtered' keeps the fail-safe shipped posture, so a live control path is
+  # enough evidence either way (verified 204 or the wget 204-shape).
+  if [ "$_sn_ctl" = 0 ] || [ "$_sn_ctl" = 3 ]; then
+    printf 'filtered'
+  else
+    printf 'unknown'
+  fi
+}
+
+# scan_registry_reachable - 0 iff the upstream registry answers at all
+# (SMG_SCAN_REGISTRY_URL, default the Docker Hub registry API root). Consulted
+# only after an 'unfiltered' verdict, before defaulting REGISTRY_MODE=docker.
+scan_registry_reachable() {
+  case "${SMG_SCAN_FORCE:-}" in unfiltered) return 0 ;; filtered) return 1 ;; esac
+  _scan_http_any "${SMG_SCAN_REGISTRY_URL:-https://registry-1.docker.io/v2/}" \
+    "${SMG_SCAN_TIMEOUT:-5}"
+}
+
 # ensure_tun_device - create /dev/net/tun (c 10 200) if missing and make it
 # usable. Needs root (mknod/chmod). Idempotent. Returns non-zero on failure.
 ensure_tun_device() {

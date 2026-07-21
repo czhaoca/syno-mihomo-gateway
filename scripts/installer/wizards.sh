@@ -33,6 +33,14 @@ seed_config() {
     cp "$REPO_ROOT/.env.example" "$ENV_FILE" && chmod 600 "$ENV_FILE" \
       && ui_ok "$(msg ok_env_created)" \
       || { diagnose "$(msg diag_env_create)" "$(msg diag_env_create_fix)"; return 1; }
+    # A JUST-seeded .env must not keep the example's nonempty placeholder image
+    # refs: they satisfy flow_deploy's express-path "already configured" gate
+    # and would skip wizard_images (and the #54 network scan) entirely. Blank
+    # them so env_get fails and the gate falls through - the stock mirror of
+    # the generic-linux interposition (scripts/linux/preflight_linux.sh). Only
+    # on this fresh-copy branch: an existing .env is never touched.
+    env_set MIHOMO_IMAGE ''
+    env_set METACUBEXD_IMAGE ''
   else
     diagnose "$(msg diag_no_example)" "$(msg diag_no_example_fix)"
     return 1
@@ -210,25 +218,99 @@ wizard_env() {
   return 0
 }
 
+# _wi_fresh_install - 0 while no image source has ever been chosen: the saved
+# ref is blank (fresh seeds blank it - stock and linux alike) or still the
+# shipped .env.example placeholder (a pre-#54 .env seeded before the blanking
+# landed). Anything else means the operator already configured a source, so
+# the menu stays the manual override.
+_wi_fresh_install() {
+  _wf_img="$(env_get MIHOMO_IMAGE 2>/dev/null || echo '')"
+  [ -z "$_wf_img" ] && return 0
+  [ "$_wf_img" = "$(example_default MIHOMO_IMAGE)" ]
+}
+
+# _wi_apply_dns_variant VERDICT - on a conclusive 'unfiltered' verdict, switch
+# a STILL-DEFAULT split-horizon pair to the no-detour foreign variant (both
+# lists = the example foreign servers with their '#<group>' detours stripped -
+# see docs/configuration.md). A pair the operator customized is never touched,
+# and every value derives from .env.example at runtime (no DNS literals here;
+# the literal-drift sweep in dsm_installer_check.sh enforces that).
+_wi_apply_dns_variant() {
+  [ "$1" = unfiltered ] || return 0
+  _av_ex_cn="$(example_default DNS_CN_NAMESERVER)"
+  _av_ex_fo="$(example_default DNS_FOREIGN_NAMESERVER)"
+  [ -n "$_av_ex_fo" ] || return 0
+  _av_cn="$(env_get DNS_CN_NAMESERVER 2>/dev/null || echo '')"
+  _av_fo="$(env_get DNS_FOREIGN_NAMESERVER 2>/dev/null || echo '')"
+  { [ -z "$_av_cn" ] || [ "$_av_cn" = "$_av_ex_cn" ]; } || return 0
+  { [ -z "$_av_fo" ] || [ "$_av_fo" = "$_av_ex_fo" ]; } || return 0
+  _av_plain="$(printf '%s' "$_av_ex_fo" | sed 's/#[^,]*//g')"
+  [ -n "$_av_plain" ] || return 0
+  env_set DNS_CN_NAMESERVER "$_av_plain" || return 0
+  if ! env_set DNS_FOREIGN_NAMESERVER "$_av_plain"; then
+    # never leave a half-rewritten pair: best-effort restore of the CN list to
+    # the shipped default (envedit already reported the write failure).
+    env_set DNS_CN_NAMESERVER "$_av_ex_cn" || :
+    ui_warn "$(msg scan_dns_rollback)"
+    return 0
+  fi
+  ui_ok "$(msgf scan_dns_variant "$_av_plain")"
+  return 0
+}
+
+# _wi_auto_scan - fresh installs only: classify the network (lib/network.sh)
+# and pre-decide the image source (sets _mode) + DNS variant. Anything
+# inconclusive leaves _mode empty so the menu + GFW question run exactly as
+# before (#54 DEC-A, panel-confirmed: the verdict asserts HTTP 204, and
+# 'filtered' stays the fail-safe default the shipped .env.example encodes).
+_wi_auto_scan() {
+  command -v scan_network_filtering >/dev/null 2>&1 || return 0
+  ui_info "$(msg scan_probing)"
+  _wa_v="$(scan_network_filtering)"
+  case "$_wa_v" in
+    unfiltered)
+      if scan_registry_reachable; then
+        _mode=docker
+        ui_ok "$(msg scan_unfiltered)"
+      else
+        ui_info "$(msg scan_mixed)"
+      fi ;;
+    filtered)
+      _mode=acr
+      ui_ok "$(msg scan_filtered)" ;;
+    *)
+      ui_info "$(msg scan_unknown)" ;;
+  esac
+  _wi_apply_dns_variant "$_wa_v"
+  return 0
+}
+
 # wizard_images - pick the image source (REGISTRY_MODE), collect registry creds
-# + tags, and derive the image refs (req #4).
+# + tags, and derive the image refs (req #4). On a fresh install a conclusive
+# network scan pre-decides the source + DNS variant silently (#54); the menu
+# below is the inconclusive fallback AND the Modify-flow manual override.
 wizard_images() {
   ui_step "$(msg step_images)"
   _mode=""
-  ui_say "$(msg images_where)"
-  ui_menu_select _sel "$(msg images_choose)" \
-    "$(msg images_opt_acr)" \
-    "$(msg images_opt_docker)"
-  case "$UI_MENU_INDEX" in
-    1) _mode=acr ;;
-    *) _mode=docker ;;
-  esac
+  if _wi_fresh_install; then
+    _wi_auto_scan
+  fi
+  if [ -z "$_mode" ]; then
+    ui_say "$(msg images_where)"
+    ui_menu_select _sel "$(msg images_choose)" \
+      "$(msg images_opt_acr)" \
+      "$(msg images_opt_docker)"
+    case "$UI_MENU_INDEX" in
+      1) _mode=acr ;;
+      *) _mode=docker ;;
+    esac
 
-  if [ "$_mode" = docker ]; then
-    ui_warn "$(msg warn_docker_blocked)"
-    if ! ui_yesno "$(msg ask_unfiltered)" n; then
-      ui_warn "$(msg warn_keep_acr)"
-      _mode=acr
+    if [ "$_mode" = docker ]; then
+      ui_warn "$(msg warn_docker_blocked)"
+      if ! ui_yesno "$(msg ask_unfiltered)" n; then
+        ui_warn "$(msg warn_keep_acr)"
+        _mode=acr
+      fi
     fi
   fi
   REGISTRY_MODE="$_mode"

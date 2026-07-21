@@ -118,6 +118,73 @@ _iface_ipv4() { case "$1" in eth0) echo 192.168.1.10 ;; *) echo '' ;; esac; }
   || fail "scan_interfaces kept an address-less or filtered NIC: $(scan_interfaces)"
 unset -f ip
 
+# scan_network_filtering / scan_registry_reachable: the 204-asserted network
+# classifier behind the installer's auto image-source + DNS-variant pick (#54).
+# The 204 assertion is load-bearing: captive portals and transparent proxies
+# complete handshakes and answer 200-with-a-body, which must NEVER read as
+# "unfiltered". Subshell: the curl/wget/_scan_have stubs must not leak.
+(
+  set -eu
+  fail() { echo "FAIL: $*" >&2; exit 1; }
+  # SMG_SCAN_FORCE short-circuits probing entirely (operator escape hatch +
+  # test seam). Command substitution / ( ) keep the prefix off the parent.
+  [ "$(SMG_SCAN_FORCE=filtered scan_network_filtering)" = filtered ] \
+    || fail "SMG_SCAN_FORCE=filtered not honored"
+  ( SMG_SCAN_FORCE=unfiltered scan_registry_reachable ) \
+    || fail "SMG_SCAN_FORCE=unfiltered did not force registry reachability"
+  if ( SMG_SCAN_FORCE=filtered scan_registry_reachable ); then
+    fail "SMG_SCAN_FORCE=filtered still reported the registry reachable"
+  fi
+
+  # curl path: the classifier asserts HTTP 204, not connect success.
+  _scan_have() { [ "$1" = curl ]; }
+  curl() {
+    eval "_u=\${$#}"
+    case "$_u" in
+      *foreign-ok*|*control-ok*) printf '204' ;;
+      *portal*) printf '200' ;;
+      *) printf '000'; return 7 ;;
+    esac
+  }
+  SMG_SCAN_FOREIGN_URL=https://foreign-ok.invalid/gen204
+  [ "$(scan_network_filtering)" = unfiltered ] \
+    || fail "foreign 204 did not classify as unfiltered"
+  SMG_SCAN_FOREIGN_URL=https://portal.invalid/gen204
+  SMG_SCAN_CONTROL_URL=https://control-ok.invalid/gen204
+  [ "$(scan_network_filtering)" = filtered ] \
+    || fail "captive-portal 200 counted as unfiltered (must assert 204)"
+  SMG_SCAN_CONTROL_URL=https://dead.invalid/gen204
+  [ "$(scan_network_filtering)" = unknown ] \
+    || fail "dead foreign+control did not classify as unknown"
+
+  # wget fallback: an empty-body success is 204-SHAPED but the status is
+  # unverifiable (BusyBox wget exposes no code), so it must NEVER conclude
+  # 'unfiltered' (DEC-A panel condition: only a VERIFIED 204 is conclusive);
+  # it still counts as a live control, keeping the fail-safe 'filtered' path.
+  _scan_have() { [ "$1" = wget ]; }
+  wget() {
+    eval "_u=\${$#}"
+    case "$_u" in
+      *foreign-ok*) : ;;
+      *portal*) printf 'login page' ;;
+      *) return 4 ;;
+    esac
+  }
+  SMG_SCAN_FOREIGN_URL=https://foreign-ok.invalid/gen204
+  [ "$(scan_network_filtering)" = unknown ] \
+    || fail "wget unverifiable empty-body concluded unfiltered (must stay unknown)"
+  SMG_SCAN_FOREIGN_URL=https://portal.invalid/gen204
+  SMG_SCAN_CONTROL_URL=https://foreign-ok.invalid/gen204
+  [ "$(scan_network_filtering)" = filtered ] \
+    || fail "wget portal body + live control did not classify as filtered"
+
+  # No fetch tool at all -> unknown; the classifier never guesses blind.
+  _scan_have() { return 1; }
+  [ "$(scan_network_filtering)" = unknown ] \
+    || fail "toolless host did not classify as unknown"
+  exit 0
+) || exit 1
+
 # --- resolve.sh: UI-free config resolution -------------------------------------
 # Every resolve_* function must be callable with env/args only. Prove it by
 # unsetting every ui.sh/i18n widget inside the subshell before exercising them
@@ -940,6 +1007,154 @@ done
     [ "$_got" = "$_want" ] \
       || fail "precheck_env default for $_k diverged from .env.example: got '$_got' want '$_want'"
   done
+  exit 0
+) || exit 1
+
+# --- seed_config fresh-seed image-ref blanking (#54): flow_deploy's express
+# gate treats nonempty refs as "already configured", so a JUST-seeded .env
+# keeping the example's placeholder refs would skip wizard_images (and the
+# network scan) entirely. Stock mirror of the generic-linux interposition
+# (scripts/linux/preflight_linux.sh); an existing .env is never touched.
+(
+  set -eu
+  fail() { echo "FAIL: $*" >&2; exit 1; }
+  ui_error() { echo "ERROR: $*" >&2; }
+  # shellcheck source=scripts/installer/envedit.sh
+  . "$ROOT/scripts/installer/envedit.sh"
+  # shellcheck source=scripts/lib/resolve.sh
+  . "$ROOT/scripts/lib/resolve.sh"
+  # shellcheck source=scripts/installer/wizards.sh
+  . "$ROOT/scripts/installer/wizards.sh"
+  msg() { echo "$1"; }; msgf() { _mk="$1"; shift; echo "$_mk $*"; }
+  ui_step() { :; }; ui_ok() { :; }; ui_say() { :; }; ui_warn() { :; }
+  diagnose() { printf '%s\n' "$1"; }
+  rm -rf "$TD/seedb-app" "$TD/seedb-data"
+  mkdir -p "$TD/seedb-app" "$TD/seedb-data/config"
+  cp "$ROOT/.env.example" "$TD/seedb-app/.env.example"
+  REPO_ROOT="$TD/seedb-app"
+  ENV_FILE="$TD/seedb-data/.env"
+  SUBSCRIPTION_FILE="$TD/seedb-data/config/subscription.txt"
+  seed_config >/dev/null 2>&1 || fail "seed_config failed on a fresh tree"
+  [ -z "$(dotenv_get MIHOMO_IMAGE 2>/dev/null || echo '')" ] \
+    || fail "fresh seed kept the placeholder MIHOMO_IMAGE (express-path bypass)"
+  [ -z "$(dotenv_get METACUBEXD_IMAGE 2>/dev/null || echo '')" ] \
+    || fail "fresh seed kept the placeholder METACUBEXD_IMAGE"
+  [ "$(dotenv_get REGISTRY_MODE)" = acr ] \
+    || fail "fresh seed changed the committed acr default"
+  printf 'MIHOMO_IMAGE="docker.io/testns/mihomo:v1"\n' > "$ENV_FILE"
+  seed_config >/dev/null 2>&1 || fail "seed_config failed on an existing .env"
+  [ "$(dotenv_get MIHOMO_IMAGE)" = "docker.io/testns/mihomo:v1" ] \
+    || fail "seed_config touched the refs of an existing .env"
+  exit 0
+) || exit 1
+
+# --- wizard_images auto-scan (#54): a conclusive network scan pre-decides the
+# image source + DNS variant on FRESH installs only; anything else falls back
+# to the menu + GFW question (the manual override), and an operator-customized
+# DNS pair is never rewritten. Fresh = MIHOMO_IMAGE blank or still the shipped
+# .env.example placeholder (pre-#54 seeds copied it verbatim; fresh seeds now
+# blank it - the placeholder leg covers installs seeded before that landed).
+(
+  set -eu
+  fail() { echo "FAIL: $*" >&2; exit 1; }
+  REPO_ROOT="$ROOT"
+  ui_error() { echo "ERROR: $*" >&2; }
+  # shellcheck source=scripts/installer/envedit.sh
+  . "$ROOT/scripts/installer/envedit.sh"
+  # shellcheck source=scripts/lib/resolve.sh
+  . "$ROOT/scripts/lib/resolve.sh"
+  # shellcheck source=scripts/installer/wizards.sh
+  . "$ROOT/scripts/installer/wizards.sh"
+  # shellcheck source=scripts/lib/network.sh
+  . "$ROOT/scripts/lib/network.sh"
+  msg() { echo "$1"; }
+  msgf() { _mk="$1"; shift; echo "$_mk $*"; }
+  ui_step() { :; }; ui_info() { :; }; ui_ok() { :; }
+  ui_say() { :; }; ui_warn() { :; }
+  diagnose() { :; }
+  _example_ref() { ( ENV_FILE="$ROOT/.env.example"; dotenv_get "$1" ); }
+  # Tail prompts (tags/creds) answered with their offered defaults; the ACR
+  # namespace needs a value or derive_images fails closed; no cloudflared.
+  ui_ask() { case "$1" in ACR_NAMESPACE) eval "$1=testns" ;; *) eval "$1=\"\$3\"" ;; esac; }
+  ui_ask_secret() { eval "$1=''"; }
+  ui_yesno() { return 1; }
+  resolve_update_images() { :; }
+
+  _fo_ex="$(_example_ref DNS_FOREIGN_NAMESERVER)"
+  _cn_ex="$(_example_ref DNS_CN_NAMESERVER)"
+  [ -n "$_fo_ex" ] && [ -n "$_cn_ex" ] || fail "example split-horizon pair missing"
+  _plain_want="$(printf '%s' "$_fo_ex" | sed 's/#[^,]*//g')"
+  case "$_plain_want" in *'#'*) fail "test setup: detour strip failed" ;; esac
+  [ "$_plain_want" != "$_fo_ex" ] || fail "test setup: example foreign list carries no detour"
+
+  # (1) conclusive unfiltered on a fresh env (DSM placeholder refs): docker
+  # mode, NO image-source menu / GFW ask, pair rewritten no-detour on BOTH sides.
+  ENV_FILE="$TD/scan1.env"; cp "$ROOT/.env.example" "$ENV_FILE"
+  ui_menu_select() { fail "conclusive scan still showed the image-source menu"; }
+  scan_network_filtering() { printf 'unfiltered'; }
+  scan_registry_reachable() { return 0; }
+  wizard_images >/dev/null 2>&1 || fail "wizard_images failed on the unfiltered path"
+  [ "$(dotenv_get REGISTRY_MODE)" = docker ] \
+    || fail "unfiltered scan did not set REGISTRY_MODE=docker"
+  [ "$(dotenv_get DNS_CN_NAMESERVER)" = "$_plain_want" ] \
+    || fail "unfiltered scan did not rewrite DNS_CN_NAMESERVER to the no-detour variant"
+  [ "$(dotenv_get DNS_FOREIGN_NAMESERVER)" = "$_plain_want" ] \
+    || fail "unfiltered scan left the detour in DNS_FOREIGN_NAMESERVER"
+
+  # (2) conclusive filtered on a fresh env: acr mode, menu suppressed, pair untouched.
+  ENV_FILE="$TD/scan2.env"; cp "$ROOT/.env.example" "$ENV_FILE"
+  scan_network_filtering() { printf 'filtered'; }
+  wizard_images >/dev/null 2>&1 || fail "wizard_images failed on the filtered path"
+  [ "$(dotenv_get REGISTRY_MODE)" = acr ] \
+    || fail "filtered scan did not keep REGISTRY_MODE=acr"
+  [ "$(dotenv_get DNS_CN_NAMESERVER)" = "$_cn_ex" ] \
+    || fail "filtered scan touched DNS_CN_NAMESERVER"
+  [ "$(dotenv_get DNS_FOREIGN_NAMESERVER)" = "$_fo_ex" ] \
+    || fail "filtered scan touched DNS_FOREIGN_NAMESERVER"
+
+  # (3) inconclusive scan: the menu + manual path run exactly as before.
+  ENV_FILE="$TD/scan3.env"; cp "$ROOT/.env.example" "$ENV_FILE"
+  scan_network_filtering() { printf 'unknown'; }
+  rm -f "$TD/menu_seen"
+  ui_menu_select() { : > "$TD/menu_seen"; UI_MENU_INDEX=1; }
+  wizard_images >/dev/null 2>&1 || fail "wizard_images failed on the unknown path"
+  [ -e "$TD/menu_seen" ] || fail "inconclusive scan skipped the image-source menu"
+  [ "$(dotenv_get REGISTRY_MODE)" = acr ] || fail "menu pick did not persist acr"
+  [ "$(dotenv_get DNS_FOREIGN_NAMESERVER)" = "$_fo_ex" ] \
+    || fail "inconclusive scan touched the DNS pair"
+
+  # (3b) inconclusive + docker menu pick: the GFW question still gates it,
+  # and declining falls back to acr exactly as before the scan existed.
+  ENV_FILE="$TD/scan3b.env"; cp "$ROOT/.env.example" "$ENV_FILE"
+  scan_network_filtering() { printf 'unknown'; }
+  ui_menu_select() { UI_MENU_INDEX=2; }
+  rm -f "$TD/gfw_asked"
+  ui_yesno() { case "$1" in ask_unfiltered*) : > "$TD/gfw_asked"; return 1 ;; *) return 1 ;; esac; }
+  wizard_images >/dev/null 2>&1 || fail "wizard_images failed on the unknown+docker path"
+  [ -e "$TD/gfw_asked" ] || fail "docker pick after an inconclusive scan skipped ask_unfiltered"
+  [ "$(dotenv_get REGISTRY_MODE)" = acr ] \
+    || fail "declining ask_unfiltered did not fall back to acr"
+
+  # (4) already-configured install (real ref saved): the scan never runs and
+  # the menu is the manual override.
+  ENV_FILE="$TD/scan4.env"; cp "$ROOT/.env.example" "$ENV_FILE"
+  env_set MIHOMO_IMAGE docker.io/testns/mihomo:latest
+  scan_network_filtering() { fail "scan ran on an already-configured install"; }
+  ui_menu_select() { UI_MENU_INDEX=1; }
+  wizard_images >/dev/null 2>&1 || fail "wizard_images failed on the configured path"
+
+  # (5) an operator-customized pair is never rewritten, even on a conclusive
+  # unfiltered verdict (TEST-NET literal: never a real resolver).
+  ENV_FILE="$TD/scan5.env"; cp "$ROOT/.env.example" "$ENV_FILE"
+  env_set DNS_FOREIGN_NAMESERVER 'https://192.0.2.53/dns-query#All Nodes'
+  scan_network_filtering() { printf 'unfiltered'; }
+  scan_registry_reachable() { return 0; }
+  ui_menu_select() { fail "conclusive scan showed the menu (customized-pair case)"; }
+  wizard_images >/dev/null 2>&1 || fail "wizard_images failed on the customized-pair path"
+  [ "$(dotenv_get DNS_FOREIGN_NAMESERVER)" = 'https://192.0.2.53/dns-query#All Nodes' ] \
+    || fail "scan rewrote an operator-customized DNS pair"
+  [ "$(dotenv_get DNS_CN_NAMESERVER)" = "$_cn_ex" ] \
+    || fail "scan rewrote DNS_CN_NAMESERVER beside a customized foreign list"
   exit 0
 ) || exit 1
 

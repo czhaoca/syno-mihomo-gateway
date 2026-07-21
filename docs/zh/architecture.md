@@ -186,8 +186,9 @@ config/config.template.yaml ──(scripts/render_config.sh)──► ../syno-mi
 `../syno-mihomo-gateway-data/config/subscription.txt`）以及 `.env` 提供的令牌
 （`CONTROLLER_*`、`DNS_*`、`TUN_*`）替换进模板：`TUN_ENABLE` 决定保留还是删除由
 `{{TUN_BEGIN}}`/`{{TUN_END}}` 围起的 `tun:` 块，`{{TUN_AUTO_REDIRECT}}` 则是一个被替换的
-令牌（两者都按严格的 `true`/`false` 校验），分域解析对决定渲染哪套围栏 DNS 核心——
-设置时为境外优先的 v2，未设时为传统 `nameserver`+`fallback` 核心（见
+令牌（两者都按严格的 `true`/`false` 校验），分域解析对（`DNS_CN_NAMESERVER` +
+`DNS_FOREIGN_NAMESERVER`）注入境外优先的 v2 DNS 核心——这是唯一的 DNS 配置档：两个列表
+均为必填，缺失时渲染会直接拒绝并点名缺失的变量（见
 [配置](configuration.md)）。路由是静态 `rules:` 列表（私网目标最先直连，流媒体——视频
 与音频服务——→ 可固定的 `Streaming Sites` 选择器，国内直连，境外列表 → `Proxy Mode`
 选择器，GEOIP 兜底）。`Proxy Mode` 默认指向 `Country Pick`，其成员是由**必填**的

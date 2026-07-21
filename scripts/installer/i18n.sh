@@ -174,6 +174,13 @@ _msg_en() {
     q_tz)             printf '%s' 'Timezone' ;;
     ok_env_saved)     printf '%s' 'saved network & DNS settings to .env' ;;
     step_images)      printf '%s' 'Container image source' ;;
+    scan_probing)     printf '%s' 'probing network reachability (a few seconds)...' ;;
+    scan_unfiltered)  printf '%s' 'network scan: unfiltered internet detected - using upstream registries and the no-detour DNS variant' ;;
+    scan_filtered)    printf '%s' 'network scan: filtered network detected - keeping the ACR mirror and the split-horizon defaults' ;;
+    scan_mixed)       printf '%s' 'network scan: foreign sites reachable but the upstream registry is not - choose the image source manually' ;;
+    scan_unknown)     printf '%s' 'network scan inconclusive - falling back to the manual choice' ;;
+    scan_dns_variant) printf '%s' 'unfiltered network: split-horizon pair set to the no-detour variant: %s' ;;
+    scan_dns_rollback) printf '%s' 'DNS variant write failed - restored the shipped split-horizon defaults' ;;
     images_where)     printf '%s' 'Where should the gateway pull its container images from?' ;;
     images_choose)    printf '%s' 'Choose' ;;
     images_opt_acr)   printf '%s' 'Alibaba ACR mirror (recommended for mainland China)' ;;
@@ -556,6 +563,13 @@ _msg_zh() {
     q_tz)             printf '%s' '时区' ;;
     ok_env_saved)     printf '%s' '已将网络与 DNS 设置保存到 .env' ;;
     step_images)      printf '%s' '容器镜像来源' ;;
+    scan_probing)     printf '%s' '正在探测网络可达性（约数秒）……' ;;
+    scan_unfiltered)  printf '%s' '网络探测：检测到无过滤的互联网——将使用上游镜像仓库和无绕行的 DNS 变体' ;;
+    scan_filtered)    printf '%s' '网络探测：检测到受过滤网络——保留 ACR 镜像与分域解析默认值' ;;
+    scan_mixed)       printf '%s' '网络探测：境外站点可达但上游镜像仓库不可达——请手动选择镜像来源' ;;
+    scan_unknown)     printf '%s' '网络探测无法判定——回退到手动选择' ;;
+    scan_dns_variant) printf '%s' '无过滤网络：分域解析对已设为无绕行变体：%s' ;;
+    scan_dns_rollback) printf '%s' '写入 DNS 变体失败——已恢复出厂分域解析默认值' ;;
     images_where)     printf '%s' '网关应从何处拉取容器镜像？' ;;
     images_choose)    printf '%s' '请选择' ;;
     images_opt_acr)   printf '%s' '阿里云 ACR 镜像（推荐，适用于中国大陆）' ;;
