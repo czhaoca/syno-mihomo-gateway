@@ -696,8 +696,23 @@ case "$PH" in
       ok "bootstrap panel pin rendered ($PH -> domestic nameserver)"
     else
       bad "bootstrap panel pin missing for $PH"
+    fi
+    # Panel DIRECT routing rule (2026-07-22 catch): newer mihomo routes its
+    # own provider pull through the rule engine, so the panel must match
+    # DIRECT before any group-dependent rule or an empty cold start REJECTs
+    # its own bootstrap - the DNS pin above fixes resolution, not routing.
+    if grep -q "^  - 'DOMAIN,$PH,DIRECT'\$" "$CFG"; then
+      ok "panel DIRECT rule rendered ($PH)"
+    else
+      bad "panel DIRECT rule missing for $PH - a cold start REJECTs its own provider pull"
     fi ;;
-  *) echo "note: no panel pin expected (IP-literal subscription host $PH)" ;;
+  *)
+    echo "note: no panel pin expected (IP-literal subscription host $PH)"
+    if grep -q "^  - 'IP-CIDR,$PH/32,DIRECT,no-resolve'\$" "$CFG"; then
+      ok "panel DIRECT rule rendered (IP-CIDR $PH/32)"
+    else
+      bad "panel DIRECT rule missing for IP-literal $PH"
+    fi ;;
 esac
 
 say "A4: enable split-horizon + sniffer + country groups from the shipped .env.example defaults"

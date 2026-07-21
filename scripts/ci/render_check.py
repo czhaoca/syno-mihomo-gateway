@@ -160,8 +160,15 @@ DEFAULT_CG = 'Japan Auto=日本|JP\\d|^JP;美国=美国|US\\d'
 # GEOLOCATION-!CN (each service is a subset — a later rule would never
 # match), and both GEOSITE foreign rules before the GEOIP,CN fallthrough
 # so listed domains never force a local lookup just for routing.
+# The panel DIRECT rule sits right after the LAN rule (and after the
+# full-proxy SRC rules when the band is on): mihomo >=1.19.x routes its own
+# provider pull through the rule engine, so without this rule a cold start
+# with empty groups REJECTs its own subscription fetch (2026-07-22
+# validation catch). Derived from the subscription host like the DNS pins.
+PANEL_HOST = "h.example.com"
 RULES_BASE = [
     "GEOIP,LAN,DIRECT,no-resolve",
+    f"DOMAIN,{PANEL_HOST},DIRECT",
     "GEOSITE,NETFLIX,Streaming Sites",
     "GEOSITE,SPOTIFY,Streaming Sites",
     "GEOSITE,TIDAL,Streaming Sites",
@@ -187,7 +194,7 @@ RULES_NO_RESOLVE = [r + ",no-resolve" if r == "GEOIP,CN,DIRECT" else r
 # fake-ip routing for a Google host.
 PIN_MIRROR = "testingcf.jsdelivr.net"
 PIN_GSTATIC = "www.gstatic.com"
-PANEL_HOST = "h.example.com"
+# PANEL_HOST is defined above RULES_BASE (the routing rule shares it).
 BOOTSTRAP_PINS = {PIN_MIRROR: DNS_NS, PIN_GSTATIC: DNS_NS, PANEL_HOST: DNS_NS}
 # v2 is the only DNS profile: every render carries the bootstrap pins PLUS
 # the split-horizon policy entries (geosite:cn domestic, everything-foreign
@@ -778,6 +785,10 @@ def main() -> None:
                    "FULL_PROXY_RULES"):
         if f"{{{{{marker}}}}}" not in raw:
             fail(f"template must carry the {{{{{marker}}}}} generation marker")
+    if "{{AIRPORT_DIRECT_RULE}}" not in raw:
+        fail("template must carry the {{AIRPORT_DIRECT_RULE}} token — the "
+             "provider pull must never depend on a populated proxy group "
+             "(cold-start bootstrap, 2026-07-22)")
     # SNIFFER + FULL_PROXY are the optional fences: unset-inertness is proven
     # by byte-identity against a fence-stripped template (same env, spec on).
     plain_raw = strip_fence(raw, "SNIFFER")
@@ -1252,9 +1263,37 @@ def main() -> None:
     if ipdns.get("fake-ip-filter") != [PIN_MIRROR]:
         fail(f"[IP-literal] fake-ip-filter must carry ONLY the mirror: "
              f"got {ipdns.get('fake-ip-filter')!r}")
+    # The routing rule degrades to an IP-CIDR form (no DNS involved), so an
+    # IP-literal panel keeps the cold-start bootstrap too.
+    ip_rules_expected = ([RULES_BASE[0],
+                          "IP-CIDR,192.0.2.10/32,DIRECT,no-resolve"]
+                         + RULES_BASE[2:])
+    if ipdoc.get("rules") != ip_rules_expected:
+        fail(f"[IP-literal] rules must carry the IP-CIDR panel DIRECT rule "
+             f"in the panel slot: expected {ip_rules_expected!r}, "
+             f"got {ipdoc.get('rules')!r}")
     ip_url = (((ipdoc.get("proxy-providers") or {}).get("my-airport")) or {}).get("url")
     if ip_url != SUB_LINE_IP.split("=", 1)[1]:
         fail(f"[IP-literal] subscription URL mangled: got {ip_url!r}")
+
+    # A digits-and-dots host that is NOT a valid dotted quad must never
+    # become a live IP-CIDR rule: mihomo -t rejects it, and a FIRST boot
+    # has no last-good config to fall back to. The renderer degrades the
+    # panel slot to a comment (the unparseable contract) and renders on.
+    sub_line_badip = "Default=https://999.1.2.3/api/v1/subscribe?token=a"
+    proc_bad, bad_rendered = render(raw, sub_line=sub_line_badip)
+    if proc_bad.returncode != 0 or bad_rendered is None:
+        fail(f"malformed-IP-literal subscription render failed: "
+             f"{proc_bad.stderr.strip()}")
+    assert_resolved("malformed-IP-sub", bad_rendered)
+    bdoc = yaml.safe_load(bad_rendered)
+    bad_rules_expected = [RULES_BASE[0]] + RULES_BASE[2:]
+    if bdoc.get("rules") != bad_rules_expected:
+        fail(f"[malformed-IP] rules must degrade the panel slot to a comment "
+             f"(never a live rule from an invalid address): expected "
+             f"{bad_rules_expected!r}, got {bdoc.get('rules')!r}")
+    if any("999.1.2.3" in str(r) for r in bdoc.get("rules") or []):
+        fail("[malformed-IP] the invalid host leaked into a live rule")
 
     print("OK: renderer preserves URL/secrets; controller, DNS, CORS valid; TUN is ON by "
           "default (stack: system keeps the controller reachable, allow-lan + fake-ip set; "
@@ -1267,7 +1306,9 @@ def main() -> None:
           "pins (geodata mirror + gstatic + panel host) in nameserver-policy — mirror + "
           "panel in fake-ip-filter — on every variant with the stable provider cache "
           "path, degrading to mirror+gstatic on an IP-literal subscription host; rules "
-          "are the exact chain (LAN-direct first, NETFLIX + four audio services -> "
+          "are the exact chain (LAN-direct first, then the panel DIRECT bootstrap rule "
+          "— the provider pull must never depend on a populated group; IP-literal "
+          "hosts degrade to IP-CIDR — NETFLIX + four audio services -> "
           "Streaming Sites) targeting the renamed selectors; the streamlined graph "
           "renders selectors-first (Proxy Mode -> Country Pick -> DIRECT/REJECT + raw "
           "nodes; Streaming Sites defaulting to Proxy Mode; Country Pick = the country "

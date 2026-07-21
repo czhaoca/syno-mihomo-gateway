@@ -303,6 +303,16 @@ rules:
   # then go DIRECT (browsers retry over proxied TCP; the doctor's
   # full_proxy check flags such flows). Unset renders nothing here.
 # {{FULL_PROXY_RULES}}
+  # The panel must never depend on a populated proxy group: newer mihomo
+  # (>=1.19.x) routes its OWN provider pull through this rule engine, so on
+  # a cold start with empty groups the pull would ride MATCH -> Proxy Mode
+  # -> (empty) REJECT and the subscription could never bootstrap (caught by
+  # the 2026-07-22 staged validation; the DNS pins below only fix
+  # resolution, not routing). Rendered from the subscription host exactly
+  # like the DNS pins; an IPv4-literal host renders an IP-CIDR form
+  # instead. Sits after the full-proxy band on purpose - band CLIENTS
+  # still proxy the panel website; mihomo's own pull has no band source IP.
+  {{AIRPORT_DIRECT_RULE}}
   # Streaming rides its own dashboard-pinnable group, ahead of everything so
   # neither DNS games nor the latency-optimal node choice can misroute it.
   # Audio streaming (Spotify et al.) is streaming too - region-locked

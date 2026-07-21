@@ -340,6 +340,49 @@ else
   AIRPORT_DNS_PIN="# (panel DNS pin skipped: subscription host is an IP literal or unparseable)"
   AIRPORT_FAKEIP_PIN="# (panel fake-ip pin skipped: subscription host is an IP literal or unparseable)"
 fi
+# Panel DIRECT routing rule (2026-07-22): newer mihomo routes its own
+# provider pull through the rule engine, so the panel must match DIRECT
+# before any group-dependent rule or an empty cold start REJECTs its own
+# bootstrap. A domain host rides DOMAIN; an IPv4 literal needs no DNS and
+# rides IP-CIDR; a bracketed-IPv6/unparseable host degrades to a comment
+# (same degradation contract as the DNS pins above).
+if [ "$AIRPORT_PIN_ON" = 1 ]; then
+  AIRPORT_DIRECT_RULE="- 'DOMAIN,$AIRPORT_HOST,DIRECT'"
+else
+  case "$AIRPORT_HOST" in
+    ''|\[*)
+      AIRPORT_DIRECT_RULE="# (panel DIRECT rule skipped: subscription host is unparseable or an IPv6 literal)" ;;
+    *)
+      # Digits-and-dots is only usable if it is a REAL dotted quad (four
+      # 0-255 octets, no leading zeros - the FULL_PROXY_SOURCES walk above
+      # documents why: mihomo's parser rejects the rest at startup, and a
+      # FIRST boot has no last-good config to fall back to). Anything
+      # malformed degrades to a comment like the unparseable case; the
+      # provider fetch was never going to reach a garbage host anyway.
+      _ah_ok=1
+      _ah_old_ifs=$IFS; IFS='.'
+      set -f
+      # shellcheck disable=SC2086  # deliberate '.' field split of the address
+      set -- $AIRPORT_HOST
+      set +f
+      IFS=$_ah_old_ifs
+      [ $# -eq 4 ] || _ah_ok=0
+      for _ah_o in "$@"; do
+        case "$_ah_o" in
+          ''|*[!0-9]*) _ah_ok=0; continue ;;
+          0) continue ;;
+          0*) _ah_ok=0; continue ;;
+        esac
+        if [ "${#_ah_o}" -gt 3 ] || [ "$_ah_o" -gt 255 ]; then _ah_ok=0; fi
+      done
+      if [ "$_ah_ok" = 1 ]; then
+        AIRPORT_DIRECT_RULE="- 'IP-CIDR,$AIRPORT_HOST/32,DIRECT,no-resolve'"
+      else
+        echo "NOTE: no panel DIRECT rule (subscription host '$AIRPORT_HOST' is not a valid IPv4 literal)" >&2
+        AIRPORT_DIRECT_RULE="# (panel DIRECT rule skipped: subscription host is not a valid IPv4 literal)"
+      fi ;;
+  esac
+fi
 
 # Two escaping layers, applied in order for values that land inside a YAML
 # double-quoted scalar; only the sed layer for bare/flow-sequence values.
@@ -466,6 +509,7 @@ sed \
   -e "s|{{AIRPORT_URL}}|$(esc "$(yaml_dq "$SUB_URL")")|g" \
   -e "s|{{AIRPORT_DNS_PIN}}|$(esc "$AIRPORT_DNS_PIN")|g" \
   -e "s|{{AIRPORT_FAKEIP_PIN}}|$(esc "$AIRPORT_FAKEIP_PIN")|g" \
+  -e "s|{{AIRPORT_DIRECT_RULE}}|$(esc "$AIRPORT_DIRECT_RULE")|g" \
   -e "s|{{CONTROLLER_PORT}}|$(esc "$CONTROLLER_PORT")|g" \
   -e "s|{{CONTROLLER_SECRET}}|$(esc "$(yaml_dq "$CONTROLLER_SECRET")")|g" \
   -e "s|{{DNS_DEFAULT_NAMESERVER}}|$(esc "$DNS_DEFAULT_NAMESERVER")|g" \
