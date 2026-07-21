@@ -1158,6 +1158,144 @@ done
   exit 0
 ) || exit 1
 
+# --- precheck_env pre-v2 split-horizon backfill (#55): a .env created before
+# the pair existed passes every precheck yet hard-fails at render. precheck
+# now backfills the missing list(s) from .env.example (backup first, every
+# written line printed); a present value - customized or not - is never
+# touched, and only a TRUE pre-v2 file (both missing) gets the one-time
+# scan-driven variant upgrade a fresh install would get.
+(
+  set -eu
+  fail() { echo "FAIL: $*" >&2; exit 1; }
+  REPO_ROOT="$ROOT"
+  ui_error() { echo "ERROR: $*" >&2; }
+  # shellcheck source=scripts/installer/envedit.sh
+  . "$ROOT/scripts/installer/envedit.sh"
+  # shellcheck source=scripts/lib/resolve.sh
+  . "$ROOT/scripts/lib/resolve.sh"
+  # shellcheck source=scripts/installer/wizards.sh
+  . "$ROOT/scripts/installer/wizards.sh"
+  # shellcheck source=scripts/lib/network.sh
+  . "$ROOT/scripts/lib/network.sh"
+  msg() { echo "$1"; }
+  msgf() { _mk="$1"; shift; echo "$_mk $*"; }
+  ui_step() { :; }; ui_info() { :; }; ui_warn() { :; }
+  ui_ok() { printf '%s\n' "$*"; }
+  ui_say() { :; }; diagnose() { :; }
+  ui_ask_validated() { fail "precheck re-asked $1 on a valid value"; }
+  ui_ask() { fail "precheck asked $1"; }
+  ui_ask_secret() { fail "precheck asked a secret"; }
+  ui_yesno() { return 1; }
+  check_ip_conflict() { return 0; }
+  _example_ref() { ( ENV_FILE="$ROOT/.env.example"; dotenv_get "$1" ); }
+  _cn_ex="$(_example_ref DNS_CN_NAMESERVER)"
+  _fo_ex="$(_example_ref DNS_FOREIGN_NAMESERVER)"
+  _plain="$(printf '%s' "$_fo_ex" | sed 's/#[^,]*//g')"
+
+  # (1) true pre-v2 .env (pair absent): both lists backfilled from the
+  # example, a .pre-v2.bak backup lands BEFORE the writes, both written
+  # lines are printed, and nothing is re-asked.
+  ENV_FILE="$TD/prev2.env"
+  grep -v '^DNS_CN_NAMESERVER=\|^DNS_FOREIGN_NAMESERVER=' "$ROOT/.env.example" > "$ENV_FILE"
+  env_set MIHOMO_IMAGE img1
+  env_set METACUBEXD_IMAGE img2
+  scan_network_filtering() { printf 'unknown'; }
+  _out="$(precheck_env 2>&1)" || fail "precheck_env failed on a pre-v2 env"
+  [ "$(dotenv_get DNS_CN_NAMESERVER)" = "$_cn_ex" ] || fail "CN list not backfilled"
+  [ "$(dotenv_get DNS_FOREIGN_NAMESERVER)" = "$_fo_ex" ] || fail "FOREIGN list not backfilled"
+  [ -f "$TD/prev2.env.pre-v2.bak" ] || fail "no pre-v2 backup written"
+  grep -q '^DNS_CN_NAMESERVER=' "$TD/prev2.env.pre-v2.bak" \
+    && fail "backup already carries the pair (taken after the writes?)"
+  case "$(ls -l "$TD/prev2.env.pre-v2.bak")" in
+    -rw-------*) : ;;
+    *) fail "backup is not chmod 600 (it holds secrets)" ;;
+  esac
+  case "$_out" in *"backfill_wrote DNS_CN_NAMESERVER"*) : ;; *) fail "CN write not printed: $_out" ;; esac
+  case "$_out" in *"backfill_wrote DNS_FOREIGN_NAMESERVER"*) : ;; *) fail "FOREIGN write not printed" ;; esac
+
+  # (2) valid v2 pair: strict no-op - no backup, values untouched.
+  ENV_FILE="$TD/v2ok.env"; cp "$ROOT/.env.example" "$ENV_FILE"
+  env_set MIHOMO_IMAGE img1; env_set METACUBEXD_IMAGE img2
+  precheck_env >/dev/null 2>&1 || fail "precheck_env failed on a valid env"
+  [ ! -f "$TD/v2ok.env.pre-v2.bak" ] || fail "no-op run wrote a backup"
+  [ "$(dotenv_get DNS_FOREIGN_NAMESERVER)" = "$_fo_ex" ] || fail "no-op run touched the pair"
+
+  # (3) pre-v2 + conclusive unfiltered scan: the backfilled pair upgrades to
+  # the no-detour variant (the same one-time choice a fresh install gets).
+  ENV_FILE="$TD/prev2u.env"
+  grep -v '^DNS_CN_NAMESERVER=\|^DNS_FOREIGN_NAMESERVER=' "$ROOT/.env.example" > "$ENV_FILE"
+  env_set MIHOMO_IMAGE img1; env_set METACUBEXD_IMAGE img2
+  scan_network_filtering() { printf 'unfiltered'; }
+  precheck_env >/dev/null 2>&1 || fail "precheck_env failed on pre-v2+unfiltered"
+  [ "$(dotenv_get DNS_CN_NAMESERVER)" = "$_plain" ] || fail "unfiltered backfill kept the detour variant"
+  [ "$(dotenv_get DNS_FOREIGN_NAMESERVER)" = "$_plain" ] || fail "unfiltered backfill left the #All Nodes detour"
+
+  # (4) partial (custom FOREIGN kept, CN missing): minimal repair only - CN
+  # backfilled, the custom FOREIGN untouched, and NO variant swap.
+  ENV_FILE="$TD/partial.env"
+  grep -v '^DNS_CN_NAMESERVER=' "$ROOT/.env.example" > "$ENV_FILE"
+  env_set DNS_FOREIGN_NAMESERVER 'https://192.0.2.53/dns-query#All Nodes'
+  env_set MIHOMO_IMAGE img1; env_set METACUBEXD_IMAGE img2
+  scan_network_filtering() { printf 'unfiltered'; }
+  precheck_env >/dev/null 2>&1 || fail "precheck_env failed on the partial env"
+  [ "$(dotenv_get DNS_CN_NAMESERVER)" = "$_cn_ex" ] || fail "partial repair did not backfill CN"
+  [ "$(dotenv_get DNS_FOREIGN_NAMESERVER)" = 'https://192.0.2.53/dns-query#All Nodes' ] \
+    || fail "partial repair touched the custom FOREIGN list"
+  [ -f "$TD/partial.env.pre-v2.bak" ] || fail "partial repair took no backup"
+
+  # (5) fail-closed: a backup that cannot be written aborts BEFORE any edit -
+  # never repair a secrets file without a pristine pre-repair snapshot.
+  ENV_FILE="$TD/nobak.env"
+  grep -v '^DNS_CN_NAMESERVER=\|^DNS_FOREIGN_NAMESERVER=' "$ROOT/.env.example" > "$ENV_FILE"
+  env_set MIHOMO_IMAGE img1; env_set METACUBEXD_IMAGE img2
+  scan_network_filtering() { printf 'unknown'; }
+  cp() { return 1; }
+  precheck_env >/dev/null 2>&1 && fail "precheck succeeded with an unwritable backup"
+  unset -f cp
+  grep -q '^DNS_CN_NAMESERVER=' "$ENV_FILE" && fail "backup failure still wrote the pair"
+
+  # (6) fail-closed: env_set's return code alone cannot prove the line landed
+  # (a failed rename can still report success) - a lying no-op write must
+  # abort precheck, never print backfill_wrote, and leave the backup behind.
+  ENV_FILE="$TD/failwrite.env"
+  grep -v '^DNS_CN_NAMESERVER=\|^DNS_FOREIGN_NAMESERVER=' "$ROOT/.env.example" > "$ENV_FILE"
+  env_set MIHOMO_IMAGE img1; env_set METACUBEXD_IMAGE img2
+  env_set() { return 0; }   # lies: claims success, writes nothing
+  _out="$(precheck_env 2>&1)" && fail "precheck trusted a lying env_set"
+  case "$_out" in *backfill_wrote*) fail "reported a write that never landed" ;; esac
+  # shellcheck source=scripts/installer/envedit.sh
+  . "$ROOT/scripts/installer/envedit.sh"   # restore the real env_set
+  [ -f "$TD/failwrite.env.pre-v2.bak" ] || fail "failed write left no recovery backup"
+
+  # (7) keep-first backup: a retry after a failed repair must not clobber the
+  # pristine pre-repair snapshot with a half-written file - and the message
+  # must say the backup was KEPT, not freshly saved.
+  ENV_FILE="$TD/keepbak.env"
+  grep -v '^DNS_CN_NAMESERVER=\|^DNS_FOREIGN_NAMESERVER=' "$ROOT/.env.example" > "$ENV_FILE"
+  env_set MIHOMO_IMAGE img1; env_set METACUBEXD_IMAGE img2
+  printf 'SENTINEL=original\n' > "$TD/keepbak.env.pre-v2.bak"
+  scan_network_filtering() { printf 'unknown'; }
+  ui_info() { printf '%s\n' "$*"; }   # the saved/kept notice rides ui_info
+  _out="$(precheck_env 2>&1)" || fail "precheck failed on the keep-first case"
+  grep -q '^SENTINEL=original$' "$TD/keepbak.env.pre-v2.bak" \
+    || fail "existing backup was overwritten"
+  case "$_out" in *backfill_backup_kept*) : ;; *) fail "keep-first run did not say the backup was kept" ;; esac
+  case "$_out" in *"backfill_backup "*) fail "keep-first run claimed a fresh backup save" ;; *) : ;; esac
+
+  # (8) the no-detour variant swap must never claim success on an unverified
+  # write: a lying env_set (returns 0, writes nothing) is caught by read-back
+  # and the pair is left untouched.
+  ENV_FILE="$TD/variantlie.env"; cp "$ROOT/.env.example" "$ENV_FILE"
+  env_set() { return 0; }   # lies: claims success, writes nothing
+  _out="$(_wi_apply_dns_variant unfiltered 2>&1)" || :
+  # shellcheck source=scripts/installer/envedit.sh
+  . "$ROOT/scripts/installer/envedit.sh"   # restore the real env_set
+  case "$_out" in *scan_dns_variant*) fail "variant swap claimed success on a lying env_set" ;; esac
+  [ "$(dotenv_get DNS_FOREIGN_NAMESERVER)" = "$_fo_ex" ] \
+    || fail "lying-env_set variant run altered the pair"
+  exit 0
+) || exit 1
+
 # Default literals belong in .env.example ONLY (#27): a reintroduced copy is
 # exactly the drift CI could not see until it bit an operator.
 grep -n '223\.5\.5\.5\|119\.29\.29\.29\|1\.1\.1\.1\|8\.8\.8\.8\|8080\|9090\|192\.168\.\|Asia/Shanghai' \

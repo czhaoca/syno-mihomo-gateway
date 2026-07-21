@@ -249,6 +249,19 @@ Common causes:
   redeploy; the `system` TUN stack still provides the gateway dataplane.
 - **Wrong arch image** — see above.
 
+## Upgrading a pre-v1.3.8 install: `DNS_CN_NAMESERVER must be set` at render
+
+A `.env` created before the split-horizon pair existed passes the installer's prechecks but
+refuses to render (the error names the missing variable). The redeploy precheck repairs this
+automatically: it backs the live `.env` up to `.env.pre-v2.bak` (kept on retries — the
+pristine pre-repair snapshot is never overwritten), backfills the missing
+`DNS_CN_NAMESERVER`/`DNS_FOREIGN_NAMESERVER` list(s) from the shipped `.env.example`
+defaults, verifies each write landed (a failed write aborts the deploy at precheck, naming
+the backup), and prints every line it writes. A value that is present — including a
+customized one — is never touched, and only a file missing **both** lists gets the one-time
+network-scan variant upgrade a fresh install would get. So the fix is simply: run
+`sudo sh ./install.sh` → **Redeploy** and read the printed `backfilled …` lines.
+
 ## Subscription URL looks wrong in config.yaml
 
 The renderer strips only an optional leading `Name=` label and preserves everything else,

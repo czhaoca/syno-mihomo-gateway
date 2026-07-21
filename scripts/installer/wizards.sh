@@ -246,12 +246,26 @@ _wi_apply_dns_variant() {
   { [ -z "$_av_fo" ] || [ "$_av_fo" = "$_av_ex_fo" ]; } || return 0
   _av_plain="$(printf '%s' "$_av_ex_fo" | sed 's/#[^,]*//g')"
   [ -n "$_av_plain" ] || return 0
-  env_set DNS_CN_NAMESERVER "$_av_plain" || return 0
-  if ! env_set DNS_FOREIGN_NAMESERVER "$_av_plain"; then
-    # never leave a half-rewritten pair: best-effort restore of the CN list to
-    # the shipped default (envedit already reported the write failure).
-    env_set DNS_CN_NAMESERVER "$_av_ex_cn" || :
+  # Read-back verification on every write: env_set's return code alone cannot
+  # prove a line landed (a failed rename can still report success), and this
+  # swap is OPTIONAL - on any unverified write the pair must end in a known
+  # state (shipped defaults) and success must never be claimed.
+  env_set DNS_CN_NAMESERVER "$_av_plain" || :
+  if [ "$(env_get DNS_CN_NAMESERVER 2>/dev/null || echo '')" != "$_av_plain" ]; then
     ui_warn "$(msg scan_dns_rollback)"
+    return 0
+  fi
+  env_set DNS_FOREIGN_NAMESERVER "$_av_plain" || :
+  if [ "$(env_get DNS_FOREIGN_NAMESERVER 2>/dev/null || echo '')" != "$_av_plain" ]; then
+    # never leave a half-rewritten pair: restore the CN list to the shipped
+    # default and VERIFY the restore - an unverifiable restore is said out
+    # loud, never papered over.
+    env_set DNS_CN_NAMESERVER "$_av_ex_cn" || :
+    if [ "$(env_get DNS_CN_NAMESERVER 2>/dev/null || echo '')" = "$_av_ex_cn" ]; then
+      ui_warn "$(msg scan_dns_rollback)"
+    else
+      ui_warn "$(msg scan_dns_partial)"
+    fi
     return 0
   fi
   ui_ok "$(msgf scan_dns_variant "$_av_plain")"
@@ -458,6 +472,71 @@ _pc_need() {  # KEY VALIDATOR PROMPT_MSG_KEY (the re-ask default comes from .env
   env_set "$_pc_k" "$_pc_nv"
 }
 
+# _pc_backfill_pair - upgrade path for a pre-v2 .env (#55): backfill whichever
+# of the two split-horizon lists is missing/empty from the shipped
+# .env.example defaults (the filtered fail-safe), because a pre-v2 file
+# passes every other precheck yet hard-fails at render (render_config.sh
+# names the missing variable and the entrypoint gate keeps the OLD config
+# running - a confusing dead-end). Backs up .env BEFORE writing and prints
+# every line written; a present value - customized or not - is never
+# touched. Only a TRUE pre-v2 file (both lists missing) gets the one-time
+# scan-driven variant upgrade a fresh install would get (#54); a partial
+# repair stays minimal.
+_pc_backfill_pair() {
+  _bf_cn="$(env_get DNS_CN_NAMESERVER 2>/dev/null || echo '')"
+  _bf_fo="$(env_get DNS_FOREIGN_NAMESERVER 2>/dev/null || echo '')"
+  [ -z "$_bf_cn" ] || [ -z "$_bf_fo" ] || return 0
+  _bf_ex_cn="$(example_default DNS_CN_NAMESERVER)"
+  _bf_ex_fo="$(example_default DNS_FOREIGN_NAMESERVER)"
+  if [ -z "$_bf_ex_cn" ] || [ -z "$_bf_ex_fo" ]; then
+    ui_warn "$(msg warn_backfill_noexample)"
+    return 0
+  fi
+  _pc_fixed=1
+  _bf_bak="${ENV_FILE}.pre-v2.bak"
+  # The backup is a PREREQUISITE, keep-first: no repair without a pristine
+  # pre-repair snapshot, and a retry after a failed repair must never clobber
+  # that snapshot with a half-written file.
+  if [ ! -f "$_bf_bak" ]; then
+    if ! cp "$ENV_FILE" "$_bf_bak" 2>/dev/null; then
+      diagnose "$(msgf diag_backfill_backup "$_bf_bak")" "$(msg diag_backfill_backup_fix)"
+      return 1
+    fi
+    ui_info "$(msgf backfill_backup "$_bf_bak")"
+  else
+    ui_info "$(msgf backfill_backup_kept "$_bf_bak")"
+  fi
+  # best-effort mode hardening covers a kept backup from an older run too
+  chmod 600 "$_bf_bak" 2>/dev/null
+  _bf_both=0
+  [ -z "$_bf_cn" ] && [ -z "$_bf_fo" ] && _bf_both=1
+  if [ -z "$_bf_cn" ]; then
+    env_set DNS_CN_NAMESERVER "$_bf_ex_cn" || :
+    # Read-back verification: env_set's return code alone cannot prove the
+    # line landed (a failed rename can still report success) - only the
+    # re-read value can. Fail CLOSED here, at precheck, with the backup
+    # named - never let a missing list ride on to the render dead-end.
+    if [ "$(env_get DNS_CN_NAMESERVER 2>/dev/null || echo '')" != "$_bf_ex_cn" ]; then
+      diagnose "$(msgf diag_backfill_write DNS_CN_NAMESERVER "$_bf_bak")" "$(msg diag_backfill_write_fix)"
+      return 1
+    fi
+    ui_ok "$(msgf backfill_wrote DNS_CN_NAMESERVER "$_bf_ex_cn")"
+  fi
+  if [ -z "$_bf_fo" ]; then
+    env_set DNS_FOREIGN_NAMESERVER "$_bf_ex_fo" || :
+    if [ "$(env_get DNS_FOREIGN_NAMESERVER 2>/dev/null || echo '')" != "$_bf_ex_fo" ]; then
+      diagnose "$(msgf diag_backfill_write DNS_FOREIGN_NAMESERVER "$_bf_bak")" "$(msg diag_backfill_write_fix)"
+      return 1
+    fi
+    ui_ok "$(msgf backfill_wrote DNS_FOREIGN_NAMESERVER "$_bf_ex_fo")"
+  fi
+  [ "$_bf_both" = 1 ] || return 0
+  command -v scan_network_filtering >/dev/null 2>&1 || return 0
+  ui_info "$(msg scan_probing)"
+  _wi_apply_dns_variant "$(scan_network_filtering)"
+  return 0
+}
+
 precheck_env() {
   ui_step "$(msg precheck_step)"
   _pc_fixed=0
@@ -487,6 +566,7 @@ precheck_env() {
   _pc_need CONTROLLER_PORT is_port     q_controller_port
   _pc_need DNS_DEFAULT_NAMESERVER is_dns_list q_dns_bootstrap
   _pc_need DNS_NAMESERVER         is_dns_list q_dns_domestic
+  _pc_backfill_pair || return 1
   # Image refs must resolve or compose fails closed (${MIHOMO_IMAGE:?}).
   if [ -z "$(env_get MIHOMO_IMAGE 2>/dev/null || echo '')" ] \
      || [ -z "$(env_get METACUBEXD_IMAGE 2>/dev/null || echo '')" ]; then
