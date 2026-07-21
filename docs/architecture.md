@@ -14,14 +14,14 @@ device on the home network can route through it just by setting that IP as its g
 no client software required. [MetaCubeXD](https://github.com/MetaCubeX/metacubexd) is a web
 dashboard for managing Mihomo.
 
-| Platform | Compose mode (this page's topology) | Lite mode (no Docker) | Support tier |
-|---|---|---|---|
-| **Synology DSM** | ✓ — the canonical deployment | — | **Required owner validation** |
-| **Raspberry Pi** | ✓ (64-bit OS, wired Ethernet) | ✓ | Experimental |
-| **Generic Linux (amd64/arm64)** | ✓ (64-bit OS, wired Ethernet, macvlan-viable network) | ✓ | Experimental |
+| Platform | Compose mode (this page's topology) | Lite mode (no Docker) |
+|---|---|---|
+| **Synology DSM** | ✓ — the canonical deployment | — |
+| **Raspberry Pi** | ✓ (64-bit OS, wired Ethernet) | ✓ |
+| **Generic Linux (amd64/arm64)** | ✓ (64-bit OS, wired Ethernet, macvlan-viable network) | ✓ |
 
-Tier definitions and the per-platform walkthrough:
-[Installation — Generic Linux & Raspberry Pi](installation-linux.md#support-tiers).
+Support tiers (the canonical matrix — deliberately not restated here) and the per-platform
+walkthrough: [Installation — Generic Linux & Raspberry Pi](installation-linux.md#support-tiers).
 
 ### Canonical deployment: Synology DSM
 

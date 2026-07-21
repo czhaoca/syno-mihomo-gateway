@@ -53,7 +53,9 @@ pi_resolve_tag() {
     return 0
   fi
   command -v curl >/dev/null 2>&1 || {
-    log_error "resolving the latest release needs curl - install curl or pin MIHOMO_VERSION"
+    # Accurate for BOTH callers: a MIHOMO_VERSION pin skips this resolution
+    # only for the mihomo binary; the dashboard tag is always unpinned.
+    log_error "resolving the latest $_prt_repo release needs curl - install curl (a MIHOMO_VERSION pin skips this only for the mihomo binary)"
     return 1
   }
   _prt_url="$(pi_gh_url "https://github.com/$_prt_repo/releases/latest")"

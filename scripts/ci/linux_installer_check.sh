@@ -176,6 +176,30 @@ done
 for _needle in 'DSM' 'NAS' '群晖' 'Container Manager' './install.sh'; do
   assert_not_contains "zh reachable stock keys clean of: $_needle" "$_blob53_zh" "$_needle"
 done
+# The audited list above is hand-maintained; derive the ACTUAL stock-override
+# set (overlay keys minus lx_ natives minus pi-table keys) and require the
+# two to match, so a future 13th stock override cannot land without joining
+# the resolution/needle/arity sweeps above (review round).
+_53_derived="$(for _k in $_lx_en_keys; do
+  case "$_k" in lx_*) continue ;; esac
+  printf '%s\n' "$_pi_en_keys" | grep -qx "$_k" && continue
+  printf '%s\n' "$_k"
+done | sort)"
+_53_sorted="$(printf '%s\n' $_53_keys | sort)"
+[ -n "$_53_derived" ] && [ "$_53_derived" = "$_53_sorted" ] \
+  && ok || fail "audited #53 key list drifted from the overlay's stock-override set (derived: $(printf '%s' "$_53_derived" | tr '\n' ' '))"
+
+# Whole-overlay en/zh %s-arity sweep (review round): the overlay header's
+# same-count invariant is a MUST for EVERY template, not only the audited
+# stock set - pi_lite_rep_client and lx_warn_macvlan_virt carry live %s
+# args too, and a zh translation touch-up that drops a %s ships a broken
+# rendered line otherwise.
+for _k in $_lx_en_keys; do
+  _a_en="$(printf '%s' "$( (INSTALLER_LANG=en; msg "$_k") )" | grep -o '%s' | wc -l | tr -d ' 	')"
+  _a_zh="$(printf '%s' "$( (INSTALLER_LANG=zh; msg "$_k") )" | grep -o '%s' | wc -l | tr -d ' 	')"
+  [ "$_a_en" = "$_a_zh" ] \
+    && ok || fail "overlay $_k: en/zh %s arity differs (en=$_a_en zh=$_a_zh)"
+done
 # One real call site end to end: pf_arch's diagnose rides the overridden key.
 _out="$( (INSTALLER_LANG=en; EXPECTED_ARCH=mips; host_arch() { echo amd64; }; pf_arch) 2>&1 )" || :
 assert_contains "pf_arch (generic chain): host wording" "$_out" "this host is 'amd64'"
