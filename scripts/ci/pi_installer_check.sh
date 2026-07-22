@@ -882,6 +882,73 @@ grep -n '223\.5\.5\.5\|119\.29\.29\.29\|1\.1\.1\.1\|8\.8\.8\.8\|8080\|9090\|192\
   && fail "flow_lite.sh carries default literals (single-source them in .env.example)" || ok
 
 # =============================================================================
+# Ticket #60 - pre-v2 .env backfill in the lite flow (DEC-B)
+# =============================================================================
+# pi_flow_lite never ran precheck (full precheck_env is WRONG here - macvlan
+# fields), so a pre-v2 .env sailed to pi_lite_render_config and dead-ended.
+# The flow now calls _pc_backfill_pair at the render-adjacent fence. The
+# stubs cut the flow at the render boundary; msg/msgf print bare keys so the
+# output asserts are locale-independent.
+_lite_bf_stubs() {
+  ui_step() { :; }; ui_say() { :; }
+  ui_info() { printf '%s\n' "$*"; }
+  ui_ok() { printf '%s\n' "$*"; }
+  ui_warn() { printf '%s\n' "$*"; }
+  msg() { printf '%s' "$1"; }
+  msgf() { printf '%s' "$*"; }
+  diagnose() { :; }
+  is_root() { return 0; }
+  seed_config() { :; }
+  pi_lite_wizard() { :; }
+  wizard_subscription() { :; }
+  pf_port_free() { return 0; }
+  scan_network_filtering() { printf 'unknown'; }
+  pi_lite_render_config() { : > "$GATEWAY_DATA_DIR/render-called"; return 1; }
+}
+# (a) pre-v2 fixture: both lists backfilled from .env.example BEFORE the
+# render fence (the render stub aborts the flow, yet the pair has landed),
+# keep-first backup taken, written lines printed.
+mkdir -p "$TD/lite-prev2"
+( GATEWAY_DATA_DIR="$TD/lite-prev2"; ENV_FILE="$TD/lite-prev2/.env"; REPO_ROOT="$ROOT"
+  grep -v '^DNS_CN_NAMESERVER=\|^DNS_FOREIGN_NAMESERVER=' "$ROOT/.env.example" > "$ENV_FILE"
+  _lite_bf_stubs
+  _out="$(pi_flow_lite 2>&1)" || :
+  _cn_ex="$( (ENV_FILE="$ROOT/.env.example"; dotenv_get DNS_CN_NAMESERVER) )"
+  _fo_ex="$( (ENV_FILE="$ROOT/.env.example"; dotenv_get DNS_FOREIGN_NAMESERVER) )"
+  [ "$(dotenv_get DNS_CN_NAMESERVER 2>/dev/null || echo '')" = "$_cn_ex" ] \
+    || { echo "lite backfill: CN list not backfilled" >&2; exit 1; }
+  [ "$(dotenv_get DNS_FOREIGN_NAMESERVER 2>/dev/null || echo '')" = "$_fo_ex" ] \
+    || { echo "lite backfill: FOREIGN list not backfilled" >&2; exit 1; }
+  [ -f "$ENV_FILE.pre-v2.bak" ] || { echo "lite backfill: no keep-first backup" >&2; exit 1; }
+  case "$_out" in *backfill_wrote*) : ;; *) echo "lite backfill: written lines not printed" >&2; exit 1 ;; esac
+  [ -f "$GATEWAY_DATA_DIR/render-called" ] || { echo "lite backfill: render fence never reached" >&2; exit 1; }
+  exit 0
+) && ok || fail "pi_flow_lite backfills a pre-v2 .env before the render fence (#60)"
+# (b) valid-pair fixture: a strict no-op - no backup, no write, byte-identical.
+mkdir -p "$TD/lite-v2ok"
+( GATEWAY_DATA_DIR="$TD/lite-v2ok"; ENV_FILE="$TD/lite-v2ok/.env"; REPO_ROOT="$ROOT"
+  cp "$ROOT/.env.example" "$ENV_FILE"
+  _lite_bf_stubs
+  _out="$(pi_flow_lite 2>&1)" || :
+  [ ! -f "$ENV_FILE.pre-v2.bak" ] || { echo "lite backfill: no-op run took a backup" >&2; exit 1; }
+  case "$_out" in *backfill_wrote*) echo "lite backfill: no-op run claimed a write" >&2; exit 1 ;; esac
+  cmp -s "$ENV_FILE" "$ROOT/.env.example" || { echo "lite backfill: no-op run altered .env" >&2; exit 1; }
+  exit 0
+) && ok || fail "pi_flow_lite is a strict no-op on a valid split-horizon pair (#60)"
+# (c) fail-closed wiring: an unwritable backup aborts the flow BEFORE the
+# render fence (the || return 1 contract).
+mkdir -p "$TD/lite-bfail"
+( GATEWAY_DATA_DIR="$TD/lite-bfail"; ENV_FILE="$TD/lite-bfail/.env"; REPO_ROOT="$ROOT"
+  grep -v '^DNS_CN_NAMESERVER=\|^DNS_FOREIGN_NAMESERVER=' "$ROOT/.env.example" > "$ENV_FILE"
+  _lite_bf_stubs
+  cp() { return 1; }
+  pi_flow_lite >/dev/null 2>&1 && { echo "lite backfill: flow succeeded on a failed backfill" >&2; exit 1; }
+  [ ! -f "$GATEWAY_DATA_DIR/render-called" ] \
+    || { echo "lite backfill: render ran after a failed backfill" >&2; exit 1; }
+  exit 0
+) && ok || fail "pi_flow_lite aborts before the render when the backfill fails closed (#60)"
+
+# =============================================================================
 # Ticket #21 - lite_ctl status/doctor + scheduler coverage
 # =============================================================================
 
@@ -1049,6 +1116,21 @@ rm -f "$TD/ctl-nosub/config/subscription.txt"
 _rc=0; run_lite_ctl "$TD/ctl-nosub" 'active,probe' doctor > "$TD/ctl-nosub-out" 2>&1 || _rc=$?
 [ "$_rc" = 2 ] && grep -qi 'subscription' "$TD/ctl-nosub-out" \
   && ok || fail "doctor degrades on a missing subscription (rc=$_rc)"
+
+# --- doctor: pre-v2 .env -> render BROKEN names the remediation (#60, read-only) --
+mk_ctl_sandbox "$TD/ctl-prev2"
+grep -v '^DNS_CN_NAMESERVER=\|^DNS_FOREIGN_NAMESERVER=' "$TD/ctl-prev2/.env" > "$TD/ctl-prev2/.env.next" \
+  && mv "$TD/ctl-prev2/.env.next" "$TD/ctl-prev2/.env"
+_rc=0; run_lite_ctl "$TD/ctl-prev2" 'active,probe' doctor > "$TD/ctl-prev2-out" 2>&1 || _rc=$?
+[ "$_rc" = 3 ] && grep -q 'Result: BROKEN' "$TD/ctl-prev2-out" \
+  && ok || fail "doctor: a pre-v2 .env fails the render check BROKEN (rc=$_rc)"
+grep -q 'pre-v1.3.8' "$TD/ctl-prev2-out" && grep -q 'lite deploy' "$TD/ctl-prev2-out" \
+  && ok || fail "doctor: the BROKEN render verdict names the pre-v1.3.8 remediation (#60)"
+# lite_ctl is reused verbatim by the generic-Linux doctor (_lx_lite_ctl), whose
+# rebrand filter never touches raw literals - the hint must stay entrypoint-
+# neutral (the msg-catalog branding sweep cannot see this string).
+grep -q 'install-pi.sh' "$TD/ctl-prev2-out" \
+  && fail "doctor: the remediation names the Pi entrypoint on a shared output path (#60)" || ok
 
 # --- status: surfaces mode, version, and the last-run record ---------------------
 mk_ctl_sandbox "$TD/ctl-st"

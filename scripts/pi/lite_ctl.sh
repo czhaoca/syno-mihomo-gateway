@@ -91,7 +91,7 @@ _lc_render_check() {
      sh "$REPO_ROOT/scripts/render_config.sh" >/dev/null 2>&1; then
     _lc_ok "config renders cleanly (same renderer the service runs)"
   else
-    _lc_bad "config does not render - check the .env DNS/controller values and the subscription"
+    _lc_bad "config does not render - check the .env DNS/controller values and the subscription (a pre-v1.3.8 .env lacks the split-horizon DNS pair: re-run the lite deploy, which backfills it)"
   fi
   rm -rf "$_lrc_tmp"
 }

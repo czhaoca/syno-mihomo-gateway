@@ -110,6 +110,13 @@ pi_flow_lite() {
   wizard_subscription || return 1
   load_env
 
+  # Pre-v2 .env repair (#60 DEC-B): the compose precheck's backfill, reused
+  # at the same render-adjacent fence. Full precheck_env is deliberately NOT
+  # run here - it validates macvlan fields lite never sets; without the
+  # backfill a pre-v2 .env dead-ends in pi_lite_render_config below.
+  _pc_backfill_pair || return 1
+  load_env
+
   # mihomo's DNS binds :53; a stock resolver (systemd-resolved, dnsmasq) in
   # the way is the most common first-start failure on Pi OS variants (G7).
   # Warn now - the unit still starts and the doctor (#21) diagnoses it fully.
