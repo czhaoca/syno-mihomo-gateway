@@ -227,6 +227,15 @@ unset -f ip
   if ( SMG_SCAN_FORCE=filtered scan_registry_reachable ); then
     fail "SMG_SCAN_FORCE=filtered still reported the registry reachable"
   fi
+  # FORCE=unknown must short-circuit too (#61c): conservative not-reachable,
+  # never a live probe - the classifier's complete FORCE case is the shape.
+  rm -f "$TD/probe_attempted"
+  _scan_have() { : > "$TD/probe_attempted"; return 1; }
+  if ( SMG_SCAN_FORCE=unknown scan_registry_reachable ); then
+    fail "SMG_SCAN_FORCE=unknown reported the registry reachable"
+  fi
+  [ ! -e "$TD/probe_attempted" ] \
+    || fail "SMG_SCAN_FORCE=unknown still attempted a live registry probe"
 
   # curl path: the classifier asserts HTTP 204, not connect success.
   _scan_have() { [ "$1" = curl ]; }
@@ -1247,6 +1256,22 @@ done
     || fail "scan rewrote an operator-customized DNS pair"
   [ "$(dotenv_get DNS_CN_NAMESERVER)" = "$_cn_ex" ] \
     || fail "scan rewrote DNS_CN_NAMESERVER beside a customized foreign list"
+
+  # (6) MIXED (#61a): unfiltered verdict but the registry unreachable - the
+  # image-source menu still runs (no _mode pre-pick), yet the DNS variant
+  # swap STILL applies (routing posture and image source are independent).
+  ENV_FILE="$TD/scan6.env"; cp "$ROOT/.env.example" "$ENV_FILE"
+  scan_network_filtering() { printf 'unfiltered'; }
+  scan_registry_reachable() { return 1; }
+  rm -f "$TD/menu_seen6"
+  ui_menu_select() { : > "$TD/menu_seen6"; UI_MENU_INDEX=1; }
+  wizard_images >/dev/null 2>&1 || fail "wizard_images failed on the mixed path"
+  [ -e "$TD/menu_seen6" ] || fail "mixed scan skipped the image-source menu"
+  [ "$(dotenv_get REGISTRY_MODE)" = acr ] || fail "mixed-path menu pick did not persist acr"
+  [ "$(dotenv_get DNS_CN_NAMESERVER)" = "$_plain_want" ] \
+    || fail "mixed scan did not apply the no-detour variant to CN"
+  [ "$(dotenv_get DNS_FOREIGN_NAMESERVER)" = "$_plain_want" ] \
+    || fail "mixed scan left the detour in FOREIGN"
   exit 0
 ) || exit 1
 
@@ -1254,8 +1279,9 @@ done
 # the pair existed passes every precheck yet hard-fails at render. precheck
 # now backfills the missing list(s) from .env.example (backup first, every
 # written line printed); a present value - customized or not - is never
-# touched, and only a TRUE pre-v2 file (both missing) gets the one-time
-# scan-driven variant upgrade a fresh install would get.
+# touched, and the one-time scan-driven variant upgrade a fresh install
+# would get applies when every field is missing or still the example
+# default (#61 retry-eligibility); a customized value keeps repair minimal.
 (
   set -eu
   fail() { echo "FAIL: $*" >&2; exit 1; }
@@ -1373,6 +1399,12 @@ done
     || fail "existing backup was overwritten"
   case "$_out" in *backfill_backup_kept*) : ;; *) fail "keep-first run did not say the backup was kept" ;; esac
   case "$_out" in *"backfill_backup "*) fail "keep-first run claimed a fresh backup save" ;; *) : ;; esac
+  # (#61d) the KEPT backup is re-hardened to 600 too (a bak from an older run
+  # may carry a looser mode; the fresh-save leg is already asserted).
+  case "$(ls -l "$TD/keepbak.env.pre-v2.bak")" in
+    -rw-------*) : ;;
+    *) fail "kept backup was not re-hardened to mode 600" ;;
+  esac
 
   # (8) the no-detour variant swap must never claim success on an unverified
   # write: a lying env_set (returns 0, writes nothing) is caught by read-back
@@ -1385,6 +1417,37 @@ done
   case "$_out" in *scan_dns_variant*) fail "variant swap claimed success on a lying env_set" ;; esac
   [ "$(dotenv_get DNS_FOREIGN_NAMESERVER)" = "$_fo_ex" ] \
     || fail "lying-env_set variant run altered the pair"
+
+  # (9) precheck -> scan chain (#61b): blank image refs on an otherwise-valid
+  # .env drive precheck_env through wizard_images -> _wi_auto_scan end to end
+  # (the missing-image branch was never exercised via the precheck entry).
+  ENV_FILE="$TD/chain.env"; cp "$ROOT/.env.example" "$ENV_FILE"
+  env_set MIHOMO_IMAGE ''; env_set METACUBEXD_IMAGE ''
+  ui_ask() { case "$1" in ACR_NAMESPACE) eval "$1=testns" ;; *) eval "$1=\"\$3\"" ;; esac; }
+  ui_ask_secret() { eval "$1=''"; }
+  resolve_update_images() { :; }
+  rm -f "$TD/scan_ran9"
+  scan_network_filtering() { : > "$TD/scan_ran9"; printf 'filtered'; }
+  precheck_env >/dev/null 2>&1 || fail "precheck_env failed on blank image refs"
+  [ -e "$TD/scan_ran9" ] || fail "precheck chain never reached the auto-scan"
+  [ "$(dotenv_get REGISTRY_MODE)" = acr ] \
+    || fail "precheck chain did not persist the scan-picked acr mode"
+  [ -n "$(dotenv_get MIHOMO_IMAGE)" ] || fail "precheck chain left MIHOMO_IMAGE blank"
+
+  # (10) retry eligibility (#61d): run 1 of a true pre-v2 repair backfilled CN
+  # then faulted on FOREIGN; the retry sees CN == example default and must
+  # still count the file as variant-upgrade eligible (the ONE-TIME upgrade a
+  # fresh install gets is kept, never permanently lost to a mid-repair fault).
+  ENV_FILE="$TD/retry.env"
+  grep -v '^DNS_FOREIGN_NAMESERVER=' "$ROOT/.env.example" > "$ENV_FILE"
+  env_set MIHOMO_IMAGE img1; env_set METACUBEXD_IMAGE img2
+  printf 'SENTINEL=r1\n' > "$TD/retry.env.pre-v2.bak"
+  scan_network_filtering() { printf 'unfiltered'; }
+  precheck_env >/dev/null 2>&1 || fail "retry precheck failed"
+  [ "$(dotenv_get DNS_FOREIGN_NAMESERVER)" = "$_plain" ] \
+    || fail "retry lost the one-time variant upgrade (FOREIGN kept the detour)"
+  [ "$(dotenv_get DNS_CN_NAMESERVER)" = "$_plain" ] \
+    || fail "retry lost the one-time variant upgrade (CN kept the detour)"
   exit 0
 ) || exit 1
 

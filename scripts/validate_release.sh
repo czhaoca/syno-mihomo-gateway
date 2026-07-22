@@ -721,6 +721,13 @@ All Nodes' ]; then st_ok; else st_bad "urltest_groups got: $(printf '%s' "$_name
   # shellcheck disable=SC2181 # the subshell above is the tested unit
   if [ $? -eq 0 ]; then st_ok; else st_bad "derive_probe_ip candidate/band logic"; fi
 
+  # B3's streaming heuristic is a single marker substring by design (#61e);
+  # its WARN must name the SPA blindness so the check is never over-read.
+  # The pattern is split so this assert cannot match its own source line.
+  _st_b3m='region-block marker'
+  if grep "$_st_b3m" "$0" 2>/dev/null | grep -q 'SPA'; then st_ok
+  else st_bad "B3 region-block WARN text lacks the SPA-blindness caveat"; fi
+
   echo "validate_release self-test: $_stp passed, $_stf failed"
   [ "$_stf" -eq 0 ] || exit 1
   echo "OK: measurement helpers (policy/knob/psn/split-core rule anchoring incl. bootstrap-pin + comment-prose immunity, provider-node counting + real-member egress gate, filtered-group discovery + %XX name encoding + COMPATIBLE/REJECT placeholder exclusion, full-proxy band connection parsing + CIDR membership, quoted-.env parsing, .env.example key coverage, scrubbed child env, doctor rc gate, summary accumulator, cache unpark, keep-split-horizon auto-decision, LAN-probe chain classification + probe-IP derivation)"
@@ -1245,7 +1252,7 @@ if [ -n "${LAN_PROBE_IP:-}" ]; then
   else
     case "$_b3_body" in
       *[Nn]ot\ [Aa]vailable*)
-        warn "B3 streaming probe: region-block marker in the response - pin an unlock-capable node in MetaCubeXD -> Streaming Unlock (All Nodes picks by latency, not unlock)" ;;
+        warn "B3 streaming probe: region-block marker in the response - pin an unlock-capable node in MetaCubeXD -> Streaming Unlock (All Nodes picks by latency, not unlock; marker heuristic only - SPA-rendered block pages are not detected, so a marker-free fetch is not proof of unlock)" ;;
       *)
         ok "B3 streaming probe: $_b3_url answered through the gateway rules (Chrome-UA LAN-client fetch)" ;;
     esac

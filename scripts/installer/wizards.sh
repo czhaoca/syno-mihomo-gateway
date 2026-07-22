@@ -479,9 +479,10 @@ _pc_need() {  # KEY VALIDATOR PROMPT_MSG_KEY (the re-ask default comes from .env
 # names the missing variable and the entrypoint gate keeps the OLD config
 # running - a confusing dead-end). Backs up .env BEFORE writing and prints
 # every line written; a present value - customized or not - is never
-# touched. Only a TRUE pre-v2 file (both lists missing) gets the one-time
-# scan-driven variant upgrade a fresh install would get (#54); a partial
-# repair stays minimal.
+# touched. The one-time scan-driven variant upgrade a fresh install would
+# get (#54) applies when every field is missing OR still the shipped example
+# default (#61: a retry after a mid-repair fault stays eligible); any
+# customized value keeps the repair minimal.
 _pc_backfill_pair() {
   _bf_cn="$(env_get DNS_CN_NAMESERVER 2>/dev/null || echo '')"
   _bf_fo="$(env_get DNS_FOREIGN_NAMESERVER 2>/dev/null || echo '')"
@@ -508,8 +509,13 @@ _pc_backfill_pair() {
   fi
   # best-effort mode hardening covers a kept backup from an older run too
   chmod 600 "$_bf_bak" 2>/dev/null
+  # Variant-upgrade eligibility (#61 DEC-C): a field that already equals the
+  # shipped example default counts as still-eligible - run 1 of a repair may
+  # backfill one field then fault on the other, and the retry must keep the
+  # ONE-TIME upgrade a fresh install gets. Any customized value disqualifies.
   _bf_both=0
-  [ -z "$_bf_cn" ] && [ -z "$_bf_fo" ] && _bf_both=1
+  { [ -z "$_bf_cn" ] || [ "$_bf_cn" = "$_bf_ex_cn" ]; } \
+    && { [ -z "$_bf_fo" ] || [ "$_bf_fo" = "$_bf_ex_fo" ]; } && _bf_both=1
   if [ -z "$_bf_cn" ]; then
     env_set DNS_CN_NAMESERVER "$_bf_ex_cn" || :
     # Belt-and-braces read-back (env_set is self-verifying since #59; this

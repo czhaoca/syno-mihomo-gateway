@@ -161,7 +161,9 @@ scan_network_filtering() {
 # (SMG_SCAN_REGISTRY_URL, default the Docker Hub registry API root). Consulted
 # only after an 'unfiltered' verdict, before defaulting REGISTRY_MODE=docker.
 scan_registry_reachable() {
-  case "${SMG_SCAN_FORCE:-}" in unfiltered) return 0 ;; filtered) return 1 ;; esac
+  # The FORCE seam mirrors scan_network_filtering's complete case (#61c):
+  # 'unknown' short-circuits conservatively (not reachable), never probes.
+  case "${SMG_SCAN_FORCE:-}" in unfiltered) return 0 ;; filtered|unknown) return 1 ;; esac
   _scan_http_any "${SMG_SCAN_REGISTRY_URL:-https://registry-1.docker.io/v2/}" \
     "${SMG_SCAN_TIMEOUT:-5}"
 }
