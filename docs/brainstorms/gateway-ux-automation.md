@@ -138,3 +138,15 @@ Staged as the `gateway-ux-automation` work-order chain via `/stage-work-order`;
 drained by `/issue-resolver` (or single tickets via `/resume-gap`). NAS re-validation
 happens at the next release cut — after ticket 4 the staged validator runs with zero
 `/dev/tty` reads end to end.
+
+## Release-note snippet (draft for the next release — ticket 5 acceptance)
+
+> **Renamed: the dashboard cards now say what they do.** `Proxy Mode` →
+> **`Routing Mode`**, `Streaming Sites` → **`Streaming Unlock`**, `Country Pick` →
+> **`Exit Country`**, `Full Proxy` → **`Full-Tunnel Devices`**. The `<Country> Auto`
+> cards and the hidden `All Nodes` DNS anchor are unchanged. **One-time effect after
+> upgrading:** mihomo keys its saved dashboard selections by group name, so each
+> renamed card resets to its default member once — re-pin your streaming exit,
+> country choice, or Full-Tunnel Devices selection in MetaCubeXD if you had one (same behavior as the v1.5.0 group
+> streamline). The old names are retired and can no longer be used as
+> `COUNTRY_GROUPS` labels.

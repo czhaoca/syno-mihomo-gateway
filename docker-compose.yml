@@ -49,12 +49,12 @@ services:
       - PRIORITY_EXCLUDE_FILTER=${PRIORITY_EXCLUDE_FILTER:-}
       - AUTO_EXCLUDE_FILTER=${AUTO_EXCLUDE_FILTER:-}
       # Per-country auto-selection groups ('NAME=regex;...' spec) - REQUIRED:
-      # Country Pick's members ARE the generated groups, so the renderer
+      # Exit Country's members ARE the generated groups, so the renderer
       # refuses an unset/empty spec (the ':-' keeps compose warning-free; the
       # renderer owns the loud failure and the entrypoint gate keeps the
       # previous config running).
       - COUNTRY_GROUPS=${COUNTRY_GROUPS:-}
-      # Per-device full-proxy band (OPTIONAL - renders the Full Proxy group
+      # Per-device full-proxy band (OPTIONAL - renders the Full-Tunnel Devices group
       # + SRC-IP-CIDR rules only when set; empty is byte-identical to
       # unset, so existing .envs are untouched).
       - FULL_PROXY_SOURCES=${FULL_PROXY_SOURCES:-}

@@ -69,19 +69,19 @@ case "$1" in
       *sys/class/net*) exit "${FAKE_TUN_IF_RC:-0}" ;;
       *'/version'*) exit "${FAKE_CTL_RC:-0}" ;;
       # proxy_groups controller endpoints (chk_proxy_groups): /group lists the
-      # groups; /proxies/Country%20Pick supplies the "now" selection; per-group
+      # groups; /proxies/Exit%20Country supplies the "now" selection; per-group
       # /proxies/<name> URLs arrive %XX-encoded byte by byte
       # (All Nodes=%41%6c%6c%20%4e%6f%64%65%73,
-      # Country Pick=%43%6f%75%6e%74%72%79%20%50%69%63%6b, JPX=%4a%50%58,
+      # Exit Country=%45%78%69%74%20%43%6f%75%6e%74%72%79, JPX=%4a%50%58,
       # USX=%55%53%58 - spaces ride as %20; the specific-before-generic case
       # order is kept). default-empty = the SELECTED country group (JPX, the
-      # Country Pick "now") is empty; country-empty = the non-selected USX is.
+      # Exit Country "now") is empty; country-empty = the non-selected USX is.
       *'/group'*)
         case "${FAKE_PG_MODE:-healthy}" in
           prestream) printf '{"proxies":[{"name":"All Nodes","type":"URLTest","all":["n1","n2"]},{"name":"PROXY","type":"Selector","all":["All Nodes","DIRECT","REJECT"]},{"name":"STREAMING","type":"Selector","all":["PROXY","All Nodes","DIRECT"]},{"name":"GLOBAL","type":"Selector","all":["All Nodes","PROXY"]}]}' ;;
-          *) printf '{"proxies":[{"name":"Proxy Mode","type":"Selector","all":["Country Pick","DIRECT","REJECT"]},{"name":"Streaming Sites","type":"Selector","all":["Proxy Mode","JPX","USX","DIRECT"]},{"name":"Country Pick","type":"Selector","all":["JPX","USX"]},{"name":"JPX","type":"URLTest","all":["n1"]},{"name":"USX","type":"URLTest","all":["n1"]},{"name":"All Nodes","type":"URLTest","hidden":true,"all":["n1","n2"]},{"name":"GLOBAL","type":"Selector","all":["All Nodes","Proxy Mode"]}]}' ;;
+          *) printf '{"proxies":[{"name":"Routing Mode","type":"Selector","all":["Exit Country","DIRECT","REJECT"]},{"name":"Streaming Unlock","type":"Selector","all":["Routing Mode","JPX","USX","DIRECT"]},{"name":"Exit Country","type":"Selector","all":["JPX","USX"]},{"name":"JPX","type":"URLTest","all":["n1"]},{"name":"USX","type":"URLTest","all":["n1"]},{"name":"All Nodes","type":"URLTest","hidden":true,"all":["n1","n2"]},{"name":"GLOBAL","type":"Selector","all":["All Nodes","Routing Mode"]}]}' ;;
         esac ;;
-      *'/proxies/%43%6f%75%6e%74%72%79%20%50%69%63%6b'*)
+      *'/proxies/%45%78%69%74%20%43%6f%75%6e%74%72%79'*)
         printf '{"all":["JPX","USX"],"now":"JPX"}' ;;
       *'/proxies/%4a%50%58'*)
         if [ "${FAKE_PG_MODE:-healthy}" = default-empty ]; then
@@ -720,12 +720,12 @@ if [ "$_fp_run" = 1 ]; then
     && grep -q 'COUNTRY_GROUPS' "$TMP/derr" \
     && ok || fail "proxy_groups-country-empty parity (json=$_jrc human=$_hrc)"
 
-  # proxy_groups default-empty (the Country Pick selection matches no node):
+  # proxy_groups default-empty (the Exit Country selection matches no node):
   # BROKEN both, rc 3, error names the selected group
   FAKE_PG_MODE=default-empty; export FAKE_PG_MODE
   dpar
   jval proxy_groups default-empty && [ "$_jrc" = 3 ] && [ "$_hrc" = 3 ] \
-    && grep -q 'ERROR.*Country Pick' "$TMP/derr" \
+    && grep -q 'ERROR.*Exit Country' "$TMP/derr" \
     && grep -q 'ERROR.*JPX' "$TMP/derr" \
     && ok || fail "proxy_groups-default-empty parity (json=$_jrc human=$_hrc)"
 

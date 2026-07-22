@@ -345,7 +345,7 @@ _fp_is_lan() {
 }
 # _fp_conns - controller /connections JSON on stdin -> one line per
 # connection: sourceIP|destinationIP|network|fp/nofp (fp = the chain
-# carries 'Full Proxy'). Connections are split onto lines FIRST (a
+# carries 'Full-Tunnel Devices'). Connections are split onto lines FIRST (a
 # multi-char RS is a gawk extension BusyBox awk lacks), then matched
 # field-by-field.
 _fp_conns() {
@@ -356,7 +356,7 @@ _fp_conns() {
       if (match($0, /"sourceIP":"[^"]*"/))      src=substr($0, RSTART+12, RLENGTH-13)
       if (match($0, /"destinationIP":"[^"]*"/)) dst=substr($0, RSTART+17, RLENGTH-18)
       if (match($0, /"network":"[^"]*"/))       net=substr($0, RSTART+11, RLENGTH-12)
-      if (match($0, /"chains":\[[^]]*"Full Proxy"[^]]*\]/)) fp="fp"
+      if (match($0, /"chains":\[[^]]*"Full-Tunnel Devices"[^]]*\]/)) fp="fp"
       print src "|" dst "|" net "|" fp
     }'
 }
@@ -366,7 +366,7 @@ _fp_conns() {
 #       SRC-IP-CIDR rule set must equal the normalized FULL_PROXY_SOURCES
 #       knob - a mismatch means the operator's band edit is NOT live.
 #   (b) RUNTIME (controller /connections via the _pg_ctl plumbing): any
-#       non-LAN flow FROM a band source whose chain lacks 'Full Proxy'
+#       non-LAN flow FROM a band source whose chain lacks 'Full-Tunnel Devices'
 #       breaks the band guarantee - in practice the DEC-A residual: a
 #       UDP/QUIC flow whose exit node lacks UDP relay falls through the
 #       SRC rule at the rule engine, and CN-listed destinations then go
@@ -381,7 +381,7 @@ chk_full_proxy() {
   _cfp_knob="${FULL_PROXY_SOURCES:-}"
   _cfp_lines=""
   [ -n "${CONFIG_STATE_DIR:-}" ] && [ -r "$_cfp_cfg" ] \
-    && _cfp_lines="$(sed -n "s/^  - 'SRC-IP-CIDR,\([^,]*\),Full Proxy'\$/\1/p" "$_cfp_cfg" 2>/dev/null)"
+    && _cfp_lines="$(sed -n "s/^  - 'SRC-IP-CIDR,\([^,]*\),Full-Tunnel Devices'\$/\1/p" "$_cfp_cfg" 2>/dev/null)"
   if [ -z "$_cfp_knob" ] && [ -z "$_cfp_lines" ]; then
     CHECK_VALUE=disabled CHECK_SEV=silent
     return 0
@@ -422,12 +422,12 @@ $(printf '%s' "$_cfp_raw" | _fp_conns)
 CFPEOF
   if [ "$_cfp_viol" -gt 0 ]; then
     CHECK_VALUE=chain-violation CHECK_SEV=warn
-    CHECK_DETAIL="$_cfp_viol of $_cfp_scanned non-LAN flow(s) from band source(s) bypass Full Proxy (e.g. $_cfp_vex) - usually the DEC-A UDP/QUIC fallthrough: the exit node lacks UDP relay, so CN destinations go DIRECT (browsers retry over proxied TCP); the band guarantee also assumes no routable LAN IPv6 (see ipv6_bypass)"
+    CHECK_DETAIL="$_cfp_viol of $_cfp_scanned non-LAN flow(s) from band source(s) bypass Full-Tunnel Devices (e.g. $_cfp_vex) - usually the DEC-A UDP/QUIC fallthrough: the exit node lacks UDP relay, so CN destinations go DIRECT (browsers retry over proxied TCP); the band guarantee also assumes no routable LAN IPv6 (see ipv6_bypass)"
     CHECK_HINT="      persistent TCP violations mean the rules on disk and in memory disagree - redeploy; UDP-only flags are the documented QUIC residual (an opt-in UDP block ships only if the airport's UDP proves unreliable)"
     return 0
   fi
   CHECK_VALUE=ok CHECK_SEV=ok
-  CHECK_DETAIL="band rules live ($_cfp_n entr(y/ies)); $_cfp_scanned band flow(s) scanned, all riding Full Proxy (guarantee assumes no routable LAN IPv6 - see ipv6_bypass)"
+  CHECK_DETAIL="band rules live ($_cfp_n entr(y/ies)); $_cfp_scanned band flow(s) scanned, all riding Full-Tunnel Devices (guarantee assumes no routable LAN IPv6 - see ipv6_bypass)"
 }
 
 # proxy_groups - zero-node guard for the generated "<Country> Auto" url-test
@@ -442,7 +442,7 @@ CFPEOF
 # group is empty the provider itself has no nodes (cold start or dead
 # subscription) - report that single condition with the seeding runbook
 # instead of blaming the filters. default-empty = the country group the
-# Country Pick selector is CURRENTLY riding has zero nodes (the routing
+# Exit Country selector is CURRENTLY riding has zero nodes (the routing
 # default is dead - bad); any OTHER empty country group is a warn. A live
 # config with no country groups (a pre-streamline render still running) is
 # reported ok with a note.
@@ -478,10 +478,10 @@ chk_proxy_groups() {
     CHECK_VALUE=unknown CHECK_SEV=silent
     return 0
   fi
-  # The routing default: the country group Country Pick is currently riding
-  # ("now"). Empty when no Country Pick group exists (a pre-streamline
+  # The routing default: the country group Exit Country is currently riding
+  # ("now"). Empty when no Exit Country group exists (a pre-streamline
   # config still live) - the default-empty state is then unjudgeable.
-  _pg_now="$(_pg_ctl "/proxies/$(_pg_enc 'Country Pick')" \
+  _pg_now="$(_pg_ctl "/proxies/$(_pg_enc 'Exit Country')" \
     | sed -n 's/.*"now":"\([^"]*\)".*/\1/p')"
   # Every "name" key in /group is a group name (member nodes appear only as
   # bare strings inside all[]). Group names may carry interior spaces (the
@@ -490,11 +490,11 @@ chk_proxy_groups() {
   # pre-streamline config never miscounts its selectors as country groups).
   _pg_names="$(printf '%s' "$_pg_raw" \
     | awk -F'"name":"' '{ for (i = 2; i <= NF; i++) { n = $i; sub(/".*/, "", n); print n } }')"
-  # Country Pick EXISTS but its "now" fetch failed (transient controller
+  # Exit Country EXISTS but its "now" fetch failed (transient controller
   # flake): judging emptiness without the selection would misclassify
   # default-empty as country-empty (the #45 gap-panel advisory) - report
   # unknown instead of guessing; the next doctor run re-probes.
-  if [ -z "$_pg_now" ] && printf '%s\n' "$_pg_names" | grep -qx 'Country Pick'; then
+  if [ -z "$_pg_now" ] && printf '%s\n' "$_pg_names" | grep -qx 'Exit Country'; then
     CHECK_VALUE=unknown CHECK_SEV=silent
     return 0
   fi
@@ -503,7 +503,7 @@ chk_proxy_groups() {
   while IFS= read -r _pg_n; do
     [ -n "$_pg_n" ] || continue
     case "$_pg_n" in
-      'Proxy Mode'|'Streaming Sites'|'Country Pick'|'Full Proxy'|'Priority Nodes'|PROXY|STREAMING|GLOBAL|DIRECT|REJECT|REJECT-DROP|PASS|COMPATIBLE) continue ;;
+      'Routing Mode'|'Streaming Unlock'|'Exit Country'|'Full-Tunnel Devices'|'Priority Nodes'|PROXY|STREAMING|GLOBAL|DIRECT|REJECT|REJECT-DROP|PASS|COMPATIBLE) continue ;;
     esac
     _pg_c="$(_pg_real "$_pg_n")"; _pg_c=${_pg_c:-0}
     [ "$_pg_c" -gt 0 ] && _pg_any_real=1
@@ -532,14 +532,14 @@ PGEOF
   fi
   if [ "$_pg_country_n" -eq 0 ]; then
     CHECK_VALUE=ok CHECK_SEV=ok
-    CHECK_DETAIL="no country groups visible from the controller (a pre-streamline config is still live; redeploy renders the Country Pick model)"
+    CHECK_DETAIL="no country groups visible from the controller (a pre-streamline config is still live; redeploy renders the Exit Country model)"
     return 0
   fi
   if [ "$_pg_default_empty" -eq 1 ]; then
     _pg_now_sane="$(printf '%s' "$_pg_now" | tr '|' '/')"
     CHECK_VALUE=default-empty CHECK_SEV=bad
-    CHECK_DETAIL="the Country Pick selection '$_pg_now_sane' has NO nodes - its COUNTRY_GROUPS regex matches no provider node, so default-route traffic is REJECTED (fail closed)${_pg_empty:+; other empty country group(s): $_pg_empty}"
-    CHECK_HINT="      tune the COUNTRY_GROUPS regex(es) in .env and redeploy: sudo sh ./${INSTALLER_ENTRY:-install.sh} (Redeploy); stopgap: pick another country in the dashboard Country Pick selector"
+    CHECK_DETAIL="the Exit Country selection '$_pg_now_sane' has NO nodes - its COUNTRY_GROUPS regex matches no provider node, so default-route traffic is REJECTED (fail closed)${_pg_empty:+; other empty country group(s): $_pg_empty}"
+    CHECK_HINT="      tune the COUNTRY_GROUPS regex(es) in .env and redeploy: sudo sh ./${INSTALLER_ENTRY:-install.sh} (Redeploy); stopgap: pick another country in the dashboard Exit Country selector"
     return 0
   fi
   if [ -n "$_pg_empty" ]; then
@@ -549,7 +549,7 @@ PGEOF
     return 0
   fi
   CHECK_VALUE=ok CHECK_SEV=ok
-  CHECK_DETAIL="country groups all have real nodes ($_pg_country_n group(s)${_pg_now:+; Country Pick riding '$(printf '%s' "$_pg_now" | tr '|' '/')'})"
+  CHECK_DETAIL="country groups all have real nodes ($_pg_country_n group(s)${_pg_now:+; Exit Country riding '$(printf '%s' "$_pg_now" | tr '|' '/')'})"
 }
 
 # config_rejected - consumer of the entrypoint gate's rejection marker (#38,

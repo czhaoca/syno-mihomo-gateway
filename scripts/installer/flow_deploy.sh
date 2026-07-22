@@ -53,7 +53,7 @@ _ctrl_get() {
 
 # proxy_egress_probe - EXTRA GUARD: a mihomo "Running + controller OK" health gate
 # does NOT prove the proxy can actually reach the internet. Ask mihomo to GET a
-# test URL THROUGH the rule target (the Proxy Mode group) via the controller's
+# test URL THROUGH the rule target (the Routing Mode group) via the controller's
 # delay API, so a "started but every node times out" state (dead / expired /
 # blocked subscription nodes) is surfaced NOW with a clear diagnosis, not later
 # as failing traffic. Warns; never fails the deploy (the gateway itself is
@@ -62,7 +62,7 @@ _ctrl_get() {
 # human name.
 proxy_egress_probe() {
   [ -n "${DOCKER_BIN:-}" ] || return 0
-  _eg_grp="${EGRESS_TEST_GROUP:-Proxy Mode}"
+  _eg_grp="${EGRESS_TEST_GROUP:-Routing Mode}"
   _eg_url="${EGRESS_TEST_URL:-http://www.gstatic.com/generate_204}"
   _eg_to="${EGRESS_TEST_TIMEOUT_MS:-5000}"
   if ! "$DOCKER_BIN" exec "$MIHOMO_CONTAINER" sh -c 'command -v wget >/dev/null 2>&1 || command -v curl >/dev/null 2>&1' 2>/dev/null; then

@@ -850,7 +850,7 @@ done
 
 # --- deploy-time country-group surfacing (#37, reworked for #45): the verify
 # table carries a groups row (real chk_proxy_groups, reused never forked) and
-# an empty Country Pick selection lands a correctly-attributed end-of-report
+# an empty Exit Country selection lands a correctly-attributed end-of-report
 # diagnosis (names the COUNTRY_GROUPS knob, never the subscription) while the
 # deploy still succeeds (DEC-A warn-and-continue). Sourcing flow_deploy
 # WITHOUT checks.sh must keep report_success alive (guarded row -> skip).
@@ -886,8 +886,8 @@ done
 
   # The real check against a stub controller. Canned %XX answers copied from
   # gateway_cli_check.sh (All Nodes=%41%6c%6c%20%4e%6f%64%65%73,
-  # Country Pick=%43%6f%75%6e%74%72%79%20%50%69%63%6b, JPX=%4a%50%58 -
-  # spaces ride as %20). Country Pick's "now" is JPX, so default-empty =
+  # Exit Country=%45%78%69%74%20%43%6f%75%6e%74%72%79, JPX=%4a%50%58 -
+  # spaces ride as %20). Exit Country's "now" is JPX, so default-empty =
   # JPX empty. DOCKER_BIN resolves to a shell function: only the URL
   # (always the last exec arg) matters.
   # shellcheck source=scripts/lib/checks.sh
@@ -896,8 +896,8 @@ done
     _fd_u=''; for _fd_a in "$@"; do _fd_u="$_fd_a"; done
     case "$_fd_u" in
       */group)
-        printf '{"proxies":[{"name":"Proxy Mode","type":"Selector","all":["Country Pick","DIRECT","REJECT"]},{"name":"Streaming Sites","type":"Selector","all":["Proxy Mode","JPX","DIRECT"]},{"name":"Country Pick","type":"Selector","all":["JPX"]},{"name":"JPX","type":"URLTest","all":["n1"]},{"name":"All Nodes","type":"URLTest","hidden":true,"all":["n1","n2"]},{"name":"GLOBAL","type":"Selector","all":["All Nodes","Proxy Mode"]}]}' ;;
-      */proxies/%43%6f%75%6e%74%72%79%20%50%69%63%6b*)
+        printf '{"proxies":[{"name":"Routing Mode","type":"Selector","all":["Exit Country","DIRECT","REJECT"]},{"name":"Streaming Unlock","type":"Selector","all":["Routing Mode","JPX","DIRECT"]},{"name":"Exit Country","type":"Selector","all":["JPX"]},{"name":"JPX","type":"URLTest","all":["n1"]},{"name":"All Nodes","type":"URLTest","hidden":true,"all":["n1","n2"]},{"name":"GLOBAL","type":"Selector","all":["All Nodes","Routing Mode"]}]}' ;;
+      */proxies/%45%78%69%74%20%43%6f%75%6e%74%72%79*)
         printf '{"all":["JPX"],"now":"JPX"}' ;;
       */proxies/%4a%50%58*)
         if [ "${FAKE_PG_MODE:-healthy}" = default-empty ]; then
@@ -922,12 +922,12 @@ done
     *diag_pg_*) fail "healthy: unexpected filtered-group diagnosis: $_out" ;;
   esac
 
-  # 2) empty Country Pick selection: FAILED row + end-of-report diagnosis
+  # 2) empty Exit Country selection: FAILED row + end-of-report diagnosis
   #    attributing the COUNTRY_GROUPS knob (after rep_next, the operator's
   #    last screen); the report itself still succeeds (DEC-A
   #    warn-and-continue, deploy exit 0)
   FAKE_PG_MODE=default-empty
-  _out="$(report_success 2>&1)" || fail "DEC-A violated: report_success failed on an empty Country Pick selection"
+  _out="$(report_success 2>&1)" || fail "DEC-A violated: report_success failed on an empty Exit Country selection"
   case "$_out" in
     *'verify_failed verify_groups'*) : ;;
     *) fail "default-empty: missing FAILED groups row: $_out" ;;

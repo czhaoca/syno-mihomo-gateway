@@ -118,7 +118,7 @@ echo "OK: provider loaded $N nodes from the seeded cache"
 # Informational egress check through the rule target (after a url-test
 # round). The effective member must be a REAL node: an empty group degrades
 # to COMPATIBLE (= DIRECT), and gstatic's generate_204 answers direct from
-# CN. The chain is now MULTI-LEVEL (Proxy Mode -> Country Pick -> "<Country>
+# CN. The chain is now MULTI-LEVEL (Routing Mode -> Exit Country -> "<Country>
 # Auto" -> node), so resolve "now" through the groups with a bounded walk: a
 # member whose /proxies/<name> answer carries an all[] list is itself a
 # group - follow its own "now". Names ride the URL %XX-encoded byte by byte
@@ -129,7 +129,7 @@ enc_name() {
 }
 GSTATIC="http://www.gstatic.com/generate_204"
 ctl_get "/group/All%20Nodes/delay?timeout=8000&url=$GSTATIC" >/dev/null 2>&1 || true
-_now=$(ctl_get /proxies/Proxy%20Mode | sed -n 's/.*"now":"\([^"]*\)".*/\1/p')
+_now=$(ctl_get /proxies/Routing%20Mode | sed -n 's/.*"now":"\([^"]*\)".*/\1/p')
 _hop=0
 while [ "$_hop" -lt 4 ] && [ -n "$_now" ]; do
   _nj=$(ctl_get "/proxies/$(enc_name "$_now")")
@@ -139,7 +139,7 @@ while [ "$_hop" -lt 4 ] && [ -n "$_now" ]; do
   esac
   _hop=$((_hop+1))
 done
-case "$(ctl_get "/proxies/Proxy%20Mode/delay?timeout=5000&url=$GSTATIC")" in
+case "$(ctl_get "/proxies/Routing%20Mode/delay?timeout=5000&url=$GSTATIC")" in
   *'"delay"'*)
     case "$_now" in
       ''|COMPATIBLE|DIRECT|REJECT|REJECT-DROP|PASS)
@@ -148,7 +148,7 @@ case "$(ctl_get "/proxies/Proxy%20Mode/delay?timeout=5000&url=$GSTATIC")" in
     esac ;;
   *)
     echo "WARN: nodes loaded but the group probe failed - pick a country (or"
-    echo "      node) in the dashboard (Proxies -> Proxy Mode / Country Pick)"
+    echo "      node) in the dashboard (Proxies -> Routing Mode / Exit Country)"
     echo "      and retest from a LAN device" ;;
 esac
 exit 0

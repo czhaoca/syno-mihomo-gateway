@@ -108,8 +108,8 @@ dns:
     # hidden url-test group defined LAST under proxy-groups below, kept solely
     # as this DNS anchor (rename both together; the renderer AND CI validate
     # every '#group' fragment against the rendered inventory). Detouring via
-    # All Nodes instead of the Proxy Mode selector keeps resolution alive even
-    # when an operator pins Proxy Mode to DIRECT or the picked country group
+    # All Nodes instead of the Routing Mode selector keeps resolution alive even
+    # when an operator pins Routing Mode to DIRECT or the picked country group
     # empties to REJECT. These two entries and the foreign-by-default
     # core below render unconditionally - split-horizon v2 is the only DNS
     # profile, and both lists are REQUIRED in .env.
@@ -137,7 +137,7 @@ dns:
 # survived. parse-pure-ip sniffs exactly those flows; override-destination
 # replaces the client-resolved (possibly GFW-poisoned) address so the node
 # re-dials by hostname remotely, which both restores domain routing (incl.
-# the Streaming Sites group) and neutralizes poisoned client-side answers.
+# the Streaming Unlock group) and neutralizes poisoned client-side answers.
 # skip-domain carries the community-standard exclusions that break under
 # SNI override (Xiaomi IoT keep-alive, Apple push).
 sniffer:
@@ -193,72 +193,74 @@ proxy-providers:
 # Rules can only target a proxy or a proxy-group (NEVER a proxy-provider), which is
 # why the catch-all `MATCH,my-airport` crash-looped: `my-airport` is a proxy-provider,
 # not a routable target. These groups consume that provider via `use:`; the MATCH rule
-# below targets the Proxy Mode group instead.
+# below targets the Routing Mode group instead.
 #
-# Naming legend (the kind-suffix system - documented once, here and in
-# .env.example): "<X> Auto" = an auto-pick url-test group, "<X> Mode" = a
-# mode selector, "<X> Sites" = a site-rule group, "<X> Pick" = a manual
-# choice. Dashboard order = definition order (selectors first - the cards an
+# Naming legend (documented once, here and in .env.example): "<X> Auto" = an
+# auto-pick url-test group (fastest node within that country); the selectors
+# carry FUNCTION names (#58) - Routing Mode (the master mode switch),
+# Streaming Unlock (streaming-exit pinning), Exit Country (which country the
+# proxy exits from), Full-Tunnel Devices (the per-device force-proxy band).
+# Dashboard order = definition order (selectors first - the cards an
 # operator actually touches; hidden machinery last).
 proxy-groups:
-  # Proxy Mode: the dashboard-facing mode selector and the rule target
-  # (GEOSITE/MATCH below). Defaults to Country Pick - a stable exit COUNTRY
+  # Routing Mode: the dashboard-facing mode selector and the rule target
+  # (GEOSITE/MATCH below). Defaults to Exit Country - a stable exit COUNTRY
   # instead of the old full-pool latency race that hopped exit countries and
   # tripped site bot-protection. An operator can pin one exact provider node
   # (surfaced via use: - the only complete fix when a site objects to
   # same-country IP hops too), force DIRECT (bypass), or REJECT (block)
   # from MetaCubeXD.
-  - name: Proxy Mode
+  - name: Routing Mode
     type: select
     proxies:
-      - Country Pick
+      - Exit Country
       - DIRECT
       - REJECT
     use:
       - my-airport
 
-  # Streaming Sites: per-service selector for unlock-sensitive SITES (the
+  # Streaming Unlock: per-service selector for unlock-sensitive SITES (the
   # GEOSITE rules below send netflix + the audio services here). First member
-  # Proxy Mode = day-one behavior is identical to a single-group config; pin
+  # Routing Mode = day-one behavior is identical to a single-group config; pin
   # a streaming-unlock node - or a country auto group for one-click
   # Netflix-region pinning - from MetaCubeXD to move ONLY streaming traffic.
-  - name: Streaming Sites
+  - name: Streaming Unlock
     type: select
     proxies:
-      - Proxy Mode
+      - Routing Mode
 # {{COUNTRY_MEMBERS_STREAMING}}
       - DIRECT
     use:
       - my-airport
 
-  # Country Pick: choose the exit COUNTRY. Its members ARE the generated
+  # Exit Country: choose the exit COUNTRY. Its members ARE the generated
   # "<Country> Auto" groups from COUNTRY_GROUPS (REQUIRED in .env - the
   # render refuses without it): the selected country's url-test holds ONE
   # node at a time, so general traffic keeps a single exit IP until that
   # group re-picks within the same country. Defaults to the FIRST
   # COUNTRY_GROUPS entry (.env.example ships Japan Auto first). No DIRECT/
-  # REJECT here - bypass and block are Proxy Mode decisions; an empty picked
+  # REJECT here - bypass and block are Routing Mode decisions; an empty picked
   # group fails CLOSED (REJECT) rather than leaking.
-  - name: Country Pick
+  - name: Exit Country
     type: select
     proxies:
 # {{COUNTRY_MEMBERS_PICK}}
 
 # {{FULL_PROXY_BEGIN}}
-  # Full Proxy: strict per-device full-proxy for the FULL_PROXY_SOURCES
+  # Full-Tunnel Devices: strict per-device full-proxy for the FULL_PROXY_SOURCES
   # band (this fenced group renders ONLY when that knob is set). The
   # SRC-IP-CIDR rules just below the LAN rule send EVERYTHING from band
   # devices here - streaming AND CN sites included; LAN destinations stay
   # DIRECT via the rule above the band. Members deliberately exclude
   # DIRECT: a band device can never be silently un-proxied - REJECT is the
-  # kill switch. Defaults to Proxy Mode (the band follows the dashboard
+  # kill switch. Defaults to Routing Mode (the band follows the dashboard
   # mode); pick a country here to pin the band's exit independently.
   # Devices enter/leave the band via a router-side fixed-IP reservation
   # flip + reconnect - never a gateway restart (docs/configuration.md).
-  - name: Full Proxy
+  - name: Full-Tunnel Devices
     type: select
     proxies:
-      - Proxy Mode
+      - Routing Mode
 # {{COUNTRY_MEMBERS_FULL_PROXY}}
       - REJECT
 
@@ -305,7 +307,7 @@ rules:
 # {{FULL_PROXY_RULES}}
   # The panel must never depend on a populated proxy group: newer mihomo
   # (>=1.19.x) routes its OWN provider pull through this rule engine, so on
-  # a cold start with empty groups the pull would ride MATCH -> Proxy Mode
+  # a cold start with empty groups the pull would ride MATCH -> Routing Mode
   # -> (empty) REJECT and the subscription could never bootstrap (caught by
   # the 2026-07-22 staged validation; the DNS pins below only fix
   # resolution, not routing). Rendered from the subscription host exactly
@@ -319,16 +321,16 @@ rules:
   # catalogs, same pinning needs. (each service is a subset of
   # geolocation-!cn - these rules must come first; apple-music is
   # deliberately absent: CN storefront risk, and youtube-music rides
-  # geosite:youtube -> Proxy Mode.)
-  - 'GEOSITE,NETFLIX,Streaming Sites'
-  - 'GEOSITE,SPOTIFY,Streaming Sites'
-  - 'GEOSITE,TIDAL,Streaming Sites'
-  - 'GEOSITE,DEEZER,Streaming Sites'
-  - 'GEOSITE,SOUNDCLOUD,Streaming Sites'
+  # geosite:youtube -> Routing Mode.)
+  - 'GEOSITE,NETFLIX,Streaming Unlock'
+  - 'GEOSITE,SPOTIFY,Streaming Unlock'
+  - 'GEOSITE,TIDAL,Streaming Unlock'
+  - 'GEOSITE,DEEZER,Streaming Unlock'
+  - 'GEOSITE,SOUNDCLOUD,Streaming Unlock'
   - 'GEOSITE,CN,DIRECT'
   # Listed-foreign domains ride the proxy WITHOUT any local DNS resolution:
   # the GEOIP rule below never sees them - a privacy and a latency win.
-  - 'GEOSITE,GEOLOCATION-!CN,Proxy Mode'
+  - 'GEOSITE,GEOLOCATION-!CN,Routing Mode'
   # GEOIP needs a destination IP, so by default mihomo RESOLVES every remaining
   # domain via the DNS chain above just to evaluate this rule. Under
   # split-horizon v2 that lookup rides the tunneled foreign list (private);
@@ -339,4 +341,4 @@ rules:
   # Trade-off: CN domains MISSED by geosite:cn above lose their direct
   # short-circuit and ride the proxy via MATCH instead.
   - 'GEOIP,CN,DIRECT{{GEOIP_NO_RESOLVE}}'
-  - 'MATCH,Proxy Mode'
+  - 'MATCH,Routing Mode'

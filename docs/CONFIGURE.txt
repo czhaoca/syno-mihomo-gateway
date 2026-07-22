@@ -158,11 +158,11 @@ DNS settings
       addresses/CIDRs (a bare IP means /32; e.g. 192.168.1.240/28).
       Renders only when set -- unset keeps the rendered config
       byte-identical (the feature is invisible). When set, a
-      "Full Proxy" selector appears on the dashboard and one
+      "Full-Tunnel Devices" selector appears on the dashboard and one
       SRC-IP-CIDR rule per entry lands immediately after the LAN
       rule: band devices reach LAN destinations DIRECT, and
       everything else -- streaming and CN sites alike -- rides
-      Full Proxy (strict semantics). Malformed values refuse to
+      Full-Tunnel Devices (strict semantics). Malformed values refuse to
       render naming this key -- IPv6 entries, hostnames, octets
       >255, a prefix >32, duplicates, whitespace, backticks (IPv6
       is refused on purpose: routable LAN IPv6 routes around the
@@ -178,7 +178,7 @@ DNS settings
       NAME=regex;NAME=regex creates one "<Country> Auto" auto-
       selecting group per entry - the panel shows NAME and keeps it
       on the fastest node whose name matches regex - and those groups
-      are the members of the "Country Pick" selector, where you
+      are the members of the "Exit Country" selector, where you
       choose the exit country. The FIRST entry is the out-of-box
       default country (the shipped default puts Japan Auto first). A
       regex naming several countries IS a multi-country group. The
@@ -187,33 +187,36 @@ DNS settings
       airport's naming. A group that matches no node blocks traffic
       when selected instead of silently bypassing the proxy (the
       doctor flags it; when the empty group is the country
-      Country Pick is riding, default-route traffic is blocked - pick
+      Exit Country is riding, default-route traffic is blocked - pick
       another country there while you fix the pattern). Names may
       contain spaces ("Japan Auto") but must not start/end with one,
       nor reuse a built-in, reserved, or retired group name
-      (All Nodes / Country Pick / Proxy Mode / Streaming Sites /
+      (All Nodes / Exit Country / Routing Mode / Streaming Unlock /
       DIRECT / REJECT / ... - the render error names the collision;
       the full list is in .env.example); backticks and malformed
       entries refuse to render.
 
   Proxy groups on the dashboard
-      Proxy Mode is the mode selector the routing rules target:
-      default Country Pick, plus DIRECT / REJECT / the raw airport
+      Routing Mode is the mode selector the routing rules target:
+      default Exit Country, plus DIRECT / REJECT / the raw airport
       nodes (pin ONE exact node here when a site objects even to
-      same-country IP changes). Streaming Sites is the per-service
+      same-country IP changes). Streaming Unlock is the per-service
       selector for unlock-sensitive sites (Netflix + the audio
-      services; default Proxy Mode). Country Pick chooses the exit
+      services; default Routing Mode). Exit Country chooses the exit
       country: its members are the "<Country> Auto" groups above, so
       general traffic keeps a single exit IP and the exit country
       never hops on its own. All Nodes still exists but is hidden -
-      it only anchors the DNS detour above. Naming legend:
-      "<X> Auto" = auto-pick, "<X> Mode" = mode selector,
-      "<X> Sites" = site rules, "<X> Pick" = manual choice.
+      it only anchors the DNS detour above. Naming legend: "<X> Auto" = auto-pick
+      (fastest node within that country); the selectors carry
+      function names (#58): Routing Mode = the master mode switch,
+      Streaming Unlock = streaming-exit pinning, Exit Country =
+      the proxy's exit country, Full-Tunnel Devices = the
+      per-device force-proxy band.
 
   Removed keys
       The old priority include/exclude filter pair (and the older
       AUTO_EXCLUDE_FILTER) are gone - the "<Country> Auto" groups
-      plus Country Pick replace them. A .env still carrying any of
+      plus Exit Country replace them. A .env still carrying any of
       those lines refuses to render; the error names the exact lines
       to delete (the gateway keeps running on its previous config
       meanwhile). After this upgrade, dashboard selections reset
@@ -367,15 +370,15 @@ Full-proxy devices (FULL_PROXY_SOURCES)
   devices skip the smart routing above: one SRC-IP-CIDR rule per entry is
   spliced immediately after the LAN rule, so a band device still reaches
   LAN destinations DIRECT, but everything else -- streaming and CN sites
-  alike -- rides the "Full Proxy" group (strict semantics: no CN
+  alike -- rides the "Full-Tunnel Devices" group (strict semantics: no CN
   short-circuit for these sources). Unset, nothing renders and the config
   stays byte-identical -- the feature is invisible until you opt in.
 
-  The "Full Proxy" group is a dashboard selector. Members:
-      * Proxy Mode (the default) -- the band follows whatever the
-        dashboard's Proxy Mode says.
+  The "Full-Tunnel Devices" group is a dashboard selector. Members:
+      * Routing Mode (the default) -- the band follows whatever the
+        dashboard's Routing Mode says.
       * every "<Country> Auto" group -- pin the band's exit country
-        independently of the main Country Pick choice.
+        independently of the main Exit Country choice.
       * REJECT -- the kill switch: one click takes the whole band
         offline.
   There is deliberately no DIRECT member: a band device can never be
@@ -411,7 +414,7 @@ Full-proxy devices (FULL_PROXY_SOURCES)
   The doctor gained a "full_proxy" check: disabled (knob unused) / ok /
   parity-drift (the rendered rules no longer match the knob -- your band
   edit is NOT live, redeploy) / chain-violation (a non-LAN flow from a
-  band source bypassed Full Proxy).
+  band source bypassed Full-Tunnel Devices).
 
   Caveats:
       1. CN sites/apps on band devices exit overseas. Under fake-ip the

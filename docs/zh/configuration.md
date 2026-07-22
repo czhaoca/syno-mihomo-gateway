@@ -60,8 +60,8 @@ Compose 兼容的引号，因此包含空格、`&`、`#`、`$`、引号或反斜
 显式报错失败——仓库中不会硬编码任何 DNS）。服务器末尾的 `#All Nodes` 是 mihomo 的分组
 绕行片段语法：该解析器会**经由**字面命名为 `All Nodes` 的分组拨号——那个**隐藏的**全池
 url-test 分组，如今只为充当这个 DNS 锚点而保留（`hidden: true` 只是显示标志：MetaCubeXD
-不显示该卡片，但分组本身仍然存活、可路由）。绕行特意走这个锚点而非 `Proxy Mode` 选择器：
-它总是按健康度持有一个存活节点，因此即使你在面板里把 `Proxy Mode` 固定为 `DIRECT`、或
+不显示该卡片，但分组本身仍然存活、可路由）。绕行特意走这个锚点而非 `Routing Mode` 选择器：
+它总是按健康度持有一个存活节点，因此即使你在面板里把 `Routing Mode` 固定为 `DIRECT`、或
 所选国家分组空到 REJECT，DNS 解析也照常工作。重命名或移除它必须连同每一个 `#All Nodes`
 片段一起改——渲染器**和** CI 会校验任何 `DNS_*` 列表中的每个 `#分组` 片段都指向真实渲染
 出的分组（或 `DIRECT`）；悬空片段会拒绝渲染。已部署 `.env` 中的 DNS 值在精简分组模型下
@@ -75,15 +75,16 @@ url-test 分组，如今只为充当这个 DNS 锚点而保留（`hidden: true` 
 | `DNS_CN_NAMESERVER` | ✅ | **分域解析对 (a)：** 命中 mihomo `geosite:cn` 列表的域名只在这里解析——国内、直连。必须与 `DNS_FOREIGN_NAMESERVER` 一起设置——分域解析 v2 是**唯一**的 DNS 配置档；缺失任何一项都会拒绝渲染（入口点守门会保持上一份配置继续运行）。 | `https://223.5.5.5/dns-query,https://120.53.53.53/dns-query` |
 | `DNS_FOREIGN_NAMESERVER` | ✅ | **分域解析对 (b)，v2 境外优先：** 渲染为**默认** `nameserver`——所有未被策略条目命中的域名（geosite 境外列表**以及**未列出的长尾）只在这里解析——境外、经 `#All Nodes` 走隧道。这些域名完全不会到达任何国内运营方；隧道全灭时解析**失败关闭**（SERVFAIL），绝不悄悄泄漏（fallback 双查询已随传统配置档一并移除）。 | `https://1.1.1.1/dns-query#All Nodes,https://8.8.8.8/dns-query#All Nodes` |
 | `DNS_GEOIP_NO_RESOLVE` | | `true` 会在 `GEOIP,CN,DIRECT` 规则上渲染出 `no-resolve`，使其完全不再强制任何解析。在 v2 下这次强制解析本就走隧道境外列表（私密），所以默认保持 `false`，未列出的国内域名保住直连捷径。`true` 的代价：`geosite:cn` 漏收的国内域名经 `MATCH` 走代理（见[故障排查](troubleshooting.md#开启-no-resolve-后小众国内网站变慢或打不开)）。仅接受小写 `true`/`false`。 | `false` |
-| `SNIFFER_ENABLE` | | 渲染**流量嗅探**（TLS SNI / HTTP Host / QUIC，`parse-pure-ip` + `override-destination`）：在网关**之外**解析 DNS 的局域网客户端发出的裸 IP 连接会恢复出域名，域名规则（含 `Streaming Sites`）照常路由它们，被污染的客户端解析结果也会在节点侧按域名重拨。未设/`false` 时不渲染该块，与 v1.3.10 之前逐字节一致（升级兼容）；`.env.example` 出厂为 `true`。路由自愈，但绕过网关的客户端要修复**隐私**仍须把设备 DNS 指向网关——见[故障排查](troubleshooting.md#局域网客户端绕过网关-dnsdnsleaktest-仍显示国内解析器)。 | `true` |
-| `FULL_PROXY_SOURCES` | | **可选的按设备全代理网段：**逗号分隔的 IPv4 地址/CIDR（裸 IP 视为 `/32`）。**仅在设置时**渲染——未设时渲染配置**逐字节不变**（该特性完全不可见）。设置后，面板上会出现一个 **`Full Proxy`** 选择器，且每个条目各生成一条 `SRC-IP-CIDR` 规则，落在 **LAN 规则之后紧邻的位置**：网段内设备访问局域网目标仍走 DIRECT，而**其余一切——流媒体与国内站点一视同仁——都走 `Full Proxy`**（严格语义）。格式错误的值**拒绝渲染**并点名本键——IPv6 条目、主机名、超过 255 的字节段、超过 32 的前缀长度、重复条目、空白字符、反引号（拒绝 IPv6 是有意为之：可路由的局域网 IPv6 会*绕开*这台仅 IPv4 的网关——见 `ipv6_bypass` 注意事项）。按设备的模式切换在**路由器侧**完成（一次 DHCP 固定 IP 翻转），绝不重启网关。见[全代理设备](#全代理设备full_proxy_sources)。 | `192.168.1.240/28` |
-| `COUNTRY_GROUPS` | ✅ | **必填——整个分组模型由它生成**（留空/未设会拒绝渲染，并指向 `.env.example` 的默认值）：`名称=正则;名称=正则;…` 每项生成一个 **`<Country> Auto`** url-test 分组——面板显示 `名称`，自动选中匹配 `正则` 的最快机场节点——这些分组就是 **`Country Pick`** 选择器的全部成员。**第一项**是开箱即用的默认出口国家；`.env.example` 出厂把 **Japan Auto 放在第一位**。正则风味：regexp2（.NET）——默认区分大小写（可用 `(?i)`），**无锚点子串**匹配（`日本` 匹配 `日本01`），`\|` 表示或，**反引号会拒绝渲染**（非法正则会让 mihomo 启动即崩溃）；短拉丁代码要加锚点（如 `US\d\|^US`），避免误中其他名字。正则跨越多个国家即是**多国分组**（如 `亚洲=日本\|新加坡`）。不带独立健康检查（延迟数据来自订阅源的健康检查）；匹配不到任何节点的分组被选中时 **REJECT**（失败关闭，绝不悄悄绕过代理；doctor 会标记——见[故障排查](troubleshooting.md#doctor-报告国家分组为空proxy_groupsdefault-empty--country-empty)）。`名称` 可用中文、可含中间空格（`Japan Auto`）——首尾空白会拒绝——且不得与内建、保留或已退役的分组/适配器名重名（`All Nodes` / `Country Pick` / `Proxy Mode` / `Streaming Sites` / `DIRECT` / `REJECT` / …——渲染错误会点名冲突项；完整清单见 `.env.example`）；空条目、重复名称及格式错误的条目**拒绝渲染**。请按*你的*机场节点命名调整出厂示例。 | `Japan Auto=日本\|JP\d\|^JP;US Auto=…`（见 `.env.example`） |
+| `SNIFFER_ENABLE` | | 渲染**流量嗅探**（TLS SNI / HTTP Host / QUIC，`parse-pure-ip` + `override-destination`）：在网关**之外**解析 DNS 的局域网客户端发出的裸 IP 连接会恢复出域名，域名规则（含 `Streaming Unlock`）照常路由它们，被污染的客户端解析结果也会在节点侧按域名重拨。未设/`false` 时不渲染该块，与 v1.3.10 之前逐字节一致（升级兼容）；`.env.example` 出厂为 `true`。路由自愈，但绕过网关的客户端要修复**隐私**仍须把设备 DNS 指向网关——见[故障排查](troubleshooting.md#局域网客户端绕过网关-dnsdnsleaktest-仍显示国内解析器)。 | `true` |
+| `FULL_PROXY_SOURCES` | | **可选的按设备全代理网段：**逗号分隔的 IPv4 地址/CIDR（裸 IP 视为 `/32`）。**仅在设置时**渲染——未设时渲染配置**逐字节不变**（该特性完全不可见）。设置后，面板上会出现一个 **`Full-Tunnel Devices`** 选择器，且每个条目各生成一条 `SRC-IP-CIDR` 规则，落在 **LAN 规则之后紧邻的位置**：网段内设备访问局域网目标仍走 DIRECT，而**其余一切——流媒体与国内站点一视同仁——都走 `Full-Tunnel Devices`**（严格语义）。格式错误的值**拒绝渲染**并点名本键——IPv6 条目、主机名、超过 255 的字节段、超过 32 的前缀长度、重复条目、空白字符、反引号（拒绝 IPv6 是有意为之：可路由的局域网 IPv6 会*绕开*这台仅 IPv4 的网关——见 `ipv6_bypass` 注意事项）。按设备的模式切换在**路由器侧**完成（一次 DHCP 固定 IP 翻转），绝不重启网关。见[全代理设备](#全代理设备full_proxy_sources)。 | `192.168.1.240/28` |
+| `COUNTRY_GROUPS` | ✅ | **必填——整个分组模型由它生成**（留空/未设会拒绝渲染，并指向 `.env.example` 的默认值）：`名称=正则;名称=正则;…` 每项生成一个 **`<Country> Auto`** url-test 分组——面板显示 `名称`，自动选中匹配 `正则` 的最快机场节点——这些分组就是 **`Exit Country`** 选择器的全部成员。**第一项**是开箱即用的默认出口国家；`.env.example` 出厂把 **Japan Auto 放在第一位**。正则风味：regexp2（.NET）——默认区分大小写（可用 `(?i)`），**无锚点子串**匹配（`日本` 匹配 `日本01`），`\|` 表示或，**反引号会拒绝渲染**（非法正则会让 mihomo 启动即崩溃）；短拉丁代码要加锚点（如 `US\d\|^US`），避免误中其他名字。正则跨越多个国家即是**多国分组**（如 `亚洲=日本\|新加坡`）。不带独立健康检查（延迟数据来自订阅源的健康检查）；匹配不到任何节点的分组被选中时 **REJECT**（失败关闭，绝不悄悄绕过代理；doctor 会标记——见[故障排查](troubleshooting.md#doctor-报告国家分组为空proxy_groupsdefault-empty--country-empty)）。`名称` 可用中文、可含中间空格（`Japan Auto`）——首尾空白会拒绝——且不得与内建、保留或已退役的分组/适配器名重名（`All Nodes` / `Exit Country` / `Routing Mode` / `Streaming Unlock` / `DIRECT` / `REJECT` / …——渲染错误会点名冲突项；完整清单见 `.env.example`）；空条目、重复名称及格式错误的条目**拒绝渲染**。请按*你的*机场节点命名调整出厂示例。 | `Japan Auto=日本\|JP\d\|^JP;US Auto=…`（见 `.env.example`） |
 
-**命名图例**（面板上通用的后缀体系）：**`<X> Auto`** = 自动优选 url-test 分组 ·
-**`<X> Mode`** = 模式选择器 · **`<X> Sites`** = 站点规则分组 · **`<X> Pick`** = 手动选择。
+**命名图例**：**`<X> Auto`** = 自动优选 url-test 分组（该国家内最快节点）；选择器采用
+功能命名（#58）——**`Routing Mode`** = 主模式开关 · **`Streaming Unlock`** = 流媒体出口
+固定 · **`Exit Country`** = 代理出口国家 · **`Full-Tunnel Devices`** = 按设备强制代理段。
 
 **已移除的开关。** 精简前的“过滤默认线路”（优先节点的圈定/剔除过滤对，及更早的
-`AUTO_EXCLUDE_FILTER`）已经移除——由 `<Country> Auto` 分组加 `Country Pick` 选择器取代。
+`AUTO_EXCLUDE_FILTER`）已经移除——由 `<Country> Auto` 分组加 `Exit Country` 选择器取代。
 `.env` 中仍残留任何这类行都会**拒绝渲染**，错误信息会点名需要删除的行（期间入口点守门
 保持上一份有效配置继续运行）；一次性升级路径见发布说明。
 
@@ -266,28 +267,28 @@ docker compose --env-file ../syno-mihomo-gateway-data/.env up -d --force-recreat
 （或 `sudo sh scripts/gateway.sh redeploy --yes`）。当镜像与 compose 模型未变化时，
 普通的 `up -d mihomo` 是**空操作**——入口脚本只在重建容器时才重新渲染，因此仅改模板
 的编辑会被静默忽略。如需自定义路由，请编辑 `rules:` 列表——默认值为
-`GEOIP,LAN,DIRECT,no-resolve` / `GEOSITE,<服务>,Streaming Sites`（netflix、spotify、
-tidal、deezer、soundcloud）/ `GEOSITE,CN,DIRECT` / `GEOSITE,GEOLOCATION-!CN,Proxy Mode` /
-`GEOIP,CN,DIRECT` / `MATCH,Proxy Mode`：私网/链路本地目标绝不走隧道（`LAN` 是 mihomo
+`GEOIP,LAN,DIRECT,no-resolve` / `GEOSITE,<服务>,Streaming Unlock`（netflix、spotify、
+tidal、deezer、soundcloud）/ `GEOSITE,CN,DIRECT` / `GEOSITE,GEOLOCATION-!CN,Routing Mode` /
+`GEOIP,CN,DIRECT` / `MATCH,Routing Mode`：私网/链路本地目标绝不走隧道（`LAN` 是 mihomo
 内建类别，无需 geo 数据库），流媒体——视频**和**音频，同样按地区锁区——走自己的可固定
 分组，国内流量直连，境外列表域名**不经任何本地 DNS 解析**直接走代理，GEOIP 兜底其余流量。
 
-代理分组图（面板顺序 = 定义顺序——操作者会用到的选择器在前，隐藏机制在后；后缀含义见
+代理分组图（面板顺序 = 定义顺序——操作者会用到的选择器在前，隐藏机制在后；名称含义见
 上文[命名图例](#dns注入到配置模板中)）：
 
-- **`Proxy Mode`**——规则（`GEOSITE`/`MATCH`）指向的选择器。成员：`Country Pick`（默认）、
+- **`Routing Mode`**——规则（`GEOSITE`/`MATCH`）指向的选择器。成员：`Exit Country`（默认）、
   `DIRECT`、`REJECT`，外加机场原始节点。当某网站连同国 IP 跳变也要计较时，在这里
   **固定一个具体节点**就是完整的解决方案；`DIRECT` 绕过隧道，`REJECT` 阻断。
-- **`Streaming Sites`**——针对解锁敏感**站点**的按服务选择器（上面的 netflix + 音频服务
-  规则落在这里）。第一个成员是 `Proxy Mode`，因此开箱行为与单分组配置完全一致；
+- **`Streaming Unlock`**——针对解锁敏感**站点**的按服务选择器（上面的 netflix + 音频服务
+  规则落在这里）。第一个成员是 `Routing Mode`，因此开箱行为与单分组配置完全一致；
   `<Country> Auto` 分组、`DIRECT` 与原始节点一键可达——固定一个流媒体解锁节点（或某个
   国家分组，一键锁定区域）即可只切换流媒体流量。
-- **`Country Pick`**——选择出口**国家**。成员正是由 `COUNTRY_GROUPS` 生成的
+- **`Exit Country`**——选择出口**国家**。成员正是由 `COUNTRY_GROUPS` 生成的
   `<Country> Auto` 分组（这正是该键必填的原因）；默认为**第一**项。所选国家的 url-test
   每次只持有**一个**节点，因此常规流量保持单一出口 IP，出口国家绝不会自行跳变。同国
   之内的重选（url-test `tolerance: 50`、订阅源健康检查节奏）仍会发生——若网站连这个也
-  计较，请改在 `Proxy Mode` 里固定一个原始节点。这里没有 `DIRECT`/`REJECT`：绕过与阻断
-  是 `Proxy Mode` 的决定，所选分组为空时**失败关闭**（REJECT）而不是泄漏。
+  计较，请改在 `Routing Mode` 里固定一个原始节点。这里没有 `DIRECT`/`REJECT`：绕过与阻断
+  是 `Routing Mode` 的决定，所选分组为空时**失败关闭**（REJECT）而不是泄漏。
 - **`<Country> Auto`**——每条 `COUNTRY_GROUPS` 生成一个 url-test 分组：选中匹配该条正则
   的最快机场节点，`empty-fallback: REJECT`（失败关闭），`tolerance: 50`，延迟数据继承自
   订阅源健康检查（零额外探测流量）。
@@ -308,14 +309,14 @@ URL（并按上述方式重新渲染）。
 
 可选。设置 `FULL_PROXY_SOURCES` 会圈出一小段 **IPv4 网段**，段内设备跳过上文的智能分流：
 每个条目各生成一条 `SRC-IP-CIDR` 规则，拼接在 **LAN 规则之后紧邻的位置**，因此网段内设备
-访问局域网目标仍然 DIRECT，但**其余一切——流媒体与国内站点一视同仁——都走 `Full Proxy`
+访问局域网目标仍然 DIRECT，但**其余一切——流媒体与国内站点一视同仁——都走 `Full-Tunnel Devices`
 分组**（严格语义：对这些源 IP 不做任何国内短路）。未设时什么都不渲染，配置保持**逐字节
 不变**——在你主动启用之前，该特性完全不可见。
 
-**`Full Proxy` 分组**是一个面板选择器。成员：
+**`Full-Tunnel Devices` 分组**是一个面板选择器。成员：
 
-- **`Proxy Mode`**（默认）——网段跟随面板上 `Proxy Mode` 的当前选择。
-- 每一个 **`<Country> Auto`** 分组——把网段的出口国家**独立**于主 `Country Pick` 的选择
+- **`Routing Mode`**（默认）——网段跟随面板上 `Routing Mode` 的当前选择。
+- 每一个 **`<Country> Auto`** 分组——把网段的出口国家**独立**于主 `Exit Country` 的选择
   单独固定。
 - **`REJECT`**——断网总闸：一键让整个网段下线。
 
@@ -343,7 +344,7 @@ IPv6 条目、主机名、超过 255 的字节段、超过 32 的前缀长度、
 
 `doctor` 新增 **`full_proxy`** 检查：`disabled`（未使用该键）· `ok` · `parity-drift`
 （渲染出的规则与该键不再一致——你的网段修改**尚未生效**，请重新部署）·
-`chain-violation`（来自网段源 IP 的一条非局域网流量绕过了 `Full Proxy`）。
+`chain-violation`（来自网段源 IP 的一条非局域网流量绕过了 `Full-Tunnel Devices`）。
 
 **注意事项：**
 

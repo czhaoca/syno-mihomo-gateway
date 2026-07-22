@@ -129,9 +129,9 @@ DNS 设置
       可选的按设备全代理网段：以逗号分隔的 IPv4 地址/CIDR（裸 IP 视为
       /32；例如 192.168.1.240/28）。只有设置了才会渲染——不设置时渲染
       出的配置逐字节相同（该功能完全不可见）。设置后，面板上会出现一个
-      "Full Proxy" 选择器，且每个条目都会在 LAN 规则之后紧跟生成一条
+      "Full-Tunnel Devices" 选择器，且每个条目都会在 LAN 规则之后紧跟生成一条
       SRC-IP-CIDR 规则：网段内设备访问局域网目标仍然直连，而其余一切
-      ——流媒体和国内网站一视同仁——都走 "Full Proxy"（严格语义）。
+      ——流媒体和国内网站一视同仁——都走 "Full-Tunnel Devices"（严格语义）。
       格式错误的值会拒绝渲染并点名此键——IPv6 条目、主机名、大于 255
       的段、大于 32 的前缀、重复项、空白、反引号（拒绝 IPv6 是有意
       为之：可路由的局域网 IPv6 会整个绕过这台仅 IPv4 的网关——见
@@ -143,34 +143,36 @@ DNS 设置
       必填——面板的分组模型由它生成（留空会拒绝渲染；请从出厂默认
       值改起）：名称=正则;名称=正则 每项生成一个 "<Country> Auto"
       自动优选分组——面板显示"名称"，并始终选中名字匹配"正则"的
-      最快节点——这些分组就是 "Country Pick" 选择器的全部成员，你在
+      最快节点——这些分组就是 "Exit Country" 选择器的全部成员，你在
       那里选择出口国家。第一项是开箱即用的默认国家（出厂默认把
       Japan Auto 放在第一位）。一个正则写多个国家即是多国分组。出厂
       示例适配以中文命名节点的机场（美国01、新加坡05……）——请按你
       的机场命名修改。匹配不到任何节点的分组被选中时会直接拒绝流量，
-      而不是悄悄绕过代理（doctor 会标记；若空掉的正是 Country Pick
+      而不是悄悄绕过代理（doctor 会标记；若空掉的正是 Exit Country
       当前所选的国家，默认线路流量会被拦截——修正则期间可先在那里
       改选另一个国家）。名称可含中间空格（"Japan Auto"），但不能以
       空格开头/结尾，也不能与内建、保留或已退役的分组名重名
-      （All Nodes / Country Pick / Proxy Mode / Streaming Sites /
+      （All Nodes / Exit Country / Routing Mode / Streaming Unlock /
       DIRECT / REJECT / ……——渲染错误会点名冲突项；完整清单见
       .env.example）；反引号及格式错误的条目会拒绝渲染。
 
   面板上的代理分组
-      Proxy Mode 是路由规则指向的模式选择器：默认 Country Pick，
+      Routing Mode 是路由规则指向的模式选择器：默认 Exit Country，
       另有 DIRECT / REJECT / 机场原始节点（当某网站连同国 IP 变化
-      也要计较时，在这里固定一个具体节点即可）。Streaming Sites 是
+      也要计较时，在这里固定一个具体节点即可）。Streaming Unlock 是
       针对解锁敏感站点的按服务选择器（Netflix + 各音频流媒体；默认
-      Proxy Mode）。Country Pick 选择出口国家：成员正是上面的
+      Routing Mode）。Exit Country 选择出口国家：成员正是上面的
       "<Country> Auto" 分组，因此常规流量保持单一出口 IP，出口国家
       绝不会自行跳变。All Nodes 仍然存在但已隐藏——它只为上面的
-      DNS 绕行充当锚点。命名图例："<X> Auto" = 自动优选，
-      "<X> Mode" = 模式选择器，"<X> Sites" = 站点规则，
-      "<X> Pick" = 手动选择。
+      DNS 绕行充当锚点。命名图例："<X> Auto" = 自动优选
+      （该国家内最快节点）；选择器采用功能命名（#58）：
+      Routing Mode = 主模式开关，Streaming Unlock = 流媒体出口固定，
+      Exit Country = 代理出口国家，Full-Tunnel Devices = 按设备
+      强制代理段。
 
   已移除的键
       旧的优先节点圈定/剔除过滤对（及更早的 AUTO_EXCLUDE_FILTER）
-      已经移除——由 "<Country> Auto" 分组加 Country Pick 取代。
+      已经移除——由 "<Country> Auto" 分组加 Exit Country 取代。
       .env 中仍残留任何这类行都会拒绝渲染；错误会点名需要删除的行
       （期间网关继续运行上一份有效配置）。本次升级后，面板选择会
       重置一次（保存的选择按分组名记录）——请在面板里重新固定。
@@ -306,13 +308,13 @@ Lite 模式（通用 Linux / 树莓派）
   可选。设置 FULL_PROXY_SOURCES 会保留一小段 IPv4 网段，段内设备跳过
   上面的智能分流：每个条目会在 LAN 规则之后紧跟拼入一条 SRC-IP-CIDR
   规则，因此段内设备访问局域网目标仍然直连，而其余一切——流媒体和
-  国内网站一视同仁——都走 "Full Proxy" 分组（严格语义：这些来源没有
+  国内网站一视同仁——都走 "Full-Tunnel Devices" 分组（严格语义：这些来源没有
   国内直连捷径）。不设置则什么都不渲染，配置逐字节不变——在你主动
   启用之前该功能完全不可见。
 
-  "Full Proxy" 分组是一个面板选择器。成员：
-      * Proxy Mode（默认）——网段跟随面板上 Proxy Mode 的当前选择。
-      * 每个 "<Country> Auto" 分组——独立于主 "Country Pick" 的
+  "Full-Tunnel Devices" 分组是一个面板选择器。成员：
+      * Routing Mode（默认）——网段跟随面板上 Routing Mode 的当前选择。
+      * 每个 "<Country> Auto" 分组——独立于主 "Exit Country" 的
         选择，单独固定网段的出口国家。
       * REJECT——断网开关：一键让整个网段下线。
   有意不设 DIRECT 成员：面板上的一次点击永远不可能让段内设备悄悄
@@ -344,7 +346,7 @@ Lite 模式（通用 Linux / 树莓派）
   doctor 新增 "full_proxy" 检查：disabled（未使用该键）/ ok /
   parity-drift（渲染出的规则与该键不再一致——你的网段改动尚未生效，
   请重新部署）/ chain-violation（网段来源的一条非局域网流量绕过了
-  Full Proxy）。
+  Full-Tunnel Devices）。
 
   注意事项：
       1. 段内设备访问国内网站/应用会从境外出口。在 fake-ip 下，段内

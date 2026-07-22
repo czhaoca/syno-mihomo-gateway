@@ -204,8 +204,8 @@ token (both validated as strict `true`/`false`), and the split-horizon pair
 the only DNS profile: both lists are required, and a render without them refuses with the
 missing variable named (see [Configuration](configuration.md)). Routing is the static `rules:` list
 (LAN/private destinations direct first, streaming (video + audio services) → the pinnable
-`Streaming Sites` selector, CN direct, listed-foreign → the `Proxy Mode` selector, GEOIP
-fallthrough). `Proxy Mode` defaults to `Country Pick`, whose members are the `<Country> Auto`
+`Streaming Unlock` selector, CN direct, listed-foreign → the `Routing Mode` selector, GEOIP
+fallthrough). `Routing Mode` defaults to `Exit Country`, whose members are the `<Country> Auto`
 url-test groups generated from the **required** `COUNTRY_GROUPS` key — general traffic rides
 the one node the picked country's group holds, so the exit country never hops on its own; a
 hidden `All Nodes` full-pool group survives solely as the DNS detour anchor (see
@@ -222,11 +222,11 @@ in any committed file (a project rule); real values live only in the
 in-repo copies). See [Configuration](configuration.md) and [Development](development.md).
 
 When the optional `FULL_PROXY_SOURCES` band is set, rendering additionally fences in a
-**`Full Proxy`** selector (members: `Proxy Mode` — the default — every `<Country> Auto`
+**`Full-Tunnel Devices`** selector (members: `Routing Mode` — the default — every `<Country> Auto`
 group, and `REJECT`; deliberately **no `DIRECT`**, so a band device can never be silently
 un-proxied) and splices one `SRC-IP-CIDR` rule per entry **immediately after the LAN rule**:
 band devices still reach LAN destinations direct, but everything else — streaming and CN
-alike — rides `Full Proxy`. Unset, none of this renders and the config stays byte-identical
+alike — rides `Full-Tunnel Devices`. Unset, none of this renders and the config stays byte-identical
 (see [Configuration](configuration.md#full-proxy-devices-full_proxy_sources)).
 
 ## Safety model ("safe-auto")

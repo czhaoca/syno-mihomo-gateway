@@ -2,8 +2,8 @@
 # validate_release.sh - on-NAS release validation for a staged bundle.
 # Proves, on the real network, what CI can only prove structurally:
 #   A. the staged bundle deploys and doctor is healthy (incl. the Streaming
-#      Sites group + netflix rule of v1.3.10, renamed in the group-model
-#      streamline);
+#      Unlock group + netflix rule of v1.3.10, renamed in the group-model
+#      streamline and again in #58);
 #   B. the saved .env renders the v2 split-horizon config - the ONLY DNS
 #      profile since the proxy-groups-v2 purge - then the sniffer and
 #      country groups are refreshed from the shipped .env.example defaults
@@ -36,7 +36,7 @@
 #                 A5 then temporarily adds X to FULL_PROXY_SOURCES,
 #                 attaches an ephemeral probe container (the mihomo image,
 #                 default route re-pointed at the gateway) and asserts its
-#                 flows carry 'Full Proxy' via /connections. Liveness-
+#                 flows carry 'Full-Tunnel Devices' via /connections. Liveness-
 #                 checked first (a replying IP is NOT spare); torn down on
 #                 completion AND from the INT/TERM trap. Unset -> a spare IP
 #                 is AUTO-DERIVED (#57: container-vantage ping x2, outside
@@ -55,7 +55,7 @@
 # every .env key (lib sourcing + load_env), an inherited REPO_ROOT breaks the
 # childrens' lib locators, and docker compose lets process env override
 # --env-file - both bit validation run 2.
-# Proxy Mode egress probes fire only after a group-wide url-test kick, and
+# Routing Mode egress probes fire only after a group-wide url-test kick, and
 # the parked caches are RESTORED after the cold-start block, never dropped:
 # cache.db carries the dashboard-selected node, and the template's All Nodes
 # url-test group is lazy - with the selection wiped and zero LAN traffic
@@ -164,8 +164,8 @@ now_is_real() {
 # Mirrors the doctor's chk_proxy_groups enumeration (scripts/lib/checks.sh).
 urltest_groups() {
   awk -F'"name":"' '{ for (i = 2; i <= NF; i++) { n = $i; sub(/".*/, "", n); print n } }' \
-    | grep -v -e '^Proxy Mode$' -e '^Streaming Sites$' -e '^Country Pick$' \
-              -e '^Full Proxy$' -e '^Priority Nodes$' \
+    | grep -v -e '^Routing Mode$' -e '^Streaming Unlock$' -e '^Exit Country$' \
+              -e '^Full-Tunnel Devices$' -e '^Priority Nodes$' \
               -e '^PROXY$' -e '^STREAMING$' -e '^GLOBAL$' -e '^DIRECT$' \
               -e '^REJECT$' -e '^REJECT-DROP$' -e '^PASS$' -e '^COMPATIBLE$'
 }
@@ -185,8 +185,8 @@ url_encode() {
 filtered_real_count() { members_of | grep -v '^COMPATIBLE$' | grep -c -v '^REJECT$'; }
 
 # resolve_now_chain START - follow group "now" members through ctl_get until
-# a non-group answers (bounded walk: the streamlined graph chains Proxy Mode
-# -> Country Pick -> "<Country> Auto" -> node); prints the final member. A
+# a non-group answers (bounded walk: the streamlined graph chains Routing Mode
+# -> Exit Country -> "<Country> Auto" -> node); prints the final member. A
 # member whose /proxies/<name> answer carries an all[] list is itself a
 # group. ctl_get is the injectable transport (--self-test stubs it).
 resolve_now_chain() {
@@ -241,7 +241,7 @@ fp_ip_in_cidr() {
 
 # fp_conn_lines - controller /connections JSON on stdin -> one line per
 # connection: sourceIP|destinationIP|network|fp/nofp (fp = the chain
-# carries 'Full Proxy'). Connections are split onto lines FIRST (a
+# carries 'Full-Tunnel Devices'). Connections are split onto lines FIRST (a
 # multi-char RS is a gawk extension BusyBox awk lacks). Mirrors the
 # doctor's _fp_conns - duplicated because checks.sh and this script cannot
 # source each other; both sides are suite-covered. (#46)
@@ -253,7 +253,7 @@ fp_conn_lines() {
       if (match($0, /"sourceIP":"[^"]*"/))      src=substr($0, RSTART+12, RLENGTH-13)
       if (match($0, /"destinationIP":"[^"]*"/)) dst=substr($0, RSTART+17, RLENGTH-18)
       if (match($0, /"network":"[^"]*"/))       net=substr($0, RSTART+11, RLENGTH-12)
-      if (match($0, /"chains":\[[^]]*"Full Proxy"[^]]*\]/)) fp="fp"
+      if (match($0, /"chains":\[[^]]*"Full-Tunnel Devices"[^]]*\]/)) fp="fp"
       print src "|" dst "|" net "|" fp
     }'
 }
@@ -321,13 +321,13 @@ conn_probe_lines() {
 
 # conn_mode_ok MODE - classify conn_probe_lines output (stdin).
 #   direct: at least one flow, and NO flow rides a proxy group.
-#   proxy:  at least one flow carries 'Proxy Mode' behind a REAL head -
+#   proxy:  at least one flow carries 'Routing Mode' behind a REAL head -
 #           builtins/placeholders never count (the COMPATIBLE lesson).
 conn_mode_ok() {
   awk -v mode="$1" -F"$US" '
     NF >= 2 { n++ }
-    mode == "direct" && $2 ~ /Proxy Mode|Full Proxy|Streaming Sites/ { viol++ }
-    mode == "proxy" && $2 ~ /Proxy Mode/ \
+    mode == "direct" && $2 ~ /Routing Mode|Full-Tunnel Devices|Streaming Unlock/ { viol++ }
+    mode == "proxy" && $2 ~ /Routing Mode/ \
       && $1 !~ /^(DIRECT|REJECT|REJECT-DROP|PASS|COMPATIBLE|GLOBAL)$/ { good++ }
     END {
       if (mode == "direct") exit !(n > 0 && viol == 0)
@@ -339,7 +339,7 @@ conn_mode_ok() {
 # (bare IPs and CIDR entries both count). Shared by derive_probe_ip and the
 # --probe-ip flag path: a band member is CORRECT for A5's ride-check but
 # would falsify the C direct-gate (band traffic legitimately rides the
-# proxy - config.template.yaml's Full Proxy contract).
+# proxy - config.template.yaml's Full-Tunnel Devices contract).
 ip_in_band() {
   [ -n "$2" ] || return 1
   _iib_ifs=$IFS; IFS=','
@@ -414,7 +414,7 @@ say() { echo; echo "=== $* ==="; }
 
 # unpark PATH - put PATH back from PATH.v138park (file or directory),
 # replacing whatever the cold run rebuilt; no-op without a park. Run 3
-# dropped the park on pass, which reset the Proxy Mode selector to the group
+# dropped the park on pass, which reset the Routing Mode selector to the group
 # default and lost the owner's dashboard-selected node.
 unpark() {
   [ -e "$1.v138park" ] || return 0
@@ -515,14 +515,14 @@ EOF
   #     the encoder independently), and placeholder exclusion counting BOTH
   #     adapters - a live emptied filtered group reports all:["REJECT"]
   #     (the epic's empty-fallback), not COMPATIBLE.
-  _gj='{"proxies":[{"name":"Proxy Mode","type":"Selector","all":["Country Pick","DIRECT","REJECT"]},{"name":"Streaming Sites","type":"Selector","all":["Proxy Mode","Japan Auto","DIRECT"]},{"name":"Country Pick","type":"Selector","all":["Japan Auto"]},{"name":"Japan Auto","type":"URLTest","all":["n1"]},{"name":"All Nodes","type":"URLTest","hidden":true,"all":["n1"]},{"name":"GLOBAL","type":"Selector","all":["All Nodes","Proxy Mode"]}]}'
+  _gj='{"proxies":[{"name":"Routing Mode","type":"Selector","all":["Exit Country","DIRECT","REJECT"]},{"name":"Streaming Unlock","type":"Selector","all":["Routing Mode","Japan Auto","DIRECT"]},{"name":"Exit Country","type":"Selector","all":["Japan Auto"]},{"name":"Japan Auto","type":"URLTest","all":["n1"]},{"name":"All Nodes","type":"URLTest","hidden":true,"all":["n1"]},{"name":"GLOBAL","type":"Selector","all":["All Nodes","Routing Mode"]}]}'
   _names=$(printf '%s' "$_gj" | urltest_groups)
   if [ "$_names" = 'Japan Auto
 All Nodes' ]; then st_ok; else st_bad "urltest_groups got: $(printf '%s' "$_names" | tr '\n' ' ')"; fi
   _e=$(url_encode 'All Nodes')
   if [ "$_e" = '%41%6c%6c%20%4e%6f%64%65%73' ]; then st_ok; else st_bad "url_encode(All Nodes) got: $_e"; fi
-  _e=$(url_encode 'Country Pick')
-  if [ "$_e" = '%43%6f%75%6e%74%72%79%20%50%69%63%6b' ]; then st_ok; else st_bad "url_encode(Country Pick) got: $_e"; fi
+  _e=$(url_encode 'Exit Country')
+  if [ "$_e" = '%45%78%69%74%20%43%6f%75%6e%74%72%79' ]; then st_ok; else st_bad "url_encode(Exit Country) got: $_e"; fi
   _e=$(url_encode 日本)
   if [ "$_e" = '%e6%97%a5%e6%9c%ac' ]; then st_ok; else st_bad "url_encode(日本) got: $_e"; fi
   _n=$(printf '{"all":["REJECT"],"emptyFallback":"REJECT","now":"REJECT"}' | filtered_real_count)
@@ -541,31 +541,31 @@ All Nodes' ]; then st_ok; else st_bad "urltest_groups got: $(printf '%s' "$_name
 
   # 3c) multi-level egress indirection (group-model streamline): the chain
   #     walk follows group "now" members through the injectable ctl_get
-  #     transport (Proxy Mode -> Country Pick -> Japan Auto -> node) and
+  #     transport (Routing Mode -> Exit Country -> Japan Auto -> node) and
   #     stops at the first non-group answer; a REJECTing chain resolves to
   #     the placeholder, which now_is_real then refuses.
-  _enc_pm=$(url_encode 'Proxy Mode')
-  _enc_cp=$(url_encode 'Country Pick')
+  _enc_pm=$(url_encode 'Routing Mode')
+  _enc_cp=$(url_encode 'Exit Country')
   _enc_ja=$(url_encode 'Japan Auto')
   ctl_get() {
     case "$1" in
-      "/proxies/$_enc_pm") printf '{"all":["Country Pick","DIRECT","REJECT"],"now":"Country Pick"}' ;;
+      "/proxies/$_enc_pm") printf '{"all":["Exit Country","DIRECT","REJECT"],"now":"Exit Country"}' ;;
       "/proxies/$_enc_cp") printf '{"all":["Japan Auto"],"now":"Japan Auto"}' ;;
       "/proxies/$_enc_ja") printf '{"all":["JP01","JP02"],"now":"JP01"}' ;;
       *) printf '{}' ;;
     esac
   }
-  _ch=$(resolve_now_chain 'Proxy Mode')
+  _ch=$(resolve_now_chain 'Routing Mode')
   if [ "$_ch" = "JP01" ]; then st_ok; else st_bad "resolve_now_chain got '$_ch' (want JP01)"; fi
   ctl_get() { printf '{"all":["REJECT"],"emptyFallback":"REJECT","now":"REJECT"}'; }
-  _ch=$(resolve_now_chain 'Proxy Mode')
+  _ch=$(resolve_now_chain 'Routing Mode')
   if now_is_real "$_ch"; then st_bad "chain walk accepted placeholder '$_ch'"; else st_ok; fi
   unset -f ctl_get
 
   # 3d) full-proxy band helpers (#46): connection-line parsing (chain
   #     membership, per-connection splitting without gawk RS) + CIDR
   #     membership arithmetic (the A5 probe and its IP guards ride these).
-  _fc=$(printf '%s' '{"connections":[{"id":"a1","metadata":{"network":"tcp","sourceIP":"192.0.2.20","destinationIP":"93.184.216.34"},"chains":["JP01","Japan Auto","Country Pick","Proxy Mode","Full Proxy"]},{"id":"a2","metadata":{"network":"udp","sourceIP":"192.0.2.21","destinationIP":"120.232.145.144"},"chains":["DIRECT"]}]}' | fp_conn_lines)
+  _fc=$(printf '%s' '{"connections":[{"id":"a1","metadata":{"network":"tcp","sourceIP":"192.0.2.20","destinationIP":"93.184.216.34"},"chains":["JP01","Japan Auto","Exit Country","Routing Mode","Full-Tunnel Devices"]},{"id":"a2","metadata":{"network":"udp","sourceIP":"192.0.2.21","destinationIP":"120.232.145.144"},"chains":["DIRECT"]}]}' | fp_conn_lines)
   if [ "$_fc" = '192.0.2.20|93.184.216.34|tcp|fp
 192.0.2.21|120.232.145.144|udp|nofp' ]; then st_ok; else st_bad "fp_conn_lines got: $_fc"; fi
   if fp_ip_in_cidr 192.0.2.20 192.0.2.16/28; then st_ok; else st_bad "fp_ip_in_cidr missed an in-band IP"; fi
@@ -665,9 +665,9 @@ All Nodes' ]; then st_ok; else st_bad "urltest_groups got: $(printf '%s' "$_name
   # LAN-client probe helpers (#57): the chain classification is pure - drive
   # it with /connections fixtures. Head = chains[0] (the final hop); a
   # 'direct' verdict tolerates NO proxied flow from the probe source; a
-  # 'proxy' verdict demands Proxy Mode behind a REAL head (placeholders and
+  # 'proxy' verdict demands Routing Mode behind a REAL head (placeholders and
   # builtins never count - the COMPATIBLE degradation lesson).
-  _lp_json='{"connections":[{"id":"a","metadata":{"network":"tcp","sourceIP":"192.0.2.77","destinationIP":"203.0.113.9","host":"www.baidu.com"},"chains":["DIRECT"],"rule":"GeoSite(CN)"},{"id":"b","metadata":{"network":"tcp","sourceIP":"192.0.2.77","destinationIP":"203.0.113.10","host":"g.example"},"chains":["JP 01","Japan Auto","Country Pick","Proxy Mode"],"rule":"Match"},{"id":"c","metadata":{"network":"tcp","sourceIP":"192.0.2.99","destinationIP":"203.0.113.11","host":"other"},"chains":["COMPATIBLE","Proxy Mode"],"rule":"Match"}]}'
+  _lp_json='{"connections":[{"id":"a","metadata":{"network":"tcp","sourceIP":"192.0.2.77","destinationIP":"203.0.113.9","host":"www.baidu.com"},"chains":["DIRECT"],"rule":"GeoSite(CN)"},{"id":"b","metadata":{"network":"tcp","sourceIP":"192.0.2.77","destinationIP":"203.0.113.10","host":"g.example"},"chains":["JP 01","Japan Auto","Exit Country","Routing Mode"],"rule":"Match"},{"id":"c","metadata":{"network":"tcp","sourceIP":"192.0.2.99","destinationIP":"203.0.113.11","host":"other"},"chains":["COMPATIBLE","Routing Mode"],"rule":"Match"}]}'
   _lp_l77="$(printf '%s' "$_lp_json" | conn_probe_lines 192.0.2.77)"
   if [ "$(printf '%s\n' "$_lp_l77" | grep -c .)" = 2 ]; then st_ok
   else st_bad "conn_probe_lines source filter kept the wrong flows"; fi
@@ -678,8 +678,8 @@ All Nodes' ]; then st_ok; else st_bad "urltest_groups got: $(printf '%s' "$_name
   if printf 'DIRECT%s["DIRECT"]\n' "$US" | conn_mode_ok direct; then st_ok
   else st_bad "pure-direct flow rejected by the direct verdict"; fi
   if printf '%s\n' "$_lp_l77" | conn_mode_ok proxy; then st_ok
-  else st_bad "real-node Proxy Mode flow rejected by the proxy verdict"; fi
-  if printf 'COMPATIBLE%s["COMPATIBLE","Proxy Mode"]\n' "$US" | conn_mode_ok proxy; then
+  else st_bad "real-node Routing Mode flow rejected by the proxy verdict"; fi
+  if printf 'COMPATIBLE%s["COMPATIBLE","Routing Mode"]\n' "$US" | conn_mode_ok proxy; then
     st_bad "COMPATIBLE head passed as a real node"
   else st_ok; fi
   if printf '' | conn_mode_ok direct; then st_bad "empty flow set passed the direct verdict"
@@ -687,7 +687,7 @@ All Nodes' ]; then st_ok; else st_bad "urltest_groups got: $(printf '%s' "$_name
   # '|' is DATA in node names, never a delimiter (the run-3 summary lesson,
   # reintroduced by #57's first cut): a pipe-named node must not smuggle the
   # chain past either verdict.
-  _lp_pipe='{"connections":[{"id":"p","metadata":{"network":"tcp","sourceIP":"192.0.2.66","destinationIP":"203.0.113.12","host":"x"},"chains":["US|LA-01","Country Pick","Proxy Mode"],"rule":"Match"}]}'
+  _lp_pipe='{"connections":[{"id":"p","metadata":{"network":"tcp","sourceIP":"192.0.2.66","destinationIP":"203.0.113.12","host":"x"},"chains":["US|LA-01","Exit Country","Routing Mode"],"rule":"Match"}]}'
   if printf '%s' "$_lp_pipe" | conn_probe_lines 192.0.2.66 | conn_mode_ok direct; then
     st_bad "pipe-named node flow passed the direct verdict"
   else st_ok; fi
@@ -802,7 +802,7 @@ ctl_get() {
 # delay_probe GROUP URL - ask mihomo ITSELF to fetch URL through GROUP via
 # the controller delay endpoint (authoritative: the request traverses the
 # real egress path). The group name is %XX-encoded here, so callers pass the
-# human name ('Proxy Mode', DIRECT). Retried: nodes may still be
+# human name ('Routing Mode', DIRECT). Retried: nodes may still be
 # health-checking right after a recreate. (Run 2's http_proxy-wget probes
 # were unreliable - busybox wget ignored the proxy, so baidu "passed" direct
 # and gstatic failed direct.)
@@ -823,7 +823,7 @@ delay_probe() {
 # wiped and zero LAN traffic since the recreate, a pick can be an untested
 # dead node no real client would ride - run 3 probed exactly that for nine
 # minutes while 9 nodes sat alive. A missing group makes each kick a
-# harmless no-op (the Proxy Mode probe still decides).
+# harmless no-op (the Routing Mode probe still decides).
 kick_urltest() {
   ctl_get "/group/All%20Nodes/delay?timeout=5000&url=http://www.gstatic.com/generate_204" >/dev/null 2>&1 || true
   _ku_list=$(ctl_get /group | urltest_groups)
@@ -836,24 +836,24 @@ $_ku_list
 KUEOF
 }
 
-# diag_egress - after a failed Proxy Mode probe, log who is selected along
+# diag_egress - after a failed Routing Mode probe, log who is selected along
 # the chain and which members actually pass, so a failure is diagnosable
 # from the transcript.
 diag_egress() {
-  echo "  diag Proxy Mode group: $(ctl_get /proxies/Proxy%20Mode)"
-  echo "  diag Country Pick group: $(ctl_get /proxies/Country%20Pick)"
+  echo "  diag Routing Mode group: $(ctl_get /proxies/Routing%20Mode)"
+  echo "  diag Exit Country group: $(ctl_get /proxies/Exit%20Country)"
   echo "  diag All Nodes group: $(ctl_get /proxies/All%20Nodes)"
-  echo "  diag per-member delay: $(ctl_get "/group/Proxy%20Mode/delay?timeout=8000&url=http://www.gstatic.com/generate_204")"
+  echo "  diag per-member delay: $(ctl_get "/group/Routing%20Mode/delay?timeout=8000&url=http://www.gstatic.com/generate_204")"
 }
 
-# egress_via_real_node - the Proxy Mode group's EFFECTIVE member, resolved
-# through the group chain (Proxy Mode -> Country Pick -> "<Country> Auto" ->
+# egress_via_real_node - the Routing Mode group's EFFECTIVE member, resolved
+# through the group chain (Routing Mode -> Exit Country -> "<Country> Auto" ->
 # node; resolve_now_chain's bounded walk), is an actual provider node. A
 # delay-probe PASS alone is not egress proof: an empty group degrades to
 # COMPATIBLE (= DIRECT), and gstatic's generate_204 answers direct from CN
 # (run 3.5's false PASS).
 egress_via_real_node() {
-  now_is_real "$(resolve_now_chain 'Proxy Mode')"
+  now_is_real "$(resolve_now_chain 'Routing Mode')"
 }
 
 restore_env() {  # put the pre-validation .env back
@@ -925,28 +925,28 @@ else
   exit 3
 fi
 # v1.3.10 routing surface (renamed in the group-model streamline): the
-# Streaming Sites selector and the deterministic domain rules are static
+# Streaming Unlock selector and the deterministic domain rules are static
 # template content - present in EVERY DNS profile.
-case "$(ctl_get /proxies/Streaming%20Sites)" in
-  *'"Streaming Sites"'*) ok "Streaming Sites group present (dashboard-pinnable)" ;;
-  *) bad "Streaming Sites group missing from the controller" ;;
+case "$(ctl_get /proxies/Streaming%20Unlock)" in
+  *'"Streaming Unlock"'*) ok "Streaming Unlock group present (dashboard-pinnable)" ;;
+  *) bad "Streaming Unlock group missing from the controller" ;;
 esac
-if grep -q "^  - 'GEOSITE,NETFLIX,Streaming Sites'" "$CFG"; then
+if grep -q "^  - 'GEOSITE,NETFLIX,Streaming Unlock'" "$CFG"; then
   ok "netflix rule rendered at the head of the chain"
 else
-  bad "GEOSITE,NETFLIX,Streaming Sites rule missing from the render"
+  bad "GEOSITE,NETFLIX,Streaming Unlock rule missing from the render"
 fi
 for _svc in SPOTIFY TIDAL DEEZER SOUNDCLOUD; do
-  if grep -q "^  - 'GEOSITE,$_svc,Streaming Sites'" "$CFG"; then
-    ok "$_svc rule rendered (audio streaming rides Streaming Sites)"
+  if grep -q "^  - 'GEOSITE,$_svc,Streaming Unlock'" "$CFG"; then
+    ok "$_svc rule rendered (audio streaming rides Streaming Unlock)"
   else
-    bad "GEOSITE,$_svc,Streaming Sites rule missing from the render"
+    bad "GEOSITE,$_svc,Streaming Unlock rule missing from the render"
   fi
 done
-if grep -q "^  - 'GEOSITE,GEOLOCATION-!CN,Proxy Mode'" "$CFG"; then
-  ok "listed-foreign Proxy Mode rule rendered (skips GEOIP lookups)"
+if grep -q "^  - 'GEOSITE,GEOLOCATION-!CN,Routing Mode'" "$CFG"; then
+  ok "listed-foreign Routing Mode rule rendered (skips GEOIP lookups)"
 else
-  bad "GEOSITE,GEOLOCATION-!CN,Proxy Mode rule missing from the render"
+  bad "GEOSITE,GEOLOCATION-!CN,Routing Mode rule missing from the render"
 fi
 if grep -q "^  - 'GEOIP,LAN,DIRECT,no-resolve'" "$CFG"; then
   ok "LAN-direct rule rendered (private destinations never ride the tunnel)"
@@ -1020,7 +1020,7 @@ fi
 
 say "A4.5: country groups carry real nodes (release gate - fails on empty)"
 # The A4 env just enabled the SHIPPED country-group defaults, so the groups
-# now rendered are exactly what a new install gets - and Country Pick's
+# now rendered are exactly what a new install gets - and Exit Country's
 # members ARE these groups. A generated group matching ZERO provider nodes
 # means the release's regexes do not fit the validation airport's node
 # names: selecting it REJECTs (fail closed by design), and shipping that as
@@ -1066,7 +1066,7 @@ fi
 LAN_PROBE_IP="$PROBE_IP"
 if [ -n "$LAN_PROBE_IP" ] && ip_in_band "$LAN_PROBE_IP" "${FULL_PROXY_SOURCES:-}"; then
   # A band-member --probe-ip is exactly right for A5 (its flows MUST ride
-  # Full Proxy) but would falsify the C direct-gate, where band traffic
+  # Full-Tunnel Devices) but would falsify the C direct-gate, where band traffic
   # legitimately rides the proxy. Keep it for A5; the C/B3 probes get their
   # own non-band IP below.
   echo "--probe-ip $LAN_PROBE_IP sits inside the full-proxy band - deriving a separate IP for the C/B3 LAN probes"
@@ -1112,7 +1112,7 @@ if [ -n "$PROBE_IP" ]; then
     fi
     recreate || bad "compose recreate (band on)"
     load_env || true
-    if grep -q "^  - 'SRC-IP-CIDR,$PROBE_IP/32,Full Proxy'" "$CFG"; then
+    if grep -q "^  - 'SRC-IP-CIDR,$PROBE_IP/32,Full-Tunnel Devices'" "$CFG"; then
       ok "band rule rendered for the probe IP (/32-normalized)"
     else
       bad "band rule for $PROBE_IP did not render"
@@ -1145,9 +1145,9 @@ if [ -n "$PROBE_IP" ]; then
         _fp_i=$((_fp_i + 1)); sleep 1
       done
       if [ "$_fp_seen" = 1 ] && [ -z "$_fp_viol" ]; then
-        ok "probe flow from $PROBE_IP rides Full Proxy (chain verified via /connections)"
+        ok "probe flow from $PROBE_IP rides Full-Tunnel Devices (chain verified via /connections)"
       elif [ "$_fp_seen" = 1 ]; then
-        bad "a probe flow from $PROBE_IP bypassed Full Proxy: $(printf '%s' "$_fp_viol" | head -n1)"
+        bad "a probe flow from $PROBE_IP bypassed Full-Tunnel Devices: $(printf '%s' "$_fp_viol" | head -n1)"
       else
         bad "no flow from $PROBE_IP observed via /connections within 12s (probe container up, band rule rendered)"
       fi
@@ -1188,7 +1188,7 @@ for _i in 1 2 3 4 5 6; do
   [ "$N" -gt 0 ] && break
 done
 kick_urltest
-if delay_probe 'Proxy Mode' "http://www.gstatic.com/generate_204" && egress_via_real_node; then
+if delay_probe 'Routing Mode' "http://www.gstatic.com/generate_204" && egress_via_real_node; then
   EGRESS=1
 else
   EGRESS=0
@@ -1241,11 +1241,11 @@ _b3_url="${SMG_PROBE_STREAM_URL:-https://www.netflix.com/title/70143836}"
 if [ -n "${LAN_PROBE_IP:-}" ]; then
   _b3_body="$(lan_probe_body "$_b3_url" || true)"
   if [ -z "$_b3_body" ]; then
-    warn "B3 streaming probe: no response from $_b3_url through the gateway (WARN-only: service-side bot checks are common; if playback fails, pin an unlock-capable node in MetaCubeXD -> Streaming Sites)"
+    warn "B3 streaming probe: no response from $_b3_url through the gateway (WARN-only: service-side bot checks are common; if playback fails, pin an unlock-capable node in MetaCubeXD -> Streaming Unlock)"
   else
     case "$_b3_body" in
       *[Nn]ot\ [Aa]vailable*)
-        warn "B3 streaming probe: region-block marker in the response - pin an unlock-capable node in MetaCubeXD -> Streaming Sites (All Nodes picks by latency, not unlock)" ;;
+        warn "B3 streaming probe: region-block marker in the response - pin an unlock-capable node in MetaCubeXD -> Streaming Unlock (All Nodes picks by latency, not unlock)" ;;
       *)
         ok "B3 streaming probe: $_b3_url answered through the gateway rules (Chrome-UA LAN-client fetch)" ;;
     esac
@@ -1267,10 +1267,10 @@ if [ "$SKIP_KNOB" = 0 ]; then
     bad "CN egress via DIRECT failed (baidu delay probe)"
   fi
   kick_urltest
-  if delay_probe 'Proxy Mode' "http://www.gstatic.com/generate_204" && egress_via_real_node; then
-    ok "foreign egress via Proxy Mode (mihomo-fetched gstatic 204 through a real node)"
+  if delay_probe 'Routing Mode' "http://www.gstatic.com/generate_204" && egress_via_real_node; then
+    ok "foreign egress via Routing Mode (mihomo-fetched gstatic 204 through a real node)"
   else
-    bad "foreign egress via Proxy Mode failed (probe failed, or effective member is a placeholder/builtin)"
+    bad "foreign egress via Routing Mode failed (probe failed, or effective member is a placeholder/builtin)"
     diag_egress
   fi
   # LAN-client hard gates (#57): the same checks the owner used to run by
@@ -1286,9 +1286,9 @@ if [ "$SKIP_KNOB" = 0 ]; then
     esac
     lan_probe proxy "${SMG_PROBE_FOREIGN_URL:-https://www.google.com/generate_204}"; _c_rc=$?
     case "$_c_rc" in
-      0) ok "LAN-client foreign fetch rides Proxy Mode via a real node (Chrome UA; CN-blocked endpoint = genuine egress proof)" ;;
+      0) ok "LAN-client foreign fetch rides Routing Mode via a real node (Chrome UA; CN-blocked endpoint = genuine egress proof)" ;;
       2) bad "LAN-client foreign probe container failed to start (network/IP issue)" ;;
-      *) bad "LAN-client foreign fetch did not ride a real node through Proxy Mode" ;;
+      *) bad "LAN-client foreign fetch did not ride a real node through Routing Mode" ;;
     esac
   else
     warn "C LAN-client probes skipped - no spare probe IP was available (rerun with --probe-ip)"

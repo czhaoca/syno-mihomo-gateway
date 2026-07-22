@@ -316,19 +316,19 @@ IPv6 carries traffic around the gateway (leaks persist, Netflix fails)
 Netflix (or another streaming service) says "not available in your region"
 --------------------------------------------------------------------------
   Cause: streaming services blacklist most datacenter exit addresses. The
-         "<Country> Auto" group your Country Pick selection rides picks
+         "<Country> Auto" group your Exit Country selection rides picks
          its node by LATENCY within that country, and the fastest node is
          rarely a streaming-unlock node - the tunnel works, but Netflix
          refuses its exit. This is a node property, not a rule fault:
          Netflix (and the audio services - Spotify, Tidal, Deezer,
          SoundCloud) is routed deterministically into its own
-         Streaming Sites selector (default: Proxy Mode, i.e. unchanged
+         Streaming Unlock selector (default: Routing Mode, i.e. unchanged
          behavior until you pin a node).
-  Fix:   open the dashboard > Proxies > Streaming Sites and pin a node
+  Fix:   open the dashboard > Proxies > Streaming Unlock and pin a node
          your airport marks as streaming/Netflix-capable (often named NF,
          "streaming", "unlock"...) - or pin a "<Country> Auto" group for
          one-click region pinning - then reload the title. Only streaming
-         traffic moves; everything else stays on Proxy Mode.
+         traffic moves; everything else stays on Routing Mode.
          Still failing on an unlock node? Some devices (smart TVs,
          Android Private DNS) bypass the gateway's DNS and connect by raw
          IP - those flows miss the domain rule and mix exit addresses,
@@ -350,7 +350,7 @@ Unlisted-domain lookups fail while the airport is down
   Fix:   restore the airport (renew / replace the subscription). The DNS
          detour rides the hidden All Nodes anchor group (the full pool,
          kept alive solely for DNS - the dashboard does not show it), so
-         pinning Proxy Mode to DIRECT - or an empty Country Pick
+         pinning Routing Mode to DIRECT - or an empty Exit Country
          selection - does NOT break lookups; only a dead subscription
          does. Also, the FIRST lookup of a new site adds one tunneled
          round-trip and the DNS cache resets on restart - brief slowness
@@ -359,8 +359,8 @@ Unlisted-domain lookups fail while the airport is down
 --------------------------------------------------------------------------
 Provider has no nodes (foreign sites dead, node list empty)
 --------------------------------------------------------------------------
-  Symptom: the dashboard shows only the group cards - Proxy Mode /
-           Streaming Sites / Country Pick / your "<Country> Auto" groups -
+  Symptom: the dashboard shows only the group cards - Routing Mode /
+           Streaming Unlock / Exit Country / your "<Country> Auto" groups -
            with no airport nodes inside them (All Nodes still exists but
            is hidden from the dashboard); foreign sites time out while
            domestic sites work, and the mihomo
@@ -379,14 +379,14 @@ Provider has no nodes (foreign sites dead, node list empty)
 --------------------------------------------------------------------------
 The doctor reports an empty country group (default-empty / country-empty)
 --------------------------------------------------------------------------
-  Symptom: the doctor shows "the Country Pick selection '...' has NO
+  Symptom: the doctor shows "the Exit Country selection '...' has NO
            nodes" (BROKEN, state default-empty) or "country group(s)
            match no provider node" (DEGRADED, state country-empty);
            selecting the named group in the dashboard blocks every
            connection instead of routing it.
   Cause:   a COUNTRY_GROUPS pattern matches zero airport nodes.
            default-empty is the bad one: the empty group is the country
-           Country Pick is currently riding, so default-route traffic is
+           Exit Country is currently riding, so default-route traffic is
            blocked. country-empty means some OTHER country group is
            empty - the default route still works, but selecting that
            country would block. Either way the pattern no longer fits
@@ -397,7 +397,7 @@ The doctor reports an empty country group (default-empty / country-empty)
            Proxies view), adjust that COUNTRY_GROUPS entry in .env (see
            CONFIGURE.txt), then redeploy (install.sh > modify an
            existing deployment). Stopgap while you fix it: pick another
-           country in the dashboard's Country Pick selector. If the
+           country in the dashboard's Exit Country selector. If the
            doctor instead reports provider-empty - EVERY group empty -
            that is "Provider has no nodes" above, not a pattern problem.
 
@@ -411,8 +411,8 @@ Dashboard picks reset once after the group-model upgrade
            the saved picks no longer match and each renamed/removed
            group falls back to its first member. This happens ONCE; new
            picks persist normally.
-  Fix:     re-pin in the dashboard (Proxy Mode, Streaming Sites,
-           Country Pick). Defaults are sane meanwhile: Country Pick
+  Fix:     re-pin in the dashboard (Routing Mode, Streaming Unlock,
+           Exit Country, and Full-Tunnel Devices if the band is on). Defaults are sane meanwhile: Exit Country
            rides your FIRST COUNTRY_GROUPS entry - an existing .env
            keeps its own order, so your default country is YOUR first
            entry. If you hand-edit .env instead of re-running the

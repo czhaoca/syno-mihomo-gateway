@@ -8,8 +8,8 @@
 #                     render; either direction) -> warn + redeploy hint
 #   ok              - parity holds; controller down degrades to static-only,
 #                     controller up scans /connections (band flows must
-#                     carry 'Full Proxy' in their chain)
-#   chain-violation - a non-LAN flow from a band source bypasses Full Proxy
+#                     carry 'Full-Tunnel Devices' in their chain)
+#   chain-violation - a non-LAN flow from a band source bypasses Full-Tunnel Devices
 #                     (the DEC-A UDP/QUIC fallthrough class) -> warn naming
 #                     the flow, the UDP residual, and ipv6_bypass
 # plus the transport/scoping properties: bare knob IPs compare /32-
@@ -17,7 +17,7 @@
 # keeps them DIRECT by design), non-band sources are ignored, and the
 # bearer token never appears on docker argv (stdin only, the repo rule).
 # Also carries the #45 advisory sibling fixture: chk_proxy_groups
-# short-circuits to unknown when /group succeeds but the Country Pick
+# short-circuits to unknown when /group succeeds but the Exit Country
 # "now" fetch fails (never misclassifies default-empty as country-empty).
 #
 # Every invocation is HERMETIC (env -i, tree copy, PATH-stub docker) so the
@@ -71,8 +71,8 @@ chmod +x "$STUB/docker"
 
 # Band fixture: 192.0.2.16/28 (TEST-NET-1 slice, .16-.31) + a /32 device.
 BAND='192.0.2.16/28,192.0.2.5'
-CFG_LINES="  - 'SRC-IP-CIDR,192.0.2.16/28,Full Proxy'
-  - 'SRC-IP-CIDR,192.0.2.5/32,Full Proxy'"
+CFG_LINES="  - 'SRC-IP-CIDR,192.0.2.16/28,Full-Tunnel Devices'
+  - 'SRC-IP-CIDR,192.0.2.5/32,Full-Tunnel Devices'"
 
 new_state() { # NAME -> prints dir
   _d="$TMP/state-$1"; mkdir -p "$_d/config"
@@ -85,7 +85,7 @@ mode: rule
 rules:
   - 'GEOIP,LAN,DIRECT,no-resolve'
 $2
-  - 'MATCH,Proxy Mode'
+  - 'MATCH,Routing Mode'
 CFGEOF
 }
 
@@ -134,7 +134,7 @@ grep -q '^full_proxy|ok|ok|.*ipv6_bypass' "$OUT_F" \
 
 # 4) parity drift: knob has an entry the render lacks -> parity-drift|warn
 ST=$(new_state drift)
-write_cfg "$ST" "  - 'SRC-IP-CIDR,192.0.2.16/28,Full Proxy'"
+write_cfg "$ST" "  - 'SRC-IP-CIDR,192.0.2.16/28,Full-Tunnel Devices'"
 run_fp "$ST" FULL_PROXY_SOURCES="$BAND"
 grep -q '^full_proxy|parity-drift|warn|.*NOT live' "$OUT_F" \
   && ok || fail "drift: want parity-drift|warn, got: $(cat "$OUT_F")"
@@ -148,17 +148,17 @@ run_fp "$ST"
 grep -q '^full_proxy|parity-drift|warn|' "$OUT_F" \
   && ok || fail "stale: want parity-drift on knob-unset+lines-present, got: $(cat "$OUT_F")"
 
-# 6) runtime ok: /32-normalized parity + band flows all riding Full Proxy;
+# 6) runtime ok: /32-normalized parity + band flows all riding Full-Tunnel Devices;
 #    LAN-destination band flow without the chain is EXEMPT; non-band
 #    source without the chain is IGNORED
 ST=$(new_state runtimeok)
 write_cfg "$ST" "$CFG_LINES"
 cat > "$ST/connections.json" <<'EOF'
 {"downloadTotal":1,"uploadTotal":2,"connections":[
-{"id":"a1","metadata":{"network":"tcp","type":"tun","sourceIP":"192.0.2.20","destinationIP":"93.184.216.34","host":"example.com"},"chains":["JP01","Japan Auto","Country Pick","Proxy Mode","Full Proxy"],"rule":"SrcIPCIDR"},
-{"id":"a2","metadata":{"network":"udp","type":"tun","sourceIP":"192.0.2.5","destinationIP":"93.184.216.35","host":""},"chains":["JP01","Japan Auto","Country Pick","Proxy Mode","Full Proxy"],"rule":"SrcIPCIDR"},
+{"id":"a1","metadata":{"network":"tcp","type":"tun","sourceIP":"192.0.2.20","destinationIP":"93.184.216.34","host":"example.com"},"chains":["JP01","Japan Auto","Exit Country","Routing Mode","Full-Tunnel Devices"],"rule":"SrcIPCIDR"},
+{"id":"a2","metadata":{"network":"udp","type":"tun","sourceIP":"192.0.2.5","destinationIP":"93.184.216.35","host":""},"chains":["JP01","Japan Auto","Exit Country","Routing Mode","Full-Tunnel Devices"],"rule":"SrcIPCIDR"},
 {"id":"a3","metadata":{"network":"tcp","type":"tun","sourceIP":"192.0.2.20","destinationIP":"192.168.1.5","host":""},"chains":["DIRECT"],"rule":"GeoIP"},
-{"id":"a4","metadata":{"network":"tcp","type":"tun","sourceIP":"192.0.2.50","destinationIP":"93.184.216.34","host":""},"chains":["Proxy Mode","Country Pick","Japan Auto","JP01"],"rule":"Match"},
+{"id":"a4","metadata":{"network":"tcp","type":"tun","sourceIP":"192.0.2.50","destinationIP":"93.184.216.34","host":""},"chains":["Routing Mode","Exit Country","Japan Auto","JP01"],"rule":"Match"},
 {"id":"a5","metadata":{"network":"udp","type":"tun","sourceIP":"192.0.2.20","destinationIP":"239.255.255.250","host":""},"chains":["DIRECT"],"rule":"GeoIP"}
 ]}
 EOF
@@ -166,14 +166,15 @@ run_fp "$ST" FULL_PROXY_SOURCES="$BAND"
 grep -q '^full_proxy|ok|ok|.*2 band flow(s) scanned' "$OUT_F" \
   && ok || fail "runtime-ok: want ok with 2 scanned (LAN + multicast dst exempt, non-band ignored), got: $(cat "$OUT_F")"
 
-# 7) chain violation: band source, non-LAN destination, chain lacks Full
-#    Proxy -> chain-violation|warn naming the flow + UDP residual + ipv6_bypass
+# 7) chain violation: band source, non-LAN destination, chain lacks
+#    Full-Tunnel Devices -> chain-violation|warn naming the flow + UDP
+#    residual + ipv6_bypass
 ST=$(new_state viol)
 write_cfg "$ST" "$CFG_LINES"
 cat > "$ST/connections.json" <<'EOF'
 {"connections":[
 {"id":"b1","metadata":{"network":"udp","type":"tun","sourceIP":"192.0.2.21","destinationIP":"120.232.145.144","host":""},"chains":["DIRECT"],"rule":"GeoIP"},
-{"id":"b2","metadata":{"network":"tcp","type":"tun","sourceIP":"192.0.2.21","destinationIP":"93.184.216.34","host":""},"chains":["JP01","Japan Auto","Country Pick","Proxy Mode","Full Proxy"],"rule":"SrcIPCIDR"},
+{"id":"b2","metadata":{"network":"tcp","type":"tun","sourceIP":"192.0.2.21","destinationIP":"93.184.216.34","host":""},"chains":["JP01","Japan Auto","Exit Country","Routing Mode","Full-Tunnel Devices"],"rule":"SrcIPCIDR"},
 {"id":"b3","metadata":{"network":"tcp","type":"tun","sourceIP":"192.0.2.21","destinationIP":"240.0.0.1","host":""},"chains":["DIRECT"],"rule":"Match"}
 ]}
 EOF
@@ -202,11 +203,11 @@ else
   ok
 fi
 
-# 9) #45 advisory sibling fixture: /group answers (Country Pick present)
-#    but the Country Pick "now" fetch fails -> proxy_groups short-circuits
+# 9) #45 advisory sibling fixture: /group answers (Exit Country present)
+#    but the Exit Country "now" fetch fails -> proxy_groups short-circuits
 #    to unknown|silent (never misclassifies default-empty as country-empty)
 ST=$(new_state pgflake)
-printf '%s' '{"proxies":[{"name":"Country Pick","type":"Selector","all":["日本"]},{"name":"日本","type":"URLTest","all":["n1"]},{"name":"All Nodes","type":"URLTest","all":["n1"]}]}' \
+printf '%s' '{"proxies":[{"name":"Exit Country","type":"Selector","all":["日本"]},{"name":"日本","type":"URLTest","all":["n1"]},{"name":"All Nodes","type":"URLTest","all":["n1"]}]}' \
   > "$ST/group.json"
 run_pg "$ST"
 grep -q '^proxy_groups|unknown|silent|' "$OUT_F" \
@@ -214,4 +215,4 @@ grep -q '^proxy_groups|unknown|silent|' "$OUT_F" \
 
 echo "full_proxy_check: $pass passed, $failn failed"
 [ "$failn" = 0 ] || exit 1
-echo "OK: full_proxy doctor check - disabled/unknown/parity-drift/ok/chain-violation contract, /32-normalized knob parity both directions, LAN-destination exemption, non-band sources ignored, UDP-residual + ipv6_bypass wording, token never on argv; plus the proxy_groups unknown short-circuit on a failed Country Pick now-fetch"
+echo "OK: full_proxy doctor check - disabled/unknown/parity-drift/ok/chain-violation contract, /32-normalized knob parity both directions, LAN-destination exemption, non-band sources ignored, UDP-residual + ipv6_bypass wording, token never on argv; plus the proxy_groups unknown short-circuit on a failed Exit Country now-fetch"

@@ -4,9 +4,9 @@
 # reworked for the group-model streamline #45): the zero-node guard for the
 # generated "<Country> Auto" url-test groups. Asserts the documented contract:
 #   ok             - every country group has real nodes (detail names the
-#                    Country Pick selection), or no country groups are live
+#                    Exit Country selection), or no country groups are live
 #                    at all (a pre-streamline config still running)
-#   default-empty  - the country group Country Pick is RIDING has no real
+#   default-empty  - the country group Exit Country is RIDING has no real
 #                    nodes (the routing default is dead) -> bad; other empty
 #                    country groups ride the detail
 #   country-empty  - some non-selected country group(s) empty -> warn
@@ -71,10 +71,10 @@ chmod +x "$STUB/docker"
 # every-byte encoder carries SPACES as %20, which is what makes the spaced
 # group names URL-safe):
 #   All Nodes    = %41%6c%6c%20%4e%6f%64%65%73
-#   Country Pick = %43%6f%75%6e%74%72%79%20%50%69%63%6b
+#   Exit Country = %45%78%69%74%20%43%6f%75%6e%74%72%79
 #   日本         = %e6%97%a5%e6%9c%ac    美国 = %e7%be%8e%e5%9b%bd
 ENC_ALL='%41%6c%6c%20%4e%6f%64%65%73'
-ENC_PICK='%43%6f%75%6e%74%72%79%20%50%69%63%6b'
+ENC_PICK='%45%78%69%74%20%43%6f%75%6e%74%72%79'
 ENC_JP='%e6%97%a5%e6%9c%ac'
 ENC_US='%e7%be%8e%e5%9b%bd'
 
@@ -85,7 +85,7 @@ EMPTY_COMPAT='{"all":["COMPATIBLE"],"now":"COMPATIBLE"}'
 PICK_JP='{"all":["日本","美国"],"now":"日本"}'
 PICK_US='{"all":["日本","美国"],"now":"美国"}'
 
-GROUPS_FULL='{"proxies":[{"name":"Proxy Mode","type":"Selector","all":["Country Pick","DIRECT","REJECT"]},{"name":"Streaming Sites","type":"Selector","all":["Proxy Mode","日本","美国","DIRECT"]},{"name":"Country Pick","type":"Selector","all":["日本","美国"]},{"name":"日本","type":"URLTest","all":["n2"]},{"name":"美国","type":"URLTest","all":["n2"]},{"name":"All Nodes","type":"URLTest","hidden":true,"all":["n1","n2","n3"]},{"name":"GLOBAL","type":"Selector","all":["All Nodes","Proxy Mode"]}]}'
+GROUPS_FULL='{"proxies":[{"name":"Routing Mode","type":"Selector","all":["Exit Country","DIRECT","REJECT"]},{"name":"Streaming Unlock","type":"Selector","all":["Routing Mode","日本","美国","DIRECT"]},{"name":"Exit Country","type":"Selector","all":["日本","美国"]},{"name":"日本","type":"URLTest","all":["n2"]},{"name":"美国","type":"URLTest","all":["n2"]},{"name":"All Nodes","type":"URLTest","hidden":true,"all":["n1","n2","n3"]},{"name":"GLOBAL","type":"Selector","all":["All Nodes","Routing Mode"]}]}'
 GROUPS_PRESTREAM='{"proxies":[{"name":"All Nodes","type":"URLTest","all":["n1","n2","n3"]},{"name":"PROXY","type":"Selector","all":["All Nodes","DIRECT","REJECT"]},{"name":"STREAMING","type":"Selector","all":["PROXY","All Nodes","DIRECT"]},{"name":"GLOBAL","type":"Selector","all":["All Nodes","PROXY"]}]}'
 
 new_state() { # NAME GROUP_JSON -> prints dir; per-group fixtures added after
@@ -105,7 +105,7 @@ run_pg() { # STATE [ENV=VAL ...] - emit the proxy_groups record hermetically
     > "$OUT_F" 2>&1 || true
 }
 
-# 1) healthy: two country groups with real nodes, Country Pick riding 日本 -> ok
+# 1) healthy: two country groups with real nodes, Exit Country riding 日本 -> ok
 ST=$(new_state healthy "$GROUPS_FULL")
 printf '%s' "$REAL3" > "$ST/proxies-$ENC_ALL.json"
 printf '%s' "$PICK_JP" > "$ST/proxies-$ENC_PICK.json"
@@ -115,7 +115,7 @@ run_pg "$ST"
 grep -q '^proxy_groups|ok|ok|' "$OUT_F" \
   && ok || fail "healthy: want ok record, got: $(cat "$OUT_F")"
 grep -q '^proxy_groups|ok|ok|.*日本' "$OUT_F" \
-  && ok || fail "healthy: detail must name the Country Pick selection"
+  && ok || fail "healthy: detail must name the Exit Country selection"
 
 # 2) a NON-selected country group empty (REJECT placeholder only) ->
 #    country-empty warn, detail names the group, remediation hint follows
@@ -145,8 +145,8 @@ grep -q '^proxy_groups|default-empty|bad|.*日本' "$OUT_F" \
   && ok || fail "default-empty: detail must also carry the other empty country group"
 grep -q '^#hint|.*COUNTRY_GROUPS' "$OUT_F" \
   && ok || fail "default-empty: want a COUNTRY_GROUPS remediation hint"
-grep -q '^#hint|.*Country Pick' "$OUT_F" \
-  && ok || fail "default-empty: hint must name the Country Pick stopgap"
+grep -q '^#hint|.*Exit Country' "$OUT_F" \
+  && ok || fail "default-empty: hint must name the Exit Country stopgap"
 
 # 4) EVERY url-test group empty -> the DEC-A provider-empty condition (warn,
 #    seed_provider hint), never per-group findings
@@ -161,7 +161,7 @@ grep -q '^proxy_groups|provider-empty|warn|' "$OUT_F" \
 grep -q '^#hint|.*seed_provider' "$OUT_F" \
   && ok || fail "provider-empty: want the seed_provider.sh hint"
 
-# 5) pre-streamline config (no Country Pick / country groups) with a healthy
+# 5) pre-streamline config (no Exit Country / country groups) with a healthy
 #    All Nodes -> ok with the redeploy note
 ST=$(new_state prestream "$GROUPS_PRESTREAM")
 printf '%s' "$REAL3" > "$ST/proxies-$ENC_ALL.json"
@@ -197,4 +197,4 @@ fi
 
 echo "proxy_groups_check: $pass passed, $failn failed"
 [ "$failn" = 0 ] || exit 1
-echo "OK: proxy_groups doctor check - ok/default-empty/country-empty/provider-empty/unknown contract keyed on the Country Pick selection, CJK %XX-encoded per-group queries, COMPATIBLE+REJECT placeholder exclusion, DEC-A cold-start grace (all-empty -> provider-empty, pre-streamline covered), token never on argv"
+echo "OK: proxy_groups doctor check - ok/default-empty/country-empty/provider-empty/unknown contract keyed on the Exit Country selection, CJK %XX-encoded per-group queries, COMPATIBLE+REJECT placeholder exclusion, DEC-A cold-start grace (all-empty -> provider-empty, pre-streamline covered), token never on argv"

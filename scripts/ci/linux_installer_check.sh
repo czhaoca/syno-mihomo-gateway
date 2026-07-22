@@ -778,7 +778,7 @@ run_hint_trio() {  # $1 = 'set'|'unset'; prints the three hints
     chk_full_proxy; printf '%s\n' "$CHECK_HINT"
     _pg_ctl() {
       case "$1" in
-        /group) printf '{"proxies":[{"name":"Country Pick"},{"name":"JP Auto"},{"name":"US Auto"}]}' ;;
+        /group) printf '{"proxies":[{"name":"Exit Country"},{"name":"JP Auto"},{"name":"US Auto"}]}' ;;
         *) printf '{"now":"JP Auto","all":["REJECT"]}' ;;
       esac
     }
@@ -794,7 +794,7 @@ assert_not_contains "hint trio (generic): no DSM entry name" "$_out" './install.
 _g="$(run_hint_trio unset)" || _g=''
 assert_contains "golden: chk_dns_privacy DSM v1 hint" "$_g" 're-render onto the v2 core: sudo sh ./install.sh (Redeploy)'
 assert_contains "golden: chk_full_proxy DSM drift hint" "$_g" 're-render: sudo sh ./install.sh (Redeploy); if the render was refused, config_rejected names the reason'
-assert_contains "golden: chk_proxy_groups DSM default-empty hint" "$_g" 'redeploy: sudo sh ./install.sh (Redeploy); stopgap: pick another country in the dashboard Country Pick selector'
+assert_contains "golden: chk_proxy_groups DSM default-empty hint" "$_g" 'redeploy: sudo sh ./install.sh (Redeploy); stopgap: pick another country in the dashboard Exit Country selector'
 
 # --- checks.sh remaining hint sites: parse-fail .env + legacy DNS profile --------
 # (review round: neither branch was exercised in either platform mode - a

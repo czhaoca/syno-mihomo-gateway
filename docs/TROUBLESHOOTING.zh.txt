@@ -273,18 +273,18 @@ IPv6 让流量整体绕过网关（泄漏时有时无，Netflix 打不开）
 --------------------------------------------------------------------------
 Netflix（或其他流媒体）提示"所在地区不可用"
 --------------------------------------------------------------------------
-  原因： 流媒体服务会封锁大多数机房出口地址。你在 Country Pick 里所选
+  原因： 流媒体服务会封锁大多数机房出口地址。你在 Exit Country 里所选
          国家对应的 "<Country> Auto" 分组按【该国之内的延迟】选节点，
          而最快的节点很少具备流媒体解锁能力——隧道本身没问题，但
          Netflix 拒绝它的出口。这是节点属性、不是规则故障：Netflix
          （以及各音频流媒体——Spotify、Tidal、Deezer、SoundCloud）
-         已被确定性地路由进独立的 Streaming Sites 选择器（默认
-         Proxy Mode，固定节点之前行为不变）。
-  解决： 打开面板 > Proxies > Streaming Sites，固定一个机场标注支持
+         已被确定性地路由进独立的 Streaming Unlock 选择器（默认
+         Routing Mode，固定节点之前行为不变）。
+  解决： 打开面板 > Proxies > Streaming Unlock，固定一个机场标注支持
          流媒体/Netflix 的节点（常见命名 NF、"流媒体"、"解锁"……）
          ——或固定一个 "<Country> Auto" 分组，一键锁定区域——然后
          重新加载片子。只有流媒体流量会切换；其余流量继续走
-         Proxy Mode。
+         Routing Mode。
          解锁节点上仍失败？某些设备（智能电视、Android 私人 DNS）会
          绕过网关 DNS、按裸 IP 直连——这些连接命中不了域名规则，
          出口地址混用同样会被 Netflix 拒绝。请关闭设备的
@@ -301,7 +301,7 @@ Netflix（或其他流媒体）提示"所在地区不可用"
          给它的通道）。国内网站全程照常可用。
   解决： 恢复机场（续费/更换订阅）。DNS 绕行走的是隐藏的 All Nodes
          锚点分组（完整节点池，只为 DNS 保留——面板不显示它），因此
-         在面板里把 Proxy Mode 固定为 DIRECT——或 Country Pick 所选
+         在面板里把 Routing Mode 固定为 DIRECT——或 Exit Country 所选
          分组为空——都不会弄断解析；只有订阅真正无节点才会。另外，
          新网站的首次解析会多一个隧道往返，且 DNS 缓存在
          重启后清空——重启后的短暂变慢属正常现象。
@@ -309,8 +309,8 @@ Netflix（或其他流媒体）提示"所在地区不可用"
 --------------------------------------------------------------------------
 机场节点全部消失（国外网站打不开、节点列表为空）
 --------------------------------------------------------------------------
-  现象：  面板只剩分组卡片——Proxy Mode / Streaming Sites /
-          Country Pick / 你的 "<Country> Auto" 分组——里面没有任何
+  现象：  面板只剩分组卡片——Routing Mode / Streaming Unlock /
+          Exit Country / 你的 "<Country> Auto" 分组——里面没有任何
           机场节点（All Nodes 仍然存在，但在面板中隐藏）；国外网站超时而
           国内网站正常；mihomo 日志反复出现
           "[Provider] my-airport pull error"。
@@ -325,12 +325,12 @@ Netflix（或其他流媒体）提示"所在地区不可用"
 --------------------------------------------------------------------------
 doctor 报告国家分组为空（default-empty / country-empty）
 --------------------------------------------------------------------------
-  现象：  doctor 显示 "the Country Pick selection '...' has NO nodes"
+  现象：  doctor 显示 "the Exit Country selection '...' has NO nodes"
           （BROKEN，状态 default-empty）或 "country group(s) match no
           provider node"（DEGRADED，状态 country-empty）；在面板中选中
           被点名的分组时，所有连接都被拒绝而不是被转发。
   原因：  某条 COUNTRY_GROUPS 正则匹配不到任何机场节点。default-empty
-          是严重的那个：空掉的正是 Country Pick 当前所选的国家分组，
+          是严重的那个：空掉的正是 Exit Country 当前所选的国家分组，
           默认线路流量因此被拦截。country-empty 表示空的是其他国家
           分组——默认线路仍然工作，但选中那个国家会被拒绝。无论哪种，
           都是正则与机场的节点命名不再吻合（机场会不打招呼地改名）。
@@ -338,7 +338,7 @@ doctor 报告国家分组为空（default-empty / country-empty）
   处理：  对照面板 Proxies 页的实际节点名检查正则，修改 .env 中对应
           的 COUNTRY_GROUPS 条目（见 CONFIGURE.zh.txt），然后重新部署
           （install.sh > 修改已有部署）。修复期间的应急做法：在面板
-          的 Country Pick 选择器里改选另一个国家。若 doctor 报告的是
+          的 Exit Country 选择器里改选另一个国家。若 doctor 报告的是
           provider-empty——所有分组皆空——那是上面的"机场节点全部
           消失"，与正则无关。
 
@@ -351,8 +351,9 @@ doctor 报告国家分组为空（default-empty / country-empty）
           旧的过滤默认分组，保存的选择因此不再对应任何分组，每个被
           改名/移除的分组都回落到其第一个成员。这只会发生一次；新的
           选择照常持久保存。
-  处理：  在面板里重新固定（Proxy Mode、Streaming Sites、
-          Country Pick）。期间默认值是合理的：Country Pick 骑乘你
+  处理：  在面板里重新固定（Routing Mode、Streaming Unlock、
+          Exit Country，若启用了强制代理段还包括 Full-Tunnel
+          Devices）。期间默认值是合理的：Exit Country 骑乘你
           COUNTRY_GROUPS 的第一项——既有 .env 保持自己原有的条目
           顺序，所以你的默认国家就是你自己的第一项。若你手工编辑
           .env 而不是重跑安装器：删除渲染错误点名的已退役过滤开关

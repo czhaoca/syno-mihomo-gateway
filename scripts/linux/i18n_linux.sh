@@ -39,7 +39,7 @@ _msg_en_linux() {
     rep_dashboard)        printf '%s' 'Dashboard (open from a LAN device that is NOT this host):' ;;
     rep_warn_isolation)   printf '%s' 'This host itself cannot reach %s (macvlan isolation) - always test from another device.' ;;
     rep_reach_test)       printf '%s' 'Verify from a LAN device (NOT this host - macvlan hides the IP from the host itself): curl http://%s:%s/version returns JSON. If it still times out from another device, see Troubleshooting.' ;;
-    diag_pg_default_fix)  printf '%s' 'its COUNTRY_GROUPS regex in .env matches no node of this airport - fix the regex and Redeploy (sudo sh ./install-linux.sh); stopgap: pick another country in the dashboard Country Pick selector' ;;
+    diag_pg_default_fix)  printf '%s' 'its COUNTRY_GROUPS regex in .env matches no node of this airport - fix the regex and Redeploy (sudo sh ./install-linux.sh); stopgap: pick another country in the dashboard Exit Country selector' ;;
     lx_warn_macvlan_virt) printf '%s' 'virtualized/cloud host detected (%s): macvlan children often cannot forward LAN traffic here (cloud VPCs filter unknown MACs; some hypervisor vswitches drop them)' ;;
     lx_warn_macvlan_virt_2) printf '%s' 'recommended: lite mode - it binds this host directly (no macvlan) and works wherever the host itself works' ;;
     lx_ask_macvlan_ack)   printf '%s' 'proceed with compose mode (macvlan) anyway?' ;;
@@ -75,7 +75,7 @@ _msg_zh_linux() {
     rep_dashboard)        printf '%s' '仪表盘（请从非本机的 LAN 设备打开）：' ;;
     rep_warn_isolation)   printf '%s' '本机自身无法访问 %s（macvlan 隔离）- 请始终从另一台设备测试。' ;;
     rep_reach_test)       printf '%s' '请从局域网设备（非本机——macvlan 使本机自身无法访问该 IP）验证：curl http://%s:%s/version 应返回 JSON。若从其他设备仍超时，请见故障排查。' ;;
-    diag_pg_default_fix)  printf '%s' '该分组在 .env 中的 COUNTRY_GROUPS 正则匹配不到该机场的任何节点——修正正则后重新部署（sudo sh ./install-linux.sh）；应急：在面板 Country Pick 选择器中换一个国家' ;;
+    diag_pg_default_fix)  printf '%s' '该分组在 .env 中的 COUNTRY_GROUPS 正则匹配不到该机场的任何节点——修正正则后重新部署（sudo sh ./install-linux.sh）；应急：在面板 Exit Country 选择器中换一个国家' ;;
     lx_warn_macvlan_virt) printf '%s' '检测到虚拟化/云主机（%s）：macvlan 子接口在此类环境常无法转发局域网流量（云 VPC 会过滤未知 MAC；部分虚拟交换机会丢弃）' ;;
     lx_warn_macvlan_virt_2) printf '%s' '建议：精简模式 - 直接绑定本机（无需 macvlan），主机能用它就能用' ;;
     lx_ask_macvlan_ack)   printf '%s' '仍要使用 compose 模式（macvlan）吗？' ;;

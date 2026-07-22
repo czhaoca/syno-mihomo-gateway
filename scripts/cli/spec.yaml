@@ -320,7 +320,7 @@ json_output:
     (update_task/boot_task verify the DSM Task Scheduler deployment;
     proxy_groups is ok|default-empty|country-empty|provider-empty for the
     generated "<Country> Auto" url-test groups - default-empty means the
-    country group selected in Country Pick matches no provider node
+    country group selected in Exit Country matches no provider node
     (default-route traffic is REJECTED, fail closed), country-empty means
     some other COUNTRY_GROUPS entr(ies) match no node, provider-empty
     means EVERY url-test group is empty (a cold or dead provider - seed
@@ -345,7 +345,7 @@ json_output:
     band is not in use, parity-drift means the rendered SRC-IP-CIDR rules
     differ from the knob (the band edit is not live - redeploy),
     chain-violation means a non-LAN flow from a band source bypassed the
-    Full Proxy group (usually the documented UDP/QUIC fallthrough when
+    Full-Tunnel Devices group (usually the documented UDP/QUIC fallthrough when
     the exit node lacks UDP relay; the guarantee also assumes no routable
     LAN IPv6 - see ipv6_bypass); "unknown" means
     the surface is not probeable on this box).
@@ -368,7 +368,7 @@ json_output:
     校验 DSM 任务计划的部署情况；proxy_groups 针对生成的“<国家> Auto”
     url-test 分组，
     取值 ok|default-empty|country-empty|provider-empty —— default-empty
-    表示 Country Pick 当前选中的国家分组匹配不到任何节点（默认线路流量被
+    表示 Exit Country 当前选中的国家分组匹配不到任何节点（默认线路流量被
     REJECT，失败关闭），
     country-empty 表示其他 COUNTRY_GROUPS 条目匹配不到节点，
     provider-empty 表示所有 url-test 分组皆空（机场节点未就绪——先做
@@ -389,7 +389,7 @@ json_output:
     disabled|ok|parity-drift|chain-violation —— disabled 表示未启用网段，
     parity-drift 表示渲染出的 SRC-IP-CIDR 规则与 .env 不一致（网段修改
     未生效——请重新部署），chain-violation 表示网段设备的非局域网流量
-    绕过了 Full Proxy 分组（通常是已在文档说明的 UDP/QUIC 穿透：出口
+    绕过了 Full-Tunnel Devices 分组（通常是已在文档说明的 UDP/QUIC 穿透：出口
     节点不支持 UDP 中继；该保证同样要求局域网没有可路由 IPv6——参见
     ipv6_bypass）；"unknown" 表示此机器上该项不可探测）。
     标准输出只有这一个对象，日志绝不混入。

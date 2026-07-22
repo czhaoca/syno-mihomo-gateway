@@ -568,7 +568,7 @@ client→router:53 is same-subnet traffic that never crosses the gateway, so the
 cannot see it; **(2)** client-side **encrypted DNS** — browser "secure DNS" (Chrome silently
 upgrades a domestic system resolver to that provider's DoH), Android Private DNS, or a
 Cloudflare WARP/1.1.1.1-type app — rides port 443/853 and cannot be hijacked. Without
-hostnames the domain rules cannot match: streaming never reaches the `Streaming Sites` group, and
+hostnames the domain rules cannot match: streaming never reaches the `Streaming Unlock` group, and
 the device dials whatever (often GFW-poisoned) addresses its own resolver returned. In fake-ip
 mode every gateway-resolved flow logs WITH a hostname, so a hostname-free log is proof of
 bypass, not a gateway fault.
@@ -630,20 +630,20 @@ v4-only, with everything steered through the gateway.
 play.
 
 **Cause:** streaming services blacklist most datacenter exit IPs. The `<Country> Auto` group
-your `Country Pick` selection rides picks its node by **latency within that country**, and the
+your `Exit Country` selection rides picks its node by **latency within that country**, and the
 lowest-latency node is rarely a streaming-unlock node — so Netflix rides a working tunnel
 whose exit is refused by Netflix. This is a node property, not a rule fault: the
-`GEOSITE,NETFLIX,Streaming Sites` rule (and its audio-service twins — Spotify, Tidal, Deezer,
-SoundCloud) routes these sites deterministically into their own `Streaming Sites` selector
-(default: `Proxy Mode`, i.e. day-one behavior is unchanged).
+`GEOSITE,NETFLIX,Streaming Unlock` rule (and its audio-service twins — Spotify, Tidal, Deezer,
+SoundCloud) routes these sites deterministically into their own `Streaming Unlock` selector
+(default: `Routing Mode`, i.e. day-one behavior is unchanged).
 
-**Fix:** open MetaCubeXD → Proxies → `Streaming Sites` and pin a node your airport marks as
+**Fix:** open MetaCubeXD → Proxies → `Streaming Unlock` and pin a node your airport marks as
 streaming/Netflix-capable (often named `NF`, `流媒体`, `解锁`…) — or pin a `<Country> Auto`
 group for one-click region pinning — then reload the title. Only streaming traffic moves;
-everything else keeps riding `Proxy Mode`. If it still fails on an
+everything else keeps riding `Routing Mode`. If it still fails on an
 unlock node: some devices (smart TVs, Android **Private DNS**) bypass the gateway's DNS and
 connect by raw IP — since v1.3.10 the sniffer recovers those flows' hostnames from SNI so they
-still reach `Streaming Sites`, but a device whose own resolver returns poisoned garbage may still
+still reach `Streaming Unlock`, but a device whose own resolver returns poisoned garbage may still
 misbehave; disable its private/hardcoded DNS so the gateway answers its lookups (see the
 "LAN clients bypass the gateway's DNS" entry above). And if `doctor` warns
 `ipv6_bypass: exposed`, fix that first: a dual-stack device streams over the ISP's IPv6 and
@@ -664,15 +664,15 @@ tunnel anyway.
 **Fix:** restore the airport (renew / replace the subscription — split-horizon v2 is the only
 DNS profile, so there is no legacy fallback mode to switch back to). Note the DNS detour rides
 the **hidden** `All Nodes` anchor group (the full pool, kept alive solely for DNS — MetaCubeXD
-does not show its card), so pinning `Proxy Mode` to `DIRECT` — or an empty `Country Pick`
+does not show its card), so pinning `Routing Mode` to `DIRECT` — or an empty `Exit Country`
 selection — does **not** break resolution; only a genuinely dead provider does. Also expect the **first** lookup of a
 new domain to add one tunneled round-trip (~hundreds of ms); mihomo's DNS cache is in-memory,
 so caches start cold after every restart.
 
 ## Provider has no nodes (foreign sites dead, node list empty)
 
-**Symptom:** the dashboard's Proxies view shows only the group cards — `Proxy Mode` /
-`Streaming Sites` / `Country Pick` / your `<Country> Auto` groups — with **no airport nodes**
+**Symptom:** the dashboard's Proxies view shows only the group cards — `Routing Mode` /
+`Streaming Unlock` / `Exit Country` / your `<Country> Auto` groups — with **no airport nodes**
 inside them (the `All Nodes` url-test still exists but is hidden from the dashboard); foreign
 sites time out while domestic sites stay fine, and the mihomo log repeats
 `[Provider] my-airport pull error: …`.
@@ -699,13 +699,13 @@ expired); on a timeout, the panel is unreachable from your network at that momen
 
 ## Doctor reports an empty country group (`proxy_groups`: default-empty / country-empty)
 
-**Symptom:** `doctor` shows `ERROR the Country Pick selection '…' has NO nodes …` (result
+**Symptom:** `doctor` shows `ERROR the Exit Country selection '…' has NO nodes …` (result
 BROKEN, state `default-empty`) or `WARN country group(s) match no provider node: …` (DEGRADED,
 state `country-empty`); selecting the named group in the dashboard rejects every connection
 instead of routing it.
 
 **Cause:** a `COUNTRY_GROUPS` regex matches zero provider nodes. `default-empty` is the bad
-one: the empty group is the country **`Country Pick` is currently riding**, so default-route
+one: the empty group is the country **`Exit Country` is currently riding**, so default-route
 traffic is REJECTed. `country-empty` means some *other* country group is empty — the default
 route still works, but selecting that country would reject. Either way the regex no longer
 fits the airport's node naming — airports rename nodes (香港01 → HK-01) without notice, and a
@@ -716,7 +716,7 @@ DIRECT out the uplink — the doctor is how you find out *why*.
 **Fix:** compare the pattern against the live node names (dashboard Proxies view), adjust that
 `COUNTRY_GROUPS` entry's regex in `.env` (syntax notes in
 [configuration](configuration.md)), then re-render with **Redeploy** (`sudo sh ./install.sh`).
-Stopgap while you fix it: pick another country in the dashboard's `Country Pick` selector. If
+Stopgap while you fix it: pick another country in the dashboard's `Exit Country` selector. If
 doctor instead reports `provider-empty` — **every** url-test group empty — the provider itself
 has no nodes: that is the [Provider has no nodes](#provider-has-no-nodes-foreign-sites-dead-node-list-empty)
 condition above, not a regex problem (`sudo sh scripts/seed_provider.sh`).
@@ -731,8 +731,9 @@ renamed the selectors and removed the old filtered default group, so saved pins 
 match any group and every renamed/removed group falls back to its first member. This happens
 **once**, by design; new picks persist normally.
 
-**Fix:** re-pin in MetaCubeXD (`Proxy Mode`, `Streaming Sites`, `Country Pick`). Defaults are
-sane meanwhile: `Country Pick` rides your **first** `COUNTRY_GROUPS` entry — a pre-existing
+**Fix:** re-pin in MetaCubeXD (`Routing Mode`, `Streaming Unlock`, `Exit Country`, and
+`Full-Tunnel Devices` if the band is enabled). Defaults are
+sane meanwhile: `Exit Country` rides your **first** `COUNTRY_GROUPS` entry — a pre-existing
 `.env` keeps its own entry order, so your default country is *your* first entry. If you
 hand-edit `.env` instead of re-running the installer: delete the retired filter-knob lines the
 render error names (see [configuration](configuration.md#dns-injected-into-the-config-template)

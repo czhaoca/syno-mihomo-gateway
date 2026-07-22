@@ -62,8 +62,8 @@ suffix on a server is mihomo's group-detour fragment syntax: that resolver is di
 **through** the group literally named `All Nodes` — the **hidden** full-pool url-test group
 kept solely as this DNS anchor (`hidden: true` is a display flag only: MetaCubeXD does not
 show the card, but the group stays alive and routable). The detour rides that anchor rather
-than the `Proxy Mode` selector on purpose: it always holds a live, health-picked node, so DNS
-keeps working even when you pin `Proxy Mode` to `DIRECT` or the picked country group empties
+than the `Routing Mode` selector on purpose: it always holds a live, health-picked node, so DNS
+keeps working even when you pin `Routing Mode` to `DIRECT` or the picked country group empties
 to REJECT. Rename or remove it only together with every `#All Nodes` fragment — the renderer
 **and** CI validate every `#group` fragment in any `DNS_*` list against the rendered groups
 (or `DIRECT`); a dangling fragment refuses the render. Deployed `.env` DNS values need **no
@@ -78,17 +78,19 @@ cold start.
 | `DNS_CN_NAMESERVER` | ✅ | **Split-horizon pair (a):** domains on mihomo's `geosite:cn` list resolve ONLY here — domestic, dialed direct. REQUIRED together with `DNS_FOREIGN_NAMESERVER` — split-horizon v2 is the **only** DNS profile; a missing pair refuses to render (the entrypoint gate keeps the previous config running). | `https://223.5.5.5/dns-query,https://120.53.53.53/dns-query` |
 | `DNS_FOREIGN_NAMESERVER` | ✅ | **Split-horizon pair (b), v2 foreign-by-default:** rendered as the **default** `nameserver` — every domain *not* matched by a policy entry (geosite-listed foreign **and** the unlisted long tail) resolves ONLY here — overseas, tunneled via `#All Nodes`. Those names never reach a domestic operator; a dead tunnel fails **closed** (SERVFAIL) instead of silently leaking (there is no fallback dual-query — that channel was removed with the legacy profile). | `https://1.1.1.1/dns-query#All Nodes,https://8.8.8.8/dns-query#All Nodes` |
 | `DNS_GEOIP_NO_RESOLVE` | | `true` renders `no-resolve` onto the `GEOIP,CN,DIRECT` rule so it never forces a lookup at all. Under v2 the forced lookup already rides the tunneled foreign list (private), so the default stays `false` and unlisted CN domains keep their DIRECT short-circuit. Trade-off of `true`: CN domains missing from `geosite:cn` ride the proxy via `MATCH` (see [troubleshooting](troubleshooting.md#niche-domestic-site-slow-or-unreachable-after-enabling-no-resolve)). Only lowercase `true`/`false`. | `false` |
-| `SNIFFER_ENABLE` | | Renders the traffic **sniffer** (TLS SNI / HTTP Host / QUIC, `parse-pure-ip` + `override-destination`): raw-IP flows from LAN clients that resolve DNS **outside** the gateway recover their hostname, so domain rules (incl. `Streaming Sites`) still route them and poisoned client-side answers are re-dialed by hostname at the node. Unset/`false` renders without the block, byte-identical to pre-v1.3.10 (upgrade compat); `.env.example` ships `true`. Routing self-heals, but bypassing clients' *privacy* still requires pointing their DNS at the gateway — see [troubleshooting](troubleshooting.md#lan-clients-bypass-the-gateways-dns-dnsleaktest-still-shows-domestic-resolvers). | `true` |
-| `FULL_PROXY_SOURCES` | | **Optional per-device full-proxy band:** comma-separated IPv4 addresses/CIDRs (a bare IP means `/32`). Renders **only when set** — unset keeps the rendered config **byte-identical** (the feature is invisible). When set, a **`Full Proxy`** selector appears on the dashboard and one `SRC-IP-CIDR` rule per entry lands **immediately after the LAN rule**: band devices reach LAN destinations DIRECT, and **everything else — streaming and CN sites alike — rides `Full Proxy`** (strict semantics). Malformed values **refuse to render** naming this key — IPv6 entries, hostnames, octets >255, a prefix >32, duplicates, whitespace, backticks (IPv6 is refused on purpose: routable LAN IPv6 routes *around* the IPv4-only gateway — see the `ipv6_bypass` caveat). Per-device mode switching is **router-side** (a DHCP fixed-IP flip), never a gateway restart. See [Full-proxy devices](#full-proxy-devices-full_proxy_sources). | `192.168.1.240/28` |
-| `COUNTRY_GROUPS` | ✅ | **Required — the group model is built from it** (empty/unset refuses to render, pointing at the `.env.example` default): `NAME=regex;NAME=regex;…` generates one **`<Country> Auto`** url-test group per entry — the dashboard shows `NAME` and auto-picks the fastest provider node matching `regex` — and those groups ARE the members of the **`Country Pick`** selector. The **first** entry is the out-of-box default exit country; `.env.example` ships **Japan Auto first**. Regex flavor: regexp2 (.NET) — case-sensitive unless `(?i)`, **unanchored substring** match (`日本` matches `日本01`), `\|` alternates, a **backtick refuses to render** (an invalid pattern crashes mihomo at startup); anchor short Latin codes as `US\d\|^US` so they cannot hit inside other names. A regex spanning several countries **is** a multi-country group (e.g. `亚洲=日本\|新加坡`). No own health probe (the provider health check supplies the delay data); a zero-match group **REJECT**s when selected (fail closed, never a silent bypass; the doctor flags it — see [troubleshooting](troubleshooting.md#doctor-reports-an-empty-country-group-proxy_groups-default-empty--country-empty)). `NAME` may be CJK and may contain interior spaces (`Japan Auto`) — leading/trailing whitespace refuses — and must not shadow a built-in, reserved, or retired group/adapter name (`All Nodes` / `Country Pick` / `Proxy Mode` / `Streaming Sites` / `DIRECT` / `REJECT` / … — the render error names the collision; full list in `.env.example`); empty parts, duplicates and malformed entries **refuse to render**. Tune the shipped example to *your* airport's node names. | `Japan Auto=日本\|JP\d\|^JP;US Auto=…` (see `.env.example`) |
+| `SNIFFER_ENABLE` | | Renders the traffic **sniffer** (TLS SNI / HTTP Host / QUIC, `parse-pure-ip` + `override-destination`): raw-IP flows from LAN clients that resolve DNS **outside** the gateway recover their hostname, so domain rules (incl. `Streaming Unlock`) still route them and poisoned client-side answers are re-dialed by hostname at the node. Unset/`false` renders without the block, byte-identical to pre-v1.3.10 (upgrade compat); `.env.example` ships `true`. Routing self-heals, but bypassing clients' *privacy* still requires pointing their DNS at the gateway — see [troubleshooting](troubleshooting.md#lan-clients-bypass-the-gateways-dns-dnsleaktest-still-shows-domestic-resolvers). | `true` |
+| `FULL_PROXY_SOURCES` | | **Optional per-device full-proxy band:** comma-separated IPv4 addresses/CIDRs (a bare IP means `/32`). Renders **only when set** — unset keeps the rendered config **byte-identical** (the feature is invisible). When set, a **`Full-Tunnel Devices`** selector appears on the dashboard and one `SRC-IP-CIDR` rule per entry lands **immediately after the LAN rule**: band devices reach LAN destinations DIRECT, and **everything else — streaming and CN sites alike — rides `Full-Tunnel Devices`** (strict semantics). Malformed values **refuse to render** naming this key — IPv6 entries, hostnames, octets >255, a prefix >32, duplicates, whitespace, backticks (IPv6 is refused on purpose: routable LAN IPv6 routes *around* the IPv4-only gateway — see the `ipv6_bypass` caveat). Per-device mode switching is **router-side** (a DHCP fixed-IP flip), never a gateway restart. See [Full-proxy devices](#full-proxy-devices-full_proxy_sources). | `192.168.1.240/28` |
+| `COUNTRY_GROUPS` | ✅ | **Required — the group model is built from it** (empty/unset refuses to render, pointing at the `.env.example` default): `NAME=regex;NAME=regex;…` generates one **`<Country> Auto`** url-test group per entry — the dashboard shows `NAME` and auto-picks the fastest provider node matching `regex` — and those groups ARE the members of the **`Exit Country`** selector. The **first** entry is the out-of-box default exit country; `.env.example` ships **Japan Auto first**. Regex flavor: regexp2 (.NET) — case-sensitive unless `(?i)`, **unanchored substring** match (`日本` matches `日本01`), `\|` alternates, a **backtick refuses to render** (an invalid pattern crashes mihomo at startup); anchor short Latin codes as `US\d\|^US` so they cannot hit inside other names. A regex spanning several countries **is** a multi-country group (e.g. `亚洲=日本\|新加坡`). No own health probe (the provider health check supplies the delay data); a zero-match group **REJECT**s when selected (fail closed, never a silent bypass; the doctor flags it — see [troubleshooting](troubleshooting.md#doctor-reports-an-empty-country-group-proxy_groups-default-empty--country-empty)). `NAME` may be CJK and may contain interior spaces (`Japan Auto`) — leading/trailing whitespace refuses — and must not shadow a built-in, reserved, or retired group/adapter name (`All Nodes` / `Exit Country` / `Routing Mode` / `Streaming Unlock` / `DIRECT` / `REJECT` / … — the render error names the collision; full list in `.env.example`); empty parts, duplicates and malformed entries **refuse to render**. Tune the shipped example to *your* airport's node names. | `Japan Auto=日本\|JP\d\|^JP;US Auto=…` (see `.env.example`) |
 
-**Naming legend** (the kind-suffix system used across the dashboard): **`<X> Auto`** = an
-auto-pick url-test group · **`<X> Mode`** = a mode selector · **`<X> Sites`** = a site-rule
+**Naming legend**: **`<X> Auto`** = an auto-pick url-test group (fastest node within that
+country); the selectors carry function names (#58) — **`Routing Mode`** = the master mode
+switch · **`Streaming Unlock`** = streaming-exit pinning · **`Exit Country`** = which country
+the proxy exits from · **`Full-Tunnel Devices`** = the per-device force-proxy band
 group · **`<X> Pick`** = a manual choice.
 
 **Removed knobs.** The pre-streamline filtered default route (the priority include/exclude
 filter pair, and the `AUTO_EXCLUDE_FILTER` before it) is gone — the `<Country> Auto` groups
-plus the `Country Pick` selector replace it. A `.env` still carrying any of those lines
+plus the `Exit Country` selector replace it. A `.env` still carrying any of those lines
 **refuses to render** with an error naming the exact lines to delete (the entrypoint gate
 keeps the last-good config running meanwhile); see the release notes for the one-time
 upgrade path.
@@ -280,9 +282,9 @@ docker compose --env-file ../syno-mihomo-gateway-data/.env up -d --force-recreat
 (or `sudo sh scripts/gateway.sh redeploy --yes`). A plain `up -d mihomo` is a **no-op** when
 the image and compose model are unchanged — the entrypoint only re-renders on recreate, so a
 template-only edit is silently ignored. To customize routing, edit the `rules:` list — the
-defaults are `GEOIP,LAN,DIRECT,no-resolve` / `GEOSITE,<service>,Streaming Sites` (netflix,
+defaults are `GEOIP,LAN,DIRECT,no-resolve` / `GEOSITE,<service>,Streaming Unlock` (netflix,
 spotify, tidal, deezer, soundcloud) / `GEOSITE,CN,DIRECT` /
-`GEOSITE,GEOLOCATION-!CN,Proxy Mode` / `GEOIP,CN,DIRECT` / `MATCH,Proxy Mode`: private/link-local
+`GEOSITE,GEOLOCATION-!CN,Routing Mode` / `GEOIP,CN,DIRECT` / `MATCH,Routing Mode`: private/link-local
 destinations never ride the tunnel (`LAN` is hardcoded in mihomo — no geo database needed),
 streaming — video **and** audio, both region-locked — rides its own pinnable group, CN traffic
 goes direct, listed-foreign domains ride the proxy **without** any local DNS lookup, and the
@@ -290,24 +292,24 @@ GEOIP fallthrough catches the rest.
 
 The proxy-group graph (dashboard order = definition order — the selectors an operator touches
 first, hidden machinery last; the [naming legend](#dns-injected-into-the-config-template) above
-explains the kind suffixes):
+explains the names):
 
-- **`Proxy Mode`** — the selector the rules target (`GEOSITE`/`MATCH`). Members: `Country Pick`
+- **`Routing Mode`** — the selector the rules target (`GEOSITE`/`MATCH`). Members: `Exit Country`
   (the default), `DIRECT`, `REJECT`, plus the raw provider nodes. Pinning **one exact node**
   here is the complete fix when a site objects even to same-country IP hops; `DIRECT` bypasses
   the tunnel, `REJECT` blocks.
-- **`Streaming Sites`** — per-service selector for unlock-sensitive **sites** (the netflix +
-  audio-service rules above land here). First member `Proxy Mode`, so day-one behavior is
+- **`Streaming Unlock`** — per-service selector for unlock-sensitive **sites** (the netflix +
+  audio-service rules above land here). First member `Routing Mode`, so day-one behavior is
   identical to a single-group config; the `<Country> Auto` groups, `DIRECT`, and the raw nodes
   are one click away — pin a streaming-unlock node (or a country group, for one-click
   region pinning) to move **only** streaming traffic.
-- **`Country Pick`** — choose the exit **country**. Its members are exactly the generated
+- **`Exit Country`** — choose the exit **country**. Its members are exactly the generated
   `<Country> Auto` groups from `COUNTRY_GROUPS` (which is why that key is required); defaults
   to the **first** entry. The selected country's url-test holds **one** node at a time, so
   general traffic keeps a single exit IP and the exit country never hops on its own.
   Within-country re-picks still happen (url-test `tolerance: 50`, provider health-check
-  cadence) — if a site objects to those too, pin a raw node in `Proxy Mode` instead. No
-  `DIRECT`/`REJECT` here: bypass and block are `Proxy Mode` decisions, and an empty picked
+  cadence) — if a site objects to those too, pin a raw node in `Routing Mode` instead. No
+  `DIRECT`/`REJECT` here: bypass and block are `Routing Mode` decisions, and an empty picked
   group fails **closed** (REJECT) rather than leaking.
 - **`<Country> Auto`** — one url-test group per `COUNTRY_GROUPS` entry: fastest provider node
   matching the entry's regex, `empty-fallback: REJECT` (fail closed), `tolerance: 50`, delay
@@ -332,15 +334,15 @@ finishing startup. If that mirror is blocked for you, replace the three URLs in 
 Optional. Setting `FULL_PROXY_SOURCES` reserves a small **IPv4 band** whose devices skip the
 smart routing above: one `SRC-IP-CIDR` rule per entry is spliced **immediately after the LAN
 rule**, so a band device still reaches LAN destinations DIRECT, but **everything else —
-streaming and CN sites alike — rides the `Full Proxy` group** (strict semantics: no
+streaming and CN sites alike — rides the `Full-Tunnel Devices` group** (strict semantics: no
 CN short-circuit for these sources). Unset, nothing renders and the config stays
 **byte-identical** — the feature is invisible until you opt in.
 
-**The `Full Proxy` group** is a dashboard selector. Members:
+**The `Full-Tunnel Devices` group** is a dashboard selector. Members:
 
-- **`Proxy Mode`** (default) — the band follows whatever the dashboard's `Proxy Mode` says.
+- **`Routing Mode`** (default) — the band follows whatever the dashboard's `Routing Mode` says.
 - every **`<Country> Auto`** group — pin the band's exit country **independently** of the
-  main `Country Pick` choice.
+  main `Exit Country` choice.
 - **`REJECT`** — the kill switch: one click takes the whole band offline.
 
 There is deliberately **no `DIRECT`** member: a band device can never be silently un-proxied
@@ -371,7 +373,7 @@ IPv4-only, and routable LAN IPv6 routes *around* the gateway entirely (caveat 3 
 
 `doctor` gained a **`full_proxy`** check: `disabled` (knob unused) · `ok` · `parity-drift`
 (the rendered rules no longer match the knob — your band edit is **not live**, redeploy) ·
-`chain-violation` (a non-LAN flow from a band source bypassed `Full Proxy`).
+`chain-violation` (a non-LAN flow from a band source bypassed `Full-Tunnel Devices`).
 
 **Caveats:**
 

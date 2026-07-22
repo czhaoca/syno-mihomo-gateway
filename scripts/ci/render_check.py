@@ -39,9 +39,9 @@ Enforces:
   * the rule chain is exact (LAN-direct with no-resolve first —
     private/link-local destinations never ride the tunnel — then the
     streaming service rules: NETFLIX plus the four audio services
-    SPOTIFY/TIDAL/DEEZER/SOUNDCLOUD -> Streaming Sites, all before CN-direct
-    before GEOLOCATION-!CN->Proxy Mode before the GEOIP fallthrough), the
-    Streaming Sites select group defaults to Proxy Mode
+    SPOTIFY/TIDAL/DEEZER/SOUNDCLOUD -> Streaming Unlock, all before CN-direct
+    before GEOLOCATION-!CN->Routing Mode before the GEOIP fallthrough), the
+    Streaming Unlock select group defaults to Routing Mode
     (day-one behavior unchanged until an unlock node is pinned), and every
     '#group' detour fragment on a DNS server entry names a real proxy-group;
   * the SNIFFER fence: unset/false renders WITHOUT the block byte-identically
@@ -50,10 +50,10 @@ Enforces:
     LAN clients that resolve DNS outside the gateway — the v1.3.10
     raw-IP-flows incident); garbage fails closed;
   * the group-model-streamline graph (vNEXT): the selectors render FIRST
-    (dashboard order = config order) — Proxy Mode (the rule target:
-    Country Pick, DIRECT, REJECT + raw provider nodes), Streaming Sites
-    (Proxy Mode first + the country splice + DIRECT + raw nodes), Country
-    Pick (the country splice ONLY — no DIRECT/REJECT, no raw nodes) — then
+    (dashboard order = config order) — Routing Mode (the rule target:
+    Exit Country, DIRECT, REJECT + raw provider nodes), Streaming Unlock
+    (Routing Mode first + the country splice + DIRECT + raw nodes), Exit
+    Country (the country splice ONLY — no DIRECT/REJECT, no raw nodes) — then
     the generated '<Country> Auto' groups, then All Nodes LAST as a
     hidden: true full-pool url-test kept solely as the DNS detour anchor
     (the '#All Nodes' fragments in every deployed .env keep working, and
@@ -65,11 +65,11 @@ Enforces:
     render with a removal-instruction error (the owner-ratified fail-loud
     tripwire pattern — never a silent route-default change);
   * the COUNTRY_GROUPS generation markers: the 'NAME=regex;NAME=regex' spec
-    is REQUIRED (Country Pick's members ARE the generated groups — a
+    is REQUIRED (Exit Country's members ARE the generated groups — a
     missing or empty spec refuses to render, naming the variable and
     pointing at the .env.example default); each entry generates one
     url-test group (filter, empty-fallback REJECT, tolerance, NO own
-    url:/interval:) spliced into the Country Pick and Streaming Sites
+    url:/interval:) spliced into the Exit Country and Streaming Unlock
     selectors, a multi-country regex being one combined group; the group
     inventory assertions are SPEC-DERIVED, never a hardcoded country list;
     every malformed-spec class (backtick, no '=', empty name/regex/entry,
@@ -130,7 +130,7 @@ SECRET = 's3cr&t|"x\\y'  # & | render via esc(); " and \ render via yaml_dq()
 
 # DNS fixtures mirror the shipped .env.example shape: a plain-IP bootstrap
 # list, DoH-on-IP domestic lists, and '#All Nodes'-fragment foreign entries
-# (detoured through the hidden full-pool url-test anchor — NOT '#Proxy Mode',
+# (detoured through the hidden full-pool url-test anchor — NOT '#Routing Mode',
 # so a dashboard DIRECT pin or an empty country pick cannot kill or leak
 # long-tail resolution). The URLs must
 # survive esc() (sed) and parse as YAML flow-sequence STRING scalars — '#'
@@ -143,7 +143,7 @@ DNS_NS = ["https://223.5.5.5/dns-query", "https://120.53.53.53/dns-query"]
 DNS_CN = ["https://223.4.4.4/dns-query", "https://120.53.53.102/dns-query"]
 DNS_FOREIGN = ["https://1.0.0.1/dns-query#All Nodes", "https://8.8.4.4/dns-query#All Nodes"]
 
-# COUNTRY_GROUPS is REQUIRED (Country Pick's members ARE the generated
+# COUNTRY_GROUPS is REQUIRED (Exit Country's members ARE the generated
 # groups), so every render in this suite carries a spec. The default fixture
 # exercises a spaced Latin name AND a CJK name; failure cases pass
 # country_groups=None (absent) / "" (the compose ':-' passthrough of a stale
@@ -169,15 +169,15 @@ PANEL_HOST = "h.example.com"
 RULES_BASE = [
     "GEOIP,LAN,DIRECT,no-resolve",
     f"DOMAIN,{PANEL_HOST},DIRECT",
-    "GEOSITE,NETFLIX,Streaming Sites",
-    "GEOSITE,SPOTIFY,Streaming Sites",
-    "GEOSITE,TIDAL,Streaming Sites",
-    "GEOSITE,DEEZER,Streaming Sites",
-    "GEOSITE,SOUNDCLOUD,Streaming Sites",
+    "GEOSITE,NETFLIX,Streaming Unlock",
+    "GEOSITE,SPOTIFY,Streaming Unlock",
+    "GEOSITE,TIDAL,Streaming Unlock",
+    "GEOSITE,DEEZER,Streaming Unlock",
+    "GEOSITE,SOUNDCLOUD,Streaming Unlock",
     "GEOSITE,CN,DIRECT",
-    "GEOSITE,GEOLOCATION-!CN,Proxy Mode",
+    "GEOSITE,GEOLOCATION-!CN,Routing Mode",
     "GEOIP,CN,DIRECT",
-    "MATCH,Proxy Mode",
+    "MATCH,Routing Mode",
 ]
 RULES_NO_RESOLVE = [r + ",no-resolve" if r == "GEOIP,CN,DIRECT" else r
                     for r in RULES_BASE]
@@ -344,13 +344,13 @@ def expected_groups(country_spec: str = DEFAULT_CG,
                     full_proxy: bool = False) -> list:
     """The SPEC-DERIVED proxy-group inventory (in order): the selectors
     first (dashboard order = config order — the cards users touch come
-    first; Full Proxy joins them right after Country Pick when the band
+    first; Full-Tunnel Devices joins them right after Exit Country when the band
     knob is set), then the generated '<Country> Auto' groups in spec
     order, then the hidden All Nodes DNS anchor LAST. Never a hardcoded
     country list (CLAUDE.md rule) — names come from the spec."""
-    selectors = ["Proxy Mode", "Streaming Sites", "Country Pick"]
+    selectors = ["Routing Mode", "Streaming Unlock", "Exit Country"]
     if full_proxy:
-        selectors.append("Full Proxy")
+        selectors.append("Full-Tunnel Devices")
     return selectors + spec_names(country_spec) + ["All Nodes"]
 
 
@@ -583,7 +583,7 @@ def main() -> None:
     # groups from the spec, the hidden All Nodes anchor LAST. Members are
     # exact-equality per selector: mihomo defaults a select group with no
     # cache.db entry to its FIRST member, so the first-member assertions
-    # pin the out-of-box routing (Proxy Mode -> Country Pick -> the first
+    # pin the out-of-box routing (Routing Mode -> Exit Country -> the first
     # COUNTRY_GROUPS entry).
     gnames = [g.get("name") for g in doc.get("proxy-groups") or []]
     if gnames != expected_groups():
@@ -591,39 +591,39 @@ def main() -> None:
              f"in order (spec-derived from DEFAULT_CG): got {gnames!r}")
     dgroups = {g.get("name"): g for g in doc.get("proxy-groups")}
     CG_DEFAULT_NAMES = spec_names(DEFAULT_CG)
-    pmode = dgroups["Proxy Mode"]
+    pmode = dgroups["Routing Mode"]
     if pmode.get("type") != "select":
-        fail(f"Proxy Mode must be a select group: got {pmode.get('type')!r}")
-    if pmode.get("proxies") != ["Country Pick", "DIRECT", "REJECT"]:
-        fail(f"Proxy Mode members must be ['Country Pick', 'DIRECT', "
-             f"'REJECT'] (Country Pick FIRST = the routing default): "
+        fail(f"Routing Mode must be a select group: got {pmode.get('type')!r}")
+    if pmode.get("proxies") != ["Exit Country", "DIRECT", "REJECT"]:
+        fail(f"Routing Mode members must be ['Exit Country', 'DIRECT', "
+             f"'REJECT'] (Exit Country FIRST = the routing default): "
              f"got {pmode.get('proxies')!r}")
     if pmode.get("use") != ["my-airport"]:
-        fail("Proxy Mode must surface raw provider nodes via use: "
+        fail("Routing Mode must surface raw provider nodes via use: "
              "[my-airport] (pinning ONE exact node is the only complete "
              f"anti-IP-hop tool — brief DEC-3): got {pmode.get('use')!r}")
-    streaming = dgroups["Streaming Sites"]
+    streaming = dgroups["Streaming Unlock"]
     if streaming.get("type") != "select":
-        fail(f"Streaming Sites must be a select group (dashboard-pinnable): "
+        fail(f"Streaming Unlock must be a select group (dashboard-pinnable): "
              f"got {streaming.get('type')!r}")
-    if streaming.get("proxies") != (["Proxy Mode"] + CG_DEFAULT_NAMES
+    if streaming.get("proxies") != (["Routing Mode"] + CG_DEFAULT_NAMES
                                     + ["DIRECT"]):
-        fail(f"Streaming Sites members must be ['Proxy Mode'] + the country "
-             f"splice + ['DIRECT'] (Proxy Mode FIRST = day-one default): "
+        fail(f"Streaming Unlock members must be ['Routing Mode'] + the country "
+             f"splice + ['DIRECT'] (Routing Mode FIRST = day-one default): "
              f"got {streaming.get('proxies')!r}")
     if streaming.get("use") != ["my-airport"]:
-        fail("Streaming Sites must surface raw provider nodes via use: "
+        fail("Streaming Unlock must surface raw provider nodes via use: "
              "[my-airport] (unlock-node pinning is the documented fix): "
              f"got {streaming.get('use')!r}")
-    cpick = dgroups["Country Pick"]
+    cpick = dgroups["Exit Country"]
     if cpick.get("type") != "select":
-        fail(f"Country Pick must be a select group: got {cpick.get('type')!r}")
+        fail(f"Exit Country must be a select group: got {cpick.get('type')!r}")
     if cpick.get("proxies") != CG_DEFAULT_NAMES:
-        fail(f"Country Pick members must be EXACTLY the country splice "
+        fail(f"Exit Country members must be EXACTLY the country splice "
              f"(no DIRECT/REJECT — the fail-closed country autos are the "
              f"only members): got {cpick.get('proxies')!r}")
     if "use" in cpick:
-        fail(f"Country Pick must NOT surface raw nodes (countries only): "
+        fail(f"Exit Country must NOT surface raw nodes (countries only): "
              f"got use: {cpick.get('use')!r}")
     dauto = dgroups["All Nodes"]
     if dauto.get("type") != "url-test":
@@ -913,7 +913,7 @@ def main() -> None:
         proc_cr, cr = render(raw, country_groups=cg_missing)
         if proc_cr.returncode == 0 or cr is not None:
             fail(f"render without COUNTRY_GROUPS ({cg_missing!r}) was "
-                 f"accepted or wrote config.yaml (Country Pick needs members)")
+                 f"accepted or wrote config.yaml (Exit Country needs members)")
         if "COUNTRY_GROUPS" not in proc_cr.stderr:
             fail(f"missing-spec error must name COUNTRY_GROUPS: "
                  f"{proc_cr.stderr.strip()!r}")
@@ -941,7 +941,7 @@ def main() -> None:
     if proc_bc.returncode == 0 or bc is not None:
         fail("dangling detour in DNS_CN_NAMESERVER was accepted (the "
              "validation must cover every DNS_* list)")
-    for good_dns in ("https://1.0.0.1/dns-query#Country Pick",
+    for good_dns in ("https://1.0.0.1/dns-query#Exit Country",
                      "https://1.0.0.1/dns-query#Japan Auto",
                      "https://1.0.0.1/dns-query#All Nodes&h3=true",
                      "https://1.0.0.1/dns-query#DIRECT"):
@@ -951,7 +951,7 @@ def main() -> None:
                  f"{proc_gd.stderr.strip()}")
 
     # 11c''') The SHIPPED .env.example: no retired-knob line survives, the
-    # starter COUNTRY_GROUPS spec ships Japan Auto FIRST (Country Pick
+    # starter COUNTRY_GROUPS spec ships Japan Auto FIRST (Exit Country
     # defaults to its first member — the v1.4.0 Japan default egress
     # carries over, brief DEC-4), and the example's REAL DNS values render
     # end-to-end with every '#fragment' resolving against the rendered
@@ -966,7 +966,7 @@ def main() -> None:
     mcg = re.search(r"^COUNTRY_GROUPS=(.+)$", env_example, re.M)
     if not mcg or not mcg.group(1).strip():
         fail(".env.example must ship a non-empty COUNTRY_GROUPS starter "
-             "spec (the knob is REQUIRED — Country Pick needs members)")
+             "spec (the knob is REQUIRED — Exit Country needs members)")
     default_cg = mcg.group(1).strip()
     if spec_names(default_cg)[0] != "Japan Auto":
         fail(f".env.example COUNTRY_GROUPS must ship Japan Auto FIRST "
@@ -1004,8 +1004,8 @@ def main() -> None:
     # over the provider pool, empty-fallback REJECT (an emptied group must
     # never degrade to the Direct-typed COMPATIBLE placeholder, the
     # unproxied-uplink leak class), tolerance but NO own url:/interval:
-    # (provider health check inherited) — spliced as Country Pick's members
-    # and into Streaming Sites after Proxy Mode, before DIRECT (spec order
+    # (provider health check inherited) — spliced as Exit Country's members
+    # and into Streaming Unlock after Routing Mode, before DIRECT (spec order
     # = dashboard order). A multi-country regex is simply one combined
     # group (the countries-as-a-group ask). The fixture carries CJK names,
     # '|', '\\d' and '^' anchors; inventories are derived from the spec
@@ -1047,18 +1047,18 @@ def main() -> None:
             if absent in g:
                 fail(f"generated group {name!r} must carry NO own {absent!r} "
                      f"(inherits the provider health check): got {g.get(absent)!r}")
-    if cgroups["Country Pick"].get("proxies") != CG_NAMES:
-        fail(f"Country Pick members must be exactly the spec order: "
-             f"got {cgroups['Country Pick'].get('proxies')!r}")
-    if cgroups["Streaming Sites"].get("proxies") != (["Proxy Mode"] + CG_NAMES
+    if cgroups["Exit Country"].get("proxies") != CG_NAMES:
+        fail(f"Exit Country members must be exactly the spec order: "
+             f"got {cgroups['Exit Country'].get('proxies')!r}")
+    if cgroups["Streaming Unlock"].get("proxies") != (["Routing Mode"] + CG_NAMES
                                                      + ["DIRECT"]):
-        fail(f"Streaming Sites members with the spec on must be Proxy Mode + "
+        fail(f"Streaming Unlock members with the spec on must be Routing Mode + "
              f"spec order + DIRECT: got "
-             f"{cgroups['Streaming Sites'].get('proxies')!r}")
-    if cgroups["Proxy Mode"].get("proxies") != ["Country Pick", "DIRECT",
+             f"{cgroups['Streaming Unlock'].get('proxies')!r}")
+    if cgroups["Routing Mode"].get("proxies") != ["Exit Country", "DIRECT",
                                                 "REJECT"]:
-        fail(f"Proxy Mode members are spec-independent (Country Pick carries "
-             f"the countries): got {cgroups['Proxy Mode'].get('proxies')!r}")
+        fail(f"Routing Mode members are spec-independent (Exit Country carries "
+             f"the countries): got {cgroups['Routing Mode'].get('proxies')!r}")
     if cgroups["All Nodes"] != dauto:
         fail(f"All Nodes must be UNTOUCHED by the country spec: "
              f"{cgroups['All Nodes']!r}")
@@ -1073,7 +1073,7 @@ def main() -> None:
     # reserved list carries the NEW selector names AND the retired legacy
     # names (a user group literally named 'All Nodes' or 'Priority Nodes'
     # would resurrect a name the docs history still associates with old
-    # semantics), plus 'Full Proxy' (reserved ahead for the
+    # semantics), plus 'Full-Tunnel Devices' (reserved ahead for the
     # per-device-full-proxy epic).
     for bad_spec, why in (
             ('日本=日本`REJECT`', "backtick"),
@@ -1086,10 +1086,14 @@ def main() -> None:
             ('Priority Nodes=x', "retired-name collision (Priority Nodes)"),
             ('PROXY=x', "retired-name collision (PROXY)"),
             ('STREAMING=x', "retired-name collision (STREAMING)"),
-            ('Country Pick=x', "selector collision (Country Pick)"),
-            ('Proxy Mode=x', "selector collision (Proxy Mode)"),
-            ('Streaming Sites=x', "selector collision (Streaming Sites)"),
-            ('Full Proxy=x', "reserved-ahead collision (Full Proxy)"),
+            ('Proxy Mode=x', "retired-name collision (pre-#58 Proxy Mode)"),
+            ('Streaming Sites=x', "retired-name collision (pre-#58 Streaming Sites)"),
+            ('Country Pick=x', "retired-name collision (pre-#58 Country Pick)"),
+            ('Full Proxy=x', "retired-name collision (pre-#58 Full Proxy)"),
+            ('Exit Country=x', "selector collision (Exit Country)"),
+            ('Routing Mode=x', "selector collision (Routing Mode)"),
+            ('Streaming Unlock=x', "selector collision (Streaming Unlock)"),
+            ('Full-Tunnel Devices=x', "reserved-ahead collision (Full-Tunnel Devices)"),
             ('DIRECT=x', "reserved adapter collision (DIRECT)"),
             ('日本=x;;美国=y', "empty entry"),
             (' 日本=x', "leading space in name"),
@@ -1121,7 +1125,7 @@ def main() -> None:
         fail("trailing-';' spec must render exactly one generated group")
 
     # 11e) FULL_PROXY_SOURCES (per-device full-proxy band, #46): OPTIONAL —
-    # set, it renders the fenced Full Proxy select group (members Proxy Mode
+    # set, it renders the fenced Full-Tunnel Devices select group (members Routing Mode
     # + the country splice + REJECT, NO DIRECT — a band device can never be
     # silently un-proxied at the group layer; REJECT is the kill switch) and
     # one SRC-IP-CIDR rule per entry at the EXACT post-LAN-rule position
@@ -1130,16 +1134,16 @@ def main() -> None:
     # a template with the whole FULL_PROXY machinery stripped (fully
     # additive; upgrade-safe). Bare IPs normalize to /32.
     FP = "192.0.2.16/28,192.0.2.5"
-    FP_RULES = ["SRC-IP-CIDR,192.0.2.16/28,Full Proxy",
-                "SRC-IP-CIDR,192.0.2.5/32,Full Proxy"]
+    FP_RULES = ["SRC-IP-CIDR,192.0.2.16/28,Full-Tunnel Devices",
+                "SRC-IP-CIDR,192.0.2.5/32,Full-Tunnel Devices"]
     # Anchor on PARSED rules, never the raw text — the template's rules
     # comment mentions SRC-IP-CIDR as prose (the comment-prose false-
     # positive class validate_release's helpers document).
     if any("SRC-IP-CIDR" in str(r) for r in doc.get("rules") or []):
         fail("default render must carry NO SRC-IP-CIDR rules "
              "(FULL_PROXY_SOURCES unset)")
-    if "Full Proxy" in {g.get("name") for g in doc.get("proxy-groups") or []}:
-        fail("default render must NOT contain the Full Proxy group "
+    if "Full-Tunnel Devices" in {g.get("name") for g in doc.get("proxy-groups") or []}:
+        fail("default render must NOT contain the Full-Tunnel Devices group "
              "(FULL_PROXY_SOURCES unset)")
     fp_plain_raw = drop_token_lines(strip_fence(raw, "FULL_PROXY"),
                                     "FULL_PROXY_RULES")
@@ -1165,23 +1169,23 @@ def main() -> None:
     fpnames = [g.get("name") for g in fpdoc.get("proxy-groups") or []]
     if fpnames != expected_groups(full_proxy=True):
         fail(f"band-on proxy-groups must be exactly "
-             f"{expected_groups(full_proxy=True)!r} in order (Full Proxy "
-             f"joins the selectors after Country Pick): got {fpnames!r}")
-    fpg = {g.get("name"): g for g in fpdoc.get("proxy-groups")}["Full Proxy"]
+             f"{expected_groups(full_proxy=True)!r} in order (Full-Tunnel Devices "
+             f"joins the selectors after Exit Country): got {fpnames!r}")
+    fpg = {g.get("name"): g for g in fpdoc.get("proxy-groups")}["Full-Tunnel Devices"]
     if fpg.get("type") != "select":
-        fail(f"Full Proxy must be a select group (zero probe traffic): "
+        fail(f"Full-Tunnel Devices must be a select group (zero probe traffic): "
              f"got {fpg.get('type')!r}")
-    if fpg.get("proxies") != (["Proxy Mode"] + CG_DEFAULT_NAMES + ["REJECT"]):
-        fail(f"Full Proxy members must be ['Proxy Mode'] + the country "
-             f"splice + ['REJECT'] (NO DIRECT — brief DEC-3; Proxy Mode "
+    if fpg.get("proxies") != (["Routing Mode"] + CG_DEFAULT_NAMES + ["REJECT"]):
+        fail(f"Full-Tunnel Devices members must be ['Routing Mode'] + the country "
+             f"splice + ['REJECT'] (NO DIRECT — brief DEC-3; Routing Mode "
              f"FIRST = the band follows the dashboard mode by default): "
              f"got {fpg.get('proxies')!r}")
     if "use" in fpg:
-        fail(f"Full Proxy must NOT surface raw nodes (pin nodes via Proxy "
-             f"Mode instead): got use: {fpg.get('use')!r}")
+        fail(f"Full-Tunnel Devices must NOT surface raw nodes (pin nodes via "
+             f"Routing Mode instead): got use: {fpg.get('use')!r}")
     for absent in ("url", "interval"):
         if absent in fpg:
-            fail(f"Full Proxy (select) must carry no {absent!r}: "
+            fail(f"Full-Tunnel Devices (select) must carry no {absent!r}: "
                  f"got {fpg.get(absent)!r}")
     if fpdoc.get("rules") != [RULES_BASE[0]] + FP_RULES + RULES_BASE[1:]:
         fail(f"band-on rules must be the LAN rule, then the SRC-IP-CIDR "
@@ -1309,9 +1313,9 @@ def main() -> None:
           "are the exact chain (LAN-direct first, then the panel DIRECT bootstrap rule "
           "— the provider pull must never depend on a populated group; IP-literal "
           "hosts degrade to IP-CIDR — NETFLIX + four audio services -> "
-          "Streaming Sites) targeting the renamed selectors; the streamlined graph "
-          "renders selectors-first (Proxy Mode -> Country Pick -> DIRECT/REJECT + raw "
-          "nodes; Streaming Sites defaulting to Proxy Mode; Country Pick = the country "
+          "Streaming Unlock) targeting the renamed selectors; the streamlined graph "
+          "renders selectors-first (Routing Mode -> Exit Country -> DIRECT/REJECT + raw "
+          "nodes; Streaming Unlock defaulting to Routing Mode; Exit Country = the country "
           "splice only) with the hidden All Nodes url-test LAST as the DNS anchor; the "
           "Priority Nodes category is purged (template tokens gone, .env.example line "
           "gone, stale PRIORITY_*/AUTO_EXCLUDE_FILTER knobs tripwire loud, empty == "
@@ -1319,11 +1323,11 @@ def main() -> None:
           "variable and the .env.example default, which ships Japan Auto first) and "
           "generates url-test groups (filter, empty-fallback REJECT, no own probe) "
           "with spec-derived inventories, refusing every malformed-spec class incl. "
-          "new-selector/retired-name/Full Proxy collisions; DNS detour fragments are "
+          "new-selector/retired-name/Full-Tunnel Devices collisions; DNS detour fragments are "
           "render-time validated (dangling '#group' refuses; rendered groups, country "
           "names, DIRECT and '&h3' suffixes pass) and the .env.example's REAL DNS "
-          "values render end-to-end; FULL_PROXY_SOURCES renders the fenced Full Proxy "
-          "select (Proxy Mode + country splice + REJECT, no DIRECT, no raw nodes) plus "
+          "values render end-to-end; FULL_PROXY_SOURCES renders the fenced Full-Tunnel Devices "
+          "select (Routing Mode + country splice + REJECT, no DIRECT, no raw nodes) plus "
           "/32-normalized SRC-IP-CIDR rules at the exact post-LAN position, is inert "
           "when unset/empty (byte-identity), composes with no-resolve, refuses every "
           "malformed class naming the knob (IPv6 pointing at ipv6_bypass), and ships "

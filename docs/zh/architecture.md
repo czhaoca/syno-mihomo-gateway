@@ -190,8 +190,8 @@ config/config.template.yaml ──(scripts/render_config.sh)──► ../syno-mi
 `DNS_FOREIGN_NAMESERVER`）注入境外优先的 v2 DNS 核心——这是唯一的 DNS 配置档：两个列表
 均为必填，缺失时渲染会直接拒绝并点名缺失的变量（见
 [配置](configuration.md)）。路由是静态 `rules:` 列表（私网目标最先直连，流媒体——视频
-与音频服务——→ 可固定的 `Streaming Sites` 选择器，国内直连，境外列表 → `Proxy Mode`
-选择器，GEOIP 兜底）。`Proxy Mode` 默认指向 `Country Pick`，其成员是由**必填**的
+与音频服务——→ 可固定的 `Streaming Unlock` 选择器，国内直连，境外列表 → `Routing Mode`
+选择器，GEOIP 兜底）。`Routing Mode` 默认指向 `Exit Country`，其成员是由**必填**的
 `COUNTRY_GROUPS` 键生成的 `<Country> Auto` url-test 分组——常规流量骑乘所选国家分组
 持有的那一个节点，出口国家因此绝不会自行跳变；隐藏的 `All Nodes` 全池分组只为充当
 DNS 绕行锚点而保留（见[配置](configuration.md)）。另有可选的嗅探围栏
@@ -205,11 +205,11 @@ CI 运行的也是**同一个脚本**
 `../syno-mihomo-gateway-data/.env` 中（`.gitignore` 条目只是防范仓库内的散落副本）。
 参见[配置](configuration.md)与[开发](development.md)。
 
-当可选的 `FULL_PROXY_SOURCES` 网段被设置时，渲染还会额外围栏出一个 **`Full Proxy`**
-选择器（成员：`Proxy Mode`——默认——每一个 `<Country> Auto` 分组，以及 `REJECT`；刻意
+当可选的 `FULL_PROXY_SOURCES` 网段被设置时，渲染还会额外围栏出一个 **`Full-Tunnel Devices`**
+选择器（成员：`Routing Mode`——默认——每一个 `<Country> Auto` 分组，以及 `REJECT`；刻意
 **不含 `DIRECT`**，网段内设备因此绝不可能被悄悄取消代理），并为每个条目在 **LAN 规则
 之后紧邻的位置**拼接一条 `SRC-IP-CIDR` 规则：网段内设备访问局域网目标仍然直连，而其余
-一切——流媒体与国内一视同仁——都走 `Full Proxy`。未设时这一切都不渲染，配置保持逐字节
+一切——流媒体与国内一视同仁——都走 `Full-Tunnel Devices`。未设时这一切都不渲染，配置保持逐字节
 不变（见[配置](configuration.md#全代理设备full_proxy_sources)）。
 
 ## 安全模型（"safe-auto"）

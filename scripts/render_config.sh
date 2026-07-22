@@ -70,26 +70,26 @@ case "$SNIFFER_ENABLE" in
 esac
 # Retirement tripwires (group-model streamline; the owner-ratified fail-loud
 # pattern from proxy-groups-v2 #40 DEC-B): the Priority Nodes category was
-# REMOVED - Country Pick over the "<Country> Auto" groups is the routing
+# REMOVED - Exit Country over the "<Country> Auto" groups is the routing
 # default now. Compose still passes the retired knobs through ONLY so a
 # stale .env fails LOUD here instead of silently rendering a different
 # default route. The old values are never used (no fallback semantics).
 : "${AUTO_EXCLUDE_FILTER:=}"
 if [ -n "$AUTO_EXCLUDE_FILTER" ]; then
-  echo "ERROR: AUTO_EXCLUDE_FILTER was removed (as was its successor PRIORITY_EXCLUDE_FILTER) - the '<Country> Auto' groups + Country Pick replace the filtered default; delete the line from .env (see docs/release-notes)" >&2
+  echo "ERROR: AUTO_EXCLUDE_FILTER was removed (as was its successor PRIORITY_EXCLUDE_FILTER) - the '<Country> Auto' groups + Exit Country replace the filtered default; delete the line from .env (see docs/release-notes)" >&2
   exit 1
 fi
 : "${PRIORITY_EXCLUDE_FILTER:=}"
 : "${PRIORITY_INCLUDE_FILTER:=}"
 if [ -n "$PRIORITY_EXCLUDE_FILTER" ] || [ -n "$PRIORITY_INCLUDE_FILTER" ]; then
-  echo "ERROR: PRIORITY_INCLUDE_FILTER/PRIORITY_EXCLUDE_FILTER were removed - the '<Country> Auto' groups + Country Pick replace Priority Nodes; delete both lines from .env (see docs/release-notes)" >&2
+  echo "ERROR: PRIORITY_INCLUDE_FILTER/PRIORITY_EXCLUDE_FILTER were removed - the '<Country> Auto' groups + Exit Country replace Priority Nodes; delete both lines from .env (see docs/release-notes)" >&2
   exit 1
 fi
 # Country groups: 'NAME=regex;NAME=regex' generates one url-test group per
 # entry (nodes matching the regexp2 pattern; a multi-country regex IS the
-# multi-country group), spliced as Country Pick's members and into the
-# Streaming Sites selector in spec order. The spec is REQUIRED: Country
-# Pick's members ARE the generated groups, so an absent or empty spec (a
+# multi-country group), spliced as Exit Country's members and into the
+# Streaming Unlock selector in spec order. The spec is REQUIRED: Exit
+# Country's members ARE the generated groups, so an absent or empty spec (a
 # stale pre-country .env passes '' through compose) refuses to render.
 # Validation is up here with the other knobs; the fragment build lives below
 # yaml_dq() (it needs the escaper). Every poison class fails BEFORE anything
@@ -97,7 +97,7 @@ fi
 # shadowing a built-in or reserved group corrupts routing.
 : "${COUNTRY_GROUPS:=}"
 if [ -z "$COUNTRY_GROUPS" ]; then
-  echo "ERROR: COUNTRY_GROUPS must be set in .env - Country Pick's members ARE the generated '<Country> Auto' groups; start from the .env.example default and tune the regexes to your airport's node names" >&2
+  echo "ERROR: COUNTRY_GROUPS must be set in .env - Exit Country's members ARE the generated '<Country> Auto' groups; start from the .env.example default and tune the regexes to your airport's node names" >&2
   exit 1
 fi
 if [ -n "$COUNTRY_GROUPS" ]; then
@@ -140,13 +140,13 @@ if [ -n "$COUNTRY_GROUPS" ]; then
         echo "ERROR: COUNTRY_GROUPS name '$_cg_name' contains whitespace other than interior spaces" >&2
         exit 1 ;;
     esac
-    # Reserved names: the current selectors + the hidden DNS anchor, 'Full
-    # Proxy' (reserved ahead for the per-device-full-proxy epic), the
-    # RETIRED legacy names (a user group named 'Priority Nodes' or PROXY
-    # would resurrect a name the docs history still associates with old
-    # semantics), and mihomo's built-in adapters.
+    # Reserved names: the current selectors + the hidden DNS anchor, the
+    # RETIRED legacy names (a user group named 'Priority Nodes', PROXY, or a
+    # pre-#58 selector name like 'Proxy Mode' would resurrect a name the
+    # docs history still associates with old semantics), and mihomo's
+    # built-in adapters.
     case "$_cg_name" in
-      'All Nodes'|'Country Pick'|'Proxy Mode'|'Streaming Sites'|'Full Proxy'|'Priority Nodes'|PROXY|STREAMING|DIRECT|REJECT|REJECT-DROP|PASS|COMPATIBLE|GLOBAL)
+      'All Nodes'|'Exit Country'|'Routing Mode'|'Streaming Unlock'|'Full-Tunnel Devices'|'Proxy Mode'|'Streaming Sites'|'Country Pick'|'Full Proxy'|'Priority Nodes'|PROXY|STREAMING|DIRECT|REJECT|REJECT-DROP|PASS|COMPATIBLE|GLOBAL)
         echo "ERROR: COUNTRY_GROUPS name '$_cg_name' collides with a built-in, reserved, or retired group/adapter name" >&2
         exit 1 ;;
     esac
@@ -165,8 +165,8 @@ if [ -n "$COUNTRY_GROUPS" ]; then
   done
 fi
 # Full-proxy band (per-device-full-proxy #46): comma-separated IPv4
-# addresses/CIDRs. OPTIONAL - set, it keeps the fenced 'Full Proxy' select
-# group and renders one 'SRC-IP-CIDR,<entry>,Full Proxy' rule per entry
+# addresses/CIDRs. OPTIONAL - set, it keeps the fenced 'Full-Tunnel Devices' select
+# group and renders one 'SRC-IP-CIDR,<entry>,Full-Tunnel Devices' rule per entry
 # right after the LAN rule; unset/empty renders byte-identical to a
 # template with the machinery stripped (fully additive). Validation
 # mirrors the COUNTRY_GROUPS error classes: every poison class fails
@@ -268,7 +268,7 @@ done
 # .env) just makes every lookup through that resolver die at runtime,
 # silently. Fail the render loud instead, naming the variable. The rendered
 # set = the static groups + the COUNTRY_GROUPS names (validated above).
-_dv_groups=";Proxy Mode;Streaming Sites;Country Pick;All Nodes;DIRECT;"
+_dv_groups=";Routing Mode;Streaming Unlock;Exit Country;All Nodes;DIRECT;"
 _cg_old_ifs=$IFS; IFS=';'
 set -f
 # shellcheck disable=SC2086  # deliberate ';' field split of the spec
@@ -297,7 +297,7 @@ for _dv_var in DNS_DEFAULT_NAMESERVER DNS_NAMESERVER \
     case "$_dv_groups" in
       *";$_dv_frag;"*) : ;;
       *)
-        echo "ERROR: $_dv_var detours '#$_dv_frag' but no such proxy group renders - valid detours are Proxy Mode, Streaming Sites, Country Pick, All Nodes, DIRECT, or a COUNTRY_GROUPS name (a stale '#Priority Nodes' means a pre-streamline .env; see docs/release-notes)" >&2
+        echo "ERROR: $_dv_var detours '#$_dv_frag' but no such proxy group renders - valid detours are Routing Mode, Streaming Unlock, Exit Country, All Nodes, DIRECT, or a COUNTRY_GROUPS name (a stale '#Priority Nodes' means a pre-streamline .env; see docs/release-notes)" >&2
         exit 1 ;;
     esac
   done
@@ -449,7 +449,7 @@ if [ -n "$FULL_PROXY_SOURCES" ]; then
       */*) _fp_norm=$_fp_e ;;
       *)   _fp_norm="$_fp_e/32" ;;
     esac
-    printf "  - 'SRC-IP-CIDR,%s,Full Proxy'\n" "$_fp_norm" >> "$FP_RULES_FRAG"
+    printf "  - 'SRC-IP-CIDR,%s,Full-Tunnel Devices'\n" "$_fp_norm" >> "$FP_RULES_FRAG"
   done
 fi
 
@@ -476,7 +476,7 @@ else
   sed -e '/{{SNIFFER_BEGIN}}/,/{{SNIFFER_END}}/d' "$PRE2" > "$PRE4"
 fi
 #   FULL_PROXY block - kept when FULL_PROXY_SOURCES is non-empty (the
-#                      fenced Full Proxy group incl. its member marker; the
+#                      fenced Full-Tunnel Devices group incl. its member marker; the
 #                      SRC-IP rules ride the {{FULL_PROXY_RULES}} marker in
 #                      the awk pass below).
 if [ -n "$FULL_PROXY_SOURCES" ]; then
@@ -488,9 +488,10 @@ fi
 #                     generated group/member fragments (awk raw-inserts the
 #                     files - deterministic across GNU/BSD/BusyBox, unlike
 #                     the sed r+d interplay). The spec is REQUIRED, so this
-#                     always runs: Country Pick's members, the Streaming
-#                     Sites splice, and (when its fence survived) the Full
-#                     Proxy splice come from the same member fragment. The
+#                     always runs: Exit Country's members, the Streaming
+#                     Unlock splice, and (when its fence survived) the
+#                     Full-Tunnel Devices splice come from the same member
+#                     fragment. The
 #                     FULL_PROXY_RULES marker always resolves here: an
 #                     empty fragment simply drops the marker line.
 awk -v groups="$CG_GROUPS_FRAG" -v members="$CG_MEMBERS_FRAG" -v fprules="$FP_RULES_FRAG" '
