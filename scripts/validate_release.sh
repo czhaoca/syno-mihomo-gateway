@@ -25,7 +25,9 @@
 #   --no-extract  validate the installed tree as-is (skip A0/A1)
 #   --keep        keep split-horizon enabled in .env at the end
 #   --revert      restore the original .env at the end
-#                 (neither flag -> asked on the TTY; default is revert)
+#                 (neither flag -> decided automatically, no prompt: an
+#                 original carrying a valid v2 pair is restored, a pair-less
+#                 original keeps the example values - DEC-C #56)
 #   --probe-ip X  automated full-proxy band probe (#46): X is a SPARE LAN
 #                 IPv4 the owner supplies (never committed - CLAUDE.md's
 #                 no-hardcoded-address rule is why there is no default).
@@ -263,6 +265,40 @@ run_scrubbed() { env -i PATH="$PATH" HOME="${HOME:-/tmp}" "$@"; }
 # FAIL, never pass (run 2's lax "!= 3" gate accepted a crash as a pass).
 doctor_rc_ok() { case "$1" in 0|2) return 0 ;; *) return 1 ;; esac; }
 
+# _env_file_has FILE KEY - 0 iff FILE assigns KEY a non-empty value (last
+# assignment wins; one layer of surrounding double-quotes stripped). Enough
+# for presence detection while mirroring the dotenv semantics, and pure -
+# self_test exercises it without sourcing common.sh.
+_env_file_has() {
+  [ -f "$1" ] || return 1
+  # \r-strip + trailing-whitespace trim BEFORE unquoting mirrors dotenv_load/
+  # dotenv_decode (a quoted value's interior whitespace survives - the trim
+  # only ever removes characters outside the closing quote).
+  _efh_v="$(awk -v k="$2" 'index($0, k"=") == 1 { v = substr($0, length(k) + 2) }
+                           END { printf "%s", v }' "$1" \
+            | sed -e 's/\r$//' -e 's/[[:space:]]*$//')"
+  case "$_efh_v" in
+    \"*\") _efh_v="${_efh_v#\"}"; _efh_v="${_efh_v%\"}" ;;
+    \'*\') _efh_v="${_efh_v#\'}"; _efh_v="${_efh_v%\'}" ;;
+  esac
+  [ -n "$_efh_v" ]
+}
+
+# decide_keep_split_horizon FINAL ORIG_FILE - print keep|revert (DEC-C #56).
+# Explicit --keep/--revert flags always win. Otherwise the decision is
+# automatic: an original .env that already carried a valid v2 pair is
+# RESTORED - validation never mutates a valid production .env - while an
+# original missing either list KEEPS the applied .env.example values, which
+# is the same migration the installer's precheck backfill (#55) performs.
+decide_keep_split_horizon() {
+  case "$1" in keep|revert) printf '%s' "$1"; return 0 ;; esac
+  if _env_file_has "$2" DNS_CN_NAMESERVER && _env_file_has "$2" DNS_FOREIGN_NAMESERVER; then
+    printf 'revert'
+  else
+    printf 'keep'
+  fi
+}
+
 # Result accumulation. The separator is the ASCII unit separator, which never
 # appears in a message - run 3 used '|' and the summary split every doctor
 # message ("rc 0 (0 healthy | 2 degraded)") across two lines.
@@ -491,9 +527,40 @@ All Nodes' ]; then st_ok; else st_bad "urltest_groups got: $(printf '%s' "$_name
   unpark "$TMP/plain"
   if [ "$(cat "$TMP/plain")" = live ]; then st_ok; else st_bad "unpark(no park) touched the live file"; fi
 
+  # DEC-C (#56): the keep-split-horizon decision is automatic - explicit
+  # flags always win; a valid-pair original reverts (validation never
+  # mutates a valid production .env); a pair-less/empty/missing original
+  # keeps the example values (the migration #55's precheck also performs).
+  printf 'DNS_CN_NAMESERVER=a\nDNS_FOREIGN_NAMESERVER="b"\n' > "$TMP/orig-v2"
+  printf 'DNS_CN_NAMESERVER=a\n' > "$TMP/orig-prev2"
+  printf 'DNS_CN_NAMESERVER=""\nDNS_FOREIGN_NAMESERVER=b\n' > "$TMP/orig-empty"
+  # dotenv-semantics parity: CRLF, whitespace-only, and single-quoted-empty
+  # values are all "missing" to the repo's parser and must auto-keep too.
+  printf 'DNS_CN_NAMESERVER=""\r\nDNS_FOREIGN_NAMESERVER=""\r\n' > "$TMP/orig-crlf"
+  printf 'DNS_CN_NAMESERVER=   \nDNS_FOREIGN_NAMESERVER=b\n' > "$TMP/orig-ws"
+  printf "DNS_CN_NAMESERVER=''\nDNS_FOREIGN_NAMESERVER=b\n" > "$TMP/orig-squote"
+  if [ "$(decide_keep_split_horizon '' "$TMP/orig-v2")" = revert ]; then st_ok
+  else st_bad "valid-pair original did not auto-revert"; fi
+  if [ "$(decide_keep_split_horizon '' "$TMP/orig-crlf")" = keep ]; then st_ok
+  else st_bad "CRLF empty-valued pair did not auto-keep"; fi
+  if [ "$(decide_keep_split_horizon '' "$TMP/orig-ws")" = keep ]; then st_ok
+  else st_bad "whitespace-only value did not auto-keep"; fi
+  if [ "$(decide_keep_split_horizon '' "$TMP/orig-squote")" = keep ]; then st_ok
+  else st_bad "single-quoted-empty value did not auto-keep"; fi
+  if [ "$(decide_keep_split_horizon '' "$TMP/orig-prev2")" = keep ]; then st_ok
+  else st_bad "pair-less original did not auto-keep"; fi
+  if [ "$(decide_keep_split_horizon '' "$TMP/orig-empty")" = keep ]; then st_ok
+  else st_bad "empty-valued pair did not auto-keep"; fi
+  if [ "$(decide_keep_split_horizon '' "$TMP/no-such-orig")" = keep ]; then st_ok
+  else st_bad "missing original did not auto-keep"; fi
+  if [ "$(decide_keep_split_horizon keep "$TMP/orig-v2")" = keep ]; then st_ok
+  else st_bad "--keep flag did not override the auto rule"; fi
+  if [ "$(decide_keep_split_horizon revert "$TMP/orig-prev2")" = revert ]; then st_ok
+  else st_bad "--revert flag did not override the auto rule"; fi
+
   echo "validate_release self-test: $_stp passed, $_stf failed"
   [ "$_stf" -eq 0 ] || exit 1
-  echo "OK: measurement helpers (policy/knob/psn/split-core rule anchoring incl. bootstrap-pin + comment-prose immunity, provider-node counting + real-member egress gate, filtered-group discovery + %XX name encoding + COMPATIBLE/REJECT placeholder exclusion, full-proxy band connection parsing + CIDR membership, quoted-.env parsing, .env.example key coverage, scrubbed child env, doctor rc gate, summary accumulator, cache unpark)"
+  echo "OK: measurement helpers (policy/knob/psn/split-core rule anchoring incl. bootstrap-pin + comment-prose immunity, provider-node counting + real-member egress gate, filtered-group discovery + %XX name encoding + COMPATIBLE/REJECT placeholder exclusion, full-proxy band connection parsing + CIDR membership, quoted-.env parsing, .env.example key coverage, scrubbed child env, doctor rc gate, summary accumulator, cache unpark, keep-split-horizon auto-decision)"
   exit 0
 }
 [ "$SELF_TEST" = 1 ] && self_test
@@ -988,14 +1055,18 @@ else
 fi
 
 say "D: keep split-horizon in .env, or restore the original?"
+# DEC-C (#56): no prompt - the decision is automatic (flags still win).
+_dk="$(decide_keep_split_horizon "$FINAL" "$ORIG")"
 case "$FINAL" in
-  keep) KEEP=1 ;;
-  revert) KEEP=0 ;;
-  *)
-    printf ">>> Keep split-horizon enabled (values from .env.example)? [y/N] : "
-    read -r _k </dev/tty || _k=""
-    case "$_k" in y|Y|yes) KEEP=1 ;; *) KEEP=0 ;; esac ;;
+  keep|revert) _dk_src="explicit --$FINAL flag" ;;
+  *) if [ "$_dk" = revert ]; then
+       _dk_src="auto: the original .env carries a valid v2 pair - validation never mutates it"
+     else
+       _dk_src="auto: the original .env lacked the split-horizon pair - keeping the example values acts as the migration"
+     fi ;;
 esac
+case "$_dk" in keep) KEEP=1 ;; *) KEEP=0 ;; esac
+ok "D keep-split-horizon: $_dk ($_dk_src)"
 if [ "$KEEP" = 1 ]; then
   rm -f "$ORIG"
   echo "keeping split-horizon (revert later by restoring your old DNS_* lines)"
