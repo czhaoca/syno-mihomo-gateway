@@ -29,6 +29,98 @@ dotenv_load "$ENV_FILE"
 [ "$ACR_PASSWORD" = "$SPECIAL" ] || fail "strict dotenv loader changed a secret"
 [ "$UPDATE_SCHEDULE" = '0 2 * * *' ] || fail "strict dotenv loader changed a schedule"
 
+# env_set is SELF-VERIFYING (#59): honest rename status, decoded read-back,
+# temp cleanup on every failure path. chmod stays best-effort (the kept-backup
+# precedent in wizards.sh) - content verification is authoritative.
+# (1) a failed rename returns 1, alters nothing, orphans no temp file.
+( ENV_FILE="$TD/sv-mvfail.env"
+  printf 'KEEP="1"\n' > "$ENV_FILE"
+  mv() { return 1; }
+  env_set FOO bar 2>/dev/null && fail "env_set reported success on a failed mv"
+  grep -q '^FOO=' "$ENV_FILE" && fail "a failed mv still altered the env"
+  set -- "$ENV_FILE".tmp.*
+  [ ! -e "$1" ] || fail "a failed mv orphaned the temp file"
+  exit 0
+) || exit 1
+# (2) a LYING rename (returns 0, moves nothing) is caught by read-back.
+( ENV_FILE="$TD/sv-mvlie.env"
+  printf 'FOO="old"\n' > "$ENV_FILE"
+  mv() { return 0; }
+  env_set FOO new 2>/dev/null && fail "env_set trusted a lying mv"
+  [ "$(dotenv_get FOO)" = old ] || fail "a lying-mv run altered the env"
+  set -- "$ENV_FILE".tmp.*
+  [ ! -e "$1" ] || fail "a lying mv orphaned the temp file"
+  exit 0
+) || exit 1
+# (3) chmod failure alone does not fail a verified write (best-effort mode
+# hardening; the decoded special-character value must still round-trip).
+( ENV_FILE="$TD/sv-chmod.env"
+  : > "$ENV_FILE"
+  chmod() { return 1; }
+  env_set FOO "$SPECIAL" 2>/dev/null || fail "env_set failed on a chmod-only failure"
+  [ "$(env_get FOO)" = "$SPECIAL" ] || fail "chmod-fail write did not round-trip"
+  exit 0
+) || exit 1
+# (4) an rc-checking call site fails closed end to end (derive_images is one
+# of the 6): a failed write can no longer ride through as derived success.
+( ENV_FILE="$TD/sv-callsite.env"
+  : > "$ENV_FILE"
+  REGISTRY_MODE=docker
+  mv() { return 1; }
+  derive_images >/dev/null 2>&1 && fail "derive_images ignored a failed env_set write"
+  exit 0
+) || exit 1
+# (5) empty requested value: a missing key after a lying rename must still
+# fail verification - "key absent" and "value empty" are different facts
+# (real callers blank keys: DOCKER_REGISTRY, image refs on fresh seeds).
+( ENV_FILE="$TD/sv-mvlie-empty.env"
+  printf 'KEEP="1"\n' > "$ENV_FILE"
+  mv() { return 0; }
+  env_set FOO '' 2>/dev/null && fail "env_set verified an empty write whose key never landed"
+  set -- "$ENV_FILE".tmp.*
+  [ ! -e "$1" ] || fail "an unverified empty write orphaned the temp file"
+  exit 0
+) || exit 1
+# (6) chmod stays best-effort in an ACTIVE set -e context too (bare call, no
+# caller guard): the caller must survive and the write must still verify.
+( export ROOT TD
+  # shellcheck disable=SC2016 # the child shell expands these, not this one
+  _out="$(sh -euc '
+    . "$ROOT/scripts/lib/common.sh"
+    ui_error() { echo "ERROR: $*" >&2; }
+    . "$ROOT/scripts/installer/envedit.sh"
+    ENV_FILE="$TD/sv-chmod-bare.env"
+    chmod() { return 1; }
+    env_set FOO bar 2>/dev/null
+    echo SURVIVED' 2>/dev/null)" \
+    || fail "bare env_set aborted under set -e on a chmod-only failure"
+  case "$_out" in *SURVIVED*) : ;; *) fail "bare env_set under set -e stopped at the best-effort chmod" ;; esac
+  ENV_FILE="$TD/sv-chmod-bare.env"
+  [ "$(dotenv_get FOO)" = bar ] || fail "set -e chmod-fail write did not land"
+  exit 0
+) || exit 1
+# (7) idempotent rewrite + lying rename: the file already holds the value,
+# so the state verifies - but the temp left by the no-op mv must not orphan.
+( ENV_FILE="$TD/sv-mvlie-same.env"
+  printf 'FOO="same"\n' > "$ENV_FILE"
+  mv() { return 0; }
+  env_set FOO same 2>/dev/null || fail "env_set failed although the env already holds the value"
+  set -- "$ENV_FILE".tmp.*
+  [ ! -e "$1" ] || fail "a verified lying mv orphaned the temp file"
+  exit 0
+) || exit 1
+# (8) keys must satisfy the strict loader's charset up front: writing a key
+# dotenv_load refuses would corrupt the env file, and a regex-metachar key
+# (here matching the innocent A0B line) can never be verified literally.
+( ENV_FILE="$TD/sv-badkey.env"
+  printf 'A0B="x"\n' > "$ENV_FILE"
+  env_set 'A.B' x 2>/dev/null && fail "env_set accepted a key the dotenv loader refuses"
+  [ "$(cat "$ENV_FILE")" = 'A0B="x"' ] || fail "invalid-key attempt altered the env"
+  set -- "$ENV_FILE".tmp.*
+  [ ! -e "$1" ] || fail "invalid-key attempt orphaned a temp file"
+  exit 0
+) || exit 1
+
 # Existing .env files omit the v1.2.13 TUN knob; the shipped default (false -
 # DSM-safe) must hold without an operator migration. Since the LOCK_DIR
 # incident fix, optional-tunable defaults bind at SOURCE time in common.sh

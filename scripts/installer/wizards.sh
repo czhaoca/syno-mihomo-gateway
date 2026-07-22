@@ -246,10 +246,10 @@ _wi_apply_dns_variant() {
   { [ -z "$_av_fo" ] || [ "$_av_fo" = "$_av_ex_fo" ]; } || return 0
   _av_plain="$(printf '%s' "$_av_ex_fo" | sed 's/#[^,]*//g')"
   [ -n "$_av_plain" ] || return 0
-  # Read-back verification on every write: env_set's return code alone cannot
-  # prove a line landed (a failed rename can still report success), and this
-  # swap is OPTIONAL - on any unverified write the pair must end in a known
-  # state (shipped defaults) and success must never be claimed.
+  # Belt-and-braces read-back on every write (env_set is self-verifying since
+  # #59; this tested local proof STAYS): the swap is OPTIONAL - on any
+  # unverified write the pair must end in a known state (shipped defaults)
+  # and success must never be claimed.
   env_set DNS_CN_NAMESERVER "$_av_plain" || :
   if [ "$(env_get DNS_CN_NAMESERVER 2>/dev/null || echo '')" != "$_av_plain" ]; then
     ui_warn "$(msg scan_dns_rollback)"
@@ -512,10 +512,10 @@ _pc_backfill_pair() {
   [ -z "$_bf_cn" ] && [ -z "$_bf_fo" ] && _bf_both=1
   if [ -z "$_bf_cn" ]; then
     env_set DNS_CN_NAMESERVER "$_bf_ex_cn" || :
-    # Read-back verification: env_set's return code alone cannot prove the
-    # line landed (a failed rename can still report success) - only the
-    # re-read value can. Fail CLOSED here, at precheck, with the backup
-    # named - never let a missing list ride on to the render dead-end.
+    # Belt-and-braces read-back (env_set is self-verifying since #59; this
+    # tested local proof STAYS): this precheck repairs a secrets file, so
+    # fail CLOSED here with the backup named - never let a missing list
+    # ride on to the render dead-end.
     if [ "$(env_get DNS_CN_NAMESERVER 2>/dev/null || echo '')" != "$_bf_ex_cn" ]; then
       diagnose "$(msgf diag_backfill_write DNS_CN_NAMESERVER "$_bf_bak")" "$(msg diag_backfill_write_fix)"
       return 1

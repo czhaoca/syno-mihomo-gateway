@@ -33,11 +33,22 @@ env_get() {
 
 # env_set KEY VALUE - upsert KEY=VALUE in $ENV_FILE (replace the first
 # uncommented KEY= line, else append). Re-chmods 600 (it can hold secrets).
+# SELF-VERIFYING (#59): the rename status is honest, the temp file is removed
+# on every failure path, and success is only reported once the DECODED value
+# reads back equal - a failed or lying rename can never claim success. chmod
+# stays best-effort (the kept-backup precedent in wizards.sh): content is
+# authoritative, mode hardening is not.
 env_set() {
   _k="$1"; _v="$2"
+  # The strict loader's key charset, enforced up front: writing a key
+  # dotenv_load refuses would corrupt the env file, and a regex-metachar
+  # key could never be matched (or verified) literally by the awk paths.
+  case "$_k" in ''|[0-9]*|*[!A-Za-z0-9_]*)
+    ui_error "invalid .env key: $_k"; return 1 ;;
+  esac
   if [ ! -f "${ENV_FILE:-}" ]; then
     : > "$ENV_FILE" || { ui_error "cannot create $ENV_FILE"; return 1; }
-    chmod 600 "$ENV_FILE" 2>/dev/null
+    chmod 600 "$ENV_FILE" 2>/dev/null || :
   fi
   # Compose-compatible double quoting. The strict loader reverses these
   # escapes without evaluating the value as shell code.
@@ -45,18 +56,33 @@ env_set() {
     -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/\$/$$/g')"
   _encoded="\"$_encoded\""
   _tmp="${ENV_FILE}.tmp.$$"
-  if ENV_K="$_k" ENV_V="$_encoded" awk '
+  if ! ENV_K="$_k" ENV_V="$_encoded" awk '
         BEGIN { k = ENVIRON["ENV_K"]; v = ENVIRON["ENV_V"]; done = 0 }
         (done == 0) && ($0 ~ "^" k "=") { print k "=" v; done = 1; next }
         { print }
         END { if (done == 0) print k "=" v }
       ' "$ENV_FILE" > "$_tmp"; then
-    mv "$_tmp" "$ENV_FILE" && chmod 600 "$ENV_FILE" 2>/dev/null
-    return 0
+    rm -f "$_tmp" 2>/dev/null
+    ui_error "failed to update $_k in $ENV_FILE"
+    return 1
   fi
-  rm -f "$_tmp" 2>/dev/null
-  ui_error "failed to update $_k in $ENV_FILE"
-  return 1
+  if ! mv "$_tmp" "$ENV_FILE"; then
+    rm -f "$_tmp" 2>/dev/null
+    ui_error "failed to update $_k in $ENV_FILE"
+    return 1
+  fi
+  chmod 600 "$ENV_FILE" 2>/dev/null || :
+  # Presence-aware read-back: a missing key must fail verification even when
+  # the requested value is empty ("key absent" and "value empty" differ).
+  if ! _rb="$(dotenv_get "$_k" 2>/dev/null)" || [ "$_rb" != "$_v" ]; then
+    rm -f "$_tmp" 2>/dev/null   # a lying rename leaves the temp behind
+    ui_error "failed to update $_k in $ENV_FILE (write did not verify)"
+    return 1
+  fi
+  # A lying rename can leave the temp even when verification passes (the
+  # file already held the requested value) - never orphan it.
+  rm -f "$_tmp" 2>/dev/null || :
+  return 0
 }
 
 # derive_ref BASENAME [TAG] - print the fully-qualified ref for one image under
