@@ -920,7 +920,8 @@ mkdir -p "$TD/lite-prev2"
   [ "$(dotenv_get DNS_FOREIGN_NAMESERVER 2>/dev/null || echo '')" = "$_fo_ex" ] \
     || { echo "lite backfill: FOREIGN list not backfilled" >&2; exit 1; }
   [ -f "$ENV_FILE.pre-v2.bak" ] || { echo "lite backfill: no keep-first backup" >&2; exit 1; }
-  case "$_out" in *backfill_wrote*) : ;; *) echo "lite backfill: written lines not printed" >&2; exit 1 ;; esac
+  case "$_out" in *"backfill_wrote DNS_CN_NAMESERVER"*) : ;; *) echo "lite backfill: CN write not printed" >&2; exit 1 ;; esac
+  case "$_out" in *"backfill_wrote DNS_FOREIGN_NAMESERVER"*) : ;; *) echo "lite backfill: FOREIGN write not printed" >&2; exit 1 ;; esac
   [ -f "$GATEWAY_DATA_DIR/render-called" ] || { echo "lite backfill: render fence never reached" >&2; exit 1; }
   exit 0
 ) && ok || fail "pi_flow_lite backfills a pre-v2 .env before the render fence (#60)"

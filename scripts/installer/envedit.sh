@@ -38,6 +38,10 @@ env_get() {
 # reads back equal - a failed or lying rename can never claim success. chmod
 # stays best-effort (the kept-backup precedent in wizards.sh): content is
 # authoritative, mode hardening is not.
+# Caller contract under set -e: because the rc is honest, a BARE call with
+# errexit active (e.g. inside a $(fn) capture under sh -eu) stops the caller
+# mid-flight on a failed write. That is the intended fail-closed default -
+# add `|| :` only where masking the failure is the deliberate choice.
 env_set() {
   _k="$1"; _v="$2"
   # The strict loader's key charset, enforced up front: writing a key

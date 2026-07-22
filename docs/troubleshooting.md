@@ -252,15 +252,26 @@ Common causes:
 ## Upgrading a pre-v1.3.8 install: `DNS_CN_NAMESERVER must be set` at render
 
 A `.env` created before the split-horizon pair existed passes the installer's prechecks but
-refuses to render (the error names the missing variable). The redeploy precheck repairs this
-automatically: it backs the live `.env` up to `.env.pre-v2.bak` (kept on retries — the
-pristine pre-repair snapshot is never overwritten), backfills the missing
-`DNS_CN_NAMESERVER`/`DNS_FOREIGN_NAMESERVER` list(s) from the shipped `.env.example`
-defaults, verifies each write landed (a failed write aborts the deploy at precheck, naming
-the backup), and prints every line it writes. A value that is present — including a
-customized one — is never touched, and only a file missing **both** lists gets the one-time
-network-scan variant upgrade a fresh install would get. So the fix is simply: run
-`sudo sh ./install.sh` → **Redeploy** and read the printed `backfilled …` lines.
+refuses to render (the error names the missing variable). The DSM **Redeploy** precheck
+(**Modify** → **Apply changes** runs it too) and the lite deploy flow repair this
+automatically, running the same backfill: it backs the live `.env` up to `.env.pre-v2.bak`
+(kept on retries — the pristine pre-repair snapshot is never overwritten), backfills the
+missing `DNS_CN_NAMESERVER`/`DNS_FOREIGN_NAMESERVER` list(s) from the shipped `.env.example`
+defaults, verifies each write landed (a failed write aborts the deploy before rendering,
+naming the backup), and prints every line it writes. A customized value is never touched and
+keeps the repair minimal; the one-time network-scan variant upgrade a fresh install would
+get applies when every field is missing **or** still the shipped example default — so a
+retry after a mid-repair fault stays eligible for it.
+
+The fix, per platform:
+
+- **Synology DSM:** run `sudo sh ./install.sh` → **Redeploy** (or **Modify** → **Apply
+  changes** — the same precheck runs) and read the printed `backfilled …` lines.
+- **Pi lite / generic-Linux lite:** re-run the lite deploy (`sudo sh ./install-pi.sh` /
+  `sudo sh ./install-linux.sh`) — it backfills the pair the same way before rendering. The
+  day-2 doctor (`sh scripts/pi/lite_ctl.sh doctor`, also reachable from either installer's
+  Status menu) names this path: its BROKEN `config does not render` verdict points at the
+  missing split-horizon pair and the lite re-deploy that backfills it.
 
 ## Subscription URL looks wrong in config.yaml
 
