@@ -12,8 +12,10 @@
 #      tunnel-dependent resolver black-holed, nodes still come up - the
 #      2026-07 chicken-and-egg, disproven on the wire - and long-tail DNS
 #      FAILS CLOSED (never silently answered by a domestic resolver) while
-#      the policy-pinned hosts keep resolving; then an owner LAN spot-check
-#      (dnsleaktest extended + netflix via the Streaming Sites group);
+#      the policy-pinned hosts keep resolving; then automated LAN-client
+#      probes (#57: Chrome-UA fetches from an ephemeral container, judged by
+#      their /connections chain - streaming WARN-only, CN-direct and
+#      foreign-via-real-node as hard gates in section C);
 #   D. the DNS_GEOIP_NO_RESOLVE flip renders, routes, and reverts.
 #
 # Run on the NAS, in a real terminal (sudo needs a TTY):
@@ -36,9 +38,13 @@
 #                 default route re-pointed at the gateway) and asserts its
 #                 flows carry 'Full Proxy' via /connections. Liveness-
 #                 checked first (a replying IP is NOT spare); torn down on
-#                 completion AND from the INT/TERM trap. Unset -> a manual
-#                 B3-style prompt when the band knob is live, else skipped.
-# Env overrides: SMG_STAGE, SMG_RELEASE_DIR.
+#                 completion AND from the INT/TERM trap. Unset -> a spare IP
+#                 is AUTO-DERIVED (#57: container-vantage ping x2, outside
+#                 the band); none derivable -> WARN, never a prompt. A
+#                 band-member X stays A5's probe but the C/B3 LAN probes
+#                 derive their own non-band IP.
+# Env overrides: SMG_STAGE, SMG_RELEASE_DIR, and the probe knobs documented
+# in .env.example (SMG_PROBE_CN_URL/FOREIGN_URL/STREAM_URL/UA).
 #
 # Controller/routing probes run INSIDE the mihomo container (docker exec):
 # on this NAS a macvlan child is reachable from LAN peers but NOT from the
@@ -284,6 +290,101 @@ _env_file_has() {
   [ -n "$_efh_v" ]
 }
 
+# --- LAN-client probe helpers (#57) -------------------------------------------
+# The manual spot-checks are replaced by probes fired from an ephemeral
+# LAN-client container (the A5 stand-in pattern) carrying a browser UA; the
+# verdict authority is the flow's chain in /connections, never the fetch
+# alone (fetch success cannot distinguish DIRECT from a node).
+
+# probe_ua - a normal macOS Chrome User-Agent (some destinations block the
+# default wget/curl UAs). SMG_PROBE_UA overrides.
+probe_ua() {
+  printf '%s' "${SMG_PROBE_UA:-Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36}"
+}
+
+# conn_probe_lines SRC - stdin = /connections JSON; one line per flow from
+# SRC: '<chain-head><US><chains array>' (head = chains[0], the final hop).
+# The unit separator, NEVER '|': node names carry pipes in the wild and '|'
+# as a delimiter already bit run 3 once (see the US comment below).
+conn_probe_lines() {
+  sed 's/{"id":/\
+{"id":/g' | awk -v src="$1" -v sep="$US" '
+    /"id":/ {
+      if (index($0, "\"sourceIP\":\"" src "\"") == 0) next
+      if (!match($0, /"chains":\[[^]]*\]/)) next
+      c = substr($0, RSTART+10, RLENGTH-10)
+      h = c
+      if (match(h, /"[^"]*"/)) h = substr(h, RSTART+1, RLENGTH-2)
+      print h sep c
+    }'
+}
+
+# conn_mode_ok MODE - classify conn_probe_lines output (stdin).
+#   direct: at least one flow, and NO flow rides a proxy group.
+#   proxy:  at least one flow carries 'Proxy Mode' behind a REAL head -
+#           builtins/placeholders never count (the COMPATIBLE lesson).
+conn_mode_ok() {
+  awk -v mode="$1" -F"$US" '
+    NF >= 2 { n++ }
+    mode == "direct" && $2 ~ /Proxy Mode|Full Proxy|Streaming Sites/ { viol++ }
+    mode == "proxy" && $2 ~ /Proxy Mode/ \
+      && $1 !~ /^(DIRECT|REJECT|REJECT-DROP|PASS|COMPATIBLE|GLOBAL)$/ { good++ }
+    END {
+      if (mode == "direct") exit !(n > 0 && viol == 0)
+      exit !(good > 0)
+    }'
+}
+
+# ip_in_band IP BAND - 0 iff IP falls inside the comma-separated band list
+# (bare IPs and CIDR entries both count). Shared by derive_probe_ip and the
+# --probe-ip flag path: a band member is CORRECT for A5's ride-check but
+# would falsify the C direct-gate (band traffic legitimately rides the
+# proxy - config.template.yaml's Full Proxy contract).
+ip_in_band() {
+  [ -n "$2" ] || return 1
+  _iib_ifs=$IFS; IFS=','
+  for _iib_b in $2; do
+    case "$_iib_b" in
+      */*) if fp_ip_in_cidr "$1" "$_iib_b"; then IFS=$_iib_ifs; return 0; fi ;;
+      *)   if [ "$1" = "$_iib_b" ]; then IFS=$_iib_ifs; return 0; fi ;;
+    esac
+  done
+  IFS=$_iib_ifs
+  return 1
+}
+
+# derive_probe_ip [BASE] [CIDR] [ROUTER] [BAND] - print a spare LAN IPv4 for
+# the LAN-client probes, or nothing (rc 1). Args default to the live
+# MIHOMO_IP/SUBNET_CIDR/ROUTER_IP/FULL_PROXY_SOURCES (parameterized so
+# self_test drives it without touching the globals). Candidates come from
+# next_free_ipv4 (lib/network.sh) with liveness re-checked from INSIDE the
+# mihomo container (host pings lie on this macvlan - the self-reach rule)
+# and double-checked; a candidate inside the full-proxy band is refused
+# (band membership would both skew the C verdicts and collide with A5's
+# temporary band append).
+derive_probe_ip() {
+  _dpi_base="${1:-${MIHOMO_IP:-}}"
+  _dpi_cidr="${2:-${SUBNET_CIDR:-}}"
+  _dpi_router="${3:-${ROUTER_IP:-}}"
+  _dpi_band="${4:-${FULL_PROXY_SOURCES:-}}"
+  command -v next_free_ipv4 >/dev/null 2>&1 || return 1
+  [ -n "$_dpi_base" ] && [ -n "$_dpi_cidr" ] || return 1
+  ip_in_use() {
+    _dpi_c=0
+    while [ "$_dpi_c" -lt 2 ]; do
+      run_scrubbed "${DOCKER_BIN:-docker}" exec "${MIHOMO_CONTAINER:-mihomo}" \
+        ping -c 1 -W 1 "$1" >/dev/null 2>&1 && return 0
+      _dpi_c=$((_dpi_c + 1))
+    done
+    return 1
+  }
+  mihomo_owns_ip() { return 1; }   # the gateway's own IP is never spare
+  _dpi="$(next_free_ipv4 "$_dpi_base" "$_dpi_cidr" "$_dpi_router" 10)"
+  [ -n "$_dpi" ] || return 1
+  if ip_in_band "$_dpi" "$_dpi_band"; then return 1; fi
+  printf '%s' "$_dpi"
+}
+
 # decide_keep_split_horizon FINAL ORIG_FILE - print keep|revert (DEC-C #56).
 # Explicit --keep/--revert flags always win. Otherwise the decision is
 # automatic: an original .env that already carried a valid v2 pair is
@@ -303,9 +404,12 @@ decide_keep_split_horizon() {
 # appears in a message - run 3 used '|' and the summary split every doctor
 # message ("rc 0 (0 healthy | 2 degraded)") across two lines.
 US=$(printf '\037')
-PASS=""; FAIL=""
+PASS=""; FAIL=""; WARN=""
 ok()  { echo "PASS: $*"; PASS="$PASS$US$*"; }
 bad() { echo "FAIL: $*"; FAIL="$FAIL$US$*"; }
+# warn - recorded but never gating (DEC-D #57: infra-unavailable and
+# external-service outcomes surface loudly without blocking the release).
+warn() { echo "WARN: $*"; WARN="$WARN$US$*"; }
 say() { echo; echo "=== $* ==="; }
 
 # unpark PATH - put PATH back from PATH.v138park (file or directory),
@@ -558,9 +662,68 @@ All Nodes' ]; then st_ok; else st_bad "urltest_groups got: $(printf '%s' "$_name
   if [ "$(decide_keep_split_horizon revert "$TMP/orig-prev2")" = revert ]; then st_ok
   else st_bad "--revert flag did not override the auto rule"; fi
 
+  # LAN-client probe helpers (#57): the chain classification is pure - drive
+  # it with /connections fixtures. Head = chains[0] (the final hop); a
+  # 'direct' verdict tolerates NO proxied flow from the probe source; a
+  # 'proxy' verdict demands Proxy Mode behind a REAL head (placeholders and
+  # builtins never count - the COMPATIBLE degradation lesson).
+  _lp_json='{"connections":[{"id":"a","metadata":{"network":"tcp","sourceIP":"192.0.2.77","destinationIP":"203.0.113.9","host":"www.baidu.com"},"chains":["DIRECT"],"rule":"GeoSite(CN)"},{"id":"b","metadata":{"network":"tcp","sourceIP":"192.0.2.77","destinationIP":"203.0.113.10","host":"g.example"},"chains":["JP 01","Japan Auto","Country Pick","Proxy Mode"],"rule":"Match"},{"id":"c","metadata":{"network":"tcp","sourceIP":"192.0.2.99","destinationIP":"203.0.113.11","host":"other"},"chains":["COMPATIBLE","Proxy Mode"],"rule":"Match"}]}'
+  _lp_l77="$(printf '%s' "$_lp_json" | conn_probe_lines 192.0.2.77)"
+  if [ "$(printf '%s\n' "$_lp_l77" | grep -c .)" = 2 ]; then st_ok
+  else st_bad "conn_probe_lines source filter kept the wrong flows"; fi
+  case "$_lp_l77" in "DIRECT$US"*) st_ok ;; *) st_bad "chain-head extraction (DIRECT first, US-separated)" ;; esac
+  if printf '%s\n' "$_lp_l77" | conn_mode_ok direct; then
+    st_bad "direct verdict passed despite a proxied flow from the same source"
+  else st_ok; fi
+  if printf 'DIRECT%s["DIRECT"]\n' "$US" | conn_mode_ok direct; then st_ok
+  else st_bad "pure-direct flow rejected by the direct verdict"; fi
+  if printf '%s\n' "$_lp_l77" | conn_mode_ok proxy; then st_ok
+  else st_bad "real-node Proxy Mode flow rejected by the proxy verdict"; fi
+  if printf 'COMPATIBLE%s["COMPATIBLE","Proxy Mode"]\n' "$US" | conn_mode_ok proxy; then
+    st_bad "COMPATIBLE head passed as a real node"
+  else st_ok; fi
+  if printf '' | conn_mode_ok direct; then st_bad "empty flow set passed the direct verdict"
+  else st_ok; fi
+  # '|' is DATA in node names, never a delimiter (the run-3 summary lesson,
+  # reintroduced by #57's first cut): a pipe-named node must not smuggle the
+  # chain past either verdict.
+  _lp_pipe='{"connections":[{"id":"p","metadata":{"network":"tcp","sourceIP":"192.0.2.66","destinationIP":"203.0.113.12","host":"x"},"chains":["US|LA-01","Country Pick","Proxy Mode"],"rule":"Match"}]}'
+  if printf '%s' "$_lp_pipe" | conn_probe_lines 192.0.2.66 | conn_mode_ok direct; then
+    st_bad "pipe-named node flow passed the direct verdict"
+  else st_ok; fi
+  if printf '%s' "$_lp_pipe" | conn_probe_lines 192.0.2.66 | conn_mode_ok proxy; then st_ok
+  else st_bad "pipe-named real node rejected by the proxy verdict"; fi
+  # ip_in_band: bare-IP and CIDR entries both count; outsiders never do.
+  if ip_in_band 192.0.2.50 '192.0.2.50'; then st_ok; else st_bad "ip_in_band bare-IP match"; fi
+  if ip_in_band 192.0.2.50 '203.0.113.7,192.0.2.48/28'; then st_ok
+  else st_bad "ip_in_band CIDR match"; fi
+  if ip_in_band 192.0.2.100 '192.0.2.48/28'; then st_bad "ip_in_band matched an outsider"
+  else st_ok; fi
+  if ip_in_band 192.0.2.100 ''; then st_bad "ip_in_band matched an empty band"
+  else st_ok; fi
+  case "$(probe_ua)" in
+    *Macintosh*Chrome*|*Chrome*Macintosh*) st_ok ;;
+    *) st_bad "probe_ua is not a macOS Chrome string" ;;
+  esac
+  if [ "$(SMG_PROBE_UA=custom-ua probe_ua)" = custom-ua ]; then st_ok
+  else st_bad "SMG_PROBE_UA override ignored"; fi
+  # derive_probe_ip: container-vantage liveness (stubbed quiet LAN -> first
+  # candidate above the gateway IP), and the full-proxy band is never chosen.
+  # Driven via ARGS (TEST-NET values) - the globals stay untouched.
+  # shellcheck disable=SC2329 # stubs are invoked indirectly (network.sh callees)
+  ( log_info() { :; }; log_warn() { :; }; log_error() { :; }
+    # shellcheck source=scripts/lib/network.sh
+    . "$ROOT/scripts/lib/network.sh"
+    run_scrubbed() { return 1; }   # in-container ping never answers = quiet LAN
+    [ "$(derive_probe_ip 192.0.2.10 192.0.2.0/24 192.0.2.1 '')" = 192.0.2.11 ] || exit 1
+    [ -z "$(derive_probe_ip 192.0.2.10 192.0.2.0/24 192.0.2.1 '192.0.2.11/32' || true)" ] || exit 1
+    exit 0 )
+  # shellcheck disable=SC2181 # the subshell above is the tested unit
+  if [ $? -eq 0 ]; then st_ok; else st_bad "derive_probe_ip candidate/band logic"; fi
+
   echo "validate_release self-test: $_stp passed, $_stf failed"
   [ "$_stf" -eq 0 ] || exit 1
-  echo "OK: measurement helpers (policy/knob/psn/split-core rule anchoring incl. bootstrap-pin + comment-prose immunity, provider-node counting + real-member egress gate, filtered-group discovery + %XX name encoding + COMPATIBLE/REJECT placeholder exclusion, full-proxy band connection parsing + CIDR membership, quoted-.env parsing, .env.example key coverage, scrubbed child env, doctor rc gate, summary accumulator, cache unpark, keep-split-horizon auto-decision)"
+  echo "OK: measurement helpers (policy/knob/psn/split-core rule anchoring incl. bootstrap-pin + comment-prose immunity, provider-node counting + real-member egress gate, filtered-group discovery + %XX name encoding + COMPATIBLE/REJECT placeholder exclusion, full-proxy band connection parsing + CIDR membership, quoted-.env parsing, .env.example key coverage, scrubbed child env, doctor rc gate, summary accumulator, cache unpark, keep-split-horizon auto-decision, LAN-probe chain classification + probe-IP derivation)"
   exit 0
 }
 [ "$SELF_TEST" = 1 ] && self_test
@@ -590,6 +753,10 @@ fi
 NO_LOG_INIT=1; export NO_LOG_INIT
 # shellcheck source=scripts/lib/common.sh
 . "$REL/scripts/lib/common.sh"
+# network.sh supplies next_free_ipv4 for derive_probe_ip (#57); pure
+# definitions only - nothing runs at source time.
+# shellcheck source=scripts/lib/network.sh
+. "$REL/scripts/lib/network.sh"
 # shellcheck source=scripts/lib/registry.sh
 . "$REL/scripts/lib/registry.sh"
 # shellcheck source=scripts/lib/compose.sh
@@ -695,8 +862,53 @@ restore_env() {  # put the pre-validation .env back
 # fp_probe_teardown - remove the A5 band-probe container if one is up; a
 # ^C must never leave it holding the owner's spare IP on the live macvlan.
 fp_probe_teardown() { "${DOCKER_BIN:-docker}" rm -f smg-fp-probe >/dev/null 2>&1 || true; }
+lan_probe_teardown() { "${DOCKER_BIN:-docker}" rm -f smg-lan-probe >/dev/null 2>&1 || true; }
+
+# lan_probe MODE URL - fetch URL from an ephemeral LAN-client container
+# (Chrome UA via probe_ua; gateway route + DNS - the A5 stand-in pattern)
+# and judge the flow's chain via /connections with conn_mode_ok.
+# rc 0 pass | 1 chain verdict failed | 2 cannot-run (no IP / container).
+lan_probe() {
+  _lp_mode="$1"; _lp_url="$2"
+  [ -n "${LAN_PROBE_IP:-}" ] || return 2
+  lan_probe_teardown
+  # shellcheck disable=SC2016 # "$1".."$3" expand in the probe container's shell
+  run_scrubbed "$DOCKER_BIN" run -d --rm --name smg-lan-probe \
+      --network "${TPROXY_NETWORK:-tproxy_network}" --ip "$LAN_PROBE_IP" \
+      --dns "${MIHOMO_IP:?}" --cap-add NET_ADMIN \
+      --entrypoint /bin/sh "${MIHOMO_IMAGE:?}" -c \
+      'ip route replace default via "$1" 2>/dev/null || { route del default 2>/dev/null; route add default gw "$1"; }; i=0; while [ "$i" -lt 20 ]; do wget -q -T 6 -U "$2" -O /dev/null "$3" 2>/dev/null; sleep 1; i=$((i+1)); done' \
+      _ "$MIHOMO_IP" "$(probe_ua)" "$_lp_url" >/dev/null 2>&1 \
+    || { lan_probe_teardown; return 2; }
+  _lp_rc=1
+  _lp_i=0
+  while [ "$_lp_i" -lt 12 ]; do
+    _lp_lines="$(ctl_get /connections | conn_probe_lines "$LAN_PROBE_IP")"
+    if [ -n "$_lp_lines" ] && printf '%s\n' "$_lp_lines" | conn_mode_ok "$_lp_mode"; then
+      _lp_rc=0; break
+    fi
+    _lp_i=$((_lp_i + 1)); sleep 1
+  done
+  lan_probe_teardown
+  return $_lp_rc
+}
+
+# lan_probe_body URL - one-shot LAN-client fetch printing the response body
+# head (empty on failure). For the WARN-only streaming check, where the BODY
+# is the region signal and no hard chain verdict applies.
+lan_probe_body() {
+  [ -n "${LAN_PROBE_IP:-}" ] || return 1
+  # shellcheck disable=SC2016
+  run_scrubbed "$DOCKER_BIN" run --rm \
+      --network "${TPROXY_NETWORK:-tproxy_network}" --ip "$LAN_PROBE_IP" \
+      --dns "${MIHOMO_IP:?}" --cap-add NET_ADMIN \
+      --entrypoint /bin/sh "${MIHOMO_IMAGE:?}" -c \
+      'ip route replace default via "$1" 2>/dev/null || { route del default 2>/dev/null; route add default gw "$1"; }; wget -q -T 12 -U "$2" -O - "$3" 2>/dev/null | head -c 4000' \
+      _ "$MIHOMO_IP" "$(probe_ua)" "$1" 2>/dev/null
+}
+
 # shellcheck disable=SC2329 # invoked via the trap below
-on_abort() { echo "INTERRUPTED - restoring original .env"; fp_probe_teardown; restore_env; recreate; exit 1; }
+on_abort() { echo "INTERRUPTED - restoring original .env"; fp_probe_teardown; lan_probe_teardown; restore_env; recreate; exit 1; }
 trap on_abort INT TERM
 
 say "A2: redeploy + baseline doctor"
@@ -848,7 +1060,30 @@ fi
 
 # A5 runs in the resolvers-restored window (before the cold-start
 # black-holing) so the probe's fetches measure the real band path.
-say "A5: full-proxy band (#46; --probe-ip <spare-lan-ip> enables the automated leg)"
+# One spare LAN IP powers every LAN-client probe this run (#57): the owner's
+# --probe-ip when given, else a container-vantage auto-derivation. WARN -
+# never silent, never a pause - when neither yields one (DEC-D).
+LAN_PROBE_IP="$PROBE_IP"
+if [ -n "$LAN_PROBE_IP" ] && ip_in_band "$LAN_PROBE_IP" "${FULL_PROXY_SOURCES:-}"; then
+  # A band-member --probe-ip is exactly right for A5 (its flows MUST ride
+  # Full Proxy) but would falsify the C direct-gate, where band traffic
+  # legitimately rides the proxy. Keep it for A5; the C/B3 probes get their
+  # own non-band IP below.
+  echo "--probe-ip $LAN_PROBE_IP sits inside the full-proxy band - deriving a separate IP for the C/B3 LAN probes"
+  LAN_PROBE_IP=""
+fi
+if [ -z "$LAN_PROBE_IP" ]; then
+  if LAN_PROBE_IP="$(derive_probe_ip)"; then
+    echo "auto-derived spare probe IP: $LAN_PROBE_IP (in-container ping x2 negative, outside the band)"
+  else
+    LAN_PROBE_IP=""
+  fi
+fi
+say "A5: full-proxy band (#46; --probe-ip <spare-lan-ip> overrides the auto-derived probe IP)"
+if [ -z "$PROBE_IP" ] && [ -n "$LAN_PROBE_IP" ] && [ -n "${FULL_PROXY_SOURCES:-}" ]; then
+  PROBE_IP="$LAN_PROBE_IP"
+  echo "band is live and no --probe-ip was given - using the auto-derived $PROBE_IP for the automated leg"
+fi
 if [ -n "$PROBE_IP" ]; then
   _fp_go=1
   case "$PROBE_IP" in
@@ -925,15 +1160,7 @@ if [ -n "$PROBE_IP" ]; then
     load_env || true
   fi
 elif [ -n "${FULL_PROXY_SOURCES:-}" ]; then
-  echo ">>> FULL_PROXY_SOURCES is live but no --probe-ip was given. Manual"
-  echo ">>> spot-check, from the router console + any band-capable device:"
-  echo ">>>  1) flip the device's fixed-IP reservation INTO the band + reconnect"
-  echo ">>>  2) MetaCubeXD -> Connections: that device's non-LAN flows must"
-  echo ">>>     show 'Full Proxy' in the chain"
-  echo ">>>  3) flip the reservation back + reconnect"
-  printf ">>> Press Enter when checked : "
-  read -r _ans </dev/tty || true
-  ok "A5 manual band spot-check acknowledged (knob live, no --probe-ip)"
+  warn "A5: band is live but no probe IP was available (none supplied, none derivable) - the band ride-check did not run; rerun with --probe-ip <spare-lan-ip>"
 else
   echo "skipped - FULL_PROXY_SOURCES unset and no --probe-ip (the band is opt-in)"
   ok "A5 skipped (band feature not in use)"
@@ -1005,17 +1232,27 @@ run_scrubbed sh "$REL/scripts/doctor.sh" --egress; RC=$?
 if doctor_rc_ok "$RC"; then ok "doctor --egress rc $RC (0 healthy | 2 degraded-optional)"
 else bad "doctor --egress rc $RC (crash or broken)"; fi
 
-say "B3: LAN privacy + streaming spot-check (owner, from any LAN client)"
-echo ">>> 1) DNS leak: run the EXTENDED test at dnsleaktest.com. The servers"
-echo ">>>    listed must be your tunnel exit / foreign DoH operators ONLY -"
-echo ">>>    AliDNS (Alibaba) or DNSPod (Tencent) appearing means the"
-echo ">>>    long-tail leak is back."
-echo ">>> 2) Netflix: open any title. If it says 'not available in your"
-echo ">>>    region', open MetaCubeXD -> Proxies -> Streaming Sites and pin an"
-echo ">>>    unlock-capable node (All Nodes picks by latency, not by unlock),"
-echo ">>>    then reload the title."
-printf ">>> Press Enter when both are checked : "
-read -r _ans </dev/tty || true
+say "B3: streaming reachability (LAN-client Chrome-UA probe, WARN-only)"
+# The dnsleak spot-check is retired: the leak class it hunted is already
+# PROVEN fail-closed by section B (the long-tail /dns/query died with the
+# tunnel resolvers black-holed while the pinned hosts kept resolving).
+echo "DNS-leak class: covered by section B's fail-closed proof - no manual dnsleaktest run needed."
+_b3_url="${SMG_PROBE_STREAM_URL:-https://www.netflix.com/title/70143836}"
+if [ -n "${LAN_PROBE_IP:-}" ]; then
+  _b3_body="$(lan_probe_body "$_b3_url" || true)"
+  if [ -z "$_b3_body" ]; then
+    warn "B3 streaming probe: no response from $_b3_url through the gateway (WARN-only: service-side bot checks are common; if playback fails, pin an unlock-capable node in MetaCubeXD -> Streaming Sites)"
+  else
+    case "$_b3_body" in
+      *[Nn]ot\ [Aa]vailable*)
+        warn "B3 streaming probe: region-block marker in the response - pin an unlock-capable node in MetaCubeXD -> Streaming Sites (All Nodes picks by latency, not unlock)" ;;
+      *)
+        ok "B3 streaming probe: $_b3_url answered through the gateway rules (Chrome-UA LAN-client fetch)" ;;
+    esac
+  fi
+else
+  warn "B3 streaming probe skipped - no spare probe IP was available"
+fi
 
 if [ "$SKIP_KNOB" = 0 ]; then
   say "C: DNS_GEOIP_NO_RESOLVE flip (renders, routes, reverts)"
@@ -1036,17 +1273,26 @@ if [ "$SKIP_KNOB" = 0 ]; then
     bad "foreign egress via Proxy Mode failed (probe failed, or effective member is a placeholder/builtin)"
     diag_egress
   fi
-  echo
-  echo ">>> LAN spot-check, from any device using the gateway - example sites:"
-  echo ">>>  1) Mainstream CN, expect DIRECT and fast:  www.baidu.com   www.jd.com"
-  echo ">>>  2) Foreign, expect via the node:           www.google.com  www.youtube.com"
-  echo ">>>  3) Niche CN (the no-resolve trade-off): any SMALL local business/"
-  echo ">>>     forum site (.com of a local shop) - it should STILL LOAD, maybe"
-  echo ">>>     slower. The dashboard (Connections view) is the referee:"
-  echo ">>>       GeoSite(CN) -> DIRECT       = site is on the China list (pick smaller)"
-  echo ">>>       Match -> Proxy Mode[...]    = unlisted, riding the proxy (expected)"
-  printf ">>> Press Enter when checked (the knob auto-reverts) : "
-  read -r _ans </dev/tty || true
+  # LAN-client hard gates (#57): the same checks the owner used to run by
+  # hand from a LAN device, now fired from the ephemeral probe container
+  # with a Chrome UA and judged by the flow's chain in /connections - a
+  # fetch alone cannot distinguish DIRECT from a node (the gstatic lesson).
+  if [ -n "${LAN_PROBE_IP:-}" ]; then
+    lan_probe direct "${SMG_PROBE_CN_URL:-https://www.baidu.com}"; _c_rc=$?
+    case "$_c_rc" in
+      0) ok "LAN-client CN fetch rides DIRECT (Chrome UA; chain via /connections)" ;;
+      2) bad "LAN-client CN probe container failed to start (network/IP issue)" ;;
+      *) bad "LAN-client CN fetch did NOT ride DIRECT - a CN destination is being proxied or dropped" ;;
+    esac
+    lan_probe proxy "${SMG_PROBE_FOREIGN_URL:-https://www.google.com/generate_204}"; _c_rc=$?
+    case "$_c_rc" in
+      0) ok "LAN-client foreign fetch rides Proxy Mode via a real node (Chrome UA; CN-blocked endpoint = genuine egress proof)" ;;
+      2) bad "LAN-client foreign probe container failed to start (network/IP issue)" ;;
+      *) bad "LAN-client foreign fetch did not ride a real node through Proxy Mode" ;;
+    esac
+  else
+    warn "C LAN-client probes skipped - no spare probe IP was available (rerun with --probe-ip)"
+  fi
   env_set DNS_GEOIP_NO_RESOLVE false
   recreate || bad "compose recreate (knob off)"
   if rendered_knob_off "$CFG"; then ok "knob reverted, rule bare again"; else bad "revert failed"; fi
@@ -1082,6 +1328,10 @@ if doctor_rc_ok "$RC"; then ok "final doctor rc $RC (0 healthy | 2 degraded)"; e
 
 say "SUMMARY"
 echo "PASS:"; printf '%s\n' "$PASS" | tr "$US" '\n' | sed '/^$/d;s/^/  + /'
+if [ -n "$WARN" ]; then
+  echo "WARN (recorded, never gating):"
+  printf '%s\n' "$WARN" | tr "$US" '\n' | sed '/^$/d;s/^/  ! /'
+fi
 echo "FAIL:"; printf '%s\n' "$FAIL" | tr "$US" '\n' | sed '/^$/d;s/^/  - /'
 echo
 echo "log: $LOG"
