@@ -244,6 +244,7 @@
     },
     "/v1/devices": {
       "get": {
+        "description": "`band` (the canonical FULL_PROXY_SOURCES entries) rides along so\nthe UI can gate a NEW override on a band address with a confirm\nBEFORE posting — DEC-4 covers adds, not just flips on listed rows.",
         "operationId": "get_devices_v1_devices_get",
         "responses": {
           "200": {
@@ -648,6 +649,83 @@
           }
         },
         "summary": "Stats Purge"
+      }
+    },
+    "/v1/stats/timeline": {
+      "get": {
+        "operationId": "stats_timeline_v1_stats_timeline_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "tier",
+            "required": false,
+            "schema": {
+              "default": "minute",
+              "enum": [
+                "minute",
+                "hour",
+                "day"
+              ],
+              "title": "Tier",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "device",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Device",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "since",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Since",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "until",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Until",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Stats Timeline V1 Stats Timeline Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Stats Timeline"
       }
     }
   }

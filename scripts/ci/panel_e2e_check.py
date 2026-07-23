@@ -295,6 +295,25 @@ def run_scenario(app_port: int, providers: Path, marker: Path,
     expect("add" in actions and "stats-purge" in actions,
            f"policy audit survives the purge and records it: {actions}")
 
+    # 12) the UI (#66) is served same-origin: root redirects into /ui/,
+    #     the page carries testids, the dictionaries resolve, and the API
+    #     the page calls needs no CORS because origin == API
+    status, _ = api("GET", app_port, "/v1/devices")
+    expect(status == 200, "sanity: API up before the UI probe")
+    req = urllib.request.Request(f"http://127.0.0.1:{app_port}/ui/")
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        page = resp.read().decode()
+        expect(resp.status == 200 and "data-testid" in page,
+               "the UI page must serve with testids")
+    req = urllib.request.Request(
+        f"http://127.0.0.1:{app_port}/ui/i18n/zh.json")
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        expect(resp.status == 200 and b"app_title" in resp.read(),
+               "the zh dictionary must serve")
+    req = urllib.request.Request(f"http://127.0.0.1:{app_port}/")
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        expect("/ui/" in resp.url, "the root must land in the UI")
+
 
 def main() -> int:
     started = time.monotonic()

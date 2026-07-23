@@ -314,6 +314,28 @@ def read_grouped(conn, tier: str, group_col: str, since: str = "",
     return [dict(r) for r in rows]
 
 
+def read_timeline(conn, tier: str, device: str = "", since: str = "",
+                  until: str = "") -> list:
+    """Bucket-granular rows (optionally one device) - the UI's history
+    sparklines ride this."""
+    table = _TIER_TABLES[tier]
+    where, params = [], []
+    if device:
+        where.append("device = ?")
+        params.append(device)
+    if since:
+        where.append("bucket >= ?")
+        params.append(since)
+    if until:
+        where.append("bucket <= ?")
+        params.append(until)
+    clause = f"WHERE {' AND '.join(where)}" if where else ""
+    rows = conn.execute(
+        f"SELECT bucket, SUM(up) AS up, SUM(down) AS down FROM {table} "
+        f"{clause} GROUP BY bucket ORDER BY bucket", params).fetchall()
+    return [dict(r) for r in rows]
+
+
 def read_domains(conn, since: str = "", until: str = "") -> list:
     where, params = [], []
     if since:

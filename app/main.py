@@ -11,8 +11,11 @@ Deliberately NO CORSMiddleware anywhere: the panel is same-origin only
 
 import threading
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.responses import RedirectResponse
+from fastapi.staticfiles import StaticFiles
 
 from app import config
 from app.api.routes import router
@@ -88,6 +91,18 @@ def create_app(*, mihomo_client=None, notifier=None) -> FastAPI:
     app = FastAPI(title="Syno Mihomo Gateway Panel", version="1.0.0",
                   description=API_DESCRIPTION, lifespan=lifespan)
     app.include_router(router)
+    # Same-origin UI (#66): the no-build static tree ships inside the
+    # image and is served by the app itself - the reason the API can run
+    # with ZERO CORS headers. Neither the mount nor the root redirect
+    # belongs in the /v1 contract (the gate allows only /health + /v1/*).
+    static_dir = Path(__file__).resolve().parent / "static"
+    app.mount("/ui", StaticFiles(directory=static_dir, html=True),
+              name="ui")
+
+    @app.get("/", include_in_schema=False)
+    def _root() -> RedirectResponse:
+        return RedirectResponse("/ui/", status_code=307)
+
     return app
 
 

@@ -111,3 +111,16 @@ def stats_domains() -> bool:
     """The opt-in per-domain table - OFF unless explicitly enabled."""
     return os.environ.get("PANEL_STATS_DOMAINS", "").lower() in (
         "1", "true", "yes")
+
+
+def full_proxy_sources() -> str:
+    """The static band knob, for the UI's band_member badge. Compose wires
+    it through at Sequence 60; unset (the norm until then) = no band."""
+    return os.environ.get("FULL_PROXY_SOURCES", "")
+
+
+def dashboard_port() -> int:
+    """MetaCubexD's published port for the UI deep-link (brief DEC-12:
+    node ops stay on the dashboard). Default mirrors .env.example's
+    WEB_UI_PORT; compose injects the real value at Sequence 60."""
+    return _int_env("PANEL_DASHBOARD_PORT", 8080, minimum=1)

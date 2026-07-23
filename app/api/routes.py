@@ -107,6 +107,10 @@ def health(request: Request) -> dict:
         "collector_last_ts": last_poll,
         "stats_db_bytes": (stats_store._db_bytes(config.stats_db_path())
                            if stats_conn is not None else 0),
+        # the UI builds the MetaCubexD deep-link from location.hostname +
+        # this port (DEC-12: node ops stay on the dashboard; no URL
+        # literal may live in the static tree)
+        "dashboard_port": config.dashboard_port(),
     }
 
 
@@ -152,6 +156,17 @@ def stats_domains(request: Request, since: str = "",
                 "rows": stats_store.read_domains(conn, since, until)}
 
 
+@router.get("/v1/stats/timeline")
+def stats_timeline(request: Request, tier: Tier = "minute",
+                   device: str = "", since: str = "",
+                   until: str = "") -> dict:
+    with request.app.state.stats_lock:
+        conn = _stats_conn(request)
+        return {"tier": tier, "device": device,
+                "rows": stats_store.read_timeline(conn, tier, device,
+                                                  since, until)}
+
+
 @router.get("/v1/stats/gaps")
 def stats_gaps(request: Request, limit: int = 100) -> dict:
     with request.app.state.stats_lock:
@@ -178,11 +193,41 @@ def stats_purge(request: Request) -> dict:
     return {"purged": True}
 
 
+def _band_entries() -> list:
+    """FULL_PROXY_SOURCES parsed to canonical CIDRs; invalid entries (or
+    an unset knob - the norm until compose wires it at Sequence 60)
+    degrade to an empty band, never an error - the badge is advisory."""
+    from app.validation import ValidationError, canonicalize
+    entries = []
+    for raw in config.full_proxy_sources().split(","):
+        raw = raw.strip()
+        if not raw:
+            continue
+        try:
+            entries.append(canonicalize(raw))
+        except ValidationError:
+            continue
+    return entries
+
+
+def _with_band_flags(rows: list) -> list:
+    from app.validation import cidrs_overlap
+    band = _band_entries()
+    for row in rows:
+        row["band_member"] = any(
+            cidrs_overlap(row["cidr"], entry) for entry in band)
+    return rows
+
+
 @router.get("/v1/devices")
 def get_devices(request: Request) -> dict:
+    """`band` (the canonical FULL_PROXY_SOURCES entries) rides along so
+    the UI can gate a NEW override on a band address with a confirm
+    BEFORE posting — DEC-4 covers adds, not just flips on listed rows."""
     with request.app.state.mutex:
         conn = _conn(request)
-        return {"devices": list_devices(conn)}
+        return {"devices": _with_band_flags(list_devices(conn)),
+                "band": _band_entries()}
 
 
 @router.post("/v1/devices", status_code=201,

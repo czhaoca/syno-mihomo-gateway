@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<!-- Gateway Panel UI (#66): no build step, no external requests - a thin
+     client of the contracted /v1 API, served same-origin by the panel.
+     Every interactive element carries a stable data-testid. -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title data-i18n="app_title">Gateway Panel</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1 data-i18n="app_title">Gateway Panel</h1>
+    <div class="header-tools">
+      <span id="health-dot" data-testid="health-dot" title=""></span>
+      <a id="dashboard-link" data-testid="dashboard-link" href="#"
+         target="_blank" rel="noopener" data-i18n="dashboard_link">Node dashboard</a>
+      <button id="lang-toggle" data-testid="lang-toggle" type="button">EN/中文</button>
+    </div>
+  </header>
+
+  <div id="parity-banner" data-testid="parity-banner" class="banner hidden">
+    <span data-i18n="parity_drift_banner">Apply drift: the gateway may not
+    reflect the saved policy. Check /health and re-apply.</span>
+    <button id="reapply-btn" data-testid="reapply-btn" type="button"
+            data-i18n="reapply">Re-apply</button>
+  </div>
+
+  <nav>
+    <button class="tab active" data-view="devices" data-testid="tab-devices"
+            type="button" data-i18n="tab_devices">Devices</button>
+    <button class="tab" data-view="stats" data-testid="tab-stats"
+            type="button" data-i18n="tab_stats">Stats</button>
+    <button class="tab" data-view="audit" data-testid="tab-audit"
+            type="button" data-i18n="tab_audit">Audit</button>
+  </nav>
+
+  <main>
+    <section id="view-devices" class="view">
+      <form id="add-form" data-testid="add-form">
+        <input id="add-address" data-testid="add-address" type="text"
+               inputmode="decimal" required
+               data-i18n-placeholder="add_address_ph" placeholder="IP or CIDR">
+        <input id="add-name" data-testid="add-name" type="text"
+               data-i18n-placeholder="add_name_ph" placeholder="Name (optional)">
+        <select id="add-mode" data-testid="add-mode">
+          <option value="full-tunnel" data-i18n="mode_full_tunnel">Full-Tunnel</option>
+          <option value="full-direct" data-i18n="mode_full_direct">Full-Direct</option>
+        </select>
+        <button id="add-submit" data-testid="add-submit" type="submit"
+                data-i18n="add_device">Add device</button>
+      </form>
+      <ul id="device-list" data-testid="device-list"></ul>
+      <p id="devices-empty" data-testid="devices-empty" class="empty hidden"
+         data-i18n="devices_empty">No policy entries - every device follows
+         the default rules.</p>
+    </section>
+
+    <section id="view-stats" class="view hidden">
+      <div class="stats-head">
+        <select id="stats-tier" data-testid="stats-tier">
+          <option value="minute" data-i18n="tier_minute">Last 48h (minutes)</option>
+          <option value="hour" data-i18n="tier_hour">Last 90d (hours)</option>
+          <option value="day" data-i18n="tier_day">Long term (days)</option>
+        </select>
+        <button id="stats-refresh" data-testid="stats-refresh" type="button"
+                data-i18n="refresh">Refresh</button>
+        <button id="stats-purge" data-testid="stats-purge" type="button"
+                data-i18n="purge_stats">Purge stats</button>
+      </div>
+      <svg id="stats-sparkline" data-testid="stats-sparkline"
+           viewBox="0 0 300 60" preserveAspectRatio="none"></svg>
+      <table id="stats-table">
+        <thead>
+          <tr>
+            <th data-i18n="col_device">Device</th>
+            <th data-i18n="col_up">Up</th>
+            <th data-i18n="col_down">Down</th>
+          </tr>
+        </thead>
+        <tbody id="stats-rows" data-testid="stats-rows"></tbody>
+      </table>
+      <p id="gaps-note" data-testid="gaps-note" class="note hidden"></p>
+      <p id="domains-note" data-testid="domains-note" class="note hidden"
+         data-i18n="domains_off">Per-domain stats are off (privacy default).</p>
+    </section>
+
+    <section id="view-audit" class="view hidden">
+      <table id="audit-table">
+        <thead>
+          <tr>
+            <th data-i18n="col_time">Time</th>
+            <th data-i18n="col_action">Action</th>
+            <th data-i18n="col_target">Target</th>
+            <th data-i18n="col_requester">Requester</th>
+            <th data-i18n="col_note">Note</th>
+          </tr>
+        </thead>
+        <tbody id="audit-rows" data-testid="audit-rows"></tbody>
+      </table>
+    </section>
+  </main>
+
+  <dialog id="token-dialog" data-testid="token-dialog">
+    <form method="dialog" id="token-form" data-testid="token-form">
+      <p data-i18n="token_prompt">Enter the panel token (PANEL_SECRET) to
+      make changes. It is stored only in this browser.</p>
+      <input id="token-input" data-testid="token-input" type="password"
+             autocomplete="off">
+      <button id="token-save" data-testid="token-save" value="save"
+              data-i18n="save">Save</button>
+      <button id="token-cancel" data-testid="token-cancel" value="cancel"
+              formnovalidate data-i18n="cancel">Cancel</button>
+    </form>
+  </dialog>
+
+  <template id="device-row-template">
+    <li class="device-row">
+      <div class="device-line">
+        <span class="device-name"></span>
+        <span class="device-cidr"></span>
+        <span class="badge band-badge hidden" data-i18n="band_badge">router band</span>
+        <span class="badge state-badge"></span>
+      </div>
+      <div class="device-controls">
+        <button class="mode-btn" data-mode="default" type="button"
+                data-testid="mode-default" data-i18n="mode_default">Default</button>
+        <button class="mode-btn" data-mode="full-direct" type="button"
+                data-testid="mode-full-direct" data-i18n="mode_full_direct">Full-Direct</button>
+        <button class="mode-btn" data-mode="full-tunnel" type="button"
+                data-testid="mode-full-tunnel" data-i18n="mode_full_tunnel">Full-Tunnel</button>
+        <button class="rename-btn" type="button" data-testid="device-rename"
+                data-i18n="rename">Rename</button>
+        <button class="history-btn" type="button" data-testid="device-history"
+                data-i18n="history">History</button>
+      </div>
+      <svg class="device-sparkline hidden" viewBox="0 0 300 40"
+           preserveAspectRatio="none"></svg>
+    </li>
+  </template>
+
+  <script src="app.js"></script>
+</body>
+</html>
