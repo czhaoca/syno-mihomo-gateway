@@ -28,11 +28,20 @@ class FakeMihomoClient:
         self.providers_dir = Path(providers_dir)
         self.puts: list[str] = []
         self.fail_puts = False
+        # /connections fixture state (#65): tests assign the live list;
+        # fail_connections simulates a controller outage for gap testing.
+        self.conns: list[dict] = []
+        self.fail_connections = False
 
     def refresh_provider(self, name: str) -> None:
         if self.fail_puts:
             raise MihomoError("PUT /providers/rules refresh failed (fixture)")
         self.puts.append(name)
+
+    def connections(self) -> list[dict]:
+        if self.fail_connections:
+            raise MihomoError("GET /connections failed (fixture)")
+        return [dict(c) for c in self.conns]
 
     def provider_rule_counts(self) -> dict:
         counts = {}
@@ -70,7 +79,20 @@ def panel_env(tmp_path, monkeypatch):
     monkeypatch.delenv("NOTIFY_WEBHOOK_URL", raising=False)
     monkeypatch.delenv("MIHOMO_IP", raising=False)
     monkeypatch.delenv("PANEL_IP", raising=False)
+    # stats: no background thread in unit tests (0 disables the loop);
+    # collection is driven explicitly via poll_once/rollup with fake clocks
+    monkeypatch.setenv("PANEL_STATS_POLL_S", "0")
+    monkeypatch.delenv("PANEL_STATS_DOMAINS", raising=False)
     return {"data": data, "providers": providers, "secret": "test-panel-secret"}
+
+
+def conn_fixture(cid: str, source: str, up: int, down: int,
+                 chain: str = "Routing Mode", host: str = "") -> dict:
+    """A /connections entry in the controller's wire shape."""
+    return {"id": cid, "upload": up, "download": down,
+            "metadata": {"sourceIP": source, "host": host,
+                         "network": "tcp", "type": "tun"},
+            "chains": ["JP01", "Japan Auto", "Exit Country", chain]}
 
 
 @pytest.fixture()

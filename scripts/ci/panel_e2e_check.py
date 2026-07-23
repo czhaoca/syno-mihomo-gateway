@@ -34,7 +34,8 @@ PROVIDER_FILES = {
     "dyn-full-tunnel": "dyn-full-tunnel.txt",
 }
 
-_state = {"fail_puts": False, "webhooks": [], "providers_dir": None}
+_state = {"fail_puts": False, "webhooks": [], "providers_dir": None,
+          "connections": []}
 
 
 class FakeController(BaseHTTPRequestHandler):
@@ -71,6 +72,10 @@ class FakeController(BaseHTTPRequestHandler):
                                    "type": "File", "vehicleType": "File"}
             self._reply(200, json.dumps({"providers": providers}).encode())
             return
+        if self.path == "/connections":
+            self._reply(200, json.dumps(
+                {"connections": _state["connections"]}).encode())
+            return
         self._reply(404)
 
     def do_POST(self):
@@ -89,6 +94,13 @@ class FakeController(BaseHTTPRequestHandler):
             return
         if self.path == "/_control/fail_puts/off":
             _state["fail_puts"] = False
+            self._reply(200)
+            return
+        if self.path == "/_control/connections":
+            try:
+                _state["connections"] = json.loads(body)
+            except ValueError:
+                _state["connections"] = []
             self._reply(200)
             return
         self._reply(404)
@@ -228,6 +240,61 @@ def run_scenario(app_port: int, providers: Path, marker: Path,
     expect("remove" in [e["action"] for e in body["entries"]],
            "audit must record the removal")
 
+    # 10) stats (#65): feed the fake controller live connections; the 1s
+    #     poll loop must collect them (devices + chains + opt-in domains)
+    #     and /health must report a fresh collector
+    api("POST", ctl_port, "/_control/connections", [
+        {"id": "e1", "upload": 111, "download": 2222,
+         "metadata": {"sourceIP": "198.51.100.7",
+                      "host": "video.example.com"},
+         "chains": ["JP01", "Japan Auto", "Exit Country", "Routing Mode"]},
+        {"id": "e2", "upload": 5, "download": 50,
+         "metadata": {"sourceIP": "192.0.2.40", "host": ""},
+         "chains": ["JP01", "Full-Tunnel Devices"]},
+    ])
+    deadline = time.monotonic() + 10
+    rows = []
+    while time.monotonic() < deadline:
+        status, body = api("GET", app_port, "/v1/stats/devices")
+        rows = body.get("rows") or []
+        if len(rows) >= 2:
+            break
+        time.sleep(0.5)
+    expect(len(rows) == 2, f"collector must gather both devices: {rows}")
+    by_dev = {r["device"]: r for r in rows}
+    expect(by_dev["198.51.100.7"]["down"] == 2222, f"delta rows: {rows}")
+    status, body = api("GET", app_port, "/v1/stats/chains")
+    chains = {r["chain"] for r in body["rows"]}
+    expect(chains == {"Routing Mode", "Full-Tunnel Devices"},
+           f"chain dimension: {chains}")
+    status, body = api("GET", app_port, "/v1/stats/domains")
+    expect(body["enabled"] is True and
+           [r["domain"] for r in body["rows"]] == ["video.example.com"],
+           f"opt-in domains: {body}")
+    status, health = api("GET", app_port, "/health")
+    expect(health["collector"] == "ok" and health["collector_last_ts"],
+           f"collector health: {health}")
+    expect(health["stats_db_bytes"] > 0, f"db bytes: {health}")
+
+    # 11) purge: token-gated; clears stats but never the policy audit.
+    #     The connections STAY LIVE across the purge on purpose - a
+    #     preserved baseline means an unchanged open connection must NOT
+    #     re-contribute its pre-purge cumulative (the double-count class
+    #     the cycle-1 panel found).
+    status, _ = api("POST", app_port, "/v1/stats/purge")
+    expect(status == 403, f"unauthenticated purge: {status}")
+    status, body = api("POST", app_port, "/v1/stats/purge", token=SECRET)
+    expect(status == 200 and body["purged"] is True, f"purge: {body}")
+    time.sleep(2.5)  # several 1s polls with the same unchanged connections
+    status, body = api("GET", app_port, "/v1/stats/devices")
+    expect(body["rows"] == [],
+           f"unchanged open connections must not re-count after a purge: "
+           f"{body}")
+    status, body = api("GET", app_port, "/v1/audit")
+    actions = [e["action"] for e in body["entries"]]
+    expect("add" in actions and "stats-purge" in actions,
+           f"policy audit survives the purge and records it: {actions}")
+
 
 def main() -> int:
     started = time.monotonic()
@@ -250,6 +317,10 @@ def main() -> int:
             "PANEL_SECRET": SECRET,
             "PANEL_MIHOMO_URL": f"http://127.0.0.1:{ctl_port}",
             "NOTIFY_WEBHOOK_URL": f"http://127.0.0.1:{ctl_port}/_webhook",
+            # stats (#65): a fast real loop + the opt-in domain table ON,
+            # so the e2e exercises collection, reads, and the purge
+            "PANEL_STATS_POLL_S": "1",
+            "PANEL_STATS_DOMAINS": "true",
         }
         with log_path.open("wb") as log:
             proc = subprocess.Popen(
@@ -302,7 +373,10 @@ def main() -> int:
           "surfaces as applied=false + parity=failed + persistent marker + "
           "{title,body} webhook while the store keeps the mutation, and "
           "/v1/apply recovers to green; audit carries add/flip/remove with "
-          "requester IPs.")
+          "requester IPs; the 1s stats loop collects real /connections "
+          "fixtures into device/chain rows + the opt-in domain table with "
+          "a fresh collector verdict in /health, and the token-gated purge "
+          "clears stats while the policy audit survives and records it.")
     return 0
 
 

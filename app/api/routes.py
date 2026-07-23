@@ -19,6 +19,8 @@ from pydantic import BaseModel, Field
 
 from app import config
 from app.api.auth import require_mutation_auth
+from app.collector.core import GAP_FACTOR, effective_interval_s
+from app.store import stats as stats_store
 from app.store.audit import append_audit, list_audit
 from app.store.policy import (
     StoreConflict,
@@ -72,15 +74,108 @@ def _reconcile(request: Request, conn) -> dict:
     return {"applied": applied, "parity": rec.status["parity"]}
 
 
+def _collector_verdict(request: Request) -> tuple:
+    """(verdict, last_poll_ts): error (stats.db unavailable) | off (loop
+    disabled) | ok (fresh within the gap threshold) | stale."""
+    stats_conn = getattr(request.app.state, "stats_conn", None)
+    collector = getattr(request.app.state, "collector", None)
+    last_ts = collector.status["last_poll_ts"] if collector else None
+    if stats_conn is None:
+        return "error", last_ts
+    if config.stats_poll_s() == 0:
+        return "off", last_ts
+    if last_ts is None:
+        return "stale", last_ts
+    from datetime import UTC, datetime
+    age = (datetime.now(UTC)
+           - datetime.fromisoformat(last_ts.replace("Z", "+00:00")))
+    fresh = age.total_seconds() <= GAP_FACTOR * effective_interval_s()
+    return ("ok" if fresh else "stale"), last_ts
+
+
 @router.get("/health")
 def health(request: Request) -> dict:
     rec = request.app.state.reconciler
+    verdict, last_poll = _collector_verdict(request)
+    stats_conn = getattr(request.app.state, "stats_conn", None)
     return {
         "db_ok": getattr(request.app.state, "conn", None) is not None,
         "parity": rec.status["parity"],
         "last_apply": rec.status["last_apply"],
         "marker": config.marker_path().exists(),
+        "collector": verdict,
+        "collector_last_ts": last_poll,
+        "stats_db_bytes": (stats_store._db_bytes(config.stats_db_path())
+                           if stats_conn is not None else 0),
     }
+
+
+def _stats_conn(request: Request):
+    conn = getattr(request.app.state, "stats_conn", None)
+    if conn is None:
+        raise HTTPException(
+            status_code=503,
+            detail="stats store unavailable - collection degraded; policy "
+                   "serving is unaffected (see /health)")
+    return conn
+
+
+Tier = Literal["minute", "hour", "day"]
+
+
+@router.get("/v1/stats/devices")
+def stats_devices(request: Request, tier: Tier = "minute",
+                  since: str = "", until: str = "") -> dict:
+    with request.app.state.stats_lock:
+        conn = _stats_conn(request)
+        return {"tier": tier,
+                "rows": stats_store.read_grouped(conn, tier, "device",
+                                                 since, until)}
+
+
+@router.get("/v1/stats/chains")
+def stats_chains(request: Request, tier: Tier = "minute",
+                 since: str = "", until: str = "") -> dict:
+    with request.app.state.stats_lock:
+        conn = _stats_conn(request)
+        return {"tier": tier,
+                "rows": stats_store.read_grouped(conn, tier, "chain",
+                                                 since, until)}
+
+
+@router.get("/v1/stats/domains")
+def stats_domains(request: Request, since: str = "",
+                  until: str = "") -> dict:
+    with request.app.state.stats_lock:
+        conn = _stats_conn(request)
+        return {"enabled": config.stats_domains(),
+                "rows": stats_store.read_domains(conn, since, until)}
+
+
+@router.get("/v1/stats/gaps")
+def stats_gaps(request: Request, limit: int = 100) -> dict:
+    with request.app.state.stats_lock:
+        conn = _stats_conn(request)
+        return {"rows": stats_store.read_gaps(conn, limit)}
+
+
+@router.post("/v1/stats/purge",
+             dependencies=[Depends(require_mutation_auth)])
+def stats_purge(request: Request) -> dict:
+    """Clears every visible stats surface (tiers, domains, gap history)
+    but preserves conn_baseline + the poll stamp - dropping baselines
+    would make still-open connections re-contribute their pre-purge
+    cumulative. The POLICY audit lives in policy.db and is untouched -
+    it records this purge like any other mutation."""
+    with request.app.state.stats_lock:
+        conn = _stats_conn(request)
+        stats_store.purge_stats(conn)
+    with request.app.state.mutex:
+        pconn = getattr(request.app.state, "conn", None)
+        if pconn is not None:
+            append_audit(pconn, action="stats-purge",
+                         requester=_requester(request))
+    return {"purged": True}
 
 
 @router.get("/v1/devices")

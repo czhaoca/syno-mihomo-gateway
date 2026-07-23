@@ -68,3 +68,46 @@ def gateway_ip() -> str:
 
 def panel_ip() -> str:
     return os.environ.get("PANEL_IP", "")
+
+
+# --- stats knobs (PANEL_STATS_* family; .env.example rows land at
+# Sequence 60). Invalid values fall back to the safe default - a stats
+# knob typo must never take the panel down. ---
+
+def _int_env(name: str, default: int, minimum: int = 0) -> int:
+    raw = os.environ.get(name, "")
+    try:
+        return max(minimum, int(raw))
+    except ValueError:
+        return default
+
+
+def stats_db_path() -> Path:
+    return state_dir() / "stats.db"
+
+
+def stats_poll_s() -> int:
+    """0 disables the collector loop (tests drive poll_once directly)."""
+    return _int_env("PANEL_STATS_POLL_S", 10)
+
+
+def stats_minute_hours() -> int:
+    return _int_env("PANEL_STATS_MINUTE_HOURS", 48, minimum=1)
+
+
+def stats_hour_days() -> int:
+    return _int_env("PANEL_STATS_HOUR_DAYS", 90, minimum=1)
+
+
+def stats_day_days() -> int:
+    return _int_env("PANEL_STATS_DAY_DAYS", 730, minimum=1)
+
+
+def stats_cap_mb() -> int:
+    return _int_env("PANEL_STATS_CAP_MB", 512)
+
+
+def stats_domains() -> bool:
+    """The opt-in per-domain table - OFF unless explicitly enabled."""
+    return os.environ.get("PANEL_STATS_DOMAINS", "").lower() in (
+        "1", "true", "yes")

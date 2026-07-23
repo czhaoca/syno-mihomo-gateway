@@ -16,11 +16,13 @@ from fastapi import FastAPI
 
 from app import config
 from app.api.routes import router
+from app.collector.core import Collector, CollectorLoop
 from app.mihomo_client.client import MihomoClient
 from app.notify import webhook_notify
 from app.reconciler.core import Reconciler
 from app.store.db import StoreError, open_db
 from app.store.policy import desired_state
+from app.store.stats import open_stats_db
 
 API_DESCRIPTION = (
     "Dynamic device policy for the Syno Mihomo Gateway. The /v1 surface is "
@@ -55,9 +57,31 @@ def create_app(*, mihomo_client=None, notifier=None) -> FastAPI:
             # startup re-sync: converge files + mihomo to the SSOT; a red
             # apply is already loud (marker/webhook/health), never fatal
             rec.apply(desired_state(app.state.conn))
+        # stats (#65): a SEPARATE db - its failure degrades stats only
+        # (/health collector=error), never policy serving
+        app.state.stats_conn = None
+        app.state.stats_lock = threading.RLock()
+        app.state.collector = None
+        stats_loop = None
+        try:
+            app.state.stats_conn = open_stats_db(config.stats_db_path())
+        except StoreError:
+            pass  # surfaced via /health; policy is unaffected by design
+        if app.state.stats_conn is not None:
+            app.state.collector = Collector(client=client,
+                                            conn=app.state.stats_conn)
+            interval = config.stats_poll_s()
+            if interval > 0:
+                stats_loop = CollectorLoop(app.state.collector,
+                                           app.state.stats_lock, interval)
+                stats_loop.start()
         try:
             yield
         finally:
+            if stats_loop is not None:
+                stats_loop.stop()
+            if app.state.stats_conn is not None:
+                app.state.stats_conn.close()
             if app.state.conn is not None:
                 app.state.conn.close()
 

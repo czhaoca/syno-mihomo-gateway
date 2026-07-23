@@ -68,3 +68,15 @@ class MihomoClient:
             if isinstance(info, dict) and "ruleCount" in info:
                 counts[name] = info["ruleCount"]
         return counts
+
+    def connections(self) -> list:
+        """The raw connections array from GET /connections (per-connection
+        cumulative upload/download + metadata); the collector parses it."""
+        raw = self._request("GET", "/connections")
+        try:
+            doc = json.loads(raw)
+        except ValueError as exc:
+            raise MihomoError(
+                "GET /connections returned unparseable JSON") from exc
+        conns = doc.get("connections")
+        return conns if isinstance(conns, list) else []

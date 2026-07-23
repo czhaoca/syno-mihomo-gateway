@@ -77,9 +77,13 @@ MIGRATIONS = [
 ]
 
 
-def open_db(path: Path) -> sqlite3.Connection:
+def open_db(path: Path, *, migrations=None, pre_migrate=()) -> sqlite3.Connection:
     """Open (creating/migrating as needed) with the frozen pragmas. Raises
-    StoreError when the store cannot be opened safely."""
+    StoreError when the store cannot be opened safely. MIGRATIONS defaults
+    to the policy schema; stats.db passes its own list (same discipline,
+    separate file — brief DEC-8). PRE_MIGRATE pragmas run before the first
+    table exists (e.g. auto_vacuum, which cannot be set later without a
+    full VACUUM)."""
     path = Path(path)
     _refuse_network_fs(path.parent if path.parent.exists() else path)
     old_umask = os.umask(0o077)
@@ -88,13 +92,18 @@ def open_db(path: Path) -> sqlite3.Connection:
         os.chmod(path.parent, 0o700)
         conn = sqlite3.connect(path, check_same_thread=False)
     except (OSError, sqlite3.Error) as exc:
-        raise StoreError(f"cannot open policy.db: {exc}") from exc
+        raise StoreError(f"cannot open {path.name}: {exc}") from exc
     finally:
         os.umask(old_umask)
     try:
         conn.row_factory = sqlite3.Row
         conn.isolation_level = None  # autocommit; mutations BEGIN explicitly
         conn.execute("PRAGMA busy_timeout = 5000")
+        # pre_migrate pragmas MUST run before journal_mode initializes the
+        # database header: auto_vacuum is frozen once page 1 exists, and
+        # setting it later silently no-ops without a full VACUUM.
+        for pragma in pre_migrate:
+            conn.execute(pragma)
         mode = conn.execute("PRAGMA journal_mode = WAL").fetchone()[0]
         if mode != "wal":
             raise StoreError(
@@ -103,19 +112,19 @@ def open_db(path: Path) -> sqlite3.Connection:
         conn.execute("PRAGMA synchronous = NORMAL")
         conn.execute("PRAGMA foreign_keys = ON")
         os.chmod(path, 0o600)
-        _migrate(conn)
+        _migrate(conn, migrations if migrations is not None else MIGRATIONS)
     except StoreError:
         conn.close()
         raise
     except (OSError, sqlite3.Error) as exc:
         conn.close()
-        raise StoreError(f"policy.db failed to initialize: {exc}") from exc
+        raise StoreError(f"{path.name} failed to initialize: {exc}") from exc
     return conn
 
 
-def _migrate(conn: sqlite3.Connection) -> None:
+def _migrate(conn: sqlite3.Connection, migrations) -> None:
     current = conn.execute("PRAGMA user_version").fetchone()[0]
-    for version, sql in MIGRATIONS:
+    for version, sql in migrations:
         if version <= current:
             continue
         conn.execute("BEGIN IMMEDIATE")
