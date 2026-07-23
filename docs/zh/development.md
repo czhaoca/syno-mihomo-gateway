@@ -78,8 +78,11 @@ scripts/
     full_proxy_check.sh       # doctor 每设备全代理网段守卫的封闭式测试
     pi_installer_check.sh     # 使用伪 Docker 的树莓派移植共享接缝测试
     linux_installer_check.sh  # 使用伪 Docker 的通用 Linux 入口 + 覆盖层测试
+    panel_contract_check.py   # CI：app/openapi.json 与全新导出逐字节比对（--write 重新生成）
+    panel_e2e_check.py        # CI：真实 uvicorn 面板对回环上的步内伪控制器
     lib/assert.sh             # sh 测试套件共享的断言
-.woodpecker.yml               # CI：9 个阻断式步骤（见下方 CI 表格）
+app/                          # 网关面板：FastAPI 服务核心（store/reconciler/api/tests）
+.woodpecker.yml               # CI：12 个阻断式步骤（见下方 CI 表格）
 docs/                         # 手册（EN）+ docs/zh 中文镜像 + docs/*.txt 最终用户指南
 ```
 
@@ -163,6 +166,9 @@ EXIT 陷阱不会回收它（`CF_KEEP_CANDIDATE`）。
 | `privacy-check` | 扫描被跟踪文件和可达 blob，拒绝私有运维标识、凭据、私钥和意外跟踪的运行时文件（+ 该守卫的自测） |
 | `dsm-shell-tests` | 十二个在 BusyBox `sh` 下、使用伪 Docker/Compose/服务 CLI 的测试套件：`dsm_installer_check`、`lifecycle_check`、`auto_update_check`、`cloudflared_check`、`generic_update_check`、`gateway_cli_check`、`seed_provider_check`、`proxy_groups_check`（doctor 对生成的国家分组的零节点守卫——含 `default-empty` 状态：`Exit Country` 正在骑乘的国家分组归零）、`full_proxy_check`（doctor 对按设备全代理网段的守卫——开关/渲染双向一致性、`/connections` 代理链扫描（含局域网目标豁免与 UDP/QUIC 直通标记）、以及 proxy_groups 未知状态短路夹具）、`mihomo_entrypoint_check`（入口点先渲染到临时文件再 `mihomo -t` 守门：通过才切换、保留上一份好配置并写入脱敏拒绝标记）、`pi_installer_check`（Raspberry Pi 移植的共享接缝）、`linux_installer_check`（通用 Linux 入口：install-linux.sh 的 source 检查、i18n 增量覆盖层（含目录级无 Pi 品牌扫描）、lite_ctl 输出改写并保留退出码、菜单到 pi 引擎的分发，以及 macvlan 可用性守卫——虚拟化/云主机检测、警告 + 显式确认、拒绝则转入精简模式、在部署前清理（确认先于任何拆除）与 create_network 两处收口——通用流程上的 `EXPECTED_ARCH` 自动锁定、和只写用户 `.env` 的 docker 默认镜像源向导（含堵住快速路径绕过））——外加 `validate_release.sh --self-test`，即 NAS 端发布验证助手的测量函数单元检查 |
 | `shellcheck` | 先对仓库中**每一个** `*.sh` 运行 `sh -n` 语法检查，再对 22 个目标运行 `shellcheck -x`：`install.sh`、`install-pi.sh`、`install-linux.sh`、`gateway.sh`、`auto_update.sh`、`pi/auto_update_lite.sh`、`pi/lite_ctl.sh`、`install_scheduler.sh`、`setup_network.sh`、`render_config.sh`、`mihomo_entrypoint.sh`、`package.sh`、`doctor.sh`、`state_diff.sh`、`seed_provider.sh`、`bootstrap.sh`、`lib/container.sh`、`lib/targets.sh`、`lib/geodata.sh`、`linux/i18n_linux.sh`、`linux/preflight_linux.sh`、`validate_release.sh`（被 source 的库在上下文中一并检查） |
+| `app-lint` | `ruff check app` —— 面板应用的 lint（ruff 版本钉在 `app/requirements-dev.txt`，配置经 `app/ruff.toml` 限定作用域） |
+| `app-unit` | `python -m pytest app/tests -q` —— 封闭式面板单元测试套件（伪控制器客户端 + 临时目录；校验类、store/迁移/备份、reconciler 正常/告警路径、鉴权矩阵、审计只追加）——随后运行 `python scripts/ci/panel_contract_check.py`，即已提交 `app/openapi.json` 的逐字节一致性门（用 `--write` 重新生成；/v1 命令面只增不破——破坏性变更 = 新版本前缀 + 所有者显式确认） |
+| `app-e2e` | `python scripts/ci/panel_e2e_check.py` —— 真实 uvicorn 下的应用对回环上的步内伪 mihomo 控制器 + webhook 接收器（无守护进程）：启动重同步、bearer 鉴权门、写入→刷新→计数一致性、告警失败路径（标记 + `{title,body}` webhook + `parity=failed`）、经 `/v1/apply` 恢复 |
 
 ## CLI 契约（生成的文件）
 
@@ -256,6 +262,14 @@ for f in $(find . -path ./.git -prune -o -name "*.sh" -print); do sh -n "$f" || 
 python3 -m venv /tmp/v && /tmp/v/bin/pip install -q pyyaml
 /tmp/v/bin/python scripts/ci/render_check.py
 /tmp/v/bin/python scripts/ci/cli_contract_check.py   # --write 重新生成这些产物
+
+# 面板应用：lint、单元测试 + OpenAPI 契约门、封闭式 e2e
+#（独立 venv——应用依赖钉在 app/requirements*.txt）
+python3 -m venv /tmp/vp && /tmp/vp/bin/pip install -q -r app/requirements.txt -r app/requirements-dev.txt
+/tmp/vp/bin/ruff check app
+/tmp/vp/bin/python -m pytest app/tests -q
+/tmp/vp/bin/python scripts/ci/panel_contract_check.py   # --write 重新生成 app/openapi.json
+/tmp/vp/bin/python scripts/ci/panel_e2e_check.py
 
 # shellcheck（经 Docker，与 CI 相同的 22 个目标）
 docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck-alpine:stable \

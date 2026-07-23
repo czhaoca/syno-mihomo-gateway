@@ -1,0 +1,8 @@
+# Lint config for the panel app (scoped: ruff's nearest-config discovery
+# applies this to app/ only). Kept strict but pragmatic: pycodestyle,
+# pyflakes, import order, bugbear, and modern-syntax upgrades.
+line-length = 100
+target-version = "py312"
+
+[lint]
+select = ["E", "F", "W", "I", "B", "UP"]

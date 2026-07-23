@@ -96,3 +96,31 @@ steps:
       # setup_network.sh is now POSIX /bin/sh (no more bash exception).
       - 'for f in $(find . -path ./.git -prune -o -name "*.sh" -print); do sh -n "$f" || exit 1; done'
       - shellcheck -x install.sh install-pi.sh install-linux.sh scripts/gateway.sh scripts/auto_update.sh scripts/pi/auto_update_lite.sh scripts/pi/lite_ctl.sh scripts/install_scheduler.sh scripts/setup_network.sh scripts/render_config.sh scripts/mihomo_entrypoint.sh scripts/package.sh scripts/doctor.sh scripts/state_diff.sh scripts/seed_provider.sh bootstrap.sh scripts/lib/container.sh scripts/lib/targets.sh scripts/lib/geodata.sh scripts/linux/i18n_linux.sh scripts/linux/preflight_linux.sh scripts/validate_release.sh
+
+  - name: app-lint
+    image: python:3.12-slim
+    commands:
+      # Panel app lint (ruff pinned in app/requirements-dev.txt; config
+      # scoped via app/ruff.toml).
+      - pip install --quiet -r app/requirements-dev.txt
+      - ruff check app
+
+  - name: app-unit
+    image: python:3.12-slim
+    commands:
+      # Panel unit suite (hermetic: fake controller client + tmp trees, no
+      # docker/network) plus the committed OpenAPI contract gate
+      # (byte-identity against a fresh export; --write regenerates).
+      - pip install --quiet -r app/requirements.txt -r app/requirements-dev.txt
+      - python -m pytest app/tests -q
+      - python scripts/ci/panel_contract_check.py
+
+  - name: app-e2e
+    image: python:3.12-slim
+    commands:
+      # Real uvicorn app against an in-step fake mihomo controller +
+      # webhook sink on loopback - daemonless (CI step containers stay
+      # plain images), exercising the write->refresh->count-parity loop,
+      # the loud failure path, and recovery end to end.
+      - pip install --quiet -r app/requirements.txt -r app/requirements-dev.txt
+      - python scripts/ci/panel_e2e_check.py

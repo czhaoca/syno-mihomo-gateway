@@ -79,8 +79,11 @@ scripts/
     full_proxy_check.sh       # hermetic suite for the doctor's per-device full-proxy band guard
     pi_installer_check.sh     # fake-Docker suite for the Raspberry Pi port's shared seams
     linux_installer_check.sh  # fake-Docker suite for the generic-Linux entry + overlay
+    panel_contract_check.py   # CI: app/openapi.json byte-diff vs a fresh export (--write regenerates)
+    panel_e2e_check.py        # CI: real uvicorn panel vs an in-step fake controller on loopback
     lib/assert.sh             # shared assertions for the sh suites
-.woodpecker.yml               # CI: 9 blocking steps (see the CI table below)
+app/                          # the gateway panel: FastAPI service core (store/reconciler/api/tests)
+.woodpecker.yml               # CI: 12 blocking steps (see the CI table below)
 docs/                         # manual (EN) + docs/zh mirrors (中文) + docs/*.txt enduser guides
 ```
 
@@ -169,6 +172,9 @@ Runs on push/PR to `main` and `master`:
 | `privacy-check` | Scans tracked files and reachable blobs for private operational identifiers, credentials, private keys, and accidentally tracked runtime files (+ the gate's self-test) |
 | `dsm-shell-tests` | Twelve BusyBox `sh` suites with fake Docker/Compose/service CLIs: `dsm_installer_check`, `lifecycle_check`, `auto_update_check`, `cloudflared_check`, `generic_update_check`, `gateway_cli_check`, `seed_provider_check`, `proxy_groups_check` (the doctor's zero-node guard for the generated country groups — incl. the `default-empty` state, the country `Exit Country` is riding gone empty), `full_proxy_check` (the doctor's per-device full-proxy band guard — knob/render parity both directions, the `/connections` chain scan incl. the LAN-destination exemption and the UDP/QUIC fallthrough flag, plus the proxy_groups unknown short-circuit fixture), `mihomo_entrypoint_check` (the entrypoint's render-to-temp + `mihomo -t` gate: swap on green, last-good fallback + scrubbed rejection marker), `pi_installer_check` (the Raspberry Pi port's shared seams), `linux_installer_check` (the generic-Linux entry: install-linux.sh sourcing, the i18n delta overlay incl. the catalog no-Pi-branding sweep, the lite_ctl output rebranding with exit-code preservation, the menu dispatch into the pi engine, plus the macvlan-viability guard — virt/cloud detection, warn + explicit ack, decline steers to lite, choke points at both the pre-deployment cleanup (ack before any teardown) and create_network — the `EXPECTED_ARCH` auto-pin on the generic flow, and the docker-default registry wizard writing only the user `.env`, incl. closing the express fast-path bypass) — plus `validate_release.sh --self-test`, the unit checks of the on-NAS release-validation helper's measurement functions |
 | `shellcheck` | `sh -n` parse-checks **every** `*.sh` in the repo, then `shellcheck -x` on 22 targets: `install.sh`, `install-pi.sh`, `install-linux.sh`, `gateway.sh`, `auto_update.sh`, `pi/auto_update_lite.sh`, `pi/lite_ctl.sh`, `install_scheduler.sh`, `setup_network.sh`, `render_config.sh`, `mihomo_entrypoint.sh`, `package.sh`, `doctor.sh`, `state_diff.sh`, `seed_provider.sh`, `bootstrap.sh`, `lib/container.sh`, `lib/targets.sh`, `lib/geodata.sh`, `linux/i18n_linux.sh`, `linux/preflight_linux.sh`, `validate_release.sh` (sourced libs followed in-context) |
+| `app-lint` | `ruff check app` — the panel app lint (ruff pinned in `app/requirements-dev.txt`, config scoped via `app/ruff.toml`) |
+| `app-unit` | `python -m pytest app/tests -q` — the hermetic panel unit suite (fake controller client + tmp trees; validation classes, store/migrations/backups, reconciler happy/loud paths, auth matrix, audit append-only) — then `python scripts/ci/panel_contract_check.py`, the committed `app/openapi.json` byte-identity gate (regenerate with `--write`; the /v1 surface is additive-only — breaking = new version prefix + explicit owner acknowledgment) |
+| `app-e2e` | `python scripts/ci/panel_e2e_check.py` — the REAL app under uvicorn against an in-step fake mihomo controller + webhook sink on loopback (daemonless): startup re-sync, bearer-gated mutations, write→refresh→count-parity, the loud failure path (marker + `{title,body}` webhook + `parity=failed`), recovery via `/v1/apply` |
 
 ## The CLI contract (generated files)
 
@@ -265,6 +271,14 @@ for f in $(find . -path ./.git -prune -o -name "*.sh" -print); do sh -n "$f" || 
 python3 -m venv /tmp/v && /tmp/v/bin/pip install -q pyyaml
 /tmp/v/bin/python scripts/ci/render_check.py
 /tmp/v/bin/python scripts/ci/cli_contract_check.py   # --write regenerates the artifacts
+
+# the panel app: lint, unit suite + OpenAPI contract gate, hermetic e2e
+# (own venv - the app pins its deps in app/requirements*.txt)
+python3 -m venv /tmp/vp && /tmp/vp/bin/pip install -q -r app/requirements.txt -r app/requirements-dev.txt
+/tmp/vp/bin/ruff check app
+/tmp/vp/bin/python -m pytest app/tests -q
+/tmp/vp/bin/python scripts/ci/panel_contract_check.py   # --write regenerates app/openapi.json
+/tmp/vp/bin/python scripts/ci/panel_e2e_check.py
 
 # shellcheck (via Docker, same 22 targets as CI)
 docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck-alpine:stable \

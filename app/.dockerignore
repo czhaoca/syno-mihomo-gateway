@@ -1,0 +1,12 @@
+# Keep the runtime image minimal: no tests, caches, or dev-only files
+# (nested __pycache__ dirs included - the bare pattern only matches root).
+tests/
+**/__pycache__/
+*.pyc
+**/*.pyc
+.ruff_cache/
+.pytest_cache/
+Dockerfile
+.dockerignore
+ruff.toml
+requirements-dev.txt
