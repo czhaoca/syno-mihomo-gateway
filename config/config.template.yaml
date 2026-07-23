@@ -189,6 +189,26 @@ proxy-providers:
       interval: 600
       url: "http://www.gstatic.com/generate_204"
 
+# Rule Providers (dynamic device policy, #63): two file-backed classical
+# text rule sets consumed by the RULE-SET pair directly under the LAN rule
+# below. The gateway panel is the ONLY writer (atomic tmp+rename, then a
+# PUT /providers/rules/<name> reload); the container entrypoint seeds
+# MISSING files zero-byte before `mihomo -t`, so every render is valid and
+# the layer is fully INERT until entries appear (empty file = the rule
+# matches nothing). The names and paths are the panel's permanent write
+# contract - renaming either breaks every deployed panel.
+rule-providers:
+  dyn-full-direct:
+    type: file
+    behavior: classical
+    format: text
+    path: ./providers/dyn-full-direct.txt
+  dyn-full-tunnel:
+    type: file
+    behavior: classical
+    format: text
+    path: ./providers/dyn-full-tunnel.txt
+
 # Proxy Groups
 # Rules can only target a proxy or a proxy-group (NEVER a proxy-provider), which is
 # why the catch-all `MATCH,my-airport` crash-looped: `my-airport` is a proxy-provider,
@@ -246,17 +266,18 @@ proxy-groups:
     proxies:
 # {{COUNTRY_MEMBERS_PICK}}
 
-# {{FULL_PROXY_BEGIN}}
-  # Full-Tunnel Devices: strict per-device full-proxy for the FULL_PROXY_SOURCES
-  # band (this fenced group renders ONLY when that knob is set). The
-  # SRC-IP-CIDR rules just below the LAN rule send EVERYTHING from band
-  # devices here - streaming AND CN sites included; LAN destinations stay
-  # DIRECT via the rule above the band. Members deliberately exclude
-  # DIRECT: a band device can never be silently un-proxied - REJECT is the
-  # kill switch. Defaults to Routing Mode (the band follows the dashboard
-  # mode); pick a country here to pin the band's exit independently.
-  # Devices enter/leave the band via a router-side fixed-IP reservation
-  # flip + reconnect - never a gateway restart (docs/configuration.md).
+  # Full-Tunnel Devices: strict per-device full-proxy. Renders
+  # UNCONDITIONALLY since #63: it is the target of BOTH per-device tunnel
+  # paths - the static FULL_PROXY_SOURCES band (SRC-IP-CIDR rules at the
+  # band marker below the LAN rule) and the panel-written dyn-full-tunnel
+  # rule set - so it can no longer be fenced on the band knob. Flows sent
+  # here carry EVERYTHING except LAN destinations - streaming AND CN sites
+  # included. Members deliberately exclude DIRECT: a tunneled device can
+  # never be silently un-proxied - REJECT is the kill switch. Defaults to
+  # Routing Mode (follows the dashboard mode); pick a country here to pin
+  # the tunnel exit independently. Static-band membership changes ride a
+  # router-side fixed-IP reservation flip + reconnect - never a gateway
+  # restart (docs/configuration.md); dynamic membership is a panel write.
   - name: Full-Tunnel Devices
     type: select
     proxies:
@@ -264,7 +285,6 @@ proxy-groups:
 # {{COUNTRY_MEMBERS_FULL_PROXY}}
       - REJECT
 
-# {{FULL_PROXY_END}}
 # Generated "<Country> Auto" url-test groups: one per COUNTRY_GROUPS entry
 # (fastest provider node matching the entry's regex; empty-fallback REJECT
 # fails closed; tolerance avoids flapping between near-equal nodes; no own
@@ -296,11 +316,20 @@ rules:
   # Windows Delivery Optimization peers at foreign RFC1918 addresses were
   # falling through to MATCH and riding the proxy.
   - 'GEOIP,LAN,DIRECT,no-resolve'
+  # Dynamic device policy (#63): panel-written SRC-IP-CIDR entries live in
+  # the file providers declared above. Spliced DIRECTLY under the LAN rule,
+  # so dynamic policy outranks the static band below AND every domain rule
+  # - and direct outranks tunnel (first match wins). Both providers seed
+  # empty (the entrypoint guarantees the files exist), so with no panel
+  # entries these two rules match nothing - zero behavior change.
+  - 'RULE-SET,dyn-full-direct,DIRECT'
+  - 'RULE-SET,dyn-full-tunnel,Full-Tunnel Devices'
   # Full-proxy band (FULL_PROXY_SOURCES, optional): one SRC-IP-CIDR line
-  # per entry renders at the marker below - immediately after the LAN rule
-  # (band devices still reach LAN destinations DIRECT) and ahead of every
-  # domain rule, so band traffic can never match a DIRECT domain rule
-  # first. Caveat: a UDP/QUIC flow whose exit node lacks UDP relay falls
+  # per entry renders at the marker below - just under the dynamic
+  # RULE-SET pair (which outranks the band; band devices still reach LAN
+  # destinations DIRECT via the rule above) and ahead of every domain
+  # rule, so band traffic can never match a DIRECT domain rule first.
+  # Caveat: a UDP/QUIC flow whose exit node lacks UDP relay falls
   # through the SRC rule at the rule-engine layer - CN-listed destinations
   # then go DIRECT (browsers retry over proxied TCP; the doctor's
   # full_proxy check flags such flows). Unset renders nothing here.

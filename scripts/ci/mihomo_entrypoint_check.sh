@@ -16,6 +16,11 @@
 # plus the hygiene properties: the subscription URL and CONTROLLER_SECRET
 # never appear in the marker OR the container log (rider 1), temp files never
 # linger, and the -t invocation carries -d CFG_DIR -f TEMP (DEC-C).
+# Issue #63 adds the dynamic-policy seeding contract: MISSING provider files
+# (providers/dyn-full-direct.txt, providers/dyn-full-tunnel.txt) are seeded
+# zero-byte BEFORE render + `mihomo -t` (the stub records what existed at -t
+# time), a NON-EMPTY file (the panel's live policy) is never overwritten,
+# and a failed render or -t leaves the seeds in place.
 #
 # Every invocation is HERMETIC (env -i, tree copy, PATH-stub mihomo whose -t
 # rc/output are fixture-driven). BusyBox-ash safe; adjudicate in alpine:3.22.
@@ -57,6 +62,17 @@ STATE="${FAKE_STATE:?}"
 printf '%s\n' "$*" >> "$STATE/argv.log"
 case " $* " in
   *" -t "*)
+    # record the dynamic-policy seed state AS SEEN BY -t (issue #63): the
+    # entrypoint must have seeded missing provider files BEFORE this point
+    for _pf in dyn-full-direct.txt dyn-full-tunnel.txt; do
+      if [ -f "${MIHOMO_CONFIG_DIR:-}/providers/$_pf" ]; then
+        printf '%s %s\n' "$_pf" \
+          "$(wc -c < "${MIHOMO_CONFIG_DIR:-}/providers/$_pf" | tr -d ' ')" \
+          >> "$STATE/seeds_at_t.log"
+      else
+        printf '%s MISSING\n' "$_pf" >> "$STATE/seeds_at_t.log"
+      fi
+    done
     [ -f "$STATE/t_out" ] && cat "$STATE/t_out"
     _rc=$(cat "$STATE/t_rc" 2>/dev/null || true)
     exit "${_rc:-0}" ;;
@@ -125,11 +141,39 @@ grep -q 'hunter2secret' "$ST/started.env" \
 grep -q -- "-t -d $ST/cfg -f $ST/cfg/.config.yaml.next" "$ST/argv.log" \
   && ok || fail "green: want '-t -d CFG_DIR -f .config.yaml.next' on argv, got: $(cat "$ST/argv.log")"
 
+# 2b) seeding (issue #63): the green run seeded both provider files
+#     zero-byte, and they ALREADY existed when -t ran
+[ -f "$ST/cfg/providers/dyn-full-direct.txt" ] \
+  && [ -f "$ST/cfg/providers/dyn-full-tunnel.txt" ] \
+  && ok || fail "green: both provider files must be seeded"
+[ ! -s "$ST/cfg/providers/dyn-full-direct.txt" ] \
+  && [ ! -s "$ST/cfg/providers/dyn-full-tunnel.txt" ] \
+  && ok || fail "green: seeded provider files must be zero-byte (DEC-A)"
+grep -q '^dyn-full-direct.txt 0$' "$ST/seeds_at_t.log" \
+  && grep -q '^dyn-full-tunnel.txt 0$' "$ST/seeds_at_t.log" \
+  && ok || fail "green: seeds must exist (zero-byte) BEFORE mihomo -t: $(cat "$ST/seeds_at_t.log" 2>/dev/null)"
+
 # 3) green first boot (no previous config): rendered + exec'd
 ST=$(new_state greenboot)
 run_ep "$ST"
 [ "$EP_RC" = 0 ] && [ -f "$ST/started.log" ] && cmp -s "$ST/cfg/config.yaml" "$REF/config.yaml" \
   && ok || fail "green first boot: want rendered config + start, rc=$EP_RC"
+
+# 3b) seeding idempotence (issue #63): a NON-EMPTY provider file (the
+#     panel's live policy) is never overwritten; only the missing sibling
+#     is seeded. TEST-NET-1 fixture entry, panel line shape.
+ST=$(new_state seedkeep)
+printf 'OLD SENTINEL\n' > "$ST/cfg/config.yaml"
+mkdir -p "$ST/cfg/providers"
+printf 'SRC-IP-CIDR,192.0.2.55/32\n' > "$ST/cfg/providers/dyn-full-direct.txt"
+run_ep "$ST"
+[ "$EP_RC" = 0 ] && ok || fail "seedkeep: want rc 0, got $EP_RC: $(cat "$OUT_F")"
+printf 'SRC-IP-CIDR,192.0.2.55/32\n' | cmp -s - "$ST/cfg/providers/dyn-full-direct.txt" \
+  && ok || fail "seedkeep: non-empty provider file must be byte-unchanged"
+[ -f "$ST/cfg/providers/dyn-full-tunnel.txt" ] && [ ! -s "$ST/cfg/providers/dyn-full-tunnel.txt" ] \
+  && ok || fail "seedkeep: missing sibling must be seeded zero-byte"
+grep -q 'MISSING' "$ST/seeds_at_t.log" \
+  && fail "seedkeep: both provider files must exist at -t time: $(cat "$ST/seeds_at_t.log")" || ok
 
 # 4) -t rejects + last-good exists: config untouched, marker, still starts
 ST=$(new_state trej)
@@ -150,6 +194,8 @@ sed -n 2p "$REJ" | grep -q '^time: 20' \
 grep -q 'CONFIG REJECTED' "$OUT_F" \
   && ok || fail "t-reject: container log must shout CONFIG REJECTED"
 no_temps "$ST" && ok || fail "t-reject: temp files must not linger"
+[ -f "$ST/cfg/providers/dyn-full-direct.txt" ] && [ -f "$ST/cfg/providers/dyn-full-tunnel.txt" ] \
+  && ok || fail "t-reject: seeded provider files must stay in place on a failed -t"
 
 # 5) rider 1 - hygiene: 0600 marker, secrets scrubbed from marker AND log
 case "$(ls -l "$REJ")" in
@@ -191,6 +237,8 @@ printf 'OLD SENTINEL\n' | cmp -s - "$ST/cfg/config.yaml" \
 sed -n 1p "$ST/cfg/.config.yaml.rejected" | grep -q '^reason: render-failed$' \
   && ok || fail "render-reject: marker first line must be 'reason: render-failed'"
 no_temps "$ST" && ok || fail "render-reject: temp files must not linger"
+[ -f "$ST/cfg/providers/dyn-full-direct.txt" ] && [ -f "$ST/cfg/providers/dyn-full-tunnel.txt" ] \
+  && ok || fail "render-reject: provider files must be seeded even when the render fails"
 
 # 7) first boot + -t reject: hard fail, NO start, marker for post-mortem
 ST=$(new_state bootrej)
@@ -256,4 +304,4 @@ _rec_fields="$(grep '^config_rejected|' "$OUT_F" | head -n1 | awk -F'|' '{print 
 
 echo "mihomo_entrypoint_check: $pass passed, $failn failed"
 [ "$failn" = 0 ] || exit 1
-echo "OK: entrypoint gate - render-to-temp + mihomo -t, whole-file swap on green only, last-good fallback with cause-distinct 0600 scrubbed marker (render-failed/config-test-failed), first-boot hard fail, secrets never in marker/log/exec'd-mihomo-env, temps never linger; doctor config_rejected reader in lockstep (ok/render-failed/config-test-failed/rejected, '|'-safe framing)"
+echo "OK: entrypoint gate - render-to-temp + mihomo -t, whole-file swap on green only, last-good fallback with cause-distinct 0600 scrubbed marker (render-failed/config-test-failed), first-boot hard fail, secrets never in marker/log/exec'd-mihomo-env, temps never linger; dynamic-policy seeding (#63): missing provider files seeded zero-byte before render/-t, non-empty files never overwritten, seeds stay in place on render/-t failure; doctor config_rejected reader in lockstep (ok/render-failed/config-test-failed/rejected, '|'-safe framing)"

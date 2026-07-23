@@ -21,7 +21,6 @@ PRE="$CFG_DIR/.config.yaml.pre"
 PRE2="$CFG_DIR/.config.yaml.pre2"
 PRE4="$CFG_DIR/.config.yaml.pre4"
 PRE6="$CFG_DIR/.config.yaml.pre6"
-PRE5="$CFG_DIR/.config.yaml.pre5"
 CG_GROUPS_FRAG="$CFG_DIR/.country_groups.frag"
 CG_MEMBERS_FRAG="$CFG_DIR/.country_members.frag"
 FP_RULES_FRAG="$CFG_DIR/.full_proxy_rules.frag"
@@ -165,14 +164,17 @@ if [ -n "$COUNTRY_GROUPS" ]; then
   done
 fi
 # Full-proxy band (per-device-full-proxy #46): comma-separated IPv4
-# addresses/CIDRs. OPTIONAL - set, it keeps the fenced 'Full-Tunnel Devices' select
-# group and renders one 'SRC-IP-CIDR,<entry>,Full-Tunnel Devices' rule per entry
-# right after the LAN rule; unset/empty renders byte-identical to a
-# template with the machinery stripped (fully additive). Validation
-# mirrors the COUNTRY_GROUPS error classes: every poison class fails
-# BEFORE anything is written. IPv4-only by design - the gateway is
-# IPv4-only, and routable LAN IPv6 bypasses it entirely (the doctor's
-# ipv6_bypass check owns that reality). A bare IP normalizes to /32.
+# addresses/CIDRs. OPTIONAL - set, it renders one
+# 'SRC-IP-CIDR,<entry>,Full-Tunnel Devices' rule per entry right after the
+# dynamic RULE-SET pair below the LAN rule; unset/empty renders
+# byte-identical to a template with the band marker stripped (fully
+# additive). The 'Full-Tunnel Devices' group itself renders
+# UNCONDITIONALLY since #63 - the panel's dyn-full-tunnel rule set targets
+# it, so only the SRC rules are knob-gated. Validation mirrors the
+# COUNTRY_GROUPS error classes: every poison class fails BEFORE anything
+# is written. IPv4-only by design - the gateway is IPv4-only, and routable
+# LAN IPv6 bypasses it entirely (the doctor's ipv6_bypass check owns that
+# reality). A bare IP normalizes to /32.
 : "${FULL_PROXY_SOURCES:=}"
 if [ -n "$FULL_PROXY_SOURCES" ]; then
   case "$FULL_PROXY_SOURCES" in
@@ -475,21 +477,12 @@ if [ "$SNIFFER_ENABLE" = true ]; then
 else
   sed -e '/{{SNIFFER_BEGIN}}/,/{{SNIFFER_END}}/d' "$PRE2" > "$PRE4"
 fi
-#   FULL_PROXY block - kept when FULL_PROXY_SOURCES is non-empty (the
-#                      fenced Full-Tunnel Devices group incl. its member marker; the
-#                      SRC-IP rules ride the {{FULL_PROXY_RULES}} marker in
-#                      the awk pass below).
-if [ -n "$FULL_PROXY_SOURCES" ]; then
-  sed -e '/{{FULL_PROXY_BEGIN}}/d' -e '/{{FULL_PROXY_END}}/d' "$PRE4" > "$PRE5"
-else
-  sed -e '/{{FULL_PROXY_BEGIN}}/,/{{FULL_PROXY_END}}/d' "$PRE4" > "$PRE5"
-fi
 #   COUNTRY markers - single marker lines, not fences: replaced by the
 #                     generated group/member fragments (awk raw-inserts the
 #                     files - deterministic across GNU/BSD/BusyBox, unlike
 #                     the sed r+d interplay). The spec is REQUIRED, so this
 #                     always runs: Exit Country's members, the Streaming
-#                     Unlock splice, and (when its fence survived) the
+#                     Unlock splice, and the (unconditional since #63)
 #                     Full-Tunnel Devices splice come from the same member
 #                     fragment. The
 #                     FULL_PROXY_RULES marker always resolves here: an
@@ -502,7 +495,7 @@ awk -v groups="$CG_GROUPS_FRAG" -v members="$CG_MEMBERS_FRAG" -v fprules="$FP_RU
   index($0, "{{COUNTRY_MEMBERS_FULL_PROXY}}")  { emit(members); next }
   index($0, "{{FULL_PROXY_RULES}}")            { emit(fprules); next }
   { print }
-' "$PRE5" > "$PRE6"
+' "$PRE4" > "$PRE6"
 
 # Pass 2 - token substitution (a disabled fence simply leaves no token behind;
 # EXTERNAL_UI_DIR renders inside a YAML double-quoted scalar like the secret).
@@ -521,7 +514,7 @@ sed \
   -e "s|{{TUN_AUTO_REDIRECT}}|$(esc "$TUN_AUTO_REDIRECT")|g" \
   -e "s|{{EXTERNAL_UI_DIR}}|$(esc "$(yaml_dq "$EXTERNAL_UI_DIR")")|g" \
   "$PRE6" > "$TMP"
-rm -f "$PRE" "$PRE2" "$PRE4" "$PRE5" "$PRE6" \
+rm -f "$PRE" "$PRE2" "$PRE4" "$PRE6" \
       "$CG_GROUPS_FRAG" "$CG_MEMBERS_FRAG" "$FP_RULES_FRAG"
 mv "$TMP" "$OUT"
 echo "Rendered $OUT"

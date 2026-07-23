@@ -160,14 +160,21 @@ DEFAULT_CG = 'Japan Auto=日本|JP\\d|^JP;美国=美国|US\\d'
 # GEOLOCATION-!CN (each service is a subset — a later rule would never
 # match), and both GEOSITE foreign rules before the GEOIP,CN fallthrough
 # so listed domains never force a local lookup just for routing.
-# The panel DIRECT rule sits right after the LAN rule (and after the
-# full-proxy SRC rules when the band is on): mihomo >=1.19.x routes its own
+# The panel DIRECT rule sits right after the dynamic RULE-SET pair (and
+# after the full-proxy SRC rules when the band is on): mihomo >=1.19.x routes its own
 # provider pull through the rule engine, so without this rule a cold start
 # with empty groups REJECTs its own subscription fetch (2026-07-22
 # validation catch). Derived from the subscription host like the DNS pins.
 PANEL_HOST = "h.example.com"
+# The two RULE-SET rules sit DIRECTLY under the LAN rule (#63): dynamic
+# per-device policy outranks the static FULL_PROXY_SOURCES band AND every
+# domain rule (brief DEC-4 — the panel's dyn-full-direct can un-proxy a
+# band device; first match wins, so direct outranks tunnel). They render
+# UNCONDITIONALLY — empty providers = zero routing behavior change.
 RULES_BASE = [
     "GEOIP,LAN,DIRECT,no-resolve",
+    "RULE-SET,dyn-full-direct,DIRECT",
+    "RULE-SET,dyn-full-tunnel,Full-Tunnel Devices",
     f"DOMAIN,{PANEL_HOST},DIRECT",
     "GEOSITE,NETFLIX,Streaming Unlock",
     "GEOSITE,SPOTIFY,Streaming Unlock",
@@ -203,6 +210,16 @@ EXPECTED_POLICY = {**BOOTSTRAP_PINS,
                    "geosite:cn": DNS_CN, "geosite:geolocation-!cn": DNS_FOREIGN}
 FAKEIP_FILTER = [PIN_MIRROR, PANEL_HOST]
 PROVIDER_PATH = "./proxies/my-airport.yaml"
+# Dynamic-policy rule providers (#63): file-backed classical text rule sets
+# the gateway panel writes at runtime; the container entrypoint seeds them
+# EMPTY (zero-byte — DEC-A, proven against Meta v1.19.29), so every render
+# carries them and they are fully inert until entries appear. The names and
+# paths ARE the panel's permanent write contract — changing either breaks
+# every deployed panel.
+RULE_PROVIDERS = {
+    "dyn-full-direct": "./providers/dyn-full-direct.txt",
+    "dyn-full-tunnel": "./providers/dyn-full-tunnel.txt",
+}
 # An IP-literal subscription host needs no DNS pin at all - the renderer must
 # degrade both panel pin lines to comments and keep the mirror pins.
 SUB_LINE_IP = "Default=https://192.0.2.10:8443/api/v1/subscribe?token=a"
@@ -340,17 +357,17 @@ def spec_names(spec: str) -> list:
     return [p.split("=", 1)[0] for p in parts]
 
 
-def expected_groups(country_spec: str = DEFAULT_CG,
-                    full_proxy: bool = False) -> list:
+def expected_groups(country_spec: str = DEFAULT_CG) -> list:
     """The SPEC-DERIVED proxy-group inventory (in order): the selectors
     first (dashboard order = config order — the cards users touch come
-    first; Full-Tunnel Devices joins them right after Exit Country when the band
-    knob is set), then the generated '<Country> Auto' groups in spec
-    order, then the hidden All Nodes DNS anchor LAST. Never a hardcoded
-    country list (CLAUDE.md rule) — names come from the spec."""
-    selectors = ["Routing Mode", "Streaming Unlock", "Exit Country"]
-    if full_proxy:
-        selectors.append("Full-Tunnel Devices")
+    first; Full-Tunnel Devices sits right after Exit Country and renders
+    UNCONDITIONALLY since #63 — the dynamic rule-set targets it, so it can
+    no longer be fenced on the band knob), then the generated '<Country>
+    Auto' groups in spec order, then the hidden All Nodes DNS anchor LAST.
+    Never a hardcoded country list (CLAUDE.md rule) — names come from the
+    spec."""
+    selectors = ["Routing Mode", "Streaming Unlock", "Exit Country",
+                 "Full-Tunnel Devices"]
     return selectors + spec_names(country_spec) + ["All Nodes"]
 
 
@@ -428,6 +445,7 @@ def check_rule_targets(doc):
     """
     groups = [g.get("name") for g in doc.get("proxy-groups") or [] if isinstance(g, dict)]
     providers = set((doc.get("proxy-providers") or {}).keys())
+    rule_providers = set((doc.get("rule-providers") or {}).keys())
     builtins = {"DIRECT", "REJECT", "REJECT-DROP", "PASS"}
     valid = set(groups) | builtins
     if len(set(groups)) != len(groups):
@@ -436,6 +454,15 @@ def check_rule_targets(doc):
         parts = [p.strip() for p in str(rule).split(",")]
         if len(parts) < 2:
             fail(f"malformed rule: {rule!r}")
+        # A RULE-SET's first argument must be a DEFINED rule-provider —
+        # mihomo panics at startup on a dangling reference, the same
+        # never-a-silent-dead-reference class as the '#group' DNS detours.
+        if parts[0] == "RULE-SET":
+            if len(parts) < 3:
+                fail(f"malformed RULE-SET rule (need provider + target): {rule!r}")
+            if parts[1] not in rule_providers:
+                fail(f"rule {rule!r} references unknown rule-provider "
+                     f"{parts[1]!r} (defined: {sorted(rule_providers)})")
         target = parts[1] if parts[0] == "MATCH" else (parts[2] if len(parts) >= 3 else None)
         if target is None:
             fail(f"rule has no target: {rule!r}")
@@ -452,6 +479,30 @@ def check_rule_targets(doc):
         for p in g.get("proxies") or []:
             if p not in valid:
                 fail(f"group {g.get('name')!r} references unknown proxy/group {p!r}")
+
+
+def check_rule_providers(variant: str, doc):
+    """The dynamic-policy rule providers (#63) render on EVERY variant,
+    with the exact write-contract shape: file-backed classical text under
+    providers/. File providers carry NO fetch machinery (url/interval) —
+    the panel is the only writer, mihomo the only reader."""
+    rps = doc.get("rule-providers") or {}
+    if sorted(rps) != sorted(RULE_PROVIDERS):
+        fail(f"[{variant}] rule-providers must be exactly "
+             f"{sorted(RULE_PROVIDERS)} (the panel write contract): "
+             f"got {sorted(rps)}")
+    for name, path in RULE_PROVIDERS.items():
+        rp = rps.get(name) or {}
+        for field, expected in (("type", "file"), ("behavior", "classical"),
+                                ("format", "text"), ("path", path)):
+            if rp.get(field) != expected:
+                fail(f"[{variant}] rule-providers.{name}.{field} must be "
+                     f"{expected!r} (the panel write contract): "
+                     f"got {rp.get(field)!r}")
+        for absent in ("url", "interval"):
+            if absent in rp:
+                fail(f"[{variant}] rule-providers.{name} is file-backed and "
+                     f"must carry no {absent!r}: got {rp.get(absent)!r}")
 
 
 def check_dns_detour_targets(doc):
@@ -625,6 +676,22 @@ def main() -> None:
     if "use" in cpick:
         fail(f"Exit Country must NOT surface raw nodes (countries only): "
              f"got use: {cpick.get('use')!r}")
+    # Full-Tunnel Devices renders UNCONDITIONALLY since #63 (the dynamic
+    # rule-set targets it) — member semantics unchanged from the fenced era.
+    ftd = dgroups["Full-Tunnel Devices"]
+    if ftd.get("type") != "select":
+        fail(f"Full-Tunnel Devices must be a select group (zero probe "
+             f"traffic): got {ftd.get('type')!r}")
+    if ftd.get("proxies") != (["Routing Mode"] + CG_DEFAULT_NAMES + ["REJECT"]):
+        fail(f"Full-Tunnel Devices members must be ['Routing Mode'] + the "
+             f"country splice + ['REJECT'] (NO DIRECT — a tunneled device "
+             f"can never be silently un-proxied at the group layer; Routing "
+             f"Mode FIRST = follows the dashboard mode by default): "
+             f"got {ftd.get('proxies')!r}")
+    if "use" in ftd:
+        fail(f"Full-Tunnel Devices must NOT surface raw nodes (pin nodes "
+             f"via Routing Mode instead): got use: {ftd.get('use')!r}")
+    check_rule_providers("default", doc)
     dauto = dgroups["All Nodes"]
     if dauto.get("type") != "url-test":
         fail(f"All Nodes must stay a url-test group: got {dauto.get('type')!r}")
@@ -678,8 +745,10 @@ def main() -> None:
     if proc_off.returncode != 0 or off is None:
         fail(f"TUN_ENABLE=false render failed: {proc_off.stderr.strip()}")
     assert_resolved("TUN-off", off)
-    if yaml.safe_load(off).get("tun") is not None:
+    offdoc = yaml.safe_load(off)
+    if offdoc.get("tun") is not None:
         fail("TUN_ENABLE=false must OMIT the tun block (plain-proxy mode)")
+    check_rule_providers("TUN-off", offdoc)
 
     # 7) TUN_ENABLE=true renders the full transparent-gateway block (auto-redirect
     # defaults to the DSM-safe false). A mounted /dev/net/tun alone is insufficient.
@@ -759,7 +828,7 @@ def main() -> None:
     # unconditionally (asserted exactly in 5/5a on the default render). The
     # remaining fences must still pair, and their unset-inertness is proven
     # by byte-identity against a stripped template.
-    for fence in ("SNIFFER", "FULL_PROXY"):
+    for fence in ("SNIFFER",):
         if (f"{{{{{fence}_BEGIN}}}}" not in raw
                 or f"{{{{{fence}_END}}}}" not in raw):
             fail(f"template must carry the {fence}_BEGIN/{fence}_END fence pair")
@@ -770,11 +839,14 @@ def main() -> None:
                  "PRIORITYMEMBER_BEGIN", "PRIORITYMEMBER_END",
                  "PRIORITYSTREAM_BEGIN", "PRIORITYSTREAM_END",
                  "PRIORITY_INCLUDE_FILTER", "PRIORITY_EXCLUDE_FILTER",
-                 "COUNTRY_MEMBERS_PROXY"):
+                 "COUNTRY_MEMBERS_PROXY",
+                 "FULL_PROXY_BEGIN", "FULL_PROXY_END"):
         if f"{{{{{gone}}}}}" in raw:
             fail(f"template must NOT carry {{{{{gone}}}}} — legacy purged "
                  f"(the DNS profile in #43; the Priority Nodes category and "
-                 f"the PROXY member marker in the group-model streamline)")
+                 f"the PROXY member marker in the group-model streamline; "
+                 f"the FULL_PROXY fence un-fenced in #63 — the group renders "
+                 f"unconditionally)")
     if "{{GEOIP_NO_RESOLVE}}" not in raw:
         fail("template must carry the {{GEOIP_NO_RESOLVE}} token on the GEOIP,CN rule")
     if doc.get("rules") != RULES_BASE:
@@ -789,8 +861,9 @@ def main() -> None:
         fail("template must carry the {{AIRPORT_DIRECT_RULE}} token — the "
              "provider pull must never depend on a populated proxy group "
              "(cold-start bootstrap, 2026-07-22)")
-    # SNIFFER + FULL_PROXY are the optional fences: unset-inertness is proven
-    # by byte-identity against a fence-stripped template (same env, spec on).
+    # SNIFFER is the remaining optional fence: unset-inertness is proven
+    # by byte-identity against a fence-stripped template (same env, spec
+    # on); the band's inertness is the marker-drop identity in 11e.
     plain_raw = strip_fence(raw, "SNIFFER")
     proc_l, plain = render(plain_raw)
     if proc_l.returncode != 0 or plain is None:
@@ -869,6 +942,7 @@ def main() -> None:
         fail(f"[sniffer] rules must be unchanged by the sniffer fence: "
              f"got {sndoc.get('rules')!r}")
     check_rule_targets(sndoc)
+    check_rule_providers("sniffer", sndoc)
     proc_sf, sf = render(raw, sniffer_enable="false")
     if proc_sf.returncode != 0 or sf != rendered:
         fail("SNIFFER_ENABLE=false must render byte-identical to unset")
@@ -992,8 +1066,22 @@ def main() -> None:
     if exnames != expected_groups(default_cg):
         fail(f".env.example defaults must render the spec-derived inventory "
              f"{expected_groups(default_cg)!r}: got {exnames!r}")
+    # The .env.example render carries the SAME exact rule chain (the DNS
+    # values differ, the rules must not) — criterion 1 pins both RULE-SET
+    # lines in the exact order on this surface too, and Full-Tunnel
+    # Devices membership stays [Routing Mode] + spec + [REJECT], no DIRECT.
+    if exdoc.get("rules") != RULES_BASE:
+        fail(f".env.example render rules must be the exact chain "
+             f"{RULES_BASE!r}: got {exdoc.get('rules')!r}")
+    ex_ftd = {g.get("name"): g for g in exdoc.get("proxy-groups")}["Full-Tunnel Devices"]
+    if ex_ftd.get("proxies") != (["Routing Mode"] + spec_names(default_cg)
+                                 + ["REJECT"]):
+        fail(f".env.example Full-Tunnel Devices members must be "
+             f"['Routing Mode'] + the spec + ['REJECT'] (no DIRECT): "
+             f"got {ex_ftd.get('proxies')!r}")
     check_rule_targets(exdoc)
     check_dns_detour_targets(exdoc)
+    check_rule_providers(".env.example", exdoc)
     ex_frags = [e for e in (exdoc.get("dns") or {}).get("nameserver") or []
                 if "#" in str(e)]
     if not ex_frags:
@@ -1059,6 +1147,12 @@ def main() -> None:
                                                 "REJECT"]:
         fail(f"Routing Mode members are spec-independent (Exit Country carries "
              f"the countries): got {cgroups['Routing Mode'].get('proxies')!r}")
+    if cgroups["Full-Tunnel Devices"].get("proxies") != (["Routing Mode"]
+                                                         + CG_NAMES
+                                                         + ["REJECT"]):
+        fail(f"Full-Tunnel Devices members with the spec on must be "
+             f"['Routing Mode'] + spec order + ['REJECT'] (no DIRECT): "
+             f"got {cgroups['Full-Tunnel Devices'].get('proxies')!r}")
     if cgroups["All Nodes"] != dauto:
         fail(f"All Nodes must be UNTOUCHED by the country spec: "
              f"{cgroups['All Nodes']!r}")
@@ -1066,6 +1160,7 @@ def main() -> None:
         fail(f"[country-groups] rules must be unchanged: got {cgdoc.get('rules')!r}")
     check_rule_targets(cgdoc)
     check_dns_detour_targets(cgdoc)
+    check_rule_providers("country-groups", cgdoc)
 
     # Malformed-spec classes: each must refuse to render (no config.yaml)
     # with an error naming COUNTRY_GROUPS - an invalid pattern would panic
@@ -1073,8 +1168,8 @@ def main() -> None:
     # reserved list carries the NEW selector names AND the retired legacy
     # names (a user group literally named 'All Nodes' or 'Priority Nodes'
     # would resurrect a name the docs history still associates with old
-    # semantics), plus 'Full-Tunnel Devices' (reserved ahead for the
-    # per-device-full-proxy epic).
+    # semantics), plus 'Full-Tunnel Devices' (a live selector since the
+    # #63 un-fence made it unconditional).
     for bad_spec, why in (
             ('日本=日本`REJECT`', "backtick"),
             ('日本', "entry without '='"),
@@ -1093,7 +1188,7 @@ def main() -> None:
             ('Exit Country=x', "selector collision (Exit Country)"),
             ('Routing Mode=x', "selector collision (Routing Mode)"),
             ('Streaming Unlock=x', "selector collision (Streaming Unlock)"),
-            ('Full-Tunnel Devices=x', "reserved-ahead collision (Full-Tunnel Devices)"),
+            ('Full-Tunnel Devices=x', "selector collision (Full-Tunnel Devices)"),
             ('DIRECT=x', "reserved adapter collision (DIRECT)"),
             ('日本=x;;美国=y', "empty entry"),
             (' 日本=x', "leading space in name"),
@@ -1124,15 +1219,18 @@ def main() -> None:
             != expected_groups('日本=日本'):
         fail("trailing-';' spec must render exactly one generated group")
 
-    # 11e) FULL_PROXY_SOURCES (per-device full-proxy band, #46): OPTIONAL —
-    # set, it renders the fenced Full-Tunnel Devices select group (members Routing Mode
-    # + the country splice + REJECT, NO DIRECT — a band device can never be
-    # silently un-proxied at the group layer; REJECT is the kill switch) and
-    # one SRC-IP-CIDR rule per entry at the EXACT post-LAN-rule position
-    # (LAN destinations stay DIRECT; everything else — streaming AND CN
-    # sites — rides the band group). Unset/empty renders byte-identical to
-    # a template with the whole FULL_PROXY machinery stripped (fully
-    # additive; upgrade-safe). Bare IPs normalize to /32.
+    # 11e) FULL_PROXY_SOURCES (per-device full-proxy band, #46; group
+    # un-fenced in #63): OPTIONAL — set, it renders one SRC-IP-CIDR rule
+    # per entry at the EXACT post-RULE-SET position (dynamic policy
+    # outranks the static band; LAN destinations stay DIRECT; everything
+    # else — streaming AND CN sites — rides the band group). The
+    # Full-Tunnel Devices select group itself renders UNCONDITIONALLY now
+    # (members Routing Mode + the country splice + REJECT, NO DIRECT — a
+    # band device can never be silently un-proxied at the group layer;
+    # REJECT is the kill switch), so only the SRC rules are knob-gated:
+    # unset/empty renders byte-identical to a template with the
+    # FULL_PROXY_RULES marker line dropped (fully additive; upgrade-safe).
+    # Bare IPs normalize to /32.
     FP = "192.0.2.16/28,192.0.2.5"
     FP_RULES = ["SRC-IP-CIDR,192.0.2.16/28,Full-Tunnel Devices",
                 "SRC-IP-CIDR,192.0.2.5/32,Full-Tunnel Devices"]
@@ -1142,11 +1240,7 @@ def main() -> None:
     if any("SRC-IP-CIDR" in str(r) for r in doc.get("rules") or []):
         fail("default render must carry NO SRC-IP-CIDR rules "
              "(FULL_PROXY_SOURCES unset)")
-    if "Full-Tunnel Devices" in {g.get("name") for g in doc.get("proxy-groups") or []}:
-        fail("default render must NOT contain the Full-Tunnel Devices group "
-             "(FULL_PROXY_SOURCES unset)")
-    fp_plain_raw = drop_token_lines(strip_fence(raw, "FULL_PROXY"),
-                                    "FULL_PROXY_RULES")
+    fp_plain_raw = drop_token_lines(raw, "FULL_PROXY_RULES")
     proc_fs, fp_stripped = render(fp_plain_raw)
     if proc_fs.returncode != 0 or fp_stripped is None:
         fail(f"FULL_PROXY-stripped render failed: {proc_fs.stderr.strip()}")
@@ -1167,10 +1261,10 @@ def main() -> None:
              "must sit flush against its neighbors")
     fpdoc = yaml.safe_load(fp_on)
     fpnames = [g.get("name") for g in fpdoc.get("proxy-groups") or []]
-    if fpnames != expected_groups(full_proxy=True):
-        fail(f"band-on proxy-groups must be exactly "
-             f"{expected_groups(full_proxy=True)!r} in order (Full-Tunnel Devices "
-             f"joins the selectors after Exit Country): got {fpnames!r}")
+    if fpnames != expected_groups():
+        fail(f"band-on proxy-groups must be exactly {expected_groups()!r} "
+             f"in order (identical to band-off since #63 — the group is "
+             f"unconditional): got {fpnames!r}")
     fpg = {g.get("name"): g for g in fpdoc.get("proxy-groups")}["Full-Tunnel Devices"]
     if fpg.get("type") != "select":
         fail(f"Full-Tunnel Devices must be a select group (zero probe traffic): "
@@ -1187,22 +1281,24 @@ def main() -> None:
         if absent in fpg:
             fail(f"Full-Tunnel Devices (select) must carry no {absent!r}: "
                  f"got {fpg.get(absent)!r}")
-    if fpdoc.get("rules") != [RULES_BASE[0]] + FP_RULES + RULES_BASE[1:]:
-        fail(f"band-on rules must be the LAN rule, then the SRC-IP-CIDR "
+    if fpdoc.get("rules") != RULES_BASE[:3] + FP_RULES + RULES_BASE[3:]:
+        fail(f"band-on rules must be the LAN rule, the two RULE-SET lines "
+             f"(dynamic outranks the static band), then the SRC-IP-CIDR "
              f"lines (in knob order, /32-normalized), then the unchanged "
              f"chain: got {fpdoc.get('rules')!r}")
     check_rule_targets(fpdoc)
     check_dns_detour_targets(fpdoc)
+    check_rule_providers("band-on", fpdoc)
     # The band composes with the no-resolve knob without disturbing it.
     proc_fn, fp_nr = render(raw, full_proxy_sources=FP,
                             geoip_no_resolve="true")
     if proc_fn.returncode != 0 or fp_nr is None:
         fail(f"band + no-resolve render failed: {proc_fn.stderr.strip()}")
-    if yaml.safe_load(fp_nr).get("rules") != ([RULES_NO_RESOLVE[0]]
+    if yaml.safe_load(fp_nr).get("rules") != (RULES_NO_RESOLVE[:3]
                                               + FP_RULES
-                                              + RULES_NO_RESOLVE[1:]):
+                                              + RULES_NO_RESOLVE[3:]):
         fail("band + no-resolve rules must compose (SRC lines after the "
-             "LAN rule, ',no-resolve' on GEOIP,CN)")
+             "RULE-SET pair, ',no-resolve' on GEOIP,CN)")
     # Malformed-knob classes: each must refuse to render (no config.yaml)
     # with an error naming FULL_PROXY_SOURCES — mirroring the
     # COUNTRY_GROUPS error classes. IPv6 entries additionally point at the
@@ -1268,10 +1364,11 @@ def main() -> None:
         fail(f"[IP-literal] fake-ip-filter must carry ONLY the mirror: "
              f"got {ipdns.get('fake-ip-filter')!r}")
     # The routing rule degrades to an IP-CIDR form (no DNS involved), so an
-    # IP-literal panel keeps the cold-start bootstrap too.
-    ip_rules_expected = ([RULES_BASE[0],
-                          "IP-CIDR,192.0.2.10/32,DIRECT,no-resolve"]
-                         + RULES_BASE[2:])
+    # IP-literal panel keeps the cold-start bootstrap too. The RULE-SET
+    # pair stays put (dynamic layer is subscription-host-independent).
+    ip_rules_expected = (RULES_BASE[:3]
+                         + ["IP-CIDR,192.0.2.10/32,DIRECT,no-resolve"]
+                         + RULES_BASE[4:])
     if ipdoc.get("rules") != ip_rules_expected:
         fail(f"[IP-literal] rules must carry the IP-CIDR panel DIRECT rule "
              f"in the panel slot: expected {ip_rules_expected!r}, "
@@ -1279,6 +1376,7 @@ def main() -> None:
     ip_url = (((ipdoc.get("proxy-providers") or {}).get("my-airport")) or {}).get("url")
     if ip_url != SUB_LINE_IP.split("=", 1)[1]:
         fail(f"[IP-literal] subscription URL mangled: got {ip_url!r}")
+    check_rule_providers("IP-literal", ipdoc)
 
     # A digits-and-dots host that is NOT a valid dotted quad must never
     # become a live IP-CIDR rule: mihomo -t rejects it, and a FIRST boot
@@ -1291,7 +1389,7 @@ def main() -> None:
              f"{proc_bad.stderr.strip()}")
     assert_resolved("malformed-IP-sub", bad_rendered)
     bdoc = yaml.safe_load(bad_rendered)
-    bad_rules_expected = [RULES_BASE[0]] + RULES_BASE[2:]
+    bad_rules_expected = RULES_BASE[:3] + RULES_BASE[4:]
     if bdoc.get("rules") != bad_rules_expected:
         fail(f"[malformed-IP] rules must degrade the panel slot to a comment "
              f"(never a live rule from an invalid address): expected "
@@ -1326,16 +1424,22 @@ def main() -> None:
           "new-selector/retired-name/Full-Tunnel Devices collisions; DNS detour fragments are "
           "render-time validated (dangling '#group' refuses; rendered groups, country "
           "names, DIRECT and '&h3' suffixes pass) and the .env.example's REAL DNS "
-          "values render end-to-end; FULL_PROXY_SOURCES renders the fenced Full-Tunnel Devices "
-          "select (Routing Mode + country splice + REJECT, no DIRECT, no raw nodes) plus "
-          "/32-normalized SRC-IP-CIDR rules at the exact post-LAN position, is inert "
+          "values render end-to-end; FULL_PROXY_SOURCES renders /32-normalized "
+          "SRC-IP-CIDR rules at the exact post-RULE-SET position, is inert "
           "when unset/empty (byte-identity), composes with no-resolve, refuses every "
           "malformed class naming the knob (IPv6 pointing at ipv6_bypass), and ships "
           "commented-out in .env.example; the SNIFFER fence is inert when unset/false and "
           "renders SNI/HTTP/QUIC sniffing with parse-pure-ip + override-destination "
           "when true; geox-url hosts China-reachable; no hardcoded literals; fences "
           "pair, tokens map bidirectionally, rule/group targets resolve (never a "
-          "provider), and every variant renders placeholder-free.")
+          "provider); the dynamic-policy layer (#63) renders on EVERY variant — "
+          "rule-providers dyn-full-direct/dyn-full-tunnel (file/classical/text under "
+          "providers/, the panel write contract, no fetch machinery) with the "
+          "RULE-SET pair directly under the LAN rule (direct outranks tunnel "
+          "outranks the static band), RULE-SET references validated against "
+          "defined rule-providers, and the un-fenced Full-Tunnel Devices group "
+          "unconditional with unchanged members (no DIRECT); and every variant "
+          "renders placeholder-free.")
 
 
 if __name__ == "__main__":

@@ -70,6 +70,16 @@ reject() { # $1 = render-failed | config-test-failed; stage output in $CAP
 }
 
 rm -f "$NEXT" "$CAP"
+# Seed MISSING dynamic-policy provider files before render + `mihomo -t`
+# (issue #63): the rendered config's rule-providers point at these paths,
+# and the panel's write contract expects them to exist. Zero-byte is the
+# DEC-A-proven inert seed (empty classical text = the RULE-SET matches
+# nothing). Idempotent - an EXISTING file (the panel's live policy) is
+# never touched, and a failed render/-t below leaves the seeds in place.
+mkdir -p "$CFG_DIR/providers"
+for _pf in dyn-full-direct.txt dyn-full-tunnel.txt; do
+  [ -f "$CFG_DIR/providers/$_pf" ] || : > "$CFG_DIR/providers/$_pf"
+done
 if ! MIHOMO_RENDER_OUT="$NEXT" sh "$SELF_DIR/render_config.sh" > "$CAP" 2>&1; then
   reject render-failed
 fi

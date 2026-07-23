@@ -79,11 +79,16 @@ new_state() { # NAME -> prints dir
   : > "$_d/argv.log"
   printf '%s' "$_d"
 }
-write_cfg() { # STATE BODY - a minimal rendered config with the given rules
+write_cfg() { # STATE BODY - a minimal rendered config with the given rules.
+  # The two RULE-SET lines mirror the always-on dynamic-policy layer (#63):
+  # one names 'Full-Tunnel Devices' yet is NOT a band line - the SRC-IP-CIDR
+  # parity grep must never count it (the disabled case proves it).
   cat > "$1/config/config.yaml" <<CFGEOF
 mode: rule
 rules:
   - 'GEOIP,LAN,DIRECT,no-resolve'
+  - 'RULE-SET,dyn-full-direct,DIRECT'
+  - 'RULE-SET,dyn-full-tunnel,Full-Tunnel Devices'
 $2
   - 'MATCH,Routing Mode'
 CFGEOF
@@ -108,12 +113,14 @@ run_pg() { # STATE [ENV=VAL ...] - emit the proxy_groups record (advisory fixtur
     > "$OUT_F" 2>&1 || true
 }
 
-# 1) knob unset + no rendered band lines -> disabled|silent
+# 1) knob unset + no rendered band lines -> disabled|silent. The config
+#    still carries the always-on RULE-SET pair (#63) - the dynamic layer
+#    must never read as a live band.
 ST=$(new_state disabled)
 write_cfg "$ST" "  - 'GEOSITE,CN,DIRECT'"
 run_fp "$ST"
 grep -q '^full_proxy|disabled|silent|' "$OUT_F" \
-  && ok || fail "disabled: want disabled|silent, got: $(cat "$OUT_F")"
+  && ok || fail "disabled: want disabled|silent (RULE-SET lines are not band lines), got: $(cat "$OUT_F")"
 
 # 2) knob set but no readable config -> unknown|silent
 ST=$(new_state noconfig)
@@ -150,7 +157,9 @@ grep -q '^full_proxy|parity-drift|warn|' "$OUT_F" \
 
 # 6) runtime ok: /32-normalized parity + band flows all riding Full-Tunnel Devices;
 #    LAN-destination band flow without the chain is EXEMPT; non-band
-#    source without the chain is IGNORED
+#    source without the chain is IGNORED; a band source matched by the
+#    DYNAMIC tunnel rule-set (#63, rule RuleSet) still carries the group
+#    in its chain and satisfies the guarantee
 ST=$(new_state runtimeok)
 write_cfg "$ST" "$CFG_LINES"
 cat > "$ST/connections.json" <<'EOF'
@@ -159,12 +168,13 @@ cat > "$ST/connections.json" <<'EOF'
 {"id":"a2","metadata":{"network":"udp","type":"tun","sourceIP":"192.0.2.5","destinationIP":"93.184.216.35","host":""},"chains":["JP01","Japan Auto","Exit Country","Routing Mode","Full-Tunnel Devices"],"rule":"SrcIPCIDR"},
 {"id":"a3","metadata":{"network":"tcp","type":"tun","sourceIP":"192.0.2.20","destinationIP":"192.168.1.5","host":""},"chains":["DIRECT"],"rule":"GeoIP"},
 {"id":"a4","metadata":{"network":"tcp","type":"tun","sourceIP":"192.0.2.50","destinationIP":"93.184.216.34","host":""},"chains":["Routing Mode","Exit Country","Japan Auto","JP01"],"rule":"Match"},
-{"id":"a5","metadata":{"network":"udp","type":"tun","sourceIP":"192.0.2.20","destinationIP":"239.255.255.250","host":""},"chains":["DIRECT"],"rule":"GeoIP"}
+{"id":"a5","metadata":{"network":"udp","type":"tun","sourceIP":"192.0.2.20","destinationIP":"239.255.255.250","host":""},"chains":["DIRECT"],"rule":"GeoIP"},
+{"id":"a6","metadata":{"network":"tcp","type":"tun","sourceIP":"192.0.2.21","destinationIP":"203.0.113.36","host":""},"chains":["JP01","Japan Auto","Exit Country","Routing Mode","Full-Tunnel Devices"],"rule":"RuleSet"}
 ]}
 EOF
 run_fp "$ST" FULL_PROXY_SOURCES="$BAND"
-grep -q '^full_proxy|ok|ok|.*2 band flow(s) scanned' "$OUT_F" \
-  && ok || fail "runtime-ok: want ok with 2 scanned (LAN + multicast dst exempt, non-band ignored), got: $(cat "$OUT_F")"
+grep -q '^full_proxy|ok|ok|.*3 band flow(s) scanned' "$OUT_F" \
+  && ok || fail "runtime-ok: want ok with 3 scanned (LAN + multicast dst exempt, non-band ignored, dynamic RuleSet flow counted), got: $(cat "$OUT_F")"
 
 # 7) chain violation: band source, non-LAN destination, chain lacks
 #    Full-Tunnel Devices -> chain-violation|warn naming the flow + UDP
@@ -215,4 +225,4 @@ grep -q '^proxy_groups|unknown|silent|' "$OUT_F" \
 
 echo "full_proxy_check: $pass passed, $failn failed"
 [ "$failn" = 0 ] || exit 1
-echo "OK: full_proxy doctor check - disabled/unknown/parity-drift/ok/chain-violation contract, /32-normalized knob parity both directions, LAN-destination exemption, non-band sources ignored, UDP-residual + ipv6_bypass wording, token never on argv; plus the proxy_groups unknown short-circuit on a failed Exit Country now-fetch"
+echo "OK: full_proxy doctor check - disabled/unknown/parity-drift/ok/chain-violation contract, /32-normalized knob parity both directions (the always-on RULE-SET pair is never miscounted as band lines), LAN-destination exemption, non-band sources ignored, dynamic RuleSet flows satisfy the chain guarantee, UDP-residual + ipv6_bypass wording, token never on argv; plus the proxy_groups unknown short-circuit on a failed Exit Country now-fetch"

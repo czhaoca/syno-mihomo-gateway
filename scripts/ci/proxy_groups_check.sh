@@ -85,7 +85,9 @@ EMPTY_COMPAT='{"all":["COMPATIBLE"],"now":"COMPATIBLE"}'
 PICK_JP='{"all":["日本","美国"],"now":"日本"}'
 PICK_US='{"all":["日本","美国"],"now":"美国"}'
 
-GROUPS_FULL='{"proxies":[{"name":"Routing Mode","type":"Selector","all":["Exit Country","DIRECT","REJECT"]},{"name":"Streaming Unlock","type":"Selector","all":["Routing Mode","日本","美国","DIRECT"]},{"name":"Exit Country","type":"Selector","all":["日本","美国"]},{"name":"日本","type":"URLTest","all":["n2"]},{"name":"美国","type":"URLTest","all":["n2"]},{"name":"All Nodes","type":"URLTest","hidden":true,"all":["n1","n2","n3"]},{"name":"GLOBAL","type":"Selector","all":["All Nodes","Routing Mode"]}]}'
+# Full-Tunnel Devices rides every /group answer since #63 (unconditional
+# render) - it is a reserved selector the country-group walk must skip.
+GROUPS_FULL='{"proxies":[{"name":"Routing Mode","type":"Selector","all":["Exit Country","DIRECT","REJECT"]},{"name":"Streaming Unlock","type":"Selector","all":["Routing Mode","日本","美国","DIRECT"]},{"name":"Exit Country","type":"Selector","all":["日本","美国"]},{"name":"Full-Tunnel Devices","type":"Selector","all":["Routing Mode","日本","美国","REJECT"]},{"name":"日本","type":"URLTest","all":["n2"]},{"name":"美国","type":"URLTest","all":["n2"]},{"name":"All Nodes","type":"URLTest","hidden":true,"all":["n1","n2","n3"]},{"name":"GLOBAL","type":"Selector","all":["All Nodes","Routing Mode"]}]}'
 GROUPS_PRESTREAM='{"proxies":[{"name":"All Nodes","type":"URLTest","all":["n1","n2","n3"]},{"name":"PROXY","type":"Selector","all":["All Nodes","DIRECT","REJECT"]},{"name":"STREAMING","type":"Selector","all":["PROXY","All Nodes","DIRECT"]},{"name":"GLOBAL","type":"Selector","all":["All Nodes","PROXY"]}]}'
 
 new_state() { # NAME GROUP_JSON -> prints dir; per-group fixtures added after
@@ -197,4 +199,4 @@ fi
 
 echo "proxy_groups_check: $pass passed, $failn failed"
 [ "$failn" = 0 ] || exit 1
-echo "OK: proxy_groups doctor check - ok/default-empty/country-empty/provider-empty/unknown contract keyed on the Exit Country selection, CJK %XX-encoded per-group queries, COMPATIBLE+REJECT placeholder exclusion, DEC-A cold-start grace (all-empty -> provider-empty, pre-streamline covered), token never on argv"
+echo "OK: proxy_groups doctor check - ok/default-empty/country-empty/provider-empty/unknown contract keyed on the Exit Country selection, the unconditional Full-Tunnel Devices selector (#63) skipped as reserved, CJK %XX-encoded per-group queries, COMPATIBLE+REJECT placeholder exclusion, DEC-A cold-start grace (all-empty -> provider-empty, pre-streamline covered), token never on argv"
