@@ -1131,6 +1131,15 @@ grep -q '"name":"docker","value":"ok"' "$TMP/out" || fail "hermetic doctor --jso
 _rc=0; henv FAKE_MIHOMO_RUNNING=true FAKE_UI_RUNNING=true FAKE_PANEL_STATE=running sh "$HGW" deploy --yes </dev/null >"$TMP/out" 2>"$TMP/err" || _rc=$?
 [ "$_rc" = 0 ] && ok || fail "hermetic deploy --yes exited $_rc - a production variable may lack its source-time default (last output: $(tail -n3 "$TMP/out" "$TMP/err" 2>/dev/null | grep -v '^==>' | tail -n3 | tr '\n' ' '))"
 grep -q 'up -d' "$HCALLS" && ok || fail "hermetic deploy --yes never reached compose up"
+# The panel's bind-mount sources must exist BEFORE compose up on EVERY
+# deploy path, not only the installer's: Synology's patched dockerd refuses
+# to auto-create bind sources ('Bind mount failed: ... does not exist' -
+# the v1.8.0-rc run-2 NAS failure), so compose_up_local/compose_recreate
+# prepare them at the choke point.
+[ -d "$HDATA/state/panel" ] && ok \
+  || fail "gateway.sh deploy did not create state/panel before compose up (DSM dockerd refuses to auto-create bind sources)"
+[ -d "$HDATA/config/providers" ] && ok \
+  || fail "gateway.sh deploy did not create config/providers before compose up"
 if grep -q 'could not acquire lock at *$' "$TMP/err"; then
   fail "hermetic deploy hit the empty-LOCK_DIR lock failure"
 else ok; fi

@@ -44,6 +44,13 @@ compose_supports_pull_never() {
 }
 
 compose_up_local() {
+  # Synology's patched dockerd REFUSES to auto-create bind-mount sources
+  # ('Bind mount failed: ... does not exist' - stock docker silently mkdirs
+  # them, which is why every off-NAS environment worked). Prepare the
+  # panel's two mounts at this choke point so EVERY deploy path (gateway.sh
+  # deploy/redeploy, rollback, boot self-heal, auto-update) is covered, not
+  # only the installer's flow_deploy call. Idempotent, panel-guarded.
+  panel_prepare_dirs
   # Images were explicitly pulled, inspected, and architecture-checked already.
   # Prevent a second implicit pull between validation and container recreation.
   if compose_supports_pull_never; then
@@ -59,6 +66,7 @@ compose_up_local() {
 compose_recreate() {
   # Installer deploys must restart mihomo so a newly rendered bind-mounted
   # configuration takes effect even when the image and compose model are unchanged.
+  panel_prepare_dirs   # DSM dockerd never auto-creates bind sources - see compose_up_local
   # shellcheck disable=SC2086
   ( cd "$REPO_ROOT" && $COMPOSE_CMD --env-file "$ENV_FILE" up -d --force-recreate ) >>"$LOG_FILE" 2>&1
 }

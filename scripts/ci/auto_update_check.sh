@@ -246,8 +246,14 @@ _rc=0; compose_ensure_up || _rc=$?
 
 MOCK_RUNNING=false; export MOCK_RUNNING
 : > "$MOCK_COMPOSE_CALLS"
+_old_gdd="${GATEWAY_DATA_DIR:-}"; GATEWAY_DATA_DIR="$TMP/gwdata-ensure"
 expect_success "ensure_up starts a stopped deployed stack" compose_ensure_up
 assert_contains "ensure_up applies local images only" "$(cat "$MOCK_COMPOSE_CALLS")" "--pull never"
+# DSM's dockerd refuses to auto-create bind sources: the compose choke
+# point must create the panel's two mount dirs before any 'up'.
+[ -d "$TMP/gwdata-ensure/state/panel" ] && [ -d "$TMP/gwdata-ensure/config/providers" ] && ok \
+  || fail "compose_up_local did not prepare the panel bind-mount sources (DSM refuses to auto-create them)"
+GATEWAY_DATA_DIR="$_old_gdd"
 MOCK_UP_RC=1; export MOCK_UP_RC
 expect_failure "ensure_up propagates a failed start" compose_ensure_up
 MOCK_UP_RC=0; export MOCK_UP_RC
