@@ -81,6 +81,8 @@ ENDUSER_MUST_INCLUDE = [
     PREFIX + "scripts/lib/help.sh",
     PREFIX + "docs/CLI.txt",
     PREFIX + "docs/CLI.zh.txt",
+    PREFIX + "docs/PANEL.txt",
+    PREFIX + "docs/PANEL.zh.txt",
     PREFIX + "scripts/installer/ui.sh",
     PREFIX + "scripts/installer/i18n.sh",
     PREFIX + "scripts/installer/flow_redeploy.sh",
@@ -416,6 +418,8 @@ def build_enduser_fixture(root: Path):
     (root / "scripts" / "gateway.sh").write_text("#!/bin/sh\n# non-interactive CLI\n:\n")
     (root / "docs" / "CLI.txt").write_text("Command-line reference for gateway.sh.\n")
     (root / "docs" / "CLI.zh.txt").write_text("gateway.sh command line reference (zh).\n")
+    (root / "docs" / "PANEL.txt").write_text("Gateway panel guide - per-device modes.\n")
+    (root / "docs" / "PANEL.zh.txt").write_text("Gateway panel guide (zh).\n")
     for s in ("auto_update.sh", "render_config.sh", "install_scheduler.sh", "setup_network.sh",
               "validate_release.sh", "seed_provider.sh"):
         (root / "scripts" / s).write_text("#!/bin/sh\n:\n")

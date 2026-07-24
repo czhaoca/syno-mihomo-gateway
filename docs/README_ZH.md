@@ -5,7 +5,8 @@
 "拉取即用"地部署 **Mihomo (Clash Meta)** 透明网关 —— 诞生于**群晖 NAS**，同样可以跑在**任何能
 运行 Docker 的 Linux 主机（amd64 + arm64）**上，包括树莓派。家中任意设备（Apple TV、iPhone、
 游戏机）只需把网关/DNS 指向该容器的局域网 IP 即可科学上网，无需安装客户端。**MetaCubeXD** 提供
-网页管理面板。NAS 仍是权威的、每个发布都经过验证的部署目标（其余平台为实验性 ——
+网页管理面板，和**网关面板**（分设备策略：full-tunnel / full-direct / default，即时生效免重启，
+另有持久流量统计）。NAS 仍是权威的、每个发布都经过验证的部署目标（其余平台为实验性 ——
 [支持层级](zh/installation-linux.md#支持层级)）。为**中国大陆**设计：镜像更新默认走
 Docker Hub/ghcr → 阿里云 ACR → 你的 NAS 的流水线（`REGISTRY_MODE=docker` 可选择在无封锁的主机上
 直接拉取上游镜像），并由群晖计划任务保持自动、安全、可自愈地更新。
@@ -34,6 +35,8 @@ Docker Hub/ghcr → 阿里云 ACR → 你的 NAS 的流水线（`REGISTRY_MODE=d
 | [自动更新](zh/auto-update.md) | ACR 配置、运行流程、健康检查/回滚、通用已登记目标、cloudflared 蓝绿、退出码 |
 | [运维](zh/operations.md) | 运维手册：计划任务、试运行、开关、日志、通知、回滚 |
 | [命令行参考](zh/cli.md) | `gateway.sh` 子命令、选项、安全护栏、退出码（由 `scripts/cli/spec.yaml` 生成） |
+| [网关面板](zh/panel.md) | 分设备策略（full-tunnel/full-direct/default）、流量统计、UI/CLI/API 界面、安全模型 |
+| [面板 API](panel-api.md) | 面板的 HTTP 接口（由 `app/openapi.json` 生成，`/v1` 只增不破；仅英文） |
 | [故障排查](zh/troubleshooting.md) | FAQ + 退出码 + 具体故障处理 |
 | [开发](zh/development.md) | 内部实现（脚本、渲染器、CI）、编码规范、如何扩展 |
 

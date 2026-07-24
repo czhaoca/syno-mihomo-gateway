@@ -1,0 +1,73 @@
+Gateway Panel
+=============
+
+The gateway panel is the stack's third container. It gives every LAN device
+a per-device routing mode you can change at any time - without editing .env
+and without restarting anything:
+
+      full-tunnel   ALL of the device's traffic rides the proxy
+      full-direct   NONE of it does (always direct)
+      default       the normal rule-based routing
+
+Open the panel from any LAN browser:
+
+      http://<PANEL_IP>:8090/ui/
+
+(<PANEL_IP> is the address you chose during install; the port is PANEL_PORT
+in .env if you changed it.) The page also shows per-device traffic history.
+
+--------------------------------------------------------------------------
+Changing a device's mode
+--------------------------------------------------------------------------
+In the UI: find the device row (or add its IP), pick the mode, confirm.
+The change is live within a second or two - the panel tells mihomo to
+reload just the two dynamic rule files.
+
+From the command line on the NAS:
+
+      sh scripts/gateway.sh policy --list
+      sh scripts/gateway.sh policy --set 192.168.1.50 --mode full-tunnel
+      sh scripts/gateway.sh policy --set 192.168.1.50 --mode default
+
+"default" removes the entry. The command prints the panel's honest answer:
+"applied": true means the change reached mihomo; if it says false, the
+change is SAVED but not live yet - run the doctor (below).
+
+Devices listed in FULL_PROXY_SOURCES (.env) show a "band" badge in the UI.
+A panel entry OVERRIDES the band for that address; the band itself only
+changes at deploy time.
+
+--------------------------------------------------------------------------
+LAN destinations stay direct
+--------------------------------------------------------------------------
+A full-tunnel device still reaches the NAS, the router, and everything else
+on your LAN directly - only its internet traffic rides the proxy.
+
+--------------------------------------------------------------------------
+Passwords and safety
+--------------------------------------------------------------------------
+Every CHANGE needs the panel token (PANEL_SECRET in .env - the installer
+generated it for you). READING the page is open to your LAN.
+
+NEVER expose the panel to the internet - no port-forward, no tunnel, no
+cloudflared entry pointing at it. Even with a strong token, anyone on the
+internet could READ your device list and traffic history; the token only
+protects changes.
+
+--------------------------------------------------------------------------
+If something looks wrong
+--------------------------------------------------------------------------
+Run the doctor:
+
+      sudo sh scripts/doctor.sh
+
+- "companion_health" warns when the panel container is down or degraded.
+- "policy_parity" reports an ERROR when what the panel saved and what
+  mihomo routes have drifted apart. Fix: open the UI (it re-applies on a
+  click of Apply), or restart the panel container:
+
+      sudo docker restart mihomo-panel
+
+Your policy entries and statistics live in the data directory under
+state/panel/ and survive restarts, updates, and redeploys. See
+TROUBLESHOOTING.txt for the full failure walkthrough.

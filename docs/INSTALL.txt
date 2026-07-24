@@ -108,6 +108,9 @@ prompts of steps 4-6, or answer No to edit each value step by step:
       it. When you set mihomo's IP, the installer checks whether that IP is
       already answering on the LAN (e.g. a DHCP-assigned device) and warns
       you before deploying. You can pick another IP or override the warning.
+      The gateway panel gets its own spare LAN IP the same way (PANEL_IP,
+      conflict-checked) and its change-token is generated for you
+      (PANEL_SECRET) - see PANEL.txt for what the panel does.
   5.  Image source - choose where images are pulled from (see below). The
       same wizard also asks whether to manage an optional cloudflared
       tunnel container (advanced; answering yes prompts for the image tag
@@ -177,6 +180,9 @@ LAN IP. Do these checks from a DIFFERENT LAN device:
 
   1. Open the dashboard:   http://<NAS-IP>:<WEB_UI_PORT>   (default 8080).
      (This URL is also reachable from the NAS itself.)
+     The gateway panel has its own page: http://<PANEL_IP>:8090/ui/
+     (per-device modes + traffic history; see PANEL.txt. LAN only -
+     never port-forward or tunnel to it.)
   2. In the dashboard, add a backend:
         Host   = <MIHOMO_IP>
         Port   = <CONTROLLER_PORT>     (default 9090)

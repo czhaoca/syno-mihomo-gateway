@@ -212,6 +212,63 @@ JSON POST）。通知会在失败时**以及**有变化的成功时触发；设�
 可能返回 0 却什么也没送达。脚本仍会尝试它（DSM 6 可用，且不经过网关），但绝不依赖它，
 也绝不因此抑制 Webhook。
 
+## 网关面板运维
+
+[面板](panel.md)的状态存放在 `<data-dir>/state/panel/` 下：`policy.db`
+（设备策略 + 审计日志）、`stats.db`（流量历史），以及自动策略快照——每次
+策略变更都会在 `policy.db` **旁边**写一份滚动的
+`policy.db.bak-<时间戳>`（记录的是已提交的数据库状态，无论那次应用是否
+到达 mihomo 都会生成；保留 `PANEL_BACKUP_KEEP` 份，默认 5；仅备份策略——
+`stats.db` 是派生的历史数据，没有自动备份）。
+
+- **立即备份**：最新的 `policy.db.bak-*` 本身就是一致的快照——直接复制到
+  你 NAS 平时的备份去处即可。若要按需快照（或把统计也带上），用
+  `VACUUM INTO` 生成副本——即使面板运行中也是一致的；目标是同目录下的
+  普通文件（不存在也不需要子目录；命令会先删除上一份手动快照——
+  `VACUUM INTO` 拒绝覆盖已有文件）：
+
+  ```sh
+  sudo docker exec mihomo-panel python3 -c "import os, sqlite3
+  for n in ('policy', 'stats'):
+      t = '/gw/state/%s-manual.db' % n
+      if os.path.exists(t): os.remove(t)
+      sqlite3.connect('/gw/state/%s.db' % n).execute(\"VACUUM INTO '%s'\" % t)"
+  sudo cp <data-dir>/state/panel/*-manual.db /your/backup/location/
+  ```
+
+- **恢复**：停止面板，把快照放回原处，再启动它：
+
+  ```sh
+  sudo docker stop mihomo-panel
+  sudo cp <data-dir>/state/panel/policy.db.bak-<时间戳> <data-dir>/state/panel/policy.db
+  sudo docker start mihomo-panel
+  ```
+
+  应用启动时会重新执行一遍迁移；doctor 的 `policy_parity` 会确认恢复出的
+  策略已经重新应用到 mihomo。
+
+- **重置**（从头开始；会删除全部策略条目与所有统计数据）：
+
+  ```sh
+  sudo docker stop mihomo-panel
+  sudo rm -rf <data-dir>/state/panel
+  sudo sh ./install.sh    # redeploy re-creates the dir with the right owner (uid 10001)
+  ```
+
+  静态的 `FULL_PROXY_SOURCES` 网段不受重置影响——它存放在 `.env` 中。
+
+- **仅清除统计数据**（策略保留不变）：带 bearer 令牌调用
+  `POST /v1/stats/purge`——见 [API 参考](../panel-api.md)。清除会保留采集器的
+  计数基线，因此之后正在进行的连接不会被重复计数。
+
+- **留存**是自动的：分钟→小时→天分层汇总，由 `PANEL_STATS_*` 时间窗口
+  控制，外加硬性的 `PANEL_STATS_CAP_MB` 上限（最旧的层级最先被裁剪，
+  采集器停摆期间留下如实的空缺行）。不需要 cron。
+
+- **留意**：`doctor.sh`——`companion_health`（停止或降级 ⇒ 告警）与
+  `policy_parity`（面板与 mihomo 出现漂移 ⇒ **错误，退出码 3**；见
+  [故障排查](troubleshooting.md#网关面板策略漂移policy_parity-error)）。
+
 ## 手动健康检查
 
 首选专门构建的只读诊断——它通过 `docker exec` 从容器网络命名空间内部探测，

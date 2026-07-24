@@ -320,20 +320,84 @@ conn_probe_lines() {
 }
 
 # conn_mode_ok MODE - classify conn_probe_lines output (stdin).
-#   direct: at least one flow, and NO flow rides a proxy group.
-#   proxy:  at least one flow carries 'Routing Mode' behind a REAL head -
-#           builtins/placeholders never count (the COMPATIBLE lesson).
+#   direct:      at least one flow, and NO flow rides a proxy group (the
+#                full-direct band assertion reuses this arm - a dynamic
+#                full-direct source's chains must stay group-free).
+#   proxy:       at least one flow carries 'Routing Mode' behind a REAL head -
+#                builtins/placeholders never count (the COMPATIBLE lesson).
+#   full-tunnel: at least one flow rides 'Full-Tunnel Devices' behind a REAL
+#                head (the dynamic band assertion; same placeholder rule).
 conn_mode_ok() {
   awk -v mode="$1" -F"$US" '
     NF >= 2 { n++ }
     mode == "direct" && $2 ~ /Routing Mode|Full-Tunnel Devices|Streaming Unlock/ { viol++ }
     mode == "proxy" && $2 ~ /Routing Mode/ \
       && $1 !~ /^(DIRECT|REJECT|REJECT-DROP|PASS|COMPATIBLE|GLOBAL)$/ { good++ }
+    mode == "full-tunnel" && $2 ~ /Full-Tunnel Devices/ \
+      && $1 !~ /^(DIRECT|REJECT|REJECT-DROP|PASS|COMPATIBLE|GLOBAL)$/ { good++ }
     END {
       if (mode == "direct") exit !(n > 0 && viol == 0)
       exit !(good > 0)
     }'
 }
+
+# --- panel probe parsers (#69) -------------------------------------------------
+# Pure stdin->verdict parsers for the A6 panel gate; --self-test drives them
+# with canned payloads. The panel emits compact one-line JSON (docker exec
+# python3 relays), so line-local extraction is sound.
+
+# vr_panel_field KEY - stdin = a flat JSON object (/health, or a policy-set
+# response); prints KEY's scalar with string quotes stripped (booleans and
+# numbers print bare), rc 1 when the key is absent - never an invented value.
+vr_panel_field() {
+  awk -v k="\"$1\"" '
+    {
+      s = $0
+      i = index(s, k ":")
+      if (i == 0) { i = index(s, k " :") }
+      if (i == 0) next
+      s = substr(s, i + length(k))
+      sub(/^[ :]+/, "", s)
+      if (substr(s, 1, 1) == "\"") {
+        s = substr(s, 2); sub(/".*/, "", s)
+      } else {
+        sub(/[,}].*/, "", s); gsub(/[ \t]/, "", s)
+      }
+      print s; found = 1; exit
+    }
+    END { exit !found }'
+}
+
+# vr_devices_mode CIDR - stdin = the panel devices document
+# ({"devices":[...],"band":[...]}); prints the mode of the entry whose
+# canonical "cidr" is CIDR, rc 1 when absent. Band rows carry no "mode"
+# and can never satisfy the lookup.
+vr_devices_mode() {
+  sed 's/{/\
+{/g' | awk -v a="\"cidr\":\"$1\"" '
+    index($0, a) && match($0, /"mode":"[^"]*"/) {
+      print substr($0, RSTART+8, RLENGTH-9); found = 1; exit
+    }
+    END { exit !found }'
+}
+
+# vr_devices_cidrs - stdin = the panel devices document; every device
+# "cidr" value, comma-joined (the flat band strings carry no "cidr" key and
+# never contribute). A6 feeds this into derive_probe_ip's exclusion list so
+# a probe candidate can NEVER collide with a real saved policy entry - an
+# offline device answers no ping, and the flip would PATCH (then the
+# cleanup DELETE) the owner's real row.
+vr_devices_cidrs() {
+  sed 's/{/\
+{/g' | awk '
+    match($0, /"cidr":"[^"]*"/) { s = s (s ? "," : "") substr($0, RSTART+8, RLENGTH-9) }
+    END { if (s) print s }'
+}
+
+# vr_ui_marker - the single source for the UI-shell reach marker: a stable
+# attribute the shipped app/static/index.html carries (i18n-proof - the
+# rendered TEXT changes per language, the data-i18n key does not).
+vr_ui_marker() { printf '%s' 'data-i18n="app_title"'; }
 
 # ip_in_band IP BAND - 0 iff IP falls inside the comma-separated band list
 # (bare IPs and CIDR entries both count). Shared by derive_probe_ip and the
@@ -721,6 +785,58 @@ All Nodes' ]; then st_ok; else st_bad "urltest_groups got: $(printf '%s' "$_name
   # shellcheck disable=SC2181 # the subshell above is the tested unit
   if [ $? -eq 0 ]; then st_ok; else st_bad "derive_probe_ip candidate/band logic"; fi
 
+  # 3c) panel probe parsers (#69): scalar field extraction from /health and
+  #     policy-set responses (booleans/numbers bare, strings unquoted, an
+  #     absent key is rc 1 - never an invented value), device-document mode
+  #     lookup by canonical CIDR (band rows carry no "mode" and must never
+  #     satisfy it), and the full-tunnel chain arm of conn_mode_ok (a REAL
+  #     head is required - the COMPATIBLE lesson applies to the panel too).
+  _pj='{"db_ok": true, "parity": "ok", "last_apply": null, "marker": false, "dashboard_port": 8080}'
+  if [ "$(printf '%s' "$_pj" | vr_panel_field db_ok)" = true ]; then st_ok
+  else st_bad "vr_panel_field missed db_ok=true"; fi
+  if [ "$(printf '%s' "$_pj" | vr_panel_field parity)" = ok ]; then st_ok
+  else st_bad "vr_panel_field missed parity=ok"; fi
+  if printf '%s' "$_pj" | vr_panel_field absent_key >/dev/null; then st_bad "vr_panel_field invented a value for an absent key"
+  else st_ok; fi
+  if [ "$(printf '{"applied": false, "parity": "failed"}' | vr_panel_field applied)" = false ]; then st_ok
+  else st_bad "vr_panel_field missed applied=false"; fi
+  # The band rides the same document as a FLAT array of CIDR strings (the
+  # wire shape of /v1/devices) - it must satisfy neither the mode lookup
+  # nor the cidr extraction.
+  _dj='{"devices":[{"id":1,"cidr":"192.0.2.7/32","mode":"full-tunnel","name":"tv"},{"id":2,"cidr":"192.0.2.8/32","mode":"full-direct","name":""}],"band":["192.0.2.40/32"]}'
+  if [ "$(printf '%s' "$_dj" | vr_devices_mode 192.0.2.7/32)" = full-tunnel ]; then st_ok
+  else st_bad "vr_devices_mode missed a present entry"; fi
+  if [ "$(printf '%s' "$_dj" | vr_devices_mode 192.0.2.8/32)" = full-direct ]; then st_ok
+  else st_bad "vr_devices_mode missed the second entry"; fi
+  if printf '%s' "$_dj" | vr_devices_mode 192.0.2.40/32 >/dev/null; then st_bad "vr_devices_mode matched a band-only address"
+  else st_ok; fi
+  if printf '%s' "$_dj" | vr_devices_mode 192.0.2.99/32 >/dev/null; then st_bad "vr_devices_mode invented an entry"
+  else st_ok; fi
+  if [ "$(printf '%s' "$_dj" | vr_devices_cidrs)" = '192.0.2.7/32,192.0.2.8/32' ]; then st_ok
+  else st_bad "vr_devices_cidrs did not extract exactly the device cidrs"; fi
+  if [ -z "$(printf '{"devices":[],"band":["192.0.2.40/32"]}' | vr_devices_cidrs)" ]; then st_ok
+  else st_bad "vr_devices_cidrs invented cidrs from an empty device list"; fi
+  _ftl=$(printf '{"id":"1","sourceIP":"192.0.2.7","chains":["JP01","Japan Auto","Full-Tunnel Devices"]}' | conn_probe_lines 192.0.2.7)
+  if printf '%s\n' "$_ftl" | conn_mode_ok full-tunnel; then st_ok
+  else st_bad "full-tunnel chain with a real head was rejected"; fi
+  if printf '%s\n' "$_ftl" | conn_mode_ok direct; then st_bad "direct arm accepted a Full-Tunnel ride"
+  else st_ok; fi
+  _ftc=$(printf '{"id":"2","sourceIP":"192.0.2.7","chains":["COMPATIBLE","Full-Tunnel Devices"]}' | conn_probe_lines 192.0.2.7)
+  if printf '%s\n' "$_ftc" | conn_mode_ok full-tunnel; then st_bad "COMPATIBLE head counted as a full-tunnel ride"
+  else st_ok; fi
+  _fdl=$(printf '{"id":"3","sourceIP":"192.0.2.8","chains":["DIRECT"]}' | conn_probe_lines 192.0.2.8)
+  if printf '%s\n' "$_fdl" | conn_mode_ok direct; then st_ok
+  else st_bad "full-direct DIRECT-only chain was rejected"; fi
+  if [ "$(vr_ui_marker)" = 'data-i18n="app_title"' ]; then st_ok
+  else st_bad "vr_ui_marker drifted from its pinned value"; fi
+  # When the app tree is present (repo checkout; the NAS release dir ships
+  # no app/ - the UI is image-delivered), the marker must exist in the real
+  # shell, or the A6 UI probe would chase a string the app no longer serves.
+  if [ -f "$ROOT/app/static/index.html" ]; then
+    if grep -qF "$(vr_ui_marker)" "$ROOT/app/static/index.html"; then st_ok
+    else st_bad "vr_ui_marker not found in app/static/index.html"; fi
+  fi
+
   # B3's streaming heuristic is a single marker substring by design (#61e);
   # its WARN must name the SPA blindness so the check is never over-read.
   # The pattern is split so this assert cannot match its own source line.
@@ -730,7 +846,7 @@ All Nodes' ]; then st_ok; else st_bad "urltest_groups got: $(printf '%s' "$_name
 
   echo "validate_release self-test: $_stp passed, $_stf failed"
   [ "$_stf" -eq 0 ] || exit 1
-  echo "OK: measurement helpers (policy/knob/psn/split-core rule anchoring incl. bootstrap-pin + comment-prose immunity, provider-node counting + real-member egress gate, filtered-group discovery + %XX name encoding + COMPATIBLE/REJECT placeholder exclusion, full-proxy band connection parsing + CIDR membership, quoted-.env parsing, .env.example key coverage, scrubbed child env, doctor rc gate, summary accumulator, cache unpark, keep-split-horizon auto-decision, LAN-probe chain classification + probe-IP derivation)"
+  echo "OK: measurement helpers (policy/knob/psn/split-core rule anchoring incl. bootstrap-pin + comment-prose immunity, provider-node counting + real-member egress gate, filtered-group discovery + %XX name encoding + COMPATIBLE/REJECT placeholder exclusion, full-proxy band connection parsing + CIDR membership, quoted-.env parsing, .env.example key coverage, scrubbed child env, doctor rc gate, summary accumulator, cache unpark, keep-split-horizon auto-decision, LAN-probe chain classification + probe-IP derivation, panel probe parsers: /health + policy-set field extraction, device-doc mode lookup, full-tunnel chain arm, UI marker pin)"
   exit 0
 }
 [ "$SELF_TEST" = 1 ] && self_test
@@ -866,6 +982,28 @@ egress_via_real_node() {
 restore_env() {  # put the pre-validation .env back
   [ -f "$ORIG" ] && cat "$ORIG" > "$ENV_FILE" && rm -f "$ORIG"
 }
+# panel_probe_teardown - remove the A6 panel-probe clients if any are up;
+# torn down at phase end AND from on_abort.
+panel_probe_teardown() {
+  "${DOCKER_BIN:-docker}" rm -f smg-panel-probe-a smg-panel-probe-b >/dev/null 2>&1 || true
+}
+
+# panel_policy_cleanup - remove the A6 policy entries (mode 'default'
+# deletes); best-effort so an abort never leaves probe IPs in the panel DB.
+panel_policy_cleanup() {
+  [ -z "${A6_IP1:-}" ] || run_scrubbed sh "$REL/scripts/gateway.sh" policy --set "$A6_IP1" --mode default >/dev/null 2>&1 || true
+  [ -z "${A6_IP2:-}" ] || run_scrubbed sh "$REL/scripts/gateway.sh" policy --set "$A6_IP2" --mode default >/dev/null 2>&1 || true
+}
+
+# panel_get PATH - GET the panel API from INSIDE its container (python-slim
+# ships no wget/curl; a macvlan child is unreachable from its own host) and
+# echo the body; empty on failure.
+panel_get() {
+  run_scrubbed "$DOCKER_BIN" exec "${PANEL_CONTAINER:-mihomo-panel}" python3 -c \
+    'import sys,urllib.request;sys.stdout.write(urllib.request.urlopen("http://127.0.0.1:%s%s"%(sys.argv[1],sys.argv[2]),timeout=8).read().decode())' \
+    "${PANEL_PORT:-8090}" "$1" 2>/dev/null
+}
+
 # fp_probe_teardown - remove the A5 band-probe container if one is up; a
 # ^C must never leave it holding the owner's spare IP on the live macvlan.
 fp_probe_teardown() { "${DOCKER_BIN:-docker}" rm -f smg-fp-probe >/dev/null 2>&1 || true; }
@@ -915,7 +1053,7 @@ lan_probe_body() {
 }
 
 # shellcheck disable=SC2329 # invoked via the trap below
-on_abort() { echo "INTERRUPTED - restoring original .env"; fp_probe_teardown; lan_probe_teardown; restore_env; recreate; exit 1; }
+on_abort() { echo "INTERRUPTED - restoring original .env"; fp_probe_teardown; lan_probe_teardown; panel_probe_teardown; panel_policy_cleanup; restore_env; recreate; exit 1; }
 trap on_abort INT TERM
 
 say "A2: redeploy + baseline doctor"
@@ -1171,6 +1309,199 @@ elif [ -n "${FULL_PROXY_SOURCES:-}" ]; then
 else
   echo "skipped - FULL_PROXY_SOURCES unset and no --probe-ip (the band is opt-in)"
   ok "A5 skipped (band feature not in use)"
+fi
+
+say "A6: gateway panel - dynamic device policy (REQUIRED release gate, #69)"
+# The panel is a standard service (brief DEC-5): a release is NOT valid
+# without it. Gates, in order: companion present + healthy (db_ok, never a
+# bare 200 - the app serves 200 fail-static), the DEC-B sibling->sibling
+# reach probe (panel container -> mihomo controller over the macvlan),
+# LAN-client UI reach at PANEL_IP, a policy flip per mode from TWO distinct
+# spare source IPs judged by /connections chains (the SRC-IP-CIDR rulesets
+# must discriminate by source), and persistence across a mihomo restart.
+_a6_go=1
+if [ -z "${PANEL_IMAGE:-}" ]; then
+  bad "A6: PANEL_IMAGE unset - the panel companion is REQUIRED (run the installer migration)"; _a6_go=0
+elif [ -z "${PANEL_SECRET:-}" ]; then
+  bad "A6: PANEL_SECRET empty - panel mutations are refused; the policy-flip gate cannot run"; _a6_go=0
+elif [ -z "${PANEL_IP:-}" ]; then
+  bad "A6: PANEL_IP unset - the panel has no LAN seat to probe"; _a6_go=0
+fi
+if [ "$_a6_go" = 1 ]; then
+  _a6_h="$(panel_get /health || true)"
+  if [ "$(printf '%s' "$_a6_h" | vr_panel_field db_ok)" = true ]; then
+    ok "panel /health db_ok (container up, DB layer writable)"
+  else
+    bad "panel /health db_ok is not true: ${_a6_h:-<no answer>}"; _a6_go=0
+  fi
+fi
+if [ "$_a6_go" = 1 ]; then
+  # DEC-B (#68): macvlan sibling->sibling reachability, recorded per the
+  # issue's decision - ANY HTTP status from the controller proves the path
+  # (401 without auth is still TCP+HTTP end-to-end).
+  if run_scrubbed "$DOCKER_BIN" exec "${PANEL_CONTAINER:-mihomo-panel}" python3 -c '
+import sys,urllib.request,urllib.error
+try:
+    urllib.request.urlopen("http://%s:%s/" % (sys.argv[1], sys.argv[2]), timeout=6)
+except urllib.error.HTTPError:
+    sys.exit(0)
+except Exception:
+    sys.exit(1)
+sys.exit(0)' "${MIHOMO_IP:?}" "${CONTROLLER_PORT:-9090}" 2>/dev/null; then
+    ok "DEC-B: panel->mihomo sibling reach confirmed (macvlan child to child)"
+  else
+    bad "DEC-B: the panel container cannot reach ${MIHOMO_IP}:${CONTROLLER_PORT:-9090} (macvlan sibling->sibling)"; _a6_go=0
+  fi
+fi
+A6_IP1=""; A6_IP2=""; _a6_excl="${FULL_PROXY_SOURCES:-}"
+if [ "$_a6_go" = 1 ]; then
+  # Existing panel entries join the exclusion list: a candidate that already
+  # carries a policy row (its device may just be asleep - no ping answer)
+  # must never be claimed, or the flip would overwrite and the cleanup
+  # would DELETE the owner's real entry. FAIL CLOSED: a list we could not
+  # read is NOT an empty list - without the exclusions no IP is safe.
+  if _a6_doc0="$(run_scrubbed sh "$REL/scripts/gateway.sh" policy --list 2>/dev/null)"; then
+    _a6_cidrs="$(printf '%s\n' "$_a6_doc0" | vr_devices_cidrs || true)"
+    [ -z "$_a6_cidrs" ] || _a6_excl="${_a6_excl:+$_a6_excl,}$_a6_cidrs"
+    A6_IP1="$(derive_probe_ip '' '' '' "$_a6_excl" || true)"
+    if [ -z "$A6_IP1" ]; then
+      bad "A6: no spare LAN IP derivable for the probe clients (outside the band and existing panel entries)"; _a6_go=0
+    fi
+  else
+    bad "A6: could not read the panel's device list - refusing to derive probe IPs without the exclusion set"; _a6_go=0
+  fi
+fi
+if [ "$_a6_go" = 1 ]; then
+  # LAN-client UI reach: a one-shot client at the first spare IP fetches the
+  # UI shell and must see the stable app marker (vr_ui_marker) - the real
+  # user path, not a host-side shortcut.
+  # shellcheck disable=SC2016 # "$1" expands in the probe container's shell
+  _a6_ui="$(run_scrubbed "$DOCKER_BIN" run --rm --name smg-panel-probe-a \
+      --network "${TPROXY_NETWORK:-tproxy_network}" --ip "$A6_IP1" \
+      --entrypoint /bin/sh "${MIHOMO_IMAGE:?}" -c \
+      'wget -q -T 8 -O - "$1"' _ "http://${PANEL_IP}:${PANEL_PORT:-8090}/ui/" 2>/dev/null || true)"
+  if printf '%s' "$_a6_ui" | grep -qF "$(vr_ui_marker)"; then
+    ok "panel UI reachable from a LAN client at http://${PANEL_IP}:${PANEL_PORT:-8090}/ui/"
+  else
+    bad "panel UI not reachable from a LAN client (no '$(vr_ui_marker)' in the response)"; _a6_go=0
+  fi
+fi
+if [ "$_a6_go" = 1 ]; then
+  _a6_set1="$(run_scrubbed sh "$REL/scripts/gateway.sh" policy --set "$A6_IP1" --mode full-tunnel --name smg-vr-a6 --note "release validation A6" 2>&1 || true)"
+  if [ "$(printf '%s\n' "$_a6_set1" | vr_panel_field applied)" = true ]; then
+    ok "policy set $A6_IP1 -> full-tunnel applied (panel's own parity read-back)"
+  else
+    bad "policy set $A6_IP1 -> full-tunnel did not apply: $(printf '%s' "$_a6_set1" | tail -n1)"; _a6_go=0
+  fi
+fi
+if [ "$_a6_go" = 1 ]; then
+  # The long-lived full-tunnel client re-uses IP1 (the one-shot has exited);
+  # it must be UP before the second derivation so its ping-liveness excludes
+  # IP1 from IP2's candidates.
+  panel_probe_teardown
+  # shellcheck disable=SC2016 # "$1" expands in the probe container's shell
+  if ! run_scrubbed "$DOCKER_BIN" run -d --rm --name smg-panel-probe-a \
+      --network "${TPROXY_NETWORK:-tproxy_network}" --ip "$A6_IP1" \
+      --dns "${MIHOMO_IP:?}" --cap-add NET_ADMIN \
+      --entrypoint /bin/sh "${MIHOMO_IMAGE:?}" -c \
+      'ip route replace default via "$1" 2>/dev/null || { route del default 2>/dev/null; route add default gw "$1"; }; i=0; while [ "$i" -lt 600 ]; do wget -q -T 4 -O /dev/null http://www.gstatic.com/generate_204 2>/dev/null; sleep 1; i=$((i+1)); done' \
+      _ "$MIHOMO_IP" >/dev/null 2>&1; then
+    bad "A6: full-tunnel probe client failed to start (ip $A6_IP1)"; _a6_go=0
+  fi
+fi
+if [ "$_a6_go" = 1 ]; then
+  A6_IP2="$(derive_probe_ip '' '' '' "${_a6_excl:+$_a6_excl,}$A6_IP1" || true)"
+  if [ -z "$A6_IP2" ] || [ "$A6_IP2" = "$A6_IP1" ]; then
+    bad "A6: no second distinct spare LAN IP derivable (got '${A6_IP2:-none}')"; _a6_go=0
+  fi
+fi
+if [ "$_a6_go" = 1 ]; then
+  _a6_set2="$(run_scrubbed sh "$REL/scripts/gateway.sh" policy --set "$A6_IP2" --mode full-direct --name smg-vr-a6b --note "release validation A6" 2>&1 || true)"
+  if [ "$(printf '%s\n' "$_a6_set2" | vr_panel_field applied)" = true ]; then
+    ok "policy set $A6_IP2 -> full-direct applied"
+  else
+    bad "policy set $A6_IP2 -> full-direct did not apply: $(printf '%s' "$_a6_set2" | tail -n1)"; _a6_go=0
+  fi
+fi
+if [ "$_a6_go" = 1 ]; then
+  _a6_doc="$(run_scrubbed sh "$REL/scripts/gateway.sh" policy --list 2>/dev/null || true)"
+  if [ "$(printf '%s\n' "$_a6_doc" | vr_devices_mode "$A6_IP1/32")" = full-tunnel ] \
+     && [ "$(printf '%s\n' "$_a6_doc" | vr_devices_mode "$A6_IP2/32")" = full-direct ]; then
+    ok "policy --list carries both canonical /32 entries with their modes"
+  else
+    bad "policy --list does not show the two probe entries as set"; _a6_go=0
+  fi
+fi
+if [ "$_a6_go" = 1 ]; then
+  # shellcheck disable=SC2016
+  run_scrubbed "$DOCKER_BIN" run -d --rm --name smg-panel-probe-b \
+      --network "${TPROXY_NETWORK:-tproxy_network}" --ip "$A6_IP2" \
+      --dns "${MIHOMO_IP:?}" --cap-add NET_ADMIN \
+      --entrypoint /bin/sh "${MIHOMO_IMAGE:?}" -c \
+      'ip route replace default via "$1" 2>/dev/null || { route del default 2>/dev/null; route add default gw "$1"; }; i=0; while [ "$i" -lt 600 ]; do wget -q -T 4 -O /dev/null http://www.gstatic.com/generate_204 2>/dev/null; sleep 1; i=$((i+1)); done' \
+      _ "$MIHOMO_IP" >/dev/null 2>&1 \
+    || { bad "A6: full-direct probe client failed to start (ip $A6_IP2)"; _a6_go=0; }
+fi
+# a6_judge LABEL - both flows judged from /connections (12s window each).
+a6_judge() {
+  _a6j_ok1=0; _a6j_i=0
+  while [ "$_a6j_i" -lt 12 ]; do
+    if ctl_get /connections | conn_probe_lines "$A6_IP1" | conn_mode_ok full-tunnel; then _a6j_ok1=1; break; fi
+    _a6j_i=$((_a6j_i + 1)); sleep 1
+  done
+  if [ "$_a6j_ok1" = 1 ]; then
+    ok "$1: flow from $A6_IP1 rides Full-Tunnel Devices behind a real node"
+  else
+    bad "$1: no full-tunnel ride observed from $A6_IP1 within 12s"
+  fi
+  _a6j_ok2=0; _a6j_i=0
+  while [ "$_a6j_i" -lt 12 ]; do
+    if ctl_get /connections | conn_probe_lines "$A6_IP2" | conn_mode_ok direct; then _a6j_ok2=1; break; fi
+    _a6j_i=$((_a6j_i + 1)); sleep 1
+  done
+  if [ "$_a6j_ok2" = 1 ]; then
+    ok "$1: flow from $A6_IP2 stays group-free (full-direct)"
+  else
+    bad "$1: no group-free flow observed from $A6_IP2 within 12s"
+  fi
+  [ "$_a6j_ok1" = 1 ] && [ "$_a6j_ok2" = 1 ]
+}
+if [ "$_a6_go" = 1 ]; then
+  a6_judge "pre-restart" || _a6_go=0
+fi
+if [ "$_a6_go" = 1 ]; then
+  # Persistence: the dynamic providers live on disk; a mihomo restart must
+  # re-read them and keep routing both sources by mode (no re-apply needed).
+  run_scrubbed "$DOCKER_BIN" restart "$MIHOMO_CONTAINER" >/dev/null 2>&1 \
+    || bad "A6: mihomo restart failed"
+  _a6_i=0
+  while [ "$_a6_i" -lt 30 ]; do
+    [ -n "$(ctl_get /version || true)" ] && break
+    _a6_i=$((_a6_i + 1)); sleep 2
+  done
+  if [ "$_a6_i" -lt 30 ]; then
+    ok "controller back after restart (persistence window)"
+    a6_judge "post-restart"
+    _a6_h2="$(panel_get /health || true)"
+    if [ "$(printf '%s' "$_a6_h2" | vr_panel_field parity)" = ok ]; then
+      ok "panel parity ok after the mihomo restart"
+    else
+      warn "panel parity not ok yet after restart ($(printf '%s' "$_a6_h2" | vr_panel_field parity || echo '?')) - the reconciler converges on its next apply; doctor policy_parity is the drift authority"
+    fi
+  else
+    bad "controller did not come back within 60s of the restart"
+  fi
+fi
+panel_probe_teardown
+panel_policy_cleanup
+if [ -n "$A6_IP1$A6_IP2" ]; then
+  _a6_doc2="$(run_scrubbed sh "$REL/scripts/gateway.sh" policy --list 2>/dev/null || true)"
+  if printf '%s\n' "$_a6_doc2" | vr_devices_mode "${A6_IP1:-0.0.0.0}/32" >/dev/null 2>&1 \
+     || printf '%s\n' "$_a6_doc2" | vr_devices_mode "${A6_IP2:-0.0.0.0}/32" >/dev/null 2>&1; then
+    bad "A6 cleanup: a probe policy entry is still present after mode-default removal"
+  else
+    ok "A6 cleanup: probe policy entries removed (mode default deletes)"
+  fi
 fi
 
 say "B: cold start - parked caches + black-holed tunnel resolvers"

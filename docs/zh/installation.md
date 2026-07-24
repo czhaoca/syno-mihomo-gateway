@@ -125,6 +125,13 @@ vi ../syno-mihomo-gateway-data/.env
 [配置](configuration.md) 中有说明。运行时数据保存在发布目录之外，因此 ZIP 升级不会删除它。
 `bootstrap.sh` 也会自动迁移旧版目录内的 `.env`。
 
+[网关面板](panel.md)还需要两个开关，引导安装器会替你搞定：`PANEL_IP`——
+面板自己的 macvlan 席位所用的一个**备用**局域网地址（安装器会询问，并做
+子网与冲突校验；手动路径上请自己挑一个，并记在你平时登记局域网地址分配
+的地方）——以及自动生成的 `PANEL_SECRET`。从面板出现之前的旧安装升级，
+走的是同一套流程：重新运行 `sudo sh ./install.sh`，预检会在能推导的地方
+非交互式地迁移你的 `.env`，只会询问 `PANEL_IP`。
+
 ## 3. 添加你的订阅
 
 ```bash
@@ -199,6 +206,10 @@ sudo sh scripts/doctor.sh          # needs root; add --egress for a real GET thr
    而不是 mihomo 的 IP。
 2. 添加后端：**Host** = `MIHOMO_IP`（例如 `192.168.1.100`），**Port** = `CONTROLLER_PORT`
    （默认 `9090`），**Secret** = 你的 `CONTROLLER_SECRET`（如果为空则留空）。
+
+[网关面板](panel.md)在 `http://<PANEL_IP>:8090/ui/` 有自己的独立页面——
+分设备策略翻转与流量历史。按设计仅限局域网：绝不要对它做端口转发，
+也不要用隧道暴露它。
 
 ## 7. 将设备指向网关
 

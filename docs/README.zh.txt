@@ -88,6 +88,7 @@ INSTALLER_LANG），因此以后运行会直接进入菜单。
   * INSTALL.zh.txt          - 详细的分步安装
   * INSTALL-LINUX.zh.txt    - 通用 Linux / 树莓派安装（仅 Linux 发布包）
   * CONFIGURE.zh.txt        - .env 设置参考
+  * PANEL.zh.txt            - 网关面板（分设备模式与流量统计）
   * AUTO-UPDATE.zh.txt      - 设置自动更新
   * TROUBLESHOOTING.zh.txt  - 故障现象与解决办法
   * CLI.zh.txt              - gateway.sh 命令行参考

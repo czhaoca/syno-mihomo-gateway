@@ -37,6 +37,7 @@ default the generic-Linux installer offers).
 |---|---|---|
 | **mihomo** | this repo, container `mihomo` | The proxy engine. Privileged, on a macvlan with a static LAN IP (`MIHOMO_IP`). Serves DNS on `:53`, the RESTful controller on `:CONTROLLER_PORT`, and proxy ports `7890-7894`. Renders its own config at start from a template. |
 | **metacubexd** | this repo, container `mihomo-ui` | Static web dashboard (bridge network, published on the NAS host IP at `WEB_UI_PORT`). A browser talks to the controller directly; the container is just serving the SPA. |
+| **panel** | this repo, container `mihomo-panel` | The [gateway panel](panel.md): dynamic per-device policy (full-tunnel / full-direct / default, live without restarts) + persistent traffic statistics. FastAPI app on its own macvlan seat (`PANEL_IP:PANEL_PORT`), uid 10001, mounting ONLY mihomo's provider dir + its own `state/panel`. Writes SRC-IP rule files and hot-reloads them over the controller; the doctor's `companion_health` / `policy_parity` watch it. |
 | **cloudflared** | **external** (not in this compose) | Optional Cloudflare Tunnel. Managed *by name* by the auto-updater via blue-green. Lets you reach the dashboard/NAS from outside without opening ports. |
 | **enrolled generic targets** | **external** (any container on the NAS) | Opt-in auto-update targets: containers enrolled via `gateway.sh update --enable` and recreated in place by the updater with a tiered health gate. See [Auto-Update](auto-update.md). |
 | **auto_update.sh** | this repo, `scripts/` | DSM-scheduled job: pulls the compose images, cloudflared, and every enrolled generic target; detects real changes; applies serially, lowest blast radius first (health gates + rollback); records `state/last-run.json`; notifies. |
@@ -77,13 +78,14 @@ flowchart LR
   subgraph GH["docker-china-sync (GitHub Actions, self-hosted runner)"]
     A["images.txt<br/>(mihomo, metacubexd,<br/>cloudflared, ...)"] -->|nightly 23:00 UTC| B["pull upstream<br/>(Docker Hub / ghcr)"]
     B --> C["push to Alibaba ACR<br/>REGISTRY/NS/&lt;image:tag&gt;"]
+    P["panel-build.yaml<br/>(tag-driven: this repo's<br/>latest release)"] -->|"buildx amd64+arm64<br/>app/ → ghcr + ACR mirror"| C
   end
   subgraph NAS["Synology NAS (this repo)"]
     D["DSM Task Scheduler<br/>(root, daily)"] --> E["scripts/auto_update.sh"]
     E -->|"pull + digest diff"| C
     E -->|"1. recreate in place"| I["enrolled generic containers"]
     E -->|"2. blue-green by name"| G["cloudflared (external)"]
-    E -->|"3. compose up -d (LAST)"| F["mihomo + metacubexd"]
+    E -->|"3. compose up -d (LAST)"| F["mihomo + metacubexd + panel"]
     E -->|"notify + record"| H["synodsmnotify / webhook<br/>logs/ + state/last-run.json"]
   end
 ```
@@ -94,8 +96,9 @@ Plain-text fallback:
  docker-china-sync (GitHub Actions)                     Synology NAS (this repo)
  images.txt → pull upstream → push to ACR   ◄──pull──   DSM Task Scheduler → auto_update.sh
    (nightly 23:00 UTC)                                    ├─ 1. recreate in place → enrolled generic containers
-   ACR: REGISTRY/NS/<image:tag>                           ├─ 2. blue-green → cloudflared (external)
-                                                          ├─ 3. compose up -d → mihomo + metacubexd (LAST)
+ panel-build.yaml → buildx app/ (amd64+arm64)             ├─ 2. blue-green → cloudflared (external)
+   → ghcr + ACR mirror (tag-driven, idempotent)           ├─ 3. compose up -d → mihomo + metacubexd + panel (LAST)
+   ACR: REGISTRY/NS/<image:tag>                           │
                                                           └─ synodsmnotify/webhook + ../syno-mihomo-gateway-data/
                                                              logs/ + state/last-run.json
 ```

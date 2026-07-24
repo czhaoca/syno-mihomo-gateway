@@ -129,9 +129,9 @@ geo 数据镜像站、健康检查主机 `www.gstatic.com`（延迟探测与空�
 
 ### 容器镜像
 
-三个镜像引用由 `install.sh` 根据 `REGISTRY_MODE` + 仓库主机 + 命名空间 + 各组件的标签**推导**得出，
+四个镜像引用由 `install.sh` 根据 `REGISTRY_MODE` + 仓库主机 + 命名空间 + 各组件的标签**推导**得出，
 因此你只需输入一次仓库/命名空间，而不必为每个镜像重复输入。自动更新器会将每个 `UPDATE_IMAGES`
-条目，通过与这三个推导引用的**精确匹配**，映射到对应的部署目标（参见
+条目，通过与这四个推导引用的**精确匹配**，映射到对应的部署目标（参见
 [自动更新](auto-update.md#镜像引用)）。
 
 > **缺失即失败，默认 ACR。** `docker-compose.yml` 使用 `${MIHOMO_IMAGE:?}` / `${METACUBEXD_IMAGE:?}`，
@@ -149,7 +149,30 @@ geo 数据镜像站、健康检查主机 `www.gstatic.com`（延迟探测与空�
 | `CF_TAG` | | 用于推导可选的 cloudflared 引用的标签。 | `latest` |
 | `MIHOMO_IMAGE` | ✅ | 推导出的 mihomo 镜像引用（安装器会据上面的值改写它）。 | `registry.cn-shenzhen.aliyuncs.com/myns/mihomo:latest` |
 | `METACUBEXD_IMAGE` | ✅ | 推导出的 metacubexd 镜像引用。 | `registry.cn-shenzhen.aliyuncs.com/myns/metacubexd:latest` |
+| `PANEL_TAG` | | 用于推导面板引用的标签。 | `latest` |
+| `PANEL_IMAGE` | ✅ | 推导出的[网关面板](panel.md)镜像引用。在 `acr` 模式下，推导方式与另外两个一致（你的 ACR 中带有 `mihomo-panel`，由镜像流水线持续发布保持更新）；在 `docker` 模式下**没有第三方上游镜像**——只能从 `PANEL_UPSTREAM` 推导，或者你自己手动设置这个引用。 | `registry.cn-shenzhen.aliyuncs.com/myns/mihomo-panel:latest` |
+| `PANEL_UPSTREAM` | | 仅 `docker` 模式使用：一个**你自己掌控**的面板镜像仓库路径（例如你自己的镜像源）。留空（默认）意味着安装器在 `docker` 模式下无法推导出 `PANEL_IMAGE`，会保留该引用当前的取值不变。 | *(未设置)* |
 | `CF_IMAGE` | Upd | 推导出的 cloudflared 引用。不管理 cloudflared 时留空。 | `registry.cn-shenzhen.aliyuncs.com/myns/cloudflared:latest` |
+
+### 网关面板
+
+[面板](panel.md)容器的运行时开关（`PANEL_IMAGE`/`PANEL_TAG`/`PANEL_UPSTREAM`
+这几个镜像引用开关列在上面的镜像表格中）。`PANEL_IP` + `PANEL_IMAGE` 属于
+compose 层面的 fail-closed（`${VAR:?}`）：面板出现之前的旧 `.env` 会拒绝
+部署，直到安装器的迁移流程把它们补齐。
+
+| 键 | Req | Sec | 说明 | 示例 |
+|---|:--:|:--:|---|---|
+| `PANEL_IP` | ✅ | | 面板自己的 macvlan 席位：网关子网上的一个**备用** LAN IPv4（安装器会询问、校验并做冲突检查；必须与 `MIHOMO_IP` 不同）。 | `192.168.1.101` |
+| `PANEL_SECRET` | ✅ | 🔒 | 每次面板**修改**操作所需的 Bearer 令牌（安装器会生成 32 位十六进制字符）。留空 = 拒绝所有修改（失败即停）；无论如何，读取始终对局域网开放。 | `…` |
+| `PANEL_PORT` | | | 该应用的 HTTP 端口（界面 + API）。 | `8090` |
+| `PANEL_STATS_POLL_S` | | | 采集器轮询间隔，单位秒（默认 10）。 | `10` |
+| `PANEL_STATS_MINUTE_HOURS` | | | 分钟层级的留存时长，单位小时（默认 48）。 | `48` |
+| `PANEL_STATS_HOUR_DAYS` | | | 小时层级的留存时长，单位天（默认 90）。 | `90` |
+| `PANEL_STATS_DAY_DAYS` | | | 天层级的留存时长，单位天（默认 730）。 | `730` |
+| `PANEL_STATS_CAP_MB` | | | `stats.db` 的硬性大小上限（默认 512）；触顶时最旧的层级最先被裁剪。 | `512` |
+| `PANEL_STATS_DOMAINS` | | | 可选开启的分设备域名明细（`true`/`1`；默认关闭——域名行始终强制保留 7 天）。 | `false` |
+| `PANEL_BACKUP_KEEP` | | | 在 `policy.db` **旁边**保留的滚动 `policy.db.bak-<时间戳>` 快照份数（每次策略变更时生成——记录已提交的数据库状态，无论那次应用是否到达 mihomo；仅策略——`stats.db` 是派生历史，无自动备份；默认 5）。 | `5` |
 
 ### 私有镜像仓库 / 阿里云 ACR（当 `REGISTRY_MODE=acr` 时使用）
 
@@ -312,6 +335,12 @@ URL（并按上述方式重新渲染）。
 访问局域网目标仍然 DIRECT，但**其余一切——流媒体与国内站点一视同仁——都走 `Full-Tunnel Devices`
 分组**（严格语义：对这些源 IP 不做任何国内短路）。未设时什么都不渲染，配置保持**逐字节
 不变**——在你主动启用之前，该特性完全不可见。
+
+> **日常翻转属于[网关面板](panel.md)。** 它的动态条目会渲染进常驻的
+> `dyn-full-direct` / `dyn-full-tunnel` 规则文件，这些文件位于该静态网段
+> **之上**，按地址逐个覆盖它，并且立即生效——无需重新渲染，也无需重启。
+> 网段仍是声明式的部署期基线（它在面板重置后依然留存）；面板才是运维
+> 权威。
 
 **`Full-Tunnel Devices` 分组**是一个面板选择器。成员：
 

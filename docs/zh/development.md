@@ -168,7 +168,7 @@ EXIT 陷阱不会回收它（`CF_KEEP_CANDIDATE`）。
 | `dsm-shell-tests` | 十二个在 BusyBox `sh` 下、使用伪 Docker/Compose/服务 CLI 的测试套件：`dsm_installer_check`、`lifecycle_check`、`auto_update_check`、`cloudflared_check`、`generic_update_check`、`gateway_cli_check`、`seed_provider_check`、`proxy_groups_check`（doctor 对生成的国家分组的零节点守卫——含 `default-empty` 状态：`Exit Country` 正在骑乘的国家分组归零）、`full_proxy_check`（doctor 对按设备全代理网段的守卫——开关/渲染双向一致性、`/connections` 代理链扫描（含局域网目标豁免与 UDP/QUIC 直通标记）、以及 proxy_groups 未知状态短路夹具）、`mihomo_entrypoint_check`（入口点先渲染到临时文件再 `mihomo -t` 守门：通过才切换、保留上一份好配置并写入脱敏拒绝标记）、`pi_installer_check`（Raspberry Pi 移植的共享接缝）、`linux_installer_check`（通用 Linux 入口：install-linux.sh 的 source 检查、i18n 增量覆盖层（含目录级无 Pi 品牌扫描）、lite_ctl 输出改写并保留退出码、菜单到 pi 引擎的分发，以及 macvlan 可用性守卫——虚拟化/云主机检测、警告 + 显式确认、拒绝则转入精简模式、在部署前清理（确认先于任何拆除）与 create_network 两处收口——通用流程上的 `EXPECTED_ARCH` 自动锁定、和只写用户 `.env` 的 docker 默认镜像源向导（含堵住快速路径绕过））——外加 `validate_release.sh --self-test`，即 NAS 端发布验证助手的测量函数单元检查 |
 | `shellcheck` | 先对仓库中**每一个** `*.sh` 运行 `sh -n` 语法检查，再对 23 个目标运行 `shellcheck -x`：`install.sh`、`install-pi.sh`、`install-linux.sh`、`gateway.sh`、`auto_update.sh`、`pi/auto_update_lite.sh`、`pi/lite_ctl.sh`、`install_scheduler.sh`、`setup_network.sh`、`render_config.sh`、`mihomo_entrypoint.sh`、`package.sh`、`doctor.sh`、`state_diff.sh`、`seed_provider.sh`、`bootstrap.sh`、`lib/container.sh`、`lib/targets.sh`、`lib/geodata.sh`、`lib/panel.sh`、`linux/i18n_linux.sh`、`linux/preflight_linux.sh`、`validate_release.sh`（被 source 的库在上下文中一并检查） |
 | `app-lint` | `ruff check app` —— 面板应用的 lint（ruff 版本钉在 `app/requirements-dev.txt`，配置经 `app/ruff.toml` 限定作用域） |
-| `app-unit` | `python -m pytest app/tests -q` —— 封闭式面板单元测试套件（伪控制器客户端 + 临时目录；校验类、store/迁移/备份、reconciler 正常/告警路径、鉴权矩阵、审计只追加）——随后运行 `python scripts/ci/panel_contract_check.py`，即已提交 `app/openapi.json` 的逐字节一致性门（用 `--write` 重新生成；/v1 命令面只增不破——破坏性变更 = 新版本前缀 + 所有者显式确认） |
+| `app-unit` | `python -m pytest app/tests -q` —— 封闭式面板单元测试套件（伪控制器客户端 + 临时目录；校验类、store/迁移/备份、reconciler 正常/告警路径、鉴权矩阵、审计只追加）——随后运行 `python scripts/ci/panel_contract_check.py`，即已提交的契约门：`app/openapi.json` **以及**生成的 `docs/panel-api.md` 逐字节一致性（用 `--write` 同时重新生成两者；/v1 命令面只增不破——破坏性变更 = 新版本前缀 + 所有者显式确认） |
 | `app-e2e` | `python scripts/ci/panel_e2e_check.py` —— 真实 uvicorn 下的应用对回环上的步内伪 mihomo 控制器 + webhook 接收器（无守护进程）：启动重同步、bearer 鉴权门、写入→刷新→计数一致性、告警失败路径（标记 + `{title,body}` webhook + `parity=failed`）、经 `/v1/apply` 恢复 |
 
 ## CLI 契约（生成的文件）
@@ -310,6 +310,25 @@ python3 scripts/ci/privacy_check_test.py
 # 镜像引用策略（fail-closed 的 ${VAR:?} 引用 + REGISTRY_MODE=acr 默认值）
 python3 scripts/ci/compose_policy_check.py
 ```
+
+**推送前的真实堆栈检查（面板相关工作）：** 以上的封闭式测试套件从不运行
+真实容器。在推送触及面板/provider/路由这一面的改动之前，运行本地 e2e
+驱动脚本——它会渲染一份关闭 TUN 的配置，把 `app/` 构建成镜像，在一个
+docker bridge 上启动真实的 mihomo + 面板 + 两个固定 IP 的客户端，经面板
+API 翻转策略，并以行为验证 SRC-IP 区分是否生效（full-direct 请求经
+DIRECT 出站，full-tunnel 在零节点时失败即停，移除条目后重新路由，
+parity 保持 ok）：
+
+```sh
+sh scripts/ci/panel_e2e_local.sh          # needs docker + internet, ~2-3 min
+# SMG_E2E_DEBUG=1 shows fetch errors; SMG_E2E_HOLD=1 keeps the stack up for post-mortem
+```
+
+同一层面的 **NAS 发布门**是 `validate_release.sh` 的 A6 阶段（必需）：
+面板 `/health` 的 db_ok、同级可达性探测、局域网客户端的界面可达性、用
+两个不同的备用源 IP、依据 `/connections` 判定的按模式策略翻转、跨一次
+mihomo 重启的持久性，以及清理——它的纯解析函数与其他每一个测量辅助
+函数一样，由 `--self-test` 覆盖。
 
 ## 如何扩展
 

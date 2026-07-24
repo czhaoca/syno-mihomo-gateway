@@ -787,3 +787,52 @@ The **doctor** reports this state on every pass while the marker exists: the
 scheduled auto-update's health gate does **not** read the marker — a gateway running on its
 last-good config looks healthy to it — so an on-demand doctor run (installer menu 5, or
 `gateway.sh doctor`) is what surfaces a rejected edit.
+
+## Panel: policy drift (`policy_parity` ERROR)
+
+The doctor's `policy_parity` goes red (exit 3) when what the panel saved and what mihomo
+actually routes have diverged — either the count parity read-back failed, or the persistent
+`panel-apply-failed` marker is set from an earlier failed apply (each alone is enough; the
+marker survives restarts on purpose). A policy change in this state is **saved but not
+live**: the `applied: false` answer from the CLI/API said so at write time.
+
+Recovery, in order:
+
+1. Open the panel UI and press **Apply** (or `POST /v1/apply` with the bearer token) — a
+   converging apply clears the marker and parity returns to `ok`.
+2. If the apply keeps failing, the panel cannot reach the mihomo controller: check
+   `companion_health`, then `sudo docker logs mihomo-panel` — the log signatures differ:
+   `... -> HTTP 401` means `CONTROLLER_SECRET` drifted between `.env` and the running
+   container (redeploy), while `... failed: <reason>` (connection refused/timeout) means
+   mihomo itself is down or unreachable.
+3. `sudo docker restart mihomo-panel` re-runs the startup re-sync, which re-applies the
+   whole desired state from `policy.db`.
+
+## Panel: every change answers 403
+
+Mutations are bearer-gated. A 403 on **every** mutation means `PANEL_SECRET` is empty
+(fail closed — an empty secret refuses writes, it does not open them) or the token you sent
+differs from the container's. `gateway.sh policy` reads the secret from `.env` itself, so a
+403 through the CLI means the *container* holds a different value: the `.env` changed after
+the last deploy — redeploy so compose passes the current secret in.
+
+## Panel: healthy container, broken panel (fail-static)
+
+The app serves HTTP 200 even when its DB layer failed to initialize (an unwritable
+`state/panel` mount, a bad migration): `/health` then shows `"db_ok": false` and every
+policy/stats operation fails while the process looks alive. The **deploy gate refuses this
+state** (`_check_panel` requires `db_ok:true` and rolls back), so meeting it in the wild
+means the mounts changed after the fact — check ownership: both bind mounts belong to uid
+10001 (`ls -ln <data-dir>/config/providers <data-dir>/state/panel`), which the installer's
+`panel_prepare_dirs` establishes before every deploy. Fix the ownership, restart the panel.
+
+## Panel: full-direct device, but foreign sites still "feel proxied"
+
+`full-direct` governs **where flows egress** (always DIRECT), not **how names resolve**. The
+gateway's split-horizon DNS still answers a full-direct device's foreign lookups through the
+foreign resolver path (DoH detoured via the proxy), so the ANSWERS can be the
+proxy-region's CDN endpoints even though the device's traffic then travels to them directly.
+That asymmetry is by design — one shared DNS core serves every LAN client. If a device must
+also *resolve* directly, give it a direct DNS server via a DHCP reservation instead of the
+gateway (that device then loses fake-ip and split-horizon entirely — usually not what you
+want).

@@ -688,3 +688,54 @@ cat ../syno-mihomo-gateway-data/config/.config.yaml.rejected
 下一次渲染通过并重新部署后自动恢复 ok。注意：计划任务的自动更新健康门并**不**读取该
 标记——回退到上一份配置运行的网关在它看来是健康的——所以需要主动运行 doctor
 （安装器菜单 5，或 `gateway.sh doctor`）才能发现被拒绝的修改。
+
+## 网关面板：策略漂移（`policy_parity` ERROR）
+
+当面板保存的状态与 mihomo 实际的路由出现分歧时，doctor 的 `policy_parity`
+会变红（退出码 3）——原因可能是 count parity 回读失败，也可能是此前某次
+应用失败留下的持久标记 `panel-apply-failed` 仍未清除（两者任一即足够；
+该标记特意会在重启后依然存在）。处于这种状态下的策略变更是**已保存但
+尚未生效**：写入那一刻 CLI/API 返回的 `applied: false` 已经说明了这一点。
+
+按顺序恢复：
+
+1. 打开面板界面并点击**应用**（或带 bearer 令牌调用 `POST /v1/apply`）——
+   一次收敛的应用会清除该标记，`policy_parity` 会恢复为 `ok`。
+2. 如果应用持续失败，说明面板连不上 mihomo 控制器：先查
+   `companion_health`，再看 `sudo docker logs mihomo-panel`——两种日志
+   签名并不相同：`... -> HTTP 401` 表示 `CONTROLLER_SECRET` 在 `.env`
+   与正在运行的容器之间出现了漂移（请重新部署）；`... failed: <原因>`
+   （连接被拒/超时）才表示 mihomo 本身停止或不可达。
+3. `sudo docker restart mihomo-panel` 会重新执行启动时的再同步，把
+   `policy.db` 中完整的期望状态重新应用一遍。
+
+## 网关面板：每次修改都返回 403
+
+修改操作由 bearer 令牌把关。**每一次**修改都返回 403，说明要么
+`PANEL_SECRET` 为空（失败即停——空密钥会拒绝写入，而不会因此放行），
+要么你发送的令牌与容器持有的不一致。`gateway.sh policy` 本身就是从
+`.env` 读取密钥的，所以经 CLI 也返回 403，说明*容器*持有的是另一个
+值：说明最近一次部署之后 `.env` 又变过——重新部署，让 compose 把当前
+密钥重新传进去。
+
+## 网关面板：容器健康，但面板故障（fail-static）
+
+即使数据库层初始化失败（`state/panel` 挂载不可写、迁移出错），应用仍会
+返回 HTTP 200：这时 `/health` 会显示 `"db_ok": false`，进程看起来还活着，
+但每一次策略/统计操作都会失败。**部署门会拒绝这种状态**（`_check_panel`
+要求 `db_ok:true`，不满足就回滚），所以如果你在实际环境中遇到它，说明
+挂载点是在部署之后才发生变化的——检查属主：两个 bind mount 都应属于
+uid 10001（`ls -ln <data-dir>/config/providers <data-dir>/state/panel`），
+安装器的 `panel_prepare_dirs` 会在每次部署前建立好这一属主关系。修好
+属主后重启面板即可。
+
+## 网关面板：full-direct 设备，境外网站仍"感觉像在走代理"
+
+`full-direct` 决定的是**流量从哪里出口**（始终直连），而不是**域名如何
+解析**。网关的分域解析 DNS 依然会经境外解析器路径（DoH 绕行代理）回答
+一台 full-direct 设备的境外查询，所以拿到的**答案**仍可能是代理所在
+地区的 CDN 节点——即便设备随后是直连过去的。这种不对称是设计使然：
+所有局域网客户端共用同一套 DNS 核心。如果某台设备连*解析*也必须走
+直连，就该通过 DHCP 固定 IP 保留，给它指定一个直连 DNS 服务器，而不是
+网关的地址（这样一来该设备会彻底失去 fake-ip 与分域解析——通常并不是
+你想要的结果）。

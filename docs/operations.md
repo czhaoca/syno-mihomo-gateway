@@ -226,6 +226,63 @@ DSM 7, so from a plain script it can exit 0 without delivering anything. It is s
 (it works on DSM 6 and does not route through the gateway), but it is never relied on and never
 suppresses the webhook.
 
+## Gateway panel runbook
+
+The [panel](panel.md)'s state lives in `<data-dir>/state/panel/`: `policy.db` (device policy +
+audit log), `stats.db` (traffic history), and the automatic policy snapshots — every policy
+mutation writes a rotating `policy.db.bak-<timestamp>` **alongside `policy.db`** (the
+committed DB state, taken whether or not that apply reached mihomo; `PANEL_BACKUP_KEEP`
+kept, default 5; policy only — `stats.db` is derived history and gets no automatic backups).
+
+- **Backup now**: the newest `policy.db.bak-*` already IS a consistent snapshot — copy it
+  wherever your NAS backups go. For an on-demand snapshot (or to include the stats), take a
+  `VACUUM INTO` copy — consistent even while the panel runs; the target is a plain file in
+  the same directory (no subdirectory exists or is needed; the command removes a previous
+  manual snapshot first — `VACUUM INTO` refuses to overwrite):
+
+  ```sh
+  sudo docker exec mihomo-panel python3 -c "import os, sqlite3
+  for n in ('policy', 'stats'):
+      t = '/gw/state/%s-manual.db' % n
+      if os.path.exists(t): os.remove(t)
+      sqlite3.connect('/gw/state/%s.db' % n).execute(\"VACUUM INTO '%s'\" % t)"
+  sudo cp <data-dir>/state/panel/*-manual.db /your/backup/location/
+  ```
+
+- **Restore**: stop the panel, put the snapshot back in place, start it:
+
+  ```sh
+  sudo docker stop mihomo-panel
+  sudo cp <data-dir>/state/panel/policy.db.bak-<timestamp> <data-dir>/state/panel/policy.db
+  sudo docker start mihomo-panel
+  ```
+
+  The app re-runs its migrations on start; the doctor's `policy_parity` confirms the restored
+  policy re-applied to mihomo.
+
+- **Reset** (start over; removes every policy entry and all statistics):
+
+  ```sh
+  sudo docker stop mihomo-panel
+  sudo rm -rf <data-dir>/state/panel
+  sudo sh ./install.sh    # redeploy re-creates the dir with the right owner (uid 10001)
+  ```
+
+  The static `FULL_PROXY_SOURCES` band is untouched by a reset — it lives in `.env`.
+
+- **Purge statistics only** (policy stays): `POST /v1/stats/purge` with the bearer token —
+  see the [API reference](panel-api.md). Purging preserves the collector's accounting
+  baseline, so live connections are not double-counted afterwards.
+
+- **Retention** is automatic: minute→hour→day rollups with the `PANEL_STATS_*` windows and a
+  hard `PANEL_STATS_CAP_MB` cap (oldest tier trimmed first, honest gap rows for collector
+  downtime), and the policy snapshots rotate themselves to `PANEL_BACKUP_KEEP`. No cron
+  needed.
+
+- **Watch it**: `doctor.sh` — `companion_health` (down/degraded ⇒ warn) and `policy_parity`
+  (panel-vs-mihomo drift ⇒ **error exit 3**; see
+  [Troubleshooting](troubleshooting.md#panel-policy-drift-policy_parity-error)).
+
 ## Manual health checks
 
 Start with the purpose-built read-only diagnostic — it probes from inside the container's

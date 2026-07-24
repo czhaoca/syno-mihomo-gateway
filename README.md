@@ -6,7 +6,9 @@ A "git-pull-and-run" way to deploy **Mihomo (Clash Meta)** as a transparent gate
 **Synology NAS**, and it runs on **any Docker-capable Linux host (amd64 + arm64)**, Raspberry Pi
 included. Any device at home (Apple TV, iPhone, consoles) can route through it just by setting its
 gateway/DNS to the container's LAN IP — no client software. **MetaCubeXD** provides a web
-dashboard. The NAS remains the canonical, release-validated deployment (the other platforms are
+dashboard, and the **gateway panel** adds per-device policy (full-tunnel / full-direct / default,
+live without restarts) plus persistent traffic statistics.
+The NAS remains the canonical, release-validated deployment (the other platforms are
 experimental — [support tiers](docs/installation-linux.md#support-tiers)). Built for **mainland
 China**: by default image updates flow Docker Hub/ghcr → Alibaba ACR → your NAS
 (`REGISTRY_MODE=docker` opts in to pulling upstream directly on an unfiltered host), and a
@@ -38,6 +40,8 @@ DSM-scheduled job keeps everything current and safely self-healing.
 | [Auto-Update](docs/auto-update.md) | ACR setup, the run sequence, health-gate/rollback, generic enrolled targets, cloudflared blue-green, exit codes |
 | [Operations](docs/operations.md) | runbook: scheduling, dry-run, kill-switch, logs, notifications, rollback |
 | [CLI Reference](docs/cli.md) | `gateway.sh` verbs, options, guardrails, exit codes (generated from `scripts/cli/spec.yaml`) |
+| [Gateway Panel](docs/panel.md) | per-device policy (full-tunnel/full-direct/default), traffic stats, the UI/CLI/API surfaces, security model |
+| [Panel API](docs/panel-api.md) | the panel's HTTP surface (generated from `app/openapi.json`, additive-only `/v1`) |
 | [Troubleshooting](docs/troubleshooting.md) | FAQ + exit codes + concrete failure fixes |
 | [Development](docs/development.md) | internals (scripts, renderer, CI), coding rules, how to extend |
 

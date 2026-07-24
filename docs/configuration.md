@@ -143,10 +143,10 @@ for DNS and routing alike.
 
 ### Container images
 
-The three image refs are **derived** by `install.sh` from `REGISTRY_MODE` + the registry host +
+The image refs are **derived** by `install.sh` from `REGISTRY_MODE` + the registry host +
 namespace + the per-component tag, so you enter the registry/namespace **once** instead of per
 image. The auto-updater maps each `UPDATE_IMAGES` entry to a deploy target by an **exact match**
-against the three resolved refs (see [Auto-Update](auto-update.md#image-refs)).
+against the resolved refs (see [Auto-Update](auto-update.md#image-refs)).
 
 > **Fail-closed, ACR by default.** `docker-compose.yml` reads `${MIHOMO_IMAGE:?}` /
 > `${METACUBEXD_IMAGE:?}`, so `docker compose up` **fails loudly** if a ref is unset rather than
@@ -164,7 +164,29 @@ against the three resolved refs (see [Auto-Update](auto-update.md#image-refs)).
 | `CF_TAG` | | Tag used to derive the optional cloudflared ref. | `latest` |
 | `MIHOMO_IMAGE` | ✅ | Resolved mihomo image ref (the installer rewrites it from the above). | `registry.cn-shenzhen.aliyuncs.com/myns/mihomo:latest` |
 | `METACUBEXD_IMAGE` | ✅ | Resolved metacubexd image ref. | `registry.cn-shenzhen.aliyuncs.com/myns/metacubexd:latest` |
+| `PANEL_TAG` | | Tag used to derive the panel ref. | `latest` |
+| `PANEL_IMAGE` | ✅ | Resolved [gateway panel](panel.md) image ref. In `acr` mode it derives like the pair (your ACR carries `mihomo-panel`, kept published by the image pipeline); in `docker` mode there is **no third-party upstream** — it derives only from `PANEL_UPSTREAM`, or you set this ref by hand. | `registry.cn-shenzhen.aliyuncs.com/myns/mihomo-panel:latest` |
+| `PANEL_UPSTREAM` | | `docker` mode only: a registry path **you control** for the panel image (e.g. your own mirror). Empty (the default) means the installer cannot derive `PANEL_IMAGE` in `docker` mode and keeps whatever the ref already is. | *(unset)* |
 | `CF_IMAGE` | Upd | Resolved cloudflared ref. Blank if not managing cloudflared. | `registry.cn-shenzhen.aliyuncs.com/myns/cloudflared:latest` |
+
+### Gateway panel
+
+Runtime knobs for the [panel](panel.md) container (the `PANEL_IMAGE`/`PANEL_TAG`/`PANEL_UPSTREAM`
+ref knobs live in the image table above). `PANEL_IP` + `PANEL_IMAGE` are compose-fail-closed
+(`${VAR:?}`): a pre-panel `.env` refuses to deploy until the installer migration supplies them.
+
+| Key | Req | Sec | Description | Example |
+|---|:--:|:--:|---|---|
+| `PANEL_IP` | ✅ | | The panel's own macvlan seat: a **spare** LAN IPv4 on the gateway's subnet (the installer asks, validates, and conflict-checks it; it must differ from `MIHOMO_IP`). | `192.168.1.101` |
+| `PANEL_SECRET` | ✅ | 🔒 | Bearer token for every panel **mutation** (the installer generates 32 hex chars). Empty = all mutations refused (fail closed); reads stay LAN-open either way. | `…` |
+| `PANEL_PORT` | | | The app's HTTP port (UI + API). | `8090` |
+| `PANEL_STATS_POLL_S` | | | Collector poll interval, seconds (default 10). | `10` |
+| `PANEL_STATS_MINUTE_HOURS` | | | Minute-tier retention, hours (default 48). | `48` |
+| `PANEL_STATS_HOUR_DAYS` | | | Hour-tier retention, days (default 90). | `90` |
+| `PANEL_STATS_DAY_DAYS` | | | Day-tier retention, days (default 730). | `730` |
+| `PANEL_STATS_CAP_MB` | | | Hard cap on `stats.db` (default 512); the oldest tier is trimmed first when it is hit. | `512` |
+| `PANEL_STATS_DOMAINS` | | | Opt-in per-device domain breakdown (`true`/`1`; off by default — domain rows always keep a forced 7-day retention). | `false` |
+| `PANEL_BACKUP_KEEP` | | | Rotating `policy.db.bak-<timestamp>` snapshots kept **alongside `policy.db`** (taken on every policy mutation — the committed DB state, whether or not that apply reached mihomo; policy only — `stats.db` is derived history and is not auto-backed-up; default 5). | `5` |
 
 ### Private registry / Alibaba ACR (used when `REGISTRY_MODE=acr`)
 
@@ -337,6 +359,12 @@ rule**, so a band device still reaches LAN destinations DIRECT, but **everything
 streaming and CN sites alike — rides the `Full-Tunnel Devices` group** (strict semantics: no
 CN short-circuit for these sources). Unset, nothing renders and the config stays
 **byte-identical** — the feature is invisible until you opt in.
+
+> **Day-to-day flips belong to the [gateway panel](panel.md).** Its dynamic entries render
+> into the always-on `dyn-full-direct` / `dyn-full-tunnel` rule files that sit **above** this
+> static band, override it per address, and apply live — no re-render, no restart. The band
+> stays the declarative deploy-time baseline (it survives a panel reset); the panel is the
+> operational authority.
 
 **The `Full-Tunnel Devices` group** is a dashboard selector. Members:
 

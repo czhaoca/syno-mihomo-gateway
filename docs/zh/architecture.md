@@ -36,6 +36,7 @@
 |---|---|---|
 | **mihomo** | 本仓库，容器 `mihomo` | 代理引擎。特权运行，位于 macvlan 上并具有静态 LAN IP（`MIHOMO_IP`）。在 `:53` 提供 DNS，在 `:CONTROLLER_PORT` 提供 RESTful 控制器，并提供代理端口 `7890-7894`。启动时基于模板渲染自己的配置。 |
 | **metacubexd** | 本仓库，容器 `mihomo-ui` | 静态 Web 仪表盘（桥接网络，发布在 NAS 主机 IP 的 `WEB_UI_PORT` 上）。浏览器直接与控制器通信；该容器只负责提供这个 SPA。 |
+| **panel** | 本仓库，容器 `mihomo-panel` | [网关面板](panel.md)：分设备的动态策略（full-tunnel / full-direct / default，即时生效免重启）+ 持久化的流量统计。FastAPI 应用，拥有自己的 macvlan 席位（`PANEL_IP:PANEL_PORT`），以 uid 10001 运行，只挂载 mihomo 的 provider 目录 + 它自己的 `state/panel`。写入 SRC-IP 规则文件并经控制器热重载；doctor 的 `companion_health` / `policy_parity` 会监视它。 |
 | **cloudflared** | **外部**（不在本 compose 中） | 可选的 Cloudflare Tunnel。由自动更新器通过蓝绿方式*按名称*管理。让你无需开放端口即可从外部访问仪表盘/NAS。 |
 | **已登记的通用目标** | **外部**（NAS 上的任意容器） | 可选择加入的自动更新目标：通过 `gateway.sh update --enable` 登记的容器，由更新器带分层健康门原地重建。参见[自动更新](auto-update.md)。 |
 | **auto_update.sh** | 本仓库，`scripts/` | DSM 计划任务作业：拉取 compose 镜像、cloudflared 以及每一个已登记的通用目标；检测真实变更；按波及面从小到大严格串行应用（健康门 + 回滚）；记录 `state/last-run.json`；发送通知。 |
@@ -74,13 +75,14 @@ flowchart LR
   subgraph GH["docker-china-sync (GitHub Actions, self-hosted runner)"]
     A["images.txt<br/>(mihomo, metacubexd,<br/>cloudflared, ...)"] -->|nightly 23:00 UTC| B["pull upstream<br/>(Docker Hub / ghcr)"]
     B --> C["push to Alibaba ACR<br/>REGISTRY/NS/&lt;image:tag&gt;"]
+    P["panel-build.yaml<br/>(tag-driven: 本仓库最新发布)"] -->|"buildx amd64+arm64<br/>app/ → ghcr + ACR 镜像"| C
   end
   subgraph NAS["Synology NAS (this repo)"]
     D["DSM Task Scheduler<br/>(root, daily)"] --> E["scripts/auto_update.sh"]
     E -->|"pull + digest diff"| C
     E -->|"1. recreate in place"| I["enrolled generic containers"]
     E -->|"2. blue-green by name"| G["cloudflared (external)"]
-    E -->|"3. compose up -d (LAST)"| F["mihomo + metacubexd"]
+    E -->|"3. compose up -d (LAST)"| F["mihomo + metacubexd + panel"]
     E -->|"notify + record"| H["synodsmnotify / webhook<br/>logs/ + state/last-run.json"]
   end
 ```
@@ -91,8 +93,9 @@ flowchart LR
  docker-china-sync (GitHub Actions)                     Synology NAS (this repo)
  images.txt → pull upstream → push to ACR   ◄──pull──   DSM Task Scheduler → auto_update.sh
    (nightly 23:00 UTC)                                    ├─ 1. recreate in place → enrolled generic containers
-   ACR: REGISTRY/NS/<image:tag>                           ├─ 2. blue-green → cloudflared (external)
-                                                          ├─ 3. compose up -d → mihomo + metacubexd (LAST)
+ panel-build.yaml → buildx app/ (amd64+arm64)             ├─ 2. blue-green → cloudflared (external)
+   → ghcr + ACR mirror (tag-driven, idempotent)           ├─ 3. compose up -d → mihomo + metacubexd + panel (LAST)
+   ACR: REGISTRY/NS/<image:tag>                           │
                                                           └─ synodsmnotify/webhook + ../syno-mihomo-gateway-data/
                                                              logs/ + state/last-run.json
 ```

@@ -138,6 +138,13 @@ Every key is documented in [Configuration](configuration.md). Runtime data is st
 the release directory so a ZIP upgrade cannot delete it. `bootstrap.sh` also migrates a legacy
 in-tree `.env` automatically.
 
+The [gateway panel](panel.md) needs two more knobs the guided installer handles for you:
+`PANEL_IP` — a **spare** LAN address for the panel's own macvlan seat (prompted, subnet- and
+conflict-checked; on the manual path pick one yourself and record it wherever you track your
+LAN's address allocations) — and `PANEL_SECRET` (generated). Upgrading from a pre-panel
+install is the same flow: re-run `sudo sh ./install.sh` and the precheck migrates your `.env`
+non-interactively where derivable, asking only for `PANEL_IP`.
+
 ## 3. Add your subscription
 
 ```bash
@@ -220,6 +227,9 @@ From a **LAN device that is not the NAS** (see the macvlan caveat in
    not the mihomo IP.
 2. Add backend: **Host** = `MIHOMO_IP` (e.g. `192.168.1.100`), **Port** = `CONTROLLER_PORT`
    (default `9090`), **Secret** = your `CONTROLLER_SECRET` (blank if empty).
+
+The [gateway panel](panel.md) has its own page at `http://<PANEL_IP>:8090/ui/` — per-device
+policy flips and traffic history. LAN-only by design: never port-forward or tunnel to it.
 
 ## 7. Point devices at the gateway
 
