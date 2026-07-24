@@ -271,7 +271,7 @@ acr_login            || { notify "Mihomo Gateway: update aborted" "ACR login fai
 
 # --- Detect changes (pull, arch-check, compare running-vs-local) ---
 compose_changed=0; cf_changed=0; changed_any=0; fail=0
-mihomo_old=""; meta_old=""; summary=""
+mihomo_old=""; meta_old=""; panel_old=""; summary=""
 updated_n=0; unchanged_n=0; failed_n=0; rolled_n=0
 updated_names=""; failed_names=""; rolled_names=""
 compose_marked=0; compose_marked_names=""
@@ -308,7 +308,17 @@ for img in $UPDATE_IMAGES; do
       else
         unchanged_n=$((unchanged_n + 1))
       fi ;;
-    "$CF_IMAGE")
+    "${PANEL_IMAGE:-}")
+      if deploy_needed "$img" "${PANEL_CONTAINER:-mihomo-panel}"; then
+        compose_changed=1; changed_any=1; compose_marked=$((compose_marked + 1))
+        compose_marked_names="$compose_marked_names panel"
+        panel_old="$(running_image_id "${PANEL_CONTAINER:-mihomo-panel}")"
+        summary="$summary
+- update: panel"
+      else
+        unchanged_n=$((unchanged_n + 1))
+      fi ;;
+    "${CF_IMAGE:-}")
       if deploy_needed "$img" "$CF_CONTAINER_NAME"; then
         cf_changed=1; changed_any=1
         summary="$summary
@@ -317,7 +327,7 @@ for img in $UPDATE_IMAGES; do
         unchanged_n=$((unchanged_n + 1))
       fi ;;
     *)
-      log_warn "pulled but mapped to NO deploy target (cache only): $img -- set MIHOMO_IMAGE/METACUBEXD_IMAGE/CF_IMAGE to this ref if it should drive a deploy" ;;
+      log_warn "pulled but mapped to NO deploy target (cache only): $img -- set MIHOMO_IMAGE/METACUBEXD_IMAGE/PANEL_IMAGE/CF_IMAGE to this ref if it should drive a deploy" ;;
   esac
 done
 
@@ -444,7 +454,7 @@ if [ "$compose_changed" -eq 1 ]; then
 - compose: applied + healthy"
     else
       log_error "health gate failed - rolling back to last-good image(s)"
-      if rollback_compose "$mihomo_old" "$meta_old" && health_gate; then
+      if rollback_compose "$mihomo_old" "$meta_old" "$panel_old" && health_gate; then
         rolled_n=$((rolled_n + compose_marked)); rolled_names="$rolled_names$compose_marked_names"; summary="$summary
 - compose: FAILED health -> ROLLED BACK to last-good (now healthy)"
       else
@@ -455,7 +465,7 @@ if [ "$compose_changed" -eq 1 ]; then
     fi
   else
     log_error "docker compose up -d failed"
-    if rollback_compose "$mihomo_old" "$meta_old" && health_gate; then
+    if rollback_compose "$mihomo_old" "$meta_old" "$panel_old" && health_gate; then
       rolled_n=$((rolled_n + compose_marked)); rolled_names="$rolled_names$compose_marked_names"; summary="$summary
 - compose: APPLY FAILED -> ROLLED BACK to last-good (now healthy)"
     else

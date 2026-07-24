@@ -91,6 +91,65 @@ services:
     depends_on:
       - mihomo
 
+  panel:
+    # The gateway panel (dynamic device policy + persistent stats). Fail-closed
+    # like the other two: an unset PANEL_IMAGE stops the deploy loudly. Own
+    # macvlan seat so LAN clients reach it directly (a macvlan child is
+    # unreachable from its own host; scripts and the doctor go in via docker
+    # exec instead - scripts/lib/panel.sh).
+    image: ${PANEL_IMAGE:?set PANEL_IMAGE in .env - run ./install.sh}
+    container_name: mihomo-panel
+    restart: always
+    networks:
+      tproxy_network:
+        ipv4_address: ${PANEL_IP:?set PANEL_IP in .env - run ./install.sh}
+    mem_limit: 256m
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+    volumes:
+      # Least privilege: ONLY the provider write surface and the panel's OWN
+      # state subdir - never the data-dir root (.env, subscription.txt) and
+      # never state/ itself (the updater's last-run.json / update-targets /
+      # last-good live there and must stay out of the panel's reach).
+      - ${GATEWAY_DATA_DIR:-../syno-mihomo-gateway-data}/config/providers:/gw/config/providers
+      - ${GATEWAY_DATA_DIR:-../syno-mihomo-gateway-data}/state/panel:/gw/state
+    environment:
+      - TZ=${TZ}
+      # The app's env contract (app/config.py). GATEWAY_DATA_DIR points at
+      # the in-container tree above; the provider dir is the #63 write
+      # contract inside the mihomo config volume.
+      - GATEWAY_DATA_DIR=/gw
+      - PANEL_PROVIDERS_DIR=/gw/config/providers
+      # The controller seat, built from the same knobs mihomo renders with -
+      # the app reads ONE base URL, never the parts.
+      - PANEL_MIHOMO_URL=http://${MIHOMO_IP}:${CONTROLLER_PORT}
+      - CONTROLLER_SECRET=${CONTROLLER_SECRET}
+      # Panel auth (DEC-6): empty = reads open, ALL mutations refused.
+      - PANEL_SECRET=${PANEL_SECRET:-}
+      # Self-address guards (the validation layer refuses policy entries
+      # covering either) + the band badge source.
+      - MIHOMO_IP=${MIHOMO_IP}
+      - PANEL_IP=${PANEL_IP}
+      - FULL_PROXY_SOURCES=${FULL_PROXY_SOURCES:-}
+      # The UI's MetaCubexD deep-link port (DEC-12: node ops stay there).
+      - PANEL_DASHBOARD_PORT=${WEB_UI_PORT:-8080}
+      # Loud-failure webhook (scripts/lib/notify.sh {title,body} contract).
+      - NOTIFY_WEBHOOK_URL=${NOTIFY_WEBHOOK_URL:-}
+      # Stats knobs (all optional; app defaults documented in .env.example).
+      - PANEL_STATS_POLL_S=${PANEL_STATS_POLL_S:-}
+      - PANEL_STATS_MINUTE_HOURS=${PANEL_STATS_MINUTE_HOURS:-}
+      - PANEL_STATS_HOUR_DAYS=${PANEL_STATS_HOUR_DAYS:-}
+      - PANEL_STATS_DAY_DAYS=${PANEL_STATS_DAY_DAYS:-}
+      - PANEL_STATS_CAP_MB=${PANEL_STATS_CAP_MB:-}
+      - PANEL_STATS_DOMAINS=${PANEL_STATS_DOMAINS:-}
+      - PANEL_BACKUP_KEEP=${PANEL_BACKUP_KEEP:-}
+      - PANEL_PORT=${PANEL_PORT:-8090}
+    depends_on:
+      - mihomo
+
 networks:
   tproxy_network:
     external: true

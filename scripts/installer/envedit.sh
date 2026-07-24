@@ -20,6 +20,10 @@
 # the committed-file CI policy is unaffected), only into the gitignored .env.
 MIHOMO_UPSTREAM="docker.io/metacubex/mihomo"
 METACUBEXD_UPSTREAM="ghcr.io/metacubex/metacubexd"
+# The panel has NO third-party upstream: its docker-mode ref must come from
+# the operator (PANEL_UPSTREAM here or a hand-set PANEL_IMAGE). The empty
+# default keeps the shipped installer identity-free (package.sh leak-gate).
+PANEL_UPSTREAM="${PANEL_UPSTREAM:-}"
 CF_UPSTREAM="docker.io/cloudflare/cloudflared"
 
 # env_get KEY - print the current value of KEY from $ENV_FILE (one layer of
@@ -96,11 +100,18 @@ derive_ref() {
   case "$_mode" in
     acr)
       [ -n "${DOCKER_REGISTRY:-}" ] && [ -n "${ACR_NAMESPACE:-}" ] || return 1
-      printf '%s/%s/%s:%s' "$DOCKER_REGISTRY" "$ACR_NAMESPACE" "$_base" "$_tag" ;;
+      # image-name mapping: the panel publishes as 'mihomo-panel' on both
+      # sides (GHCR upstream + the ACR mirror keep the same last segment)
+      _name="$_base"
+      [ "$_base" = panel ] && _name=mihomo-panel
+      printf '%s/%s/%s:%s' "$DOCKER_REGISTRY" "$ACR_NAMESPACE" "$_name" "$_tag" ;;
     docker)
       case "$_base" in
         mihomo)      printf '%s:%s' "$MIHOMO_UPSTREAM" "$_tag" ;;
         metacubexd)  printf '%s:%s' "$METACUBEXD_UPSTREAM" "$_tag" ;;
+        panel)
+          [ -n "$PANEL_UPSTREAM" ] || return 1
+          printf '%s:%s' "$PANEL_UPSTREAM" "$_tag" ;;
         cloudflared) printf '%s:%s' "$CF_UPSTREAM" "$_tag" ;;
         *) return 1 ;;
       esac ;;
@@ -127,6 +138,17 @@ derive_images() {
     || { ui_error "could not derive MIHOMO_IMAGE"; return 1; }
   METACUBEXD_IMAGE="$(derive_ref metacubexd "${METACUBEXD_TAG:-latest}")" \
     || { ui_error "could not derive METACUBEXD_IMAGE"; return 1; }
+  # Tolerant, unlike the pair: docker mode has no derivable panel ref until
+  # the operator supplies PANEL_UPSTREAM (or PANEL_IMAGE directly). Any
+  # existing value is kept - a previously working ref beats a blank - and
+  # compose stays fail-closed (${PANEL_IMAGE:?}) until one exists.
+  if _di_p="$(derive_ref panel "${PANEL_TAG:-latest}")"; then
+    PANEL_IMAGE="$_di_p"
+    env_set PANEL_IMAGE "$PANEL_IMAGE" || return 1
+  else
+    ui_warn "PANEL_IMAGE not derivable in docker mode - keeping the current value; set PANEL_UPSTREAM or PANEL_IMAGE in .env" 2>/dev/null \
+      || printf '%s\n' "WARN: PANEL_IMAGE not derivable in docker mode - set PANEL_UPSTREAM or PANEL_IMAGE in .env" >&2
+  fi
 
   env_set REGISTRY_MODE "$_mode" || return 1
   env_set MIHOMO_IMAGE "$MIHOMO_IMAGE" || return 1
@@ -135,6 +157,6 @@ derive_images() {
     DOCKER_REGISTRY=""
     env_set DOCKER_REGISTRY "" || return 1
   fi
-  export REGISTRY_MODE MIHOMO_IMAGE METACUBEXD_IMAGE DOCKER_REGISTRY
+  export REGISTRY_MODE MIHOMO_IMAGE METACUBEXD_IMAGE PANEL_IMAGE DOCKER_REGISTRY
   return 0
 }

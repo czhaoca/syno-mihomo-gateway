@@ -41,6 +41,13 @@ seed_config() {
     # on this fresh-copy branch: an existing .env is never touched.
     env_set MIHOMO_IMAGE ''
     env_set METACUBEXD_IMAGE ''
+    # Same rule for the panel knobs (#68): the example's your-namespace image
+    # placeholder must never survive to a pull, and the placeholder PANEL_IP
+    # would skip the ask (and its conflict check) whenever the real subnet
+    # happens to match the example's. Blanked, _pc_panel_backfill derives
+    # the ref and always asks on the fresh path.
+    env_set PANEL_IMAGE ''
+    env_set PANEL_IP ''
   else
     diagnose "$(msg diag_no_example)" "$(msg diag_no_example_fix)"
     return 1
@@ -543,6 +550,85 @@ _pc_backfill_pair() {
   return 0
 }
 
+# panel_secret_generate - 32 hex chars from the kernel RNG (BusyBox od).
+# Prints the token; callers persist it - it is never logged.
+panel_secret_generate() {
+  _psg="$(head -c 16 /dev/urandom 2>/dev/null | od -An -v -tx1 | tr -d ' \n')"
+  [ "${#_psg}" = 32 ] || return 1
+  printf '%s' "$_psg"
+}
+
+# _pc_panel_backfill - upgrade path for a pre-panel .env (the #55 backfill
+# discipline): derive PANEL_IMAGE from the SAME registry mode as the other
+# refs, GENERATE a PANEL_SECRET when absent (DEC-6: empty means every panel
+# change is refused - generation makes the fresh/upgraded install usable),
+# and ask for PANEL_IP - the one knob with no derivable safe value (only
+# the operator knows a free LAN IP). Compose stays fail-closed
+# (${PANEL_IMAGE:?}) until this supplies the knobs.
+_pc_panel_backfill() {
+  _pp_img="$(env_get PANEL_IMAGE 2>/dev/null || echo '')"
+  _pp_resync=0
+  if [ -z "$_pp_img" ]; then
+    _pc_fixed=1
+    _pp_resync=1
+    _pp_new="$(derive_ref panel "$(env_get PANEL_TAG 2>/dev/null || echo latest)")" || _pp_new=""
+    if [ -n "$_pp_new" ]; then
+      env_set PANEL_IMAGE "$_pp_new" || return 1
+      ui_ok "$(msgf backfill_wrote PANEL_IMAGE "$_pp_new")"
+    else
+      ui_warn "$(msg precheck_images)"
+      wizard_images || return 1
+    fi
+  fi
+  _pp_sec="$(env_get PANEL_SECRET 2>/dev/null || echo '')"
+  if [ -z "$_pp_sec" ]; then
+    _pc_fixed=1
+    if _pp_gen="$(panel_secret_generate)"; then
+      env_set PANEL_SECRET "$_pp_gen" || return 1
+      ui_ok "$(msg panel_secret_generated)"
+    else
+      ui_warn "$(msg panel_secret_manual)"
+    fi
+  fi
+  _pp_ip="$(env_get PANEL_IP 2>/dev/null || echo '')"
+  _pp_cidr="$(env_get SUBNET_CIDR 2>/dev/null || echo '')"
+  # A saved value equal to MIHOMO_IP is as unusable as a malformed one -
+  # force it through the ask (which refuses the equality + conflicts).
+  if ! is_ipv4 "$_pp_ip" || { [ -n "$_pp_cidr" ] && ! ipv4_in_cidr "$_pp_ip" "$_pp_cidr"; } \
+     || [ "$_pp_ip" = "$(env_get MIHOMO_IP 2>/dev/null || echo '')" ]; then
+    _pc_fixed=1
+    ui_warn "$(msgf precheck_bad PANEL_IP "$_pp_ip")"
+    _pp_tries=0
+    while :; do
+      _pp_tries=$((_pp_tries + 1))
+      # BOUNDED: a non-interactive caller (or a wrong answer repeated) must
+      # fail the precheck loudly, never spin - the flow is re-runnable.
+      if [ "$_pp_tries" -gt 5 ]; then
+        ui_warn "$(msgf precheck_bad PANEL_IP "${_pp_nip:-}")"
+        return 1
+      fi
+      ui_ask_validated _pp_nip "$(msg q_panel_ip)" "${_pp_ip:-$(example_default PANEL_IP)}" is_ipv4
+      if [ -n "$_pp_cidr" ] && ! ipv4_in_cidr "$_pp_nip" "$_pp_cidr"; then
+        ui_warn "$(msgf precheck_bad PANEL_IP "$_pp_nip")"
+        continue
+      fi
+      if [ "$_pp_nip" = "$(env_get MIHOMO_IP 2>/dev/null || echo '')" ]; then
+        ui_warn "$(msgf precheck_bad PANEL_IP "$_pp_nip")"
+        continue
+      fi
+      check_ip_conflict "$_pp_nip" && break
+    done
+    env_set PANEL_IP "$_pp_nip" || return 1
+  fi
+  # A newly derived panel ref must join UPDATE_IMAGES in the same pass: a
+  # pre-panel .env carries the CONCRETE trio (not the expandable template),
+  # and validate_update_config fails a set-but-unmapped PANEL_IMAGE.
+  if [ "$_pp_resync" = 1 ]; then
+    resolve_update_images || return 1
+  fi
+  return 0
+}
+
 precheck_env() {
   ui_step "$(msg precheck_step)"
   _pc_fixed=0
@@ -580,6 +666,8 @@ precheck_env() {
     ui_warn "$(msg precheck_images)"
     wizard_images || return 1
   fi
+  # Gateway panel (Sequence 60): migrate a pre-panel .env in the same pass.
+  _pc_panel_backfill || return 1
   load_env
   [ "$_pc_fixed" = 0 ] && ui_ok "$(msg precheck_ok)"
   return 0

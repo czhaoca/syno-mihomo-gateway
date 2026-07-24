@@ -321,6 +321,14 @@ UPDATE_IMAGES="$UPDATE_IMAGES $CF_IMAGE"
 expect_success "configured cloudflared mapping accepted" validate_update_config
 CF_IMAGE=
 UPDATE_IMAGES="$MIHOMO_IMAGE $METACUBEXD_IMAGE"
+# panel quartet (#68): a SET PANEL_IMAGE must be mapped; unset stays valid
+# (a pre-panel .env keeps updating its trio untouched)
+PANEL_IMAGE=acr.example/mihomo-panel:latest
+expect_failure "configured panel must be mapped in UPDATE_IMAGES" validate_update_config
+UPDATE_IMAGES="$UPDATE_IMAGES $PANEL_IMAGE"
+expect_success "configured panel mapping accepted" validate_update_config
+PANEL_IMAGE=
+UPDATE_IMAGES="$MIHOMO_IMAGE $METACUBEXD_IMAGE"
 UPDATE_ENABLED=False
 expect_failure "invalid kill-switch value is rejected" validate_update_config
 UPDATE_ENABLED=true
@@ -428,6 +436,18 @@ assert_contains "mihomo rollback tag applied" "$ROLLBACK_DOCKER" "tag sha256:old
 assert_contains "UI rollback tag applied" "$ROLLBACK_DOCKER" "tag sha256:old-ui $METACUBEXD_IMAGE"
 assert_contains "rollback forbids implicit pull" "$ROLLBACK_COMPOSE" "--pull never"
 expect_failure "rollback without prior image is unavailable" rollback_compose "" ""
+
+# panel joins the rollback set (#68): the optional third id re-tags
+# PANEL_IMAGE; a panel-only rollback is also valid
+PANEL_IMAGE=acr.example/mihomo-panel:latest
+: > "$MOCK_DOCKER_CALLS"; : > "$MOCK_COMPOSE_CALLS"
+expect_success "rollback re-tags the panel too" rollback_compose sha256:old-mihomo sha256:old-ui sha256:old-panel
+assert_contains "panel rollback tag applied" "$(cat "$MOCK_DOCKER_CALLS")" "tag sha256:old-panel $PANEL_IMAGE"
+: > "$MOCK_DOCKER_CALLS"; : > "$MOCK_COMPOSE_CALLS"
+expect_success "panel-only rollback is valid" rollback_compose "" "" sha256:old-panel
+assert_contains "panel-only rollback tagged" "$(cat "$MOCK_DOCKER_CALLS")" "tag sha256:old-panel $PANEL_IMAGE"
+expect_failure "rollback with no ids stays unavailable" rollback_compose "" "" ""
+PANEL_IMAGE=
 
 # Orchestrator integration tests. Source the entrypoint without running it, then
 # replace every host/Docker side effect with a trace function.
@@ -764,6 +784,88 @@ if [ "$_nrc" -eq 0 ]; then
 else
   FAIL=$((FAIL + _nrc))
 fi
+
+# --- _check_panel deploy gate (#68): skip-if-unset, db_ok-gated (a bare
+# HTTP 200 is NOT health - the app serves 200 fail-static), bounded tries.
+fake_panel_docker() {
+  case "$*" in
+    *'{{.State.Running}}'*) echo "${FAKE_PANEL_RUNNING:-true}"; return 0 ;;
+    'exec '*) return "${FAKE_PANEL_EXEC_RC:-0}" ;;
+  esac
+  return 0
+}
+_old_docker_bin="${DOCKER_BIN:-}"
+DOCKER_BIN=fake_panel_docker
+HEALTH_INTERVAL=0
+PANEL_IMAGE=''
+expect_success "unset PANEL_IMAGE skips the panel gate" _check_panel
+PANEL_IMAGE=p
+FAKE_PANEL_RUNNING=true FAKE_PANEL_EXEC_RC=0
+expect_success "running panel with db_ok passes the gate" _check_panel
+FAKE_PANEL_EXEC_RC=1
+expect_failure "panel without db_ok fails the gate" _check_panel
+FAKE_PANEL_RUNNING=false FAKE_PANEL_EXEC_RC=0
+expect_failure "stopped panel fails the gate" _check_panel
+DOCKER_BIN="$_old_docker_bin"; PANEL_IMAGE=''
+unset FAKE_PANEL_RUNNING FAKE_PANEL_EXEC_RC
+
+# --- UPDATE_IMAGES template literal stays expandable (#68 regression): the
+# strict dotenv loader never expands ${...}, so load_env's compat shim must
+# recognize the EXACT literal .env.example ships - otherwise every fresh
+# install fails validate_update_config before its first update.
+_tpl="$(sed -n 's/^UPDATE_IMAGES="\(.*\)"$/\1/p' "$ROOT/.env.example")"
+[ -n "$_tpl" ] || fail ".env.example lost its UPDATE_IMAGES row"
+if grep -qF "'$_tpl'" "$ROOT/scripts/lib/common.sh"; then
+  ok
+else
+  fail "common.sh load_env shim does not recognize .env.example's UPDATE_IMAGES literal: $_tpl"
+fi
+
+# --- Panel quartet orchestration (#68): a panel-only image update marks the
+# compose set, captures panel_old, and a failed health gate hands it to
+# rollback_compose's THIRD argument end-to-end.
+if (
+  load_env() {
+    GATEWAY_DATA_DIR="$TMP/gwdata"; LOG_FILE="$TMP/orchestrator.log"; UPDATE_ENABLED=true; UPDATE_IMAGES="m u p"
+    MIHOMO_IMAGE=m; METACUBEXD_IMAGE=u; PANEL_IMAGE=p; CF_IMAGE=; CF_CONTAINER_NAME=cloudflared
+    MIHOMO_CONTAINER=mihomo; METACUBEXD_CONTAINER=mihomo-ui; PANEL_CONTAINER=mihomo-panel
+    NOTIFY_ON_NOCHANGE=0
+  }
+  rotate_log() { :; }
+  acquire_lock() { :; }
+  release_lock() { :; }
+  detect_compose() { DOCKER_BIN=true; return 0; }
+  docker_daemon_ready() { return 0; }
+  validate_update_config() { return 0; }
+  check_arch_expectation() { return 0; }
+  check_tun() { return 0; }
+  check_network() { return 0; }
+  compose_config_check() { return 0; }
+  acr_login() { return 0; }
+  pull_image() { return 0; }
+  arch_ok() { return 0; }
+  mihomo_auto_redirect_probe() { return 0; }
+  deploy_needed() { [ "$1" = p ]; }
+  running_image_id() { printf '%s' sha256:panelold; }
+  compose_up_local() { printf '%s\n' compose-apply >> "$TRACE"; return 0; }
+  health_gate() {
+    if [ -e "$TMP/hg.once" ]; then return 0; fi
+    : > "$TMP/hg.once"; return 1
+  }
+  rollback_compose() { printf 'rollback:%s|%s|%s\n' "${1:-}" "${2:-}" "${3:-}" >> "$TRACE"; return 0; }
+  notify() { :; }
+  cloudflared_cleanup_candidate() { :; }
+  rm -f "$TMP/hg.once"; : > "$TRACE"
+  auto_update_main
+); then
+  fail "panel health-gate failure should exit partial"
+else
+  _rc=$?
+  if [ "$_rc" -eq "$EXIT_PARTIAL" ]; then ok; else fail "panel rollback exit code (got $_rc)"; fi
+fi
+PANEL_TRACE="$(cat "$TRACE")"
+assert_contains "panel-only update applies compose" "$PANEL_TRACE" "compose-apply"
+assert_contains "panel_old reaches rollback_compose's third argument" "$PANEL_TRACE" "rollback:||sha256:panelold"
 
 if [ "$FAIL" -ne 0 ]; then
   printf 'FAILED: %s passed, %s failed\n' "$PASS" "$FAIL" >&2

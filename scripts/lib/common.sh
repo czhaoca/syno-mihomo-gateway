@@ -182,10 +182,14 @@ load_env() {
   # Only derivations that DEPEND on loaded .env values may live below.
 
   # Backward compatibility with the pre-1.2.11 template. The strict loader
-  # intentionally does not perform arbitrary shell expansion.
+  # intentionally does not perform arbitrary shell expansion, so each template
+  # generation's literal must be recognized here (auto_update_check.sh pins
+  # .env.example's current literal against this case).
   case "${UPDATE_IMAGES:-}" in
     ''|'${MIHOMO_IMAGE} ${METACUBEXD_IMAGE} ${CF_IMAGE}')
       UPDATE_IMAGES="${MIHOMO_IMAGE:-} ${METACUBEXD_IMAGE:-} ${CF_IMAGE:-}" ;;
+    '${MIHOMO_IMAGE} ${METACUBEXD_IMAGE} ${PANEL_IMAGE} ${CF_IMAGE}')
+      UPDATE_IMAGES="${MIHOMO_IMAGE:-} ${METACUBEXD_IMAGE:-} ${PANEL_IMAGE:-} ${CF_IMAGE:-}" ;;
   esac
   export UPDATE_IMAGES
 

@@ -91,6 +91,7 @@ prepare_stack() {
   ensure_subscription || return 1
   PREVIOUS_MIHOMO_IMAGE_ID="$(running_image_id "$MIHOMO_CONTAINER")"
   PREVIOUS_METACUBEXD_IMAGE_ID="$(running_image_id "$METACUBEXD_CONTAINER")"
+  PREVIOUS_PANEL_IMAGE_ID="$(running_image_id "${PANEL_CONTAINER:-mihomo-panel}")"
   if [ "${REGISTRY_MODE:-acr}" = "acr" ]; then
     try "$(msg diag_acr_login)" "$(msg diag_acr_login_fix)" -- acr_login || { _show_log_tail; return 1; }
   else
@@ -98,8 +99,9 @@ prepare_stack() {
   fi
 
   # `docker compose up -d` pulls any missing images itself; do an explicit arch
-  # check first so we never start an unrunnable image.
-  for _img in "$MIHOMO_IMAGE" "$METACUBEXD_IMAGE"; do
+  # check first so we never start an unrunnable image. The panel ref joins the
+  # loop (#68) so a bad/unpullable panel image fails HERE, before any teardown.
+  for _img in "$MIHOMO_IMAGE" "$METACUBEXD_IMAGE" "${PANEL_IMAGE:-}"; do
     [ -n "$_img" ] || continue
     ui_info "$(msgf info_pulling "$_img")"
     try "$(msgf diag_pull_fail "$_img")" "$(msg diag_pull_fail_fix)" -- pull_image "$_img" || { _show_log_tail; return 1; }
@@ -160,6 +162,7 @@ prepare_stack() {
       ui_warn "$(msg warn_geodata)"
     fi
   fi
+  panel_prepare_dirs   # hand the panel's bind mounts to its uid before compose up
   return 0
 }
 
@@ -175,9 +178,10 @@ _deploy_teardown_notice() {
 }
 
 rollback_installer_stack() {
-  [ -n "${PREVIOUS_MIHOMO_IMAGE_ID:-}${PREVIOUS_METACUBEXD_IMAGE_ID:-}" ] || return 1
+  [ -n "${PREVIOUS_MIHOMO_IMAGE_ID:-}${PREVIOUS_METACUBEXD_IMAGE_ID:-}${PREVIOUS_PANEL_IMAGE_ID:-}" ] || return 1
   ui_warn "$(msg warn_rollback_attempt)"
   rollback_compose "${PREVIOUS_MIHOMO_IMAGE_ID:-}" "${PREVIOUS_METACUBEXD_IMAGE_ID:-}" \
+    "${PREVIOUS_PANEL_IMAGE_ID:-}" \
     && health_gate
 }
 
@@ -355,6 +359,13 @@ flow_deploy() {
     wizard_subscription || return 1
   fi
   load_env                                  # re-load after the wizards wrote .env
+
+  # Gateway panel knobs (#68): derive PANEL_IMAGE, generate PANEL_SECRET,
+  # ask/validate PANEL_IP. Runs AFTER the wizards (needs SUBNET_CIDR,
+  # MIHOMO_IP and the registry knobs) and BEFORE prepare_stack (whose
+  # compose-config preflight fails closed on the missing knobs).
+  _pc_panel_backfill || return 1
+  load_env
 
   pf_arch           || return 1
   pf_web_port       || return 1

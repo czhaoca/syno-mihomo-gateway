@@ -40,6 +40,7 @@ PACKAGER = REPO / "scripts" / "package.sh"
 BOOTSTRAP = REPO / "bootstrap.sh"
 COMMON = REPO / "scripts" / "lib" / "common.sh"
 GITIGNORE = REPO / ".gitignore"
+ENVEDIT = REPO / "scripts" / "installer" / "envedit.sh"
 PREFIX = "syno-mihomo-gateway/"
 
 ENV_SENTINEL = "PLANTED_SECRET_DO_NOT_SHIP"
@@ -56,6 +57,9 @@ MUST_EXCLUDE = [
     PREFIX + ".env",
     PREFIX + "config/subscription.txt",
     PREFIX + "config/config.yaml",
+    PREFIX + "state/stats.db",
+    PREFIX + "state/policy.sqlite3",
+    PREFIX + "config/providers/dyn-full-tunnel.txt",
 ]
 
 # --- enduser profile (curated, self-contained, identity-free distribution) ----
@@ -81,6 +85,7 @@ ENDUSER_MUST_INCLUDE = [
     PREFIX + "scripts/installer/i18n.sh",
     PREFIX + "scripts/installer/flow_redeploy.sh",
     PREFIX + "scripts/installer/preprocess.sh",
+    PREFIX + "scripts/installer/envedit.sh",
     PREFIX + "scripts/lib/network.sh",
     PREFIX + "scripts/lib/common.sh",
     PREFIX + "scripts/lib/lifecycle.sh",
@@ -116,6 +121,8 @@ ENDUSER_MUST_EXCLUDE = [
     PREFIX + "docs/zh/installation.md",
     PREFIX + "scripts/ci/check.py",
     PREFIX + "scripts/package.sh",
+    PREFIX + "app/main.py",
+    PREFIX + "app/Dockerfile",
 ]
 
 # --- linux profile (the enduser set PLUS the generic-Linux port; DEC-2, #49) ---
@@ -177,6 +184,15 @@ def build_fixture(root: Path):
     (root / "config" / "config.yaml").write_text("rendered: true\n")
     (root / "logs").mkdir()
     (root / "logs" / "auto-update.log").write_text(f"log line {ENV_SENTINEL}\n")
+    # Panel runtime state (#68): stray in-tree DBs / dynamic provider files are
+    # gitignored, and check_guards proves the tracked-refusal for each class.
+    (root / "state").mkdir()
+    (root / "state" / "stats.db").write_bytes(f"SQLite format 3\x00{ENV_SENTINEL}".encode())
+    (root / "state" / "policy.sqlite3").write_bytes(f"SQLite format 3\x00{ENV_SENTINEL}".encode())
+    (root / "state" / "panel-apply-failed").write_text(f"apply failed {ENV_SENTINEL}\n")
+    (root / "config" / "providers").mkdir()
+    (root / "config" / "providers" / "dyn-full-tunnel.txt").write_text(
+        f"payload:\n  # {SUB_SENTINEL}\n  - SRC-IP-CIDR,203.0.113.36/32\n")
 
     git(["init", "-q"], cwd=root)
     git(["config", "user.email", "ci@example.com"], cwd=root)
@@ -222,6 +238,11 @@ def check_archive_contents(path: Path):
             fail(f"{label}: SECRET LEAK - {bad} is in the archive")
     if any(n.startswith(PREFIX + "logs/") for n in names):
         fail(f"{label}: logs/ leaked into the archive")
+    for n in names:
+        if n.startswith((PREFIX + "state/", PREFIX + "config/providers/")):
+            fail(f"{label}: panel runtime state leaked into the archive: {n}")
+        if n.endswith(".db") or ".sqlite" in n:
+            fail(f"{label}: database file leaked into the archive: {n}")
     if any(".git/" in n for n in names):
         fail(f"{label}: .git/ leaked into the archive")
     blob = archive_blob(path)
@@ -271,6 +292,11 @@ def check_leak_list_parity():
     if email_grep not in text:
         fail("package.sh leak_scan email catch-all changed or removed - "
              "update EMAIL_RE and this pin in the same change")
+    tracked_line = ("ls-files -- .env config/subscription.txt config/config.yaml "
+                    "'logs/*' '*.db' '*.sqlite*' 'config/providers/*' 'state/*'")
+    if tracked_line not in text:
+        fail("package.sh tracked-secrets refusal list changed - update the "
+             "check_guards injections and this pin in the same change")
 
 
 def check_bootstrap(tar: Path, nas: Path):
@@ -322,6 +348,21 @@ def check_guards(root: Path, dist: Path, pkg: Path, ng: Path):
         fail("tracked-secret guard fired but message did not mention 'tracked'")
     git(["rm", "-q", "--cached", ".env"], cwd=root)
 
+    # tracked panel runtime state -> refuse; one injection per guard-list
+    # class ('*.db', '*.sqlite*', 'config/providers/*', and the extensionless
+    # marker proving 'state/*' bites independently of the suffix rules),
+    # pinned in full by check_leak_list_parity.
+    for planted in ("state/stats.db", "state/policy.sqlite3",
+                    "state/panel-apply-failed",
+                    "config/providers/dyn-full-tunnel.txt"):
+        git(["add", "-f", planted], cwd=root)
+        r = run(["sh", str(pkg), "--profile", "dev", "--version", "1.2.3"])
+        if r.returncode != 3:
+            fail(f"tracked {planted} guard: expected exit 3, got {r.returncode}")
+        if planted not in (r.stdout + r.stderr):
+            fail(f"tracked {planted} guard fired without naming the offending path")
+        git(["rm", "-q", "--cached", planted], cwd=root)
+
     # non-git directory -> refuse.
     (ng / "scripts").mkdir(parents=True)
     shutil.copy(PACKAGER, ng / "scripts" / "package.sh")
@@ -360,6 +401,12 @@ def build_enduser_fixture(root: Path):
         "Default=https://example.com/sub?token=REPLACE_ME\n")
     for s in ("ui.sh", "i18n.sh", "flow_redeploy.sh", "flow_deploy.sh", "preprocess.sh"):
         (root / "scripts" / "installer" / s).write_text("#!/bin/sh\n:\n")
+    # envedit.sh ships as the REAL file, not a placeholder: it embeds the
+    # registry-ref derivation (upstream paths), which is exactly the class of
+    # installer content an identity string could sneak into - packaging the
+    # real file makes the fixture's leak-gate scan cover it (the #68 QA catch:
+    # a hardcoded owner GHCR namespace would fail the release cut here).
+    shutil.copy(ENVEDIT, root / "scripts" / "installer" / "envedit.sh")
     for s in ("common.sh", "network.sh", "registry.sh", "compose.sh", "scheduler.sh", "lifecycle.sh",
               "resolve.sh"):
         (root / "scripts" / "lib" / s).write_text("#!/bin/sh\n:\n")
@@ -421,11 +468,24 @@ def build_enduser_fixture(root: Path):
         "# CLI contract spec - dev-only; see github.com/czhaoca upstream\n")
     (root / "docs" / "cli.md").write_text("# CLI reference (generated) - github.com/czhaoca\n")
     (root / "docs" / "zh" / "cli.md").write_text("# CLI reference zh - github.com/czhaoca\n")
+    # The panel app source is image-delivered (#68): the bundle ships the
+    # compose ref, never the tree. Forge-URL decoys make an unpruned DSM
+    # bundle FAIL the leak-gate instead of shipping it silently, and both
+    # files trip the membership + blanket app/ scans in either profile.
+    (root / "app").mkdir(parents=True)
+    (root / "app" / "main.py").write_text(
+        "# gateway panel app - image-delivered; github.com/czhaoca/mihomo-panel\n")
+    (root / "app" / "Dockerfile").write_text("FROM python:3.12-alpine\n# github.com/czhaoca\n")
 
     # --- untracked planted secrets (gitignored -> must never ship) ---
     (root / ".env").write_text(f"ACR_PASSWORD={ENV_SENTINEL}\n")
     (root / "config" / "subscription.txt").write_text(
         f"Default=https://real.example.com/sub?token={SUB_SENTINEL}\n")
+    (root / "state").mkdir()
+    (root / "state" / "stats.db").write_bytes(f"SQLite format 3\x00{ENV_SENTINEL}".encode())
+    (root / "config" / "providers").mkdir()
+    (root / "config" / "providers" / "dyn-full-tunnel.txt").write_text(
+        f"payload:\n  # {SUB_SENTINEL}\n  - SRC-IP-CIDR,203.0.113.36/32\n")
 
     git(["init", "-q"], cwd=root)
     git(["config", "user.email", "ci@example.com"], cwd=root)
@@ -452,6 +512,11 @@ def check_enduser_archive(path: Path):
             fail(f"{label}: enduser bundle ships the CLI spec dir scripts/cli: {n}")
         if n.startswith(PREFIX + "docs/zh/"):
             fail(f"{label}: enduser bundle ships docs/zh: {n}")
+        if n.startswith(PREFIX + "app/"):
+            fail(f"{label}: enduser bundle ships the panel app source: {n}")
+        if n.startswith((PREFIX + "state/", PREFIX + "config/providers/")) \
+                or n.endswith(".db") or ".sqlite" in n:
+            fail(f"{label}: enduser bundle ships panel runtime state: {n}")
     blob = archive_blob(path)
     for sentinel in (ENV_SENTINEL, SUB_SENTINEL):
         if sentinel.encode() in blob:
@@ -484,6 +549,11 @@ def check_linux_archive(path: Path):
             fail(f"{label}: linux bundle ships the CLI spec dir scripts/cli: {n}")
         if n.startswith(PREFIX + "docs/zh/"):
             fail(f"{label}: linux bundle ships docs/zh: {n}")
+        if n.startswith(PREFIX + "app/"):
+            fail(f"{label}: linux bundle ships the panel app source: {n}")
+        if n.startswith((PREFIX + "state/", PREFIX + "config/providers/")) \
+                or n.endswith(".db") or ".sqlite" in n:
+            fail(f"{label}: linux bundle ships panel runtime state: {n}")
     blob = archive_blob(path)
     for sentinel in (ENV_SENTINEL, SUB_SENTINEL):
         if sentinel.encode() in blob:

@@ -19,6 +19,7 @@ LIFECYCLE_NETWORK_SAFE=1
 LIFECYCLE_ATTACHMENTS=""
 LIFECYCLE_MIHOMO_STATUS=absent
 LIFECYCLE_UI_STATUS=absent
+LIFECYCLE_PANEL_STATUS=absent
 LIFECYCLE_COMPOSE_PROJECT=""
 
 _lifecycle_container_status() {
@@ -52,19 +53,29 @@ lifecycle_inspect() {
 
   LIFECYCLE_MIHOMO_STATUS="$(_lifecycle_container_status "$MIHOMO_CONTAINER" mihomo)"
   LIFECYCLE_UI_STATUS="$(_lifecycle_container_status "$METACUBEXD_CONTAINER" metacubexd)"
-  for _li_status in "$LIFECYCLE_MIHOMO_STATUS" "$LIFECYCLE_UI_STATUS"; do
+  LIFECYCLE_PANEL_STATUS="$(_lifecycle_container_status "${PANEL_CONTAINER:-mihomo-panel}" panel)"
+  for _li_status in "$LIFECYCLE_MIHOMO_STATUS" "$LIFECYCLE_UI_STATUS" "$LIFECYCLE_PANEL_STATUS"; do
     [ "$_li_status" = absent ] || LIFECYCLE_CONTAINERS_PRESENT=1
     [ "$_li_status" != ambiguous ] || LIFECYCLE_CONTAINERS_SAFE=0
   done
-  _li_m_project=""; _li_u_project=""
+  _li_m_project=""; _li_u_project=""; _li_p_project=""
   [ "$LIFECYCLE_MIHOMO_STATUS" != managed ] || _li_m_project="$(_lifecycle_container_project "$MIHOMO_CONTAINER")"
   [ "$LIFECYCLE_UI_STATUS" != managed ] || _li_u_project="$(_lifecycle_container_project "$METACUBEXD_CONTAINER")"
-  if [ -n "$_li_m_project" ] && [ -n "$_li_u_project" ] && [ "$_li_m_project" != "$_li_u_project" ]; then
+  [ "$LIFECYCLE_PANEL_STATUS" != managed ] || _li_p_project="$(_lifecycle_container_project "${PANEL_CONTAINER:-mihomo-panel}")"
+  _li_proj_mismatch=0
+  for _li_project in "$_li_m_project" "$_li_u_project" "$_li_p_project"; do
+    [ -n "$_li_project" ] || continue
+    if [ -z "$LIFECYCLE_COMPOSE_PROJECT" ]; then
+      LIFECYCLE_COMPOSE_PROJECT="$_li_project"
+    elif [ "$_li_project" != "$LIFECYCLE_COMPOSE_PROJECT" ]; then
+      _li_proj_mismatch=1
+    fi
+  done
+  # Mismatch keeps LIFECYCLE_COMPOSE_PROJECT empty: resolve.sh's preserve
+  # branch treats a non-empty value as the single owning project.
+  if [ "$_li_proj_mismatch" = 1 ]; then
     LIFECYCLE_CONTAINERS_SAFE=0
-  elif [ -n "$_li_m_project" ]; then
-    LIFECYCLE_COMPOSE_PROJECT="$_li_m_project"
-  else
-    LIFECYCLE_COMPOSE_PROJECT="$_li_u_project"
+    LIFECYCLE_COMPOSE_PROJECT=""
   fi
 
   _li_net="${TPROXY_NETWORK:-tproxy_network}"
@@ -80,13 +91,14 @@ lifecycle_inspect() {
       case "$_li_attached" in
         "$MIHOMO_CONTAINER") [ "$LIFECYCLE_MIHOMO_STATUS" = managed ] || LIFECYCLE_NETWORK_SAFE=0 ;;
         "$METACUBEXD_CONTAINER") [ "$LIFECYCLE_UI_STATUS" = managed ] || LIFECYCLE_NETWORK_SAFE=0 ;;
+        "${PANEL_CONTAINER:-mihomo-panel}") [ "$LIFECYCLE_PANEL_STATUS" = managed ] || LIFECYCLE_NETWORK_SAFE=0 ;;
         *) LIFECYCLE_NETWORK_SAFE=0 ;;
       esac
     done
   fi
   export LIFECYCLE_CONTAINERS_PRESENT LIFECYCLE_CONTAINERS_SAFE
   export LIFECYCLE_NETWORK_PRESENT LIFECYCLE_NETWORK_MATCHES LIFECYCLE_NETWORK_SAFE
-  export LIFECYCLE_ATTACHMENTS LIFECYCLE_MIHOMO_STATUS LIFECYCLE_UI_STATUS
+  export LIFECYCLE_ATTACHMENTS LIFECYCLE_MIHOMO_STATUS LIFECYCLE_UI_STATUS LIFECYCLE_PANEL_STATUS
   export LIFECYCLE_COMPOSE_PROJECT
 }
 
@@ -98,7 +110,7 @@ lifecycle_remove_containers() {
     return 1
   fi
   _lrc_d="$(_net_docker)"
-  for _lrc_name in "$MIHOMO_CONTAINER" "$METACUBEXD_CONTAINER"; do
+  for _lrc_name in "$MIHOMO_CONTAINER" "$METACUBEXD_CONTAINER" "${PANEL_CONTAINER:-mihomo-panel}"; do
     if "$_lrc_d" inspect "$_lrc_name" >/dev/null 2>&1; then
       log_warn "removing verified project container: $_lrc_name"
       "$_lrc_d" rm -f "$_lrc_name" >>"${LOG_FILE:-/dev/null}" 2>&1 || {
@@ -129,9 +141,10 @@ lifecycle_remove_network() {
 lifecycle_print_container_commands() {
   _lpc_m="$(_lifecycle_shell_quote "$MIHOMO_CONTAINER")"
   _lpc_u="$(_lifecycle_shell_quote "$METACUBEXD_CONTAINER")"
-  printf '%s\n' "  docker inspect $_lpc_m $_lpc_u"
-  printf '%s\n' "  # Continue only if service labels are mihomo/metacubexd and both project labels match."
-  printf '%s\n' "  docker rm -f $_lpc_m $_lpc_u"
+  _lpc_p="$(_lifecycle_shell_quote "${PANEL_CONTAINER:-mihomo-panel}")"
+  printf '%s\n' "  docker inspect $_lpc_m $_lpc_u $_lpc_p"
+  printf '%s\n' "  # Continue only if service labels are mihomo/metacubexd/panel and the project labels match."
+  printf '%s\n' "  docker rm -f $_lpc_m $_lpc_u $_lpc_p"
 }
 
 lifecycle_print_network_commands() {

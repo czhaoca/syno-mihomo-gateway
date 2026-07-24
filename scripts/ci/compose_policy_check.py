@@ -41,14 +41,18 @@ COMPOSE_SH = REPO / "scripts" / "lib" / "compose.sh"
 # The frozen container-name contract: compose service -> container_name literal,
 # plus the compose.sh shell default that must mirror it. A rename here is a
 # breaking operator-contract change and needs explicit owner sign-off.
-FROZEN_NAMES = {"mihomo": "mihomo", "metacubexd": "mihomo-ui"}
+FROZEN_NAMES = {"mihomo": "mihomo", "metacubexd": "mihomo-ui",
+                "panel": "mihomo-panel"}
 FROZEN_SH_DEFAULTS = (("MIHOMO_CONTAINER", "mihomo"), ("METACUBEXD_CONTAINER", "mihomo-ui"))
+# the panel default lives in panel.sh with the := parameter-default idiom
+PANEL_SH = REPO / "scripts" / "lib" / "panel.sh"
+PANEL_SH_DEFAULT = ("PANEL_CONTAINER", "mihomo-panel")
 
 # The ONLY accepted compose image forms: a single env ref, optionally with a `:?`
 # required-guard (which fails closed). Defaults (:- / :=) and hardcoded refs are
 # rejected so an unset var can never silently pull an unexpected image.
 ALLOWED_IMAGE = re.compile(r"^\$\{[A-Za-z_][A-Za-z0-9_]*(:\?[^}]*)?\}$")
-REQUIRED_VARS = ("MIHOMO_IMAGE", "METACUBEXD_IMAGE")
+REQUIRED_VARS = ("MIHOMO_IMAGE", "METACUBEXD_IMAGE", "PANEL_IMAGE")
 
 
 def fail(msg):
@@ -93,6 +97,14 @@ def check_container_names():
             fail(f"{COMPOSE.name}: service '{name}' pins container_name {cn!r}; the frozen "
                  f"operator contract requires {FROZEN_NAMES[name]!r} (a rename needs explicit "
                  f"owner sign-off)")
+    sh_panel = PANEL_SH.read_text()
+    var, frozen = PANEL_SH_DEFAULT
+    m = re.search(rf': "\$\{{{var}:=([^}}]*)\}}"', sh_panel)
+    if not m:
+        fail(f"{PANEL_SH.name}: {var} := default assignment not found")
+    if m.group(1) != frozen:
+        fail(f"{PANEL_SH.name}: {var} defaults to {m.group(1)!r} but the frozen "
+             f"contract requires {frozen!r}")
     sh = COMPOSE_SH.read_text()
     for var, frozen in FROZEN_SH_DEFAULTS:
         m = re.search(rf'^{var}="([^"]*)"', sh, re.MULTILINE)
@@ -120,6 +132,8 @@ def check_env_example():
             fail(f"{ENV_EXAMPLE.name}: {req} is not defined")
         if not found[req]:
             fail(f"{ENV_EXAMPLE.name}: {req} is empty - give it an illustrative default ref")
+    if "PANEL_IP" not in found:
+        fail(f"{ENV_EXAMPLE.name}: PANEL_IP is not defined (the panel's macvlan seat)")
     mode = found.get("REGISTRY_MODE")
     if mode is None:
         fail(f"{ENV_EXAMPLE.name}: REGISTRY_MODE is not defined (it must ship defaulting to 'acr')")
@@ -134,8 +148,9 @@ def main():
     check_env_example()
     print("OK: docker-compose images are fail-closed env refs "
           f"({', '.join(imgs)}); container names frozen (mihomo / mihomo-ui, every "
-          "service pinned, compose.sh mirrors them); .env.example defines "
-          "MIHOMO_IMAGE/METACUBEXD_IMAGE and REGISTRY_MODE ships as 'acr'.")
+          "service pinned, compose.sh + panel.sh mirror them); .env.example defines "
+          "MIHOMO_IMAGE/METACUBEXD_IMAGE/PANEL_IMAGE + PANEL_IP and "
+          "REGISTRY_MODE ships as 'acr'.")
 
 
 if __name__ == "__main__":

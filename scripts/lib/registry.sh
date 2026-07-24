@@ -149,6 +149,11 @@ validate_update_config() {
   _update_list_has "$METACUBEXD_IMAGE" || {
     log_error "UPDATE_IMAGES does not include METACUBEXD_IMAGE exactly"; return 1;
   }
+  if [ -n "${PANEL_IMAGE:-}" ]; then
+    _update_list_has "$PANEL_IMAGE" || {
+      log_error "PANEL_IMAGE is configured but UPDATE_IMAGES does not include it exactly"; return 1;
+    }
+  fi
   if [ -n "${CF_IMAGE:-}" ]; then
     _update_list_has "$CF_IMAGE" || {
       log_error "CF_IMAGE is configured but UPDATE_IMAGES does not include it exactly"; return 1;

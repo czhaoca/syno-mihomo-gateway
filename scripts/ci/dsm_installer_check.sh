@@ -132,6 +132,52 @@ dotenv_load "$ENV_FILE"
   [ "${TUN_AUTO_REDIRECT:-}" = false ] ) \
   || fail "missing TUN_AUTO_REDIRECT did not default to false"
 
+# The quartet UPDATE_IMAGES template literal (#68): the strict loader never
+# expands ${...}, so load_env's compat shim must resolve a fresh .env seeded
+# from the CURRENT .env.example to the four real refs (auto_update_check.sh
+# pins the literal itself against the shim's case).
+# shellcheck disable=SC2016 # the template literal is deliberately unexpanded
+( ENV_FILE="$TD/quartet.env"
+  {
+    printf 'MIHOMO_IMAGE="r/mi:1"\nMETACUBEXD_IMAGE="r/me:1"\n'
+    printf 'PANEL_IMAGE="r/pa:1"\nCF_IMAGE="r/cf:1"\n'
+    printf 'UPDATE_IMAGES="${MIHOMO_IMAGE} ${METACUBEXD_IMAGE} ${PANEL_IMAGE} ${CF_IMAGE}"\n'
+  } > "$ENV_FILE"
+  . "$ROOT/scripts/lib/common.sh"
+  load_env
+  [ "$UPDATE_IMAGES" = 'r/mi:1 r/me:1 r/pa:1 r/cf:1' ] ) \
+  || fail "quartet UPDATE_IMAGES template literal did not expand through load_env"
+
+# panel_prepare_dirs (#68): a configured panel gets its two bind mounts
+# created and handed to the app/Dockerfile uid pin (10001) before compose
+# up; state/ is 0700; an unconfigured panel changes nothing.
+( set -eu
+  fail() { echo "FAIL: $*" >&2; exit 1; }
+  # shellcheck source=scripts/lib/compose.sh
+  . "$ROOT/scripts/lib/compose.sh"
+  GATEWAY_DATA_DIR="$TD/ppd-data"; PANEL_IMAGE=img
+  chown() { printf '%s\n' "$*" >> "$TD/ppd.calls"; }
+  : > "$TD/ppd.calls"
+  panel_prepare_dirs || fail "panel_prepare_dirs failed with a configured panel"
+  [ -d "$TD/ppd-data/config/providers" ] || fail "provider dir not created"
+  [ -d "$TD/ppd-data/state/panel" ] || fail "panel state subdir not created"
+  case "$(ls -ld "$TD/ppd-data/state/panel")" in
+    drwx------*) : ;;
+    *) fail "panel state subdir is not 0700: $(ls -ld "$TD/ppd-data/state/panel")" ;;
+  esac
+  case "$(cat "$TD/ppd.calls")" in
+    *"10001:10001 $TD/ppd-data/config/providers $TD/ppd-data/state/panel"*) : ;;
+    *) fail "panel_prepare_dirs did not chown both mounts to the panel uid" ;;
+  esac
+  ! grep -q '/ppd-data/state$' "$TD/ppd.calls" \
+    || fail "panel_prepare_dirs must never chown state/ itself (updater metadata)"
+  rm -rf "$TD/ppd-data"
+  PANEL_IMAGE=''
+  panel_prepare_dirs || fail "panel_prepare_dirs failed with no panel configured"
+  [ ! -d "$TD/ppd-data" ] || fail "unconfigured panel still created runtime dirs"
+  exit 0
+) || exit 1
+
 # shellcheck disable=SC2016 # Literal payload verifies dotenv values are never evaluated.
 printf '%s\n' 'UNTRUSTED=$(touch SHOULD_NOT_EXIST)' >> "$ENV_FILE"
 _oldpwd="$PWD"; cd "$TD"
@@ -338,20 +384,40 @@ grep -v '^[[:space:]]*#' "$ROOT/scripts/lib/resolve.sh" \
   [ "$(env_get METACUBEXD_IMAGE)" = registry.example/ns/metacubexd:v2 ] \
     || fail "resolve_images did not persist the metacubexd ref"
   resolve_update_images || fail "resolve_update_images failed"
-  [ "$(env_get UPDATE_IMAGES)" = 'registry.example/ns/mihomo:v1 registry.example/ns/metacubexd:v2' ] \
+  # resolve_images derives the panel ref alongside the pair (#68), so the
+  # update set is the trio even before cloudflared exists.
+  [ "$(env_get UPDATE_IMAGES)" = 'registry.example/ns/mihomo:v1 registry.example/ns/metacubexd:v2 registry.example/ns/mihomo-panel:latest' ] \
     || fail "UPDATE_IMAGES wrong without cloudflared: $(env_get UPDATE_IMAGES)"
   env_set CF_IMAGE registry.example/ns/cloudflared:v3
   resolve_update_images || fail "resolve_update_images failed with CF_IMAGE"
   case "$(env_get UPDATE_IMAGES)" in
-    *cloudflared:v3) : ;;
-    *) fail "UPDATE_IMAGES did not append the cloudflared ref" ;;
+    *'mihomo-panel:latest registry.example/ns/cloudflared:v3') : ;;
+    *) fail "UPDATE_IMAGES did not keep panel before the appended cloudflared ref: $(env_get UPDATE_IMAGES)" ;;
   esac
+  # An explicitly pinned panel ref (#68) is honored over a re-derivation.
+  PANEL_IMAGE=registry.example/ns/mihomo-panel:v4
+  env_set PANEL_IMAGE "$PANEL_IMAGE"
+  resolve_update_images || fail "resolve_update_images failed with PANEL_IMAGE"
+  case "$(env_get UPDATE_IMAGES)" in
+    *'metacubexd:v2 registry.example/ns/mihomo-panel:v4 registry.example/ns/cloudflared:v3') : ;;
+    *) fail "UPDATE_IMAGES did not slot the panel ref before cloudflared: $(env_get UPDATE_IMAGES)" ;;
+  esac
+  PANEL_IMAGE=''; env_set PANEL_IMAGE ''; env_set CF_IMAGE ''
   ( REGISTRY_MODE=acr; env_set ACR_NAMESPACE ''; resolve_images >/dev/null 2>&1 ) \
     && fail "resolve_images accepted acr mode without a namespace"
   REGISTRY_MODE=docker
   resolve_images || fail "resolve_images failed in docker mode"
   [ "$MIHOMO_IMAGE" = docker.io/metacubex/mihomo:v1 ] \
     || fail "docker mode did not derive the upstream mihomo ref: $MIHOMO_IMAGE"
+  # The panel has NO third-party upstream (#68): docker mode must not invent
+  # one (a hardcoded owner namespace fails the release leak-gate) - the ref
+  # derives only from an operator-supplied PANEL_UPSTREAM.
+  derive_ref panel latest >/dev/null 2>&1 \
+    && fail "docker-mode panel ref derived without PANEL_UPSTREAM"
+  PANEL_UPSTREAM=reg.example/ns2/mihomo-panel
+  [ "$(derive_ref panel v9)" = reg.example/ns2/mihomo-panel:v9 ] \
+    || fail "operator PANEL_UPSTREAM did not drive the docker-mode panel ref"
+  PANEL_UPSTREAM=''
 
   # resolve_subscription_url: cleans paste artifacts, validates the scheme.
   [ "$(resolve_subscription_url '"https://sub.example/token"')" = 'https://sub.example/token' ] \
@@ -566,6 +632,7 @@ pf_web_port() { return 0; }
 validate_selected_network() { return 0; }
 plan_predeployment_cleanup() { echo plan >> "$TD/order"; }
 scan_and_prefill() { echo scan >> "$TD/order"; }
+_pc_panel_backfill() { echo panel >> "$TD/order"; }
 apply_predeployment_cleanup() { echo cleanup >> "$TD/order"; }
 create_network() { echo network >> "$TD/order"; }
 deploy_stack() { echo deploy >> "$TD/order"; }
@@ -579,7 +646,9 @@ esac
 prepare_stack() { echo prepare >> "$TD/order"; }
 : > "$TD/order"
 flow_deploy >/dev/null 2>&1 || fail "stubbed deployment sequence failed"
-[ "$(tr '\n' ' ' < "$TD/order")" = 'plan scan prepare cleanup network deploy ' ] \
+# panel backfill (#68) sits after the wizards (needs SUBNET_CIDR/MIHOMO_IP)
+# and before prepare_stack (whose compose preflight needs the panel knobs).
+[ "$(tr '\n' ' ' < "$TD/order")" = 'plan scan panel prepare cleanup network deploy ' ] \
   || fail "unsafe deployment order: $(tr '\n' ' ' < "$TD/order")"
 
 # The success report must turn the selected/auto-detected parent NIC's address
@@ -910,12 +979,66 @@ done
   env_set DNS_DEFAULT_NAMESERVER 1.1.1.1
   env_set DNS_NAMESERVER 1.1.1.1
   env_set MIHOMO_IMAGE img1; env_set METACUBEXD_IMAGE img2
+  # panel knobs pre-seeded so THIS case keeps testing exactly the stale-
+  # subnet MIHOMO_IP re-ask (the panel migration has its own case below)
+  env_set PANEL_IMAGE img3; env_set PANEL_SECRET fixture-tok
+  env_set PANEL_IP 10.0.0.101
   PC_ASKED=0
   ui_ask_validated() { PC_ASKED=1; eval "$1=10.0.0.100"; }
   precheck_env >/dev/null 2>&1 || fail "precheck_env (stale subnet) failed"
   [ "$PC_ASKED" = 1 ] || fail "stale-subnet MIHOMO_IP was not re-asked"
   [ "$(dotenv_get MIHOMO_IP)" = 10.0.0.100 ] \
     || fail "precheck did not persist the corrected MIHOMO_IP"
+
+  # panel migration (#68): a pre-panel .env gains PANEL_IMAGE (derived from
+  # the SAME registry mode as the other refs), a GENERATED 32-hex
+  # PANEL_SECRET, and a prompted PANEL_IP; a second run is a silent no-op.
+  ENV_FILE="$TD/panelmig.env"; : > "$ENV_FILE"
+  env_set ROUTER_IP 192.168.1.1
+  env_set SUBNET_CIDR 192.168.1.0/24
+  env_set MIHOMO_IP 192.168.1.100
+  env_set WEB_UI_PORT 8080; env_set CONTROLLER_PORT 9090
+  env_set DNS_DEFAULT_NAMESERVER 1.1.1.1
+  env_set DNS_NAMESERVER 1.1.1.1
+  env_set DNS_CN_NAMESERVER 1.1.1.1
+  env_set DNS_FOREIGN_NAMESERVER 1.1.1.1
+  env_set REGISTRY_MODE acr
+  env_set DOCKER_REGISTRY reg.example
+  env_set ACR_NAMESPACE ns
+  env_set MIHOMO_IMAGE img1; env_set METACUBEXD_IMAGE img2
+  # A REAL pre-panel .env carries the CONCRETE trio (not the expandable
+  # template); the migration must fold the derived panel ref into it or
+  # validate_update_config fails a set-but-unmapped PANEL_IMAGE.
+  env_set UPDATE_IMAGES 'img1 img2'
+  # In-memory refs from earlier load_env calls in this subshell must not
+  # shadow THIS fixture's file values (resolve prefers memory: same-file
+  # consistency holds in production, not across test fixtures).
+  MIHOMO_IMAGE=''; METACUBEXD_IMAGE=''; PANEL_IMAGE=''; CF_IMAGE=''
+  PANEL_ASKED=0
+  ui_ask_validated() { PANEL_ASKED=1; eval "$1=192.168.1.101"; }
+  precheck_env >/dev/null 2>&1 || fail "precheck_env (panel migration) failed"
+  # the registry/namespace come from the live shell env (the suite's acr
+  # exports); the NAME contract is what this pins: .../mihomo-panel:latest
+  case "$(dotenv_get PANEL_IMAGE 2>/dev/null)" in
+    */mihomo-panel:latest) : ;;
+    *) fail "panel migration did not derive PANEL_IMAGE as .../mihomo-panel:latest (got '$(dotenv_get PANEL_IMAGE 2>/dev/null)')" ;;
+  esac
+  _ps="$(dotenv_get PANEL_SECRET 2>/dev/null || echo '')"
+  [ "${#_ps}" = 32 ] || fail "panel migration did not generate a 32-hex PANEL_SECRET (len=${#_ps})"
+  case "$_ps" in *[!0-9a-f]*) fail "PANEL_SECRET is not lowercase hex" ;; esac
+  [ "$PANEL_ASKED" = 1 ] || fail "panel migration did not ask for PANEL_IP"
+  [ "$(dotenv_get PANEL_IP)" = 192.168.1.101 ] \
+    || fail "panel migration did not persist PANEL_IP"
+  [ "$(dotenv_get UPDATE_IMAGES)" = "img1 img2 $(dotenv_get PANEL_IMAGE)" ] \
+    || fail "migration did not fold the derived panel ref into UPDATE_IMAGES: $(dotenv_get UPDATE_IMAGES)"
+  PANEL_ASKED=0; _ps1="$_ps"; _ui1="$(dotenv_get UPDATE_IMAGES)"
+  MIHOMO_IMAGE=''; METACUBEXD_IMAGE=''; PANEL_IMAGE=''; CF_IMAGE=''
+  precheck_env >/dev/null 2>&1 || fail "precheck_env (panel re-run) failed"
+  [ "$PANEL_ASKED" = 0 ] || fail "panel migration re-asked on a complete .env"
+  [ "$(dotenv_get PANEL_SECRET)" = "$_ps1" ] \
+    || fail "panel re-run regenerated PANEL_SECRET"
+  [ "$(dotenv_get UPDATE_IMAGES)" = "$_ui1" ] \
+    || fail "panel re-run churned UPDATE_IMAGES"
 
   # post-deploy verification table: rows reflect the stubbed probe results
   # shellcheck source=scripts/installer/flow_deploy.sh
@@ -1140,6 +1263,13 @@ done
     || fail "fresh seed kept the placeholder MIHOMO_IMAGE (express-path bypass)"
   [ -z "$(dotenv_get METACUBEXD_IMAGE 2>/dev/null || echo '')" ] \
     || fail "fresh seed kept the placeholder METACUBEXD_IMAGE"
+  # Panel knobs (#68): the example's your-namespace image must never survive
+  # to a pull, and a kept placeholder PANEL_IP would skip the backfill ask
+  # (and its conflict check) whenever the real subnet is 192.168.1.0/24.
+  [ -z "$(dotenv_get PANEL_IMAGE 2>/dev/null || echo '')" ] \
+    || fail "fresh seed kept the placeholder PANEL_IMAGE"
+  [ -z "$(dotenv_get PANEL_IP 2>/dev/null || echo '')" ] \
+    || fail "fresh seed kept the placeholder PANEL_IP (ask/conflict-check bypass)"
   [ "$(dotenv_get REGISTRY_MODE)" = acr ] \
     || fail "fresh seed changed the committed acr default"
   printf 'MIHOMO_IMAGE="docker.io/testns/mihomo:v1"\n' > "$ENV_FILE"

@@ -170,7 +170,9 @@ health_gate() {
     case "$?" in
       0) if mihomo_gateway_probe; then
            log_info "health: mihomo running + controller OK + TUN gateway ready"
-           _check_ui; return 0
+           _check_ui
+           _check_panel || return 1
+           return 0
          fi ;;
       2) log_warn "health[$_try/$HEALTH_RETRIES]: controller probe unavailable in image" ;;
       1) log_warn "health[$_try/$HEALTH_RETRIES]: controller not answering yet" ;;
@@ -185,18 +187,67 @@ _check_ui() {
   [ "$_ui" = "true" ] || log_warn "metacubexd ($METACUBEXD_CONTAINER) is not running"
 }
 
-# rollback_compose MIHOMO_OLD_ID METACUBEXD_OLD_ID -> re-point each tag at its
-# last-good image id (captured from the running container BEFORE the swap), then a
-# single recreate. Empty args are skipped. Returns 0 if the recreate succeeded.
+# panel_prepare_dirs - the panel container runs as uid 10001 (the
+# app/Dockerfile pin) and must be able to WRITE its two bind mounts: the
+# provider dir (mihomo's root entrypoint creates it 755 root:root) and its
+# OWN state subdir state/panel (else docker auto-vivifies it root:root).
+# state/ itself stays root-owned: the updater's metadata (last-run.json,
+# update-targets, last-good) lives there and is never handed to the panel.
+# Root deploys chown; failures stay silent by design - the deploy gate
+# (_check_panel requires db_ok) and the doctor's companion_health surface
+# a still-unwritable state at runtime; non-root callers (tests) skip.
+panel_prepare_dirs() {
+  [ -n "${PANEL_IMAGE:-}" ] || return 0
+  [ -n "${GATEWAY_DATA_DIR:-}" ] || return 0
+  mkdir -p "$GATEWAY_DATA_DIR/config/providers" "$GATEWAY_DATA_DIR/state/panel" 2>/dev/null || return 0
+  chmod 700 "$GATEWAY_DATA_DIR/state/panel" 2>/dev/null || :
+  chown 10001:10001 "$GATEWAY_DATA_DIR/config/providers" "$GATEWAY_DATA_DIR/state/panel" 2>/dev/null || :
+  return 0
+}
+
+# _check_panel - the panel companion's slice of the health gate. Skipped
+# (ok) when no PANEL_IMAGE is configured, so a pre-panel .env keeps
+# deploying cleanly; otherwise the container must be running and /health
+# must report db_ok:true (docker exec - python-slim ships no wget/curl,
+# and a macvlan child is unreachable from its own host). A bare HTTP 200
+# is NOT enough: the app serves 200 even fail-static, so the deploy gate
+# requires the DB layer - unwritable mounts fail HERE, not silently. A red
+# panel FAILS the gate: the compose set health-gates and rolls back as one.
+_check_panel() {
+  [ -n "${PANEL_IMAGE:-}" ] || return 0
+  _cp_c="${PANEL_CONTAINER:-mihomo-panel}"
+  _cp_try=0
+  while [ "$_cp_try" -lt 3 ]; do
+    _cp_try=$((_cp_try+1))
+    if [ "$("$DOCKER_BIN" inspect -f '{{.State.Running}}' "$_cp_c" 2>/dev/null)" = "true" ] \
+       && "$DOCKER_BIN" exec "$_cp_c" python3 -c "import json,urllib.request,sys;sys.exit(0 if json.load(urllib.request.urlopen('http://127.0.0.1:${PANEL_PORT:-8090}/health',timeout=8)).get('db_ok') is True else 1)" >/dev/null 2>&1; then
+      log_info "health: panel ($_cp_c) /health db_ok"
+      return 0
+    fi
+    log_warn "health[panel $_cp_try/3]: $_cp_c not healthy yet"
+    sleep "$HEALTH_INTERVAL"
+  done
+  log_error "health gate FAILED for $_cp_c (/health not answering or db_ok false)"
+  return 1
+}
+
+# rollback_compose MIHOMO_OLD_ID METACUBEXD_OLD_ID [PANEL_OLD_ID] -> re-point
+# each tag at its last-good image id (captured from the running container
+# BEFORE the swap), then a single recreate. Empty args are skipped. Returns 0
+# if the recreate succeeded.
 rollback_compose() {
-  _m_old="$1"; _u_old="$2"
-  [ -n "$_m_old$_u_old" ] || { log_error "rollback unavailable: no previous running image IDs"; return 1; }
+  _m_old="$1"; _u_old="$2"; _p_old="${3:-}"
+  [ -n "$_m_old$_u_old$_p_old" ] || { log_error "rollback unavailable: no previous running image IDs"; return 1; }
   if [ -n "$_m_old" ] && ! "$DOCKER_BIN" image inspect "$_m_old" >/dev/null 2>&1; then
     log_error "rollback image is missing: $_m_old"
     return 1
   fi
   if [ -n "$_u_old" ] && ! "$DOCKER_BIN" image inspect "$_u_old" >/dev/null 2>&1; then
     log_error "rollback image is missing: $_u_old"
+    return 1
+  fi
+  if [ -n "$_p_old" ] && ! "$DOCKER_BIN" image inspect "$_p_old" >/dev/null 2>&1; then
+    log_error "rollback image is missing: $_p_old"
     return 1
   fi
   if [ -n "$_m_old" ]; then
@@ -208,6 +259,11 @@ rollback_compose() {
     log_warn "rollback: re-tag $METACUBEXD_IMAGE -> $_u_old"
     "$DOCKER_BIN" tag "$_u_old" "$METACUBEXD_IMAGE" >>"$LOG_FILE" 2>&1 \
       || { log_error "rollback re-tag failed for $METACUBEXD_IMAGE"; return 1; }
+  fi
+  if [ -n "$_p_old" ]; then
+    log_warn "rollback: re-tag $PANEL_IMAGE -> $_p_old"
+    "$DOCKER_BIN" tag "$_p_old" "$PANEL_IMAGE" >>"$LOG_FILE" 2>&1 \
+      || { log_error "rollback re-tag failed for $PANEL_IMAGE"; return 1; }
   fi
   compose_up_local || { log_error "rollback compose up failed"; return 1; }
   return 0

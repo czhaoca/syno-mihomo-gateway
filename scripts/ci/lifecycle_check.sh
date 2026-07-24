@@ -27,6 +27,7 @@ printf '%s\n' "$*" >> "$CALLS"
 case "$1 $2" in
   'inspect mihomo') [ "${FAKE_MIHOMO:-0}" = 1 ] ;;
   'inspect mihomo-ui') [ "${FAKE_UI:-0}" = 1 ] ;;
+  'inspect mihomo-panel') [ "${FAKE_PANEL:-0}" = 1 ] ;;
   'network inspect')
     case "$*" in
       *"{{.Driver}}"*) printf '%s\n' "${FAKE_NET_SPEC:-macvlan|eth0|192.168.1.0/24|192.168.1.1}" ;;
@@ -37,8 +38,10 @@ case "$1 $2" in
   'network rm') exit "${FAKE_NET_RM_RC:-0}" ;;
   *)
     case "$*" in
+      *'com.docker.compose.project'*mihomo-panel*) printf '%s\n' "${FAKE_PANEL_PROJECT:-syno-mihomo-gateway}" ;;
       *'com.docker.compose.project'*mihomo-ui*) printf '%s\n' "${FAKE_UI_PROJECT:-syno-mihomo-gateway}" ;;
       *'com.docker.compose.project'*mihomo*) printf '%s\n' "${FAKE_MIHOMO_PROJECT:-syno-mihomo-gateway}" ;;
+      *'com.docker.compose.service'*mihomo-panel*) printf '%s\n' "${FAKE_PANEL_SERVICE:-panel}" ;;
       *'com.docker.compose.service'*mihomo-ui*) printf '%s\n' "${FAKE_UI_SERVICE:-metacubexd}" ;;
       *'com.docker.compose.service'*mihomo*) printf '%s\n' "${FAKE_MIHOMO_SERVICE:-mihomo}" ;;
     esac ;;
@@ -54,8 +57,8 @@ PARENT_INTERFACE=eth0
 SUBNET_CIDR=192.168.1.0/24
 ROUTER_IP=192.168.1.1
 
-FAKE_MIHOMO=0 FAKE_UI=0 FAKE_NETWORK=0 FAKE_ATTACHMENTS=
-export FAKE_MIHOMO FAKE_UI FAKE_NETWORK FAKE_ATTACHMENTS
+FAKE_MIHOMO=0 FAKE_UI=0 FAKE_PANEL=0 FAKE_NETWORK=0 FAKE_ATTACHMENTS=
+export FAKE_MIHOMO FAKE_UI FAKE_PANEL FAKE_NETWORK FAKE_ATTACHMENTS
 lifecycle_inspect
 [ "$LIFECYCLE_CONTAINERS_PRESENT:$LIFECYCLE_NETWORK_PRESENT" = 0:0 ] && ok || fail "fresh inventory"
 
@@ -104,6 +107,39 @@ REMOVALS="$(cat "$CALLS")"
 case "$REMOVALS" in *'rm -f mihomo'*'rm -f mihomo-ui'*) ok ;; *) fail "scoped container removal commands" ;; esac
 case "$REMOVALS" in *'down --remove-orphans'*) fail "automatic cleanup used project-wide orphan removal" ;; *) ok ;; esac
 expect_success "empty verified macvlan can be removed" lifecycle_remove_network
+
+# Panel era (#68): mihomo-panel joins the verified set. Every case above ran
+# with FAKE_PANEL=0 - the pre-migration deployment shape stays fully managed
+# - and the pair-only removal must never touch the absent third name.
+case "$REMOVALS" in *'rm -f mihomo-panel'*) fail "absent panel must not be removed" ;; *) ok ;; esac
+
+FAKE_PANEL=1 FAKE_PANEL_SERVICE=panel FAKE_PANEL_PROJECT=syno-mihomo-gateway
+FAKE_ATTACHMENTS='mihomo mihomo-ui mihomo-panel'
+export FAKE_PANEL FAKE_PANEL_SERVICE FAKE_PANEL_PROJECT FAKE_ATTACHMENTS
+lifecycle_inspect
+[ "$LIFECYCLE_CONTAINERS_SAFE:$LIFECYCLE_NETWORK_SAFE:$LIFECYCLE_PANEL_STATUS" = 1:1:managed ] \
+  && ok || fail "panel joins the managed inventory"
+
+FAKE_PANEL_SERVICE=other; export FAKE_PANEL_SERVICE
+lifecycle_inspect
+[ "$LIFECYCLE_CONTAINERS_SAFE:$LIFECYCLE_NETWORK_SAFE" = 0:0 ] \
+  && ok || fail "foreign mihomo-panel blocks cleanup and network teardown"
+expect_failure "foreign panel blocks automatic cleanup" lifecycle_remove_containers
+FAKE_PANEL_SERVICE=panel; export FAKE_PANEL_SERVICE
+
+FAKE_PANEL_PROJECT=other-project; export FAKE_PANEL_PROJECT
+lifecycle_inspect
+[ "$LIFECYCLE_CONTAINERS_SAFE" = 0 ] && ok || fail "panel from another Compose project is ambiguous"
+FAKE_PANEL_PROJECT=syno-mihomo-gateway; export FAKE_PANEL_PROJECT
+
+FAKE_ATTACHMENTS=; export FAKE_ATTACHMENTS
+: >"$CALLS"
+expect_success "panel-era trio can be removed" lifecycle_remove_containers
+REMOVALS="$(cat "$CALLS")"
+case "$REMOVALS" in
+  *'rm -f mihomo'*'rm -f mihomo-ui'*'rm -f mihomo-panel'*) ok ;;
+  *) fail "trio removal commands" ;;
+esac
 
 if [ "$FAIL" -ne 0 ]; then
   printf 'FAILED: %s passed, %s failed\n' "$PASS" "$FAIL" >&2

@@ -19,6 +19,14 @@ logs/
 # from a manual misrun or a test that resolves GATEWAY_DATA_DIR under the repo.
 syno-mihomo-gateway-data/
 
+# Panel runtime state (policy/stats DBs, dynamic provider files) - same
+# stray-copy rule as above. package.sh additionally REFUSES to build if any
+# of these ever become tracked (its ls-files guard).
+state/
+config/providers/
+*.db
+*.sqlite*
+
 # Release artifacts (scripts/package.sh output)
 dist/
 

@@ -162,6 +162,9 @@ _msg_en() {
     q_router)         printf '%s' 'Router / Gateway IP' ;;
     q_subnet)         printf '%s' 'Home LAN subnet (CIDR)' ;;
     q_mihomo_ip)      printf '%s' 'Static LAN IP for mihomo (must be unused)' ;;
+    q_panel_ip)       printf '%s' 'Static LAN IP for the gateway panel (must be unused, distinct from mihomo)' ;;
+    panel_secret_generated) printf '%s' 'PANEL_SECRET generated and saved to .env (enter it once in the panel UI)' ;;
+    panel_secret_manual)    printf '%s' 'could not generate PANEL_SECRET automatically - set it in .env (panel changes stay refused until then)' ;;
     info_ip_suggest_scan) printf '%s' 'scanning the LAN for a free static IP near the NAS...' ;;
     q_web_port)       printf '%s' 'Dashboard port (published on the NAS)' ;;
     warn_port_in_use) printf '%s' 'port %s looks already in use - pick another if the dashboard fails to start' ;;
@@ -560,6 +563,9 @@ _msg_zh() {
     q_router)         printf '%s' '路由器 / 网关 IP' ;;
     q_subnet)         printf '%s' '家庭 LAN 子网（CIDR）' ;;
     q_mihomo_ip)      printf '%s' 'mihomo 的静态 LAN IP（必须未被占用）' ;;
+    q_panel_ip)       printf '%s' '网关面板的静态 LAN IP（必须未被占用，且不同于 mihomo）' ;;
+    panel_secret_generated) printf '%s' 'PANEL_SECRET 已生成并写入 .env（在面板页面输入一次即可）' ;;
+    panel_secret_manual)    printf '%s' '无法自动生成 PANEL_SECRET——请在 .env 中手动设置（设置前面板拒绝任何更改）' ;;
     info_ip_suggest_scan) printf '%s' '正在扫描 LAN 上靠近 NAS 的空闲静态 IP……' ;;
     q_web_port)       printf '%s' '仪表盘端口（在 NAS 上发布）' ;;
     warn_port_in_use) printf '%s' '端口 %s 似乎已被占用 - 若仪表盘启动失败请另选一个' ;;

@@ -82,6 +82,10 @@ def is_secret_path(path: str) -> bool:
             and lowered_path != "config/subscription.txt.example"
         )
         or lowered_path.startswith("config/config.yaml")
+        or lowered_path.startswith("config/providers/")
+        or lowered_path.startswith("state/")
+        or lowered_path.endswith(".db")
+        or ".sqlite" in lowered_path
         or lowered_path.startswith("logs/")
     )
 

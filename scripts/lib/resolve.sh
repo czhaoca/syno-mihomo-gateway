@@ -70,6 +70,8 @@ resolve_update_images() {
   _rui_u="${METACUBEXD_IMAGE:-$(env_get METACUBEXD_IMAGE 2>/dev/null || echo '')}"
   [ -n "$_rui_m" ] && [ -n "$_rui_u" ] || return 1
   _rui_list="$_rui_m $_rui_u"
+  _rui_p="${PANEL_IMAGE:-$(env_get PANEL_IMAGE 2>/dev/null || echo '')}"
+  [ -z "$_rui_p" ] || _rui_list="$_rui_list $_rui_p"
   _rui_cf="$(env_get CF_IMAGE 2>/dev/null || echo '')"
   [ -z "$_rui_cf" ] || _rui_list="$_rui_list $_rui_cf"
   env_set UPDATE_IMAGES "$_rui_list"

@@ -143,6 +143,7 @@ case "$1" in
       *compose.project*) echo "${FAKE_COMPOSE_PROJECT:-syno-mihomo-gateway}"; exit 0 ;;
       *cloudflared*) exit "${FAKE_CF_RC:-1}" ;;
       *mihomo-ui*) exit "${FAKE_UI_RC:-1}" ;;
+      *mihomo-panel*) exit "${FAKE_PANEL_RC:-1}" ;;
       *mihomo*) exit "${FAKE_MIHOMO_RC:-1}" ;;
     esac
     exit 1 ;;

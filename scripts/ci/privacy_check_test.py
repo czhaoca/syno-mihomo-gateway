@@ -23,10 +23,15 @@ class PrivacyPolicyTests(unittest.TestCase):
             "CONFIG/SUBSCRIPTION.TXT.backup",
             "config/config.yaml.old",
             "LOGS/update.log",
+            "config/providers/dyn-full-tunnel.txt",
+            "state/policy.db",
+            "state/panel-apply-failed",
+            "app/fixtures/seed.sqlite3",
         ):
             self.assertTrue(policy.is_secret_path(path), path)
         self.assertFalse(policy.is_secret_path(".env.example"))
         self.assertFalse(policy.is_secret_path("config/subscription.txt.example"))
+        self.assertFalse(policy.is_secret_path("app/store/db.py"))
 
     def test_private_key_variants_are_rejected(self) -> None:
         self.assert_rejected("-----BEGIN RSA " + "PRIVATE KEY-----")
