@@ -689,6 +689,29 @@ cat ../syno-mihomo-gateway-data/config/.config.yaml.rejected
 标记——回退到上一份配置运行的网关在它看来是健康的——所以需要主动运行 doctor
 （安装器菜单 5，或 `gateway.sh doctor`）才能发现被拒绝的修改。
 
+## 部署被拒绝："the saved .env predates the gateway panel"
+
+当保存的 `.env` 缺少 `PANEL_IMAGE`/`PANEL_IP` 时，`gateway.sh deploy|redeploy`
+（以及它们的 `--dry-run` 预演）会以退出码 3 停下并给出这条消息。面板的
+compose 引用是失败即停的（`${PANEL_IMAGE:?}`），未迁移的 `.env` 根本无法
+部署——这条拒绝会在最前面点名真正的原因，而不是让每一次 compose 调用都
+重复一遍原始的 `required variable ... is missing a value` 插值错误。同一
+状况还会在 `gateway.sh doctor`（含 `--json`）中显示为
+`env: needs-migration`，让开机自愈带着日志提示直接跳过，并让夜间自动更新
+中止并发出指向本节修法的通知——v1.8.0 目录树下的 pre-v1.8.0 `.env`
+是这四种表现唯一可预期的共同原因。
+
+**修复：** 运行一次安装器迁移——`sudo sh ./install.sh`，选择
+**按已保存设置部署**。它会按你的镜像源模式派生 `PANEL_IMAGE`、生成
+`PANEL_SECRET`、把该引用并入 `UPDATE_IMAGES`、用出厂默认补齐其他缺失的
+键，并且只询问一个值：`PANEL_IP`（网关子网上一个空闲的局域网地址，已做
+冲突检查）。此后 `gateway.sh redeploy` 一切照旧。
+
+一条相关的警告——`PANEL_SECRET is empty - the panel refuses every
+mutation`——并不致命：栈能部署、能路由，只是每一次面板修改都会返回
+403，直到迁移（或手工在 `.env` 中写入 32 位十六进制的 `PANEL_SECRET`
+并重新部署）提供密钥为止。
+
 ## 网关面板：策略漂移（`policy_parity` ERROR）
 
 当面板保存的状态与 mihomo 实际的路由出现分歧时，doctor 的 `policy_parity`

@@ -567,10 +567,8 @@ panel_secret_generate() {
 # (${PANEL_IMAGE:?}) until this supplies the knobs.
 _pc_panel_backfill() {
   _pp_img="$(env_get PANEL_IMAGE 2>/dev/null || echo '')"
-  _pp_resync=0
   if [ -z "$_pp_img" ]; then
     _pc_fixed=1
-    _pp_resync=1
     _pp_new="$(derive_ref panel "$(env_get PANEL_TAG 2>/dev/null || echo latest)")" || _pp_new=""
     if [ -n "$_pp_new" ]; then
       env_set PANEL_IMAGE "$_pp_new" || return 1
@@ -578,6 +576,14 @@ _pc_panel_backfill() {
     else
       ui_warn "$(msg precheck_images)"
       wizard_images || return 1
+      # docker mode is TOLERANT in derive_images (warn only, ref kept empty):
+      # a green precheck here would resurrect the raw ${PANEL_IMAGE:?} cascade
+      # on the exact path every refusal surface recommends - re-check and
+      # fail the migration LOUDLY, naming the one actionable knob.
+      if [ -z "$(env_get PANEL_IMAGE 2>/dev/null || echo '')" ]; then
+        ui_warn "$(msg panel_image_unresolved)"
+        return 1
+      fi
     fi
   fi
   _pp_sec="$(env_get PANEL_SECRET 2>/dev/null || echo '')"
@@ -620,12 +626,25 @@ _pc_panel_backfill() {
     done
     env_set PANEL_IP "$_pp_nip" || return 1
   fi
-  # A newly derived panel ref must join UPDATE_IMAGES in the same pass: a
-  # pre-panel .env carries the CONCRETE trio (not the expandable template),
-  # and validate_update_config fails a set-but-unmapped PANEL_IMAGE.
-  if [ "$_pp_resync" = 1 ]; then
-    resolve_update_images || return 1
-  fi
+  # The panel ref must be a MEMBER of UPDATE_IMAGES however it got here -
+  # derived this pass, or hand-added by the operator between releases: a
+  # set-but-unmapped PANEL_IMAGE fails validate_update_config, which aborts
+  # the ENTIRE nightly update run (generic targets and cloudflared included).
+  # The expandable template literals are left alone - the load_env shim
+  # expands BOTH generations panel-inclusively, and replacing one would undo
+  # the fresh-install template contract; only a CONCRETE list missing the
+  # ref is resynced.
+  _pp_img="$(env_get PANEL_IMAGE 2>/dev/null || echo '')"
+  _pp_list="$(env_get UPDATE_IMAGES 2>/dev/null || echo '')"
+  case "$_pp_list" in
+    ''|'${MIHOMO_IMAGE} ${METACUBEXD_IMAGE} ${CF_IMAGE}'|'${MIHOMO_IMAGE} ${METACUBEXD_IMAGE} ${PANEL_IMAGE} ${CF_IMAGE}')
+      : ;;
+    *)
+      case " $_pp_list " in
+        *" $_pp_img "*) : ;;
+        *) _pc_fixed=1; resolve_update_images || return 1 ;;
+      esac ;;
+  esac
   return 0
 }
 
@@ -659,6 +678,20 @@ precheck_env() {
   _pc_need DNS_DEFAULT_NAMESERVER is_dns_list q_dns_bootstrap
   _pc_need DNS_NAMESERVER         is_dns_list q_dns_domestic
   _pc_backfill_pair || return 1
+  # COUNTRY_GROUPS (the v1.5.0 group model): renderer-required, but a
+  # pre-streamline .env predates the key and the render failure's hint
+  # misdirects (subscription/DNS). The shipped default is safe to seed
+  # silently - first entry = default egress country; a present value is
+  # never touched. Read back: env_set's rc alone cannot prove the line
+  # landed (the #55 lying-write lesson).
+  if [ -z "$(env_get COUNTRY_GROUPS 2>/dev/null || echo '')" ]; then
+    _pc_fixed=1
+    _pc_cg="$(example_default COUNTRY_GROUPS)"
+    [ -n "$_pc_cg" ] || return 1
+    env_set COUNTRY_GROUPS "$_pc_cg" || return 1
+    [ "$(env_get COUNTRY_GROUPS 2>/dev/null || echo '')" = "$_pc_cg" ] || return 1
+    ui_ok "$(msgf backfill_wrote COUNTRY_GROUPS "$_pc_cg")"
+  fi
   # Image refs must resolve or compose fails closed (${MIHOMO_IMAGE:?}).
   if [ -z "$(env_get MIHOMO_IMAGE 2>/dev/null || echo '')" ] \
      || [ -z "$(env_get METACUBEXD_IMAGE 2>/dev/null || echo '')" ]; then

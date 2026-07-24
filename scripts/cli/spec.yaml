@@ -379,7 +379,11 @@ json_output:
     update_task, boot_task,
     cloudflared, subscription, host_dns, geodata, dns_privacy,
     config_rejected, ipv6_bypass, full_proxy
-    (update_task/boot_task verify the DSM Task Scheduler deployment;
+    (env is ok|needs-migration|broken - needs-migration means the .env
+    parses but predates the gateway panel (PANEL_IMAGE/PANEL_IP unset);
+    deploys and updates stay refused until the install.sh migration runs,
+    which asks only for PANEL_IP;
+    update_task/boot_task verify the DSM Task Scheduler deployment;
     proxy_groups is ok|default-empty|country-empty|provider-empty for the
     generated "<Country> Auto" url-test groups - default-empty means the
     country group selected in Exit Country matches no provider node
@@ -437,7 +441,11 @@ json_output:
     controller、image_arch、proxy_groups、dashboard、update_task、boot_task、
     cloudflared、
     subscription、host_dns、geodata、dns_privacy、config_rejected、
-    ipv6_bypass、full_proxy（update_task/boot_task
+    ipv6_bypass、full_proxy（env 取值 ok|needs-migration|broken ——
+    needs-migration 表示 .env 可解析但早于网关面板时代
+    （PANEL_IMAGE/PANEL_IP 未设置）；在 install.sh 迁移（只询问
+    PANEL_IP）完成之前，部署与更新保持拒绝；
+    update_task/boot_task
     校验 DSM 任务计划的部署情况；proxy_groups 针对生成的“<国家> Auto”
     url-test 分组，
     取值 ok|default-empty|country-empty|provider-empty —— default-empty

@@ -1040,6 +1040,69 @@ done
   [ "$(dotenv_get UPDATE_IMAGES)" = "$_ui1" ] \
     || fail "panel re-run churned UPDATE_IMAGES"
 
+  # Hand-migrated .env: PANEL_IMAGE set by the operator between releases,
+  # UPDATE_IMAGES still the pre-panel concrete trio. The membership resync
+  # must fold the ref in even though nothing was derived this pass - a
+  # set-but-unmapped PANEL_IMAGE aborts the ENTIRE nightly update run at
+  # validate_update_config, not just the panel's slice.
+  ENV_FILE="$TD/panelhand.env"; : > "$ENV_FILE"
+  env_set ROUTER_IP 192.168.1.1
+  env_set SUBNET_CIDR 192.168.1.0/24
+  env_set MIHOMO_IP 192.168.1.100
+  env_set WEB_UI_PORT 8080; env_set CONTROLLER_PORT 9090
+  env_set DNS_DEFAULT_NAMESERVER 1.1.1.1
+  env_set DNS_NAMESERVER 1.1.1.1
+  env_set DNS_CN_NAMESERVER 1.1.1.1
+  env_set DNS_FOREIGN_NAMESERVER 1.1.1.1
+  env_set REGISTRY_MODE acr
+  env_set DOCKER_REGISTRY reg.example
+  env_set ACR_NAMESPACE ns
+  env_set MIHOMO_IMAGE img1; env_set METACUBEXD_IMAGE img2
+  env_set PANEL_IMAGE reg.example/ns/mihomo-panel:latest
+  env_set PANEL_SECRET 0123456789abcdef0123456789abcdef
+  env_set PANEL_IP 192.168.1.101
+  env_set UPDATE_IMAGES 'img1 img2'
+  MIHOMO_IMAGE=''; METACUBEXD_IMAGE=''; PANEL_IMAGE=''; CF_IMAGE=''
+  PANEL_ASKED=0
+  precheck_env >/dev/null 2>&1 || fail "precheck_env (hand-migrated) failed"
+  [ "$PANEL_ASKED" = 0 ] || fail "hand-migrated run re-asked PANEL_IP"
+  [ "$(dotenv_get UPDATE_IMAGES)" = 'img1 img2 reg.example/ns/mihomo-panel:latest' ] \
+    || fail "hand-migrated .env: panel ref not folded into UPDATE_IMAGES: $(dotenv_get UPDATE_IMAGES)"
+  # The expandable template is NEVER replaced with concrete refs - the
+  # load_env shim expands BOTH template generations panel-inclusively, and
+  # replacing it would undo the #68 fresh-install template contract.
+  env_set UPDATE_IMAGES '${MIHOMO_IMAGE} ${METACUBEXD_IMAGE} ${CF_IMAGE}'
+  MIHOMO_IMAGE=''; METACUBEXD_IMAGE=''; PANEL_IMAGE=''; CF_IMAGE=''
+  precheck_env >/dev/null 2>&1 || fail "precheck_env (template list) failed"
+  [ "$(dotenv_get UPDATE_IMAGES)" = '${MIHOMO_IMAGE} ${METACUBEXD_IMAGE} ${CF_IMAGE}' ] \
+    || fail "template UPDATE_IMAGES was clobbered with concrete refs: $(dotenv_get UPDATE_IMAGES)"
+
+  # docker mode with no PANEL_UPSTREAM: derive_images is TOLERANT (warn
+  # only), so the migration must re-check and FAIL LOUDLY naming the knob -
+  # a green precheck with PANEL_IMAGE still empty sends the operator into
+  # an unescapable refusal loop (review-confirmed on the v1.8.0-rc fix).
+  ENV_FILE="$TD/paneldocker.env"; : > "$ENV_FILE"
+  env_set ROUTER_IP 192.168.1.1
+  env_set SUBNET_CIDR 192.168.1.0/24
+  env_set MIHOMO_IP 192.168.1.100
+  env_set WEB_UI_PORT 8080; env_set CONTROLLER_PORT 9090
+  env_set DNS_DEFAULT_NAMESERVER 1.1.1.1
+  env_set DNS_NAMESERVER 1.1.1.1
+  env_set DNS_CN_NAMESERVER 1.1.1.1
+  env_set DNS_FOREIGN_NAMESERVER 1.1.1.1
+  env_set REGISTRY_MODE docker
+  env_set MIHOMO_IMAGE img1; env_set METACUBEXD_IMAGE img2
+  env_set UPDATE_IMAGES 'img1 img2'
+  MIHOMO_IMAGE=''; METACUBEXD_IMAGE=''; PANEL_IMAGE=''; CF_IMAGE=''
+  # derive_ref reads the LIVE variables (memory shadows file - the suite's
+  # acr exports would silently derive a ref): force docker mode in-memory.
+  _old_rm="${REGISTRY_MODE:-}"; REGISTRY_MODE=docker; PANEL_UPSTREAM=''
+  wizard_images() { return 0; }   # models the tolerant docker-mode wizard leg
+  _out="$(precheck_env 2>&1)" && fail "docker-mode migration returned green with PANEL_IMAGE empty"
+  case "$_out" in *panel_image_unresolved*) : ;; *) fail "docker-mode failure does not name the PANEL_UPSTREAM/PANEL_IMAGE fix: $_out" ;; esac
+  [ -z "$(dotenv_get PANEL_IMAGE 2>/dev/null)" ] || fail "docker-mode case unexpectedly derived a panel ref"
+  REGISTRY_MODE="$_old_rm"
+
   # post-deploy verification table: rows reflect the stubbed probe results
   # shellcheck source=scripts/installer/flow_deploy.sh
   . "$ROOT/scripts/installer/flow_deploy.sh"
@@ -1490,6 +1553,26 @@ done
   [ "$(dotenv_get DNS_FOREIGN_NAMESERVER)" = 'https://192.0.2.53/dns-query#All Nodes' ] \
     || fail "partial repair touched the custom FOREIGN list"
   [ -f "$TD/partial.env.pre-v2.bak" ] || fail "partial repair took no backup"
+
+  # (4b) pre-streamline .env (COUNTRY_GROUPS absent, the v1.5.0 key): seeded
+  # silently from the example - the renderer refuses an empty value with a
+  # hint that misdirects to subscription/DNS, so the migration must address
+  # it (the v1.8.0-rc NAS lesson: any missing env is addressed when
+  # migrating). A present value - customized or not - is never touched.
+  ENV_FILE="$TD/precg.env"
+  grep -v '^COUNTRY_GROUPS=' "$ROOT/.env.example" > "$ENV_FILE"
+  env_set MIHOMO_IMAGE img1; env_set METACUBEXD_IMAGE img2
+  scan_network_filtering() { printf 'unknown'; }
+  _out="$(precheck_env 2>&1)" || fail "precheck_env failed on a pre-streamline env"
+  _cg_ex="$(_example_ref COUNTRY_GROUPS)"
+  [ "$(dotenv_get COUNTRY_GROUPS)" = "$_cg_ex" ] \
+    || fail "COUNTRY_GROUPS not seeded from the example: '$(dotenv_get COUNTRY_GROUPS)'"
+  case "$_out" in *"backfill_wrote COUNTRY_GROUPS"*) : ;; *) fail "COUNTRY_GROUPS write not printed: $_out" ;; esac
+  ENV_FILE="$TD/cgcustom.env"; cp "$ROOT/.env.example" "$ENV_FILE"
+  env_set MIHOMO_IMAGE img1; env_set METACUBEXD_IMAGE img2
+  env_set COUNTRY_GROUPS 'Custom Auto=XX'
+  precheck_env >/dev/null 2>&1 || fail "precheck_env failed with a custom COUNTRY_GROUPS"
+  [ "$(dotenv_get COUNTRY_GROUPS)" = 'Custom Auto=XX' ] || fail "custom COUNTRY_GROUPS was clobbered"
 
   # (5) fail-closed: a backup that cannot be written aborts BEFORE any edit -
   # never repair a secrets file without a pristine pre-repair snapshot.

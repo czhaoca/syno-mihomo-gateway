@@ -137,6 +137,13 @@ _gw_load_config() {
         || _gw_fail "$EXIT_CONFIG" "cannot derive MIHOMO_IMAGE (check REGISTRY_MODE/DOCKER_REGISTRY/ACR_NAMESPACE)"
       METACUBEXD_IMAGE="$(derive_ref metacubexd "$METACUBEXD_TAG")" \
         || _gw_fail "$EXIT_CONFIG" "cannot derive METACUBEXD_IMAGE"
+      # Panel parity with the real run (whose resolve_images derives the
+      # panel ref too): tolerant - an unresolvable ref (docker mode without
+      # PANEL_UPSTREAM) falls through to the panel gate below, which names
+      # the migration, so plan and run refuse identically.
+      if [ -z "${PANEL_IMAGE:-}" ]; then
+        PANEL_IMAGE="$(derive_ref panel "$(env_get PANEL_TAG 2>/dev/null || echo latest)" 2>/dev/null)" || PANEL_IMAGE=""
+      fi
     else
       resolve_images || _gw_fail "$EXIT_CONFIG" "could not derive image refs from the saved settings"
       resolve_update_images || log_warn "UPDATE_IMAGES was not refreshed (image refs unresolved)"
@@ -146,6 +153,19 @@ _gw_load_config() {
     eval "_v=\${$_k:-}"
     [ -n "$_v" ] || _gw_fail "$EXIT_CONFIG" "$_k is not set in $ENV_FILE"
   done
+  # Gateway panel: compose is fail-closed on these (${PANEL_IMAGE:?} /
+  # ${PANEL_IP:?}), so a pre-panel .env must be caught HERE with the
+  # migration pointer - not as a raw compose interpolation error repeated by
+  # every later recreate (the v1.8.0-rc NAS validation cascade). PANEL_IP has
+  # no derivable value; only the installer migration may ask for it.
+  _gw_panel_missing=""
+  [ -n "${PANEL_IMAGE:-}" ] || _gw_panel_missing="PANEL_IMAGE"
+  [ -n "${PANEL_IP:-}" ] || _gw_panel_missing="${_gw_panel_missing:+$_gw_panel_missing }PANEL_IP"
+  if [ -n "$_gw_panel_missing" ]; then
+    _gw_fail "$EXIT_CONFIG" "$_gw_panel_missing not set - the saved .env predates the gateway panel; run 'sh ./${INSTALLER_ENTRY:-install.sh}' and pick 'Deploy from saved settings' to migrate (it asks only for PANEL_IP)"
+  fi
+  [ -n "${PANEL_SECRET:-}" ] || log_warn \
+    "PANEL_SECRET is empty - the panel refuses every mutation until the 'sh ./${INSTALLER_ENTRY:-install.sh}' migration generates one"
   # Under 'modify --subscription --dry-run' the file is deliberately not
   # written yet; validate the PENDING value so the plan reflects the state
   # the real run would produce (and never tells the operator to run the

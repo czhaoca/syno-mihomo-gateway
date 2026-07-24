@@ -266,6 +266,15 @@ check_arch_expectation || {
 }
 check_tun            || { notify "Mihomo Gateway: update aborted" "/dev/net/tun missing - run setup_network.sh."; exit "$EXIT_CONFIG"; }
 check_network        || { notify "Mihomo Gateway: update aborted" "tproxy_network missing/mismatched - run setup_network.sh."; exit "$EXIT_CONFIG"; }
+# A pre-panel .env under a panel-era tree: compose is fail-closed on
+# ${PANEL_IMAGE:?}/${PANEL_IP:?}, so compose_config_check would kill the
+# WHOLE run with a generic message and the real cause buried in the log as
+# a raw interpolation error. Name the cause and the one-command fix.
+if [ -z "${PANEL_IMAGE:-}" ] || [ -z "${PANEL_IP:-}" ]; then
+  log_error ".env predates the gateway panel (PANEL_IMAGE/PANEL_IP unset) - updates stay off until the migration runs"
+  notify "Mihomo Gateway: update aborted" ".env predates the gateway panel - run 'sudo sh ./install.sh' (Deploy from saved settings) to migrate; it asks only for PANEL_IP."
+  exit "$EXIT_CONFIG"
+fi
 compose_config_check || { notify "Mihomo Gateway: update aborted" "Docker Compose configuration is invalid."; exit "$EXIT_CONFIG"; }
 acr_login            || { notify "Mihomo Gateway: update aborted" "ACR login failed - check ACR_PASSWORD/token."; exit "$EXIT_LOGIN"; }
 

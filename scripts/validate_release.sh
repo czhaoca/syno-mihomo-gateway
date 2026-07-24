@@ -1053,10 +1053,89 @@ lan_probe_body() {
 }
 
 # shellcheck disable=SC2329 # invoked via the trap below
-on_abort() { echo "INTERRUPTED - restoring original .env"; fp_probe_teardown; lan_probe_teardown; panel_probe_teardown; panel_policy_cleanup; restore_env; recreate; exit 1; }
+a2_migration_abort_restore() {
+  # Ctrl-C at the PANEL_IP prompt leaves PANEL_IMAGE/PANEL_SECRET written but
+  # PANEL_IP absent, and ORIG does not exist yet (A4 captures it) - restore
+  # the pristine pre-migration snapshot, else the half-migrated .env cascades
+  # raw compose interpolation errors on every later recreate. A COMPLETED
+  # migration is kept: the abort came later and the migration is real.
+  [ "${A2_MIG_IN_FLIGHT:-0}" = 1 ] || return 0
+  [ -f "$ENV_FILE.prepanel.bak" ] || return 0
+  if _env_file_has "$ENV_FILE" PANEL_IMAGE && _env_file_has "$ENV_FILE" PANEL_SECRET \
+     && _env_file_has "$ENV_FILE" PANEL_IP; then
+    return 0
+  fi
+  cat "$ENV_FILE.prepanel.bak" > "$ENV_FILE" \
+    && echo "  (half-migrated .env restored from $ENV_FILE.prepanel.bak)"
+}
+# shellcheck disable=SC2329 # invoked via the trap below
+on_abort() {
+  echo "INTERRUPTED - restoring original .env"
+  a2_migration_abort_restore
+  fp_probe_teardown; lan_probe_teardown; panel_probe_teardown; panel_policy_cleanup
+  restore_env
+  # recreate parses compose: impossible (and pure noise) on a pre-panel .env
+  # that the restore above may have just brought back.
+  if _env_file_has "$ENV_FILE" PANEL_IMAGE && _env_file_has "$ENV_FILE" PANEL_IP; then
+    recreate
+  fi
+  exit 1
+}
 trap on_abort INT TERM
 
-say "A2: redeploy + baseline doctor"
+say "A2: migrate (installer precheck) + redeploy + baseline doctor"
+# The REAL upgrade path first: a pre-panel .env is migrated by the installer's
+# own precheck_deploy - the exact code the install.sh menu runs - before
+# gateway.sh redeploy, which refuses a pre-panel .env by design (the
+# v1.8.0-rc lesson: without this, every compose call cascaded raw
+# interpolation errors). The child process is LOAD-BEARING: sourcing
+# install.sh here would replace this script's env_set (different write
+# semantics) and a broken .env would make load_env exit the whole validator.
+# Interactive by design - the PANEL_IP question reads the owner's /dev/tty;
+# everything else is derived/generated. A lost TTY makes the installer's
+# reader exit 0 MID-migration, so success is judged ONLY by post-verifying
+# the written keys, never by the child's rc.
+# The no-op gate requires ALL THREE keys: A6's policy flips are mutations,
+# and a hand-migrated .env carrying only PANEL_IMAGE/PANEL_IP (no secret)
+# would defer the failure to A6 as opaque 403s; the migration just
+# generates the secret without asking anything extra.
+if _env_file_has "$ENV_FILE" PANEL_IMAGE && _env_file_has "$ENV_FILE" PANEL_SECRET \
+   && _env_file_has "$ENV_FILE" PANEL_IP; then
+  ok "A2 migration: .env is already panel-era (no-op)"
+else
+  _a2_mig_try=1
+  # a real OPEN test: -r checks mode bits (always 0666 on /dev/tty) and lies
+  # when the process has no controlling terminal - open() fails ENXIO there.
+  if ! ( : < /dev/tty ) 2>/dev/null; then
+    bad "A2 migration needs a real terminal (the PANEL_IP question reads /dev/tty)"
+    _a2_mig_try=0
+  fi
+  if [ "$_a2_mig_try" = 1 ]; then
+    # keep-first snapshot (600 - it holds secrets): a re-run after a failed
+    # migration must not clobber the pristine pre-migration state.
+    if [ ! -f "$ENV_FILE.prepanel.bak" ]; then
+      cp -p "$ENV_FILE" "$ENV_FILE.prepanel.bak" 2>/dev/null || :
+    fi
+    chmod 600 "$ENV_FILE.prepanel.bak" 2>/dev/null || :
+    [ -f "$ENV_FILE.prepanel.bak" ] && echo "  (pre-migration .env snapshot: $ENV_FILE.prepanel.bak)"
+    A2_MIG_IN_FLIGHT=1
+    # shellcheck disable=SC2016 # the $-refs expand in the CHILD from its env
+    run_scrubbed env INSTALL_SOURCE_ONLY=1 SMG_INSTALL_ROOT="$REL" \
+        GATEWAY_DATA_DIR="$GATEWAY_DATA_DIR" ENV_FILE="$ENV_FILE" NO_LOG_INIT=1 \
+        sh -c '. "$SMG_INSTALL_ROOT/install.sh" && load_env && precheck_deploy' || :
+    A2_MIG_IN_FLIGHT=0
+  fi
+  if _env_file_has "$ENV_FILE" PANEL_IMAGE && _env_file_has "$ENV_FILE" PANEL_SECRET \
+     && _env_file_has "$ENV_FILE" PANEL_IP; then
+    ok "A2 migration: panel keys backfilled (PANEL_IP asked once, the rest derived)"
+    # the parent loaded the PRE-migration env - later blocks read PANEL_*
+    load_env || { bad "load_env after migration failed"; exit 3; }
+  else
+    _a2_bak_note=""
+    [ -f "$ENV_FILE.prepanel.bak" ] && _a2_bak_note=" - pre-migration snapshot: $ENV_FILE.prepanel.bak"
+    bad "A2 migration did not complete (PANEL_IMAGE/PANEL_SECRET/PANEL_IP not all present)$_a2_bak_note"
+  fi
+fi
 run_scrubbed sh "$REL/scripts/gateway.sh" redeploy --yes; RC=$?
 if [ "$RC" = 0 ]; then ok "redeploy rc 0"; else bad "redeploy rc $RC"; fi
 run_scrubbed sh "$REL/scripts/doctor.sh"; RC=$?

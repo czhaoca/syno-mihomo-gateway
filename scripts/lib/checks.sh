@@ -41,6 +41,17 @@
 
 chk_env() {
   if [ -f "$ENV_FILE" ] && dotenv_load "$ENV_FILE" >/dev/null 2>&1; then
+    # Parsing is not enough: a pre-panel .env can never drive the panel-era
+    # compose (fail-closed ${PANEL_IMAGE:?}/${PANEL_IP:?}), and every later
+    # surface only says 'broken'. Name the generation gap and the one-command
+    # fix HERE - the first record every doctor run emits (the v1.8.0-rc NAS
+    # validation lesson: the raw cause was buried under a dozen cascades).
+    if [ -z "${PANEL_IMAGE:-}" ] || [ -z "${PANEL_IP:-}" ]; then
+      CHECK_VALUE=needs-migration CHECK_SEV=bad
+      CHECK_DETAIL=".env parses but predates the gateway panel (PANEL_IMAGE/PANEL_IP unset) - deploys and updates stay refused until it is migrated"
+      CHECK_HINT="      run: sudo sh ./${INSTALLER_ENTRY:-install.sh} - pick 'Deploy from saved settings'; the migration asks only for PANEL_IP"
+      return 0
+    fi
     CHECK_VALUE=ok CHECK_SEV=ok CHECK_DETAIL=".env parsed safely"
     return 0
   fi

@@ -408,6 +408,7 @@ _msg_en() {
     precheck_step)    printf '%s' 'Validating the saved configuration' ;;
     precheck_bad)     printf '%s' '%s in .env is missing or invalid: "%s" - please re-enter it' ;;
     precheck_images)  printf '%s' 'image references are not set in .env - re-running the image step' ;;
+    panel_image_unresolved) printf '%s' 'PANEL_IMAGE is still unresolved - in docker mode set PANEL_UPSTREAM (your own mirror of the panel image) or PANEL_IMAGE directly in .env, then re-run the migration' ;;
     precheck_ok)      printf '%s' 'saved configuration looks valid' ;;
     warn_sub_dirty)   printf '%s' 'the saved subscription URL looks garbled (stray characters / bad paste)' ;;
     redeploy_what)    printf '%s' 'What do you want to do?' ;;
@@ -809,6 +810,7 @@ _msg_zh() {
     precheck_step)    printf '%s' '正在校验已保存的配置' ;;
     precheck_bad)     printf '%s' '.env 中的 %s 缺失或无效：“%s”——请重新输入' ;;
     precheck_images)  printf '%s' '.env 中未设置镜像引用——将重新执行镜像步骤' ;;
+    panel_image_unresolved) printf '%s' 'PANEL_IMAGE 仍未解析——docker 模式下请设置 PANEL_UPSTREAM（你自己的面板镜像上游），或直接在 .env 中设置 PANEL_IMAGE，然后重新运行迁移' ;;
     precheck_ok)      printf '%s' '已保存的配置看起来有效' ;;
     warn_sub_dirty)   printf '%s' '保存的订阅链接似乎已损坏（含异常字符 / 粘贴错误）' ;;
     redeploy_what)    printf '%s' '你想做什么？' ;;

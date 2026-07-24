@@ -788,6 +788,31 @@ scheduled auto-update's health gate does **not** read the marker — a gateway r
 last-good config looks healthy to it — so an on-demand doctor run (installer menu 5, or
 `gateway.sh doctor`) is what surfaces a rejected edit.
 
+## Deploy refuses: "the saved .env predates the gateway panel"
+
+`gateway.sh deploy|redeploy` (and their `--dry-run` plans) stop with exit 3 and this
+message when the saved `.env` lacks `PANEL_IMAGE`/`PANEL_IP`. The panel's compose
+references are fail-closed (`${PANEL_IMAGE:?}`), so an un-migrated `.env` can never
+deploy — the refusal names the cause up front instead of repeating a raw
+`required variable ... is missing a value` interpolation error for every compose
+call. The same condition surfaces as `env: needs-migration` in
+`gateway.sh doctor` (and `doctor --json`), skips the boot-time self-heal with a
+logged hint, and aborts the nightly auto-update with a notification naming this
+section's fix — a pre-v1.8.0 `.env` under a v1.8.0 tree is the one predictable
+cause of all four.
+
+**Fix:** run the installer migration once — `sudo sh ./install.sh`, pick
+**Deploy from saved settings**. It derives `PANEL_IMAGE` from your registry mode,
+generates `PANEL_SECRET`, folds the ref into `UPDATE_IMAGES`, seeds any other
+missing key from the shipped defaults, and asks for exactly one value:
+`PANEL_IP` (a spare LAN address on the gateway's subnet, conflict-checked).
+After that, `gateway.sh redeploy` works as before.
+
+A related warning — `PANEL_SECRET is empty - the panel refuses every mutation` —
+is non-fatal: the stack deploys and routes, but every panel change answers 403
+until the migration (or a manual 32-hex `PANEL_SECRET` in `.env` plus a
+redeploy) supplies a secret.
+
 ## Panel: policy drift (`policy_parity` ERROR)
 
 The doctor's `policy_parity` goes red (exit 3) when what the panel saved and what mihomo

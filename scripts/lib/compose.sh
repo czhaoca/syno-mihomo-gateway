@@ -80,6 +80,17 @@ compose_ensure_up() {
   if [ "$("$DOCKER_BIN" inspect -f '{{.State.Running}}' "$MIHOMO_CONTAINER" 2>/dev/null)" = true ]; then
     return 0
   fi
+  # DEPLOYED but DOWN on a pre-panel .env: starting is impossible (compose is
+  # fail-closed on ${PANEL_IMAGE:?}/${PANEL_IP:?}), and this is exactly the
+  # state the boot task must ALERT on - the LAN gateway is offline. rc 1 keeps
+  # the DSM error-mail contract; a silent skip would mask the outage for a
+  # day, and the raw interpolation error would bury the cause. The guard sits
+  # AFTER the running check on purpose: a healthy stack stays rc 0 through
+  # the migration window.
+  if [ -z "${PANEL_IMAGE:-}" ] || [ -z "${PANEL_IP:-}" ]; then
+    log_error "cannot start the stack: the saved .env predates the gateway panel - run 'sh ./${INSTALLER_ENTRY:-install.sh}' (Deploy from saved settings) to migrate"
+    return 1
+  fi
   compose_up_local
 }
 

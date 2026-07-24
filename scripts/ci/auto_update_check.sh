@@ -196,6 +196,31 @@ printf '%s\n' 'https://sub.example/x' > "$SUBSCRIPTION_FILE"
 MOCK_PULL_SUPPORT=1 MOCK_UP_RC=0 MOCK_EXISTS=1 MOCK_RUNNING=false
 export MOCK_PULL_SUPPORT MOCK_UP_RC MOCK_EXISTS MOCK_RUNNING
 
+# panel-era baseline for the block; the pre-panel case clears it deliberately
+_old_pi="${PANEL_IMAGE:-}"; _old_pip="${PANEL_IP:-}"
+PANEL_IMAGE=p; PANEL_IP=192.168.1.101
+
+# Pre-panel .env semantics (review-hardened): a RUNNING stack stays green
+# (rc 0) through the migration window; DEPLOYED-BUT-DOWN must FAIL (rc 1,
+# no compose call) so the boot task's DSM error-mail contract survives - a
+# silent skip would mask an offline LAN gateway for a day, and compose
+# would only produce the raw ${PANEL_IMAGE:?} interpolation error; an
+# ABSENT container stays the ordinary not-deployed skip (rc 2).
+PANEL_IMAGE=""; PANEL_IP=""
+MOCK_RUNNING=true; export MOCK_RUNNING
+_rc=0; compose_ensure_up || _rc=$?
+[ "$_rc" = 0 ] && ok || fail "ensure_up pre-panel with a RUNNING stack must no-op green (got $_rc)"
+MOCK_RUNNING=false; export MOCK_RUNNING
+: > "$MOCK_COMPOSE_CALLS"
+_rc=0; compose_ensure_up || _rc=$?
+[ "$_rc" = 1 ] && ok || fail "ensure_up pre-panel with a DOWN deployed stack must alert (rc 1, got $_rc)"
+[ ! -s "$MOCK_COMPOSE_CALLS" ] && ok || fail "ensure_up pre-panel down-path still invoked compose"
+MOCK_EXISTS=0; export MOCK_EXISTS
+_rc=0; compose_ensure_up || _rc=$?
+[ "$_rc" = 2 ] && ok || fail "ensure_up pre-panel with an ABSENT container must skip (rc 2, got $_rc)"
+MOCK_EXISTS=1; export MOCK_EXISTS
+PANEL_IMAGE=p; PANEL_IP=192.168.1.101
+
 _old_mi="$MIHOMO_IMAGE"; MIHOMO_IMAGE=""
 : > "$MOCK_COMPOSE_CALLS"
 _rc=0; compose_ensure_up || _rc=$?
@@ -226,6 +251,7 @@ assert_contains "ensure_up applies local images only" "$(cat "$MOCK_COMPOSE_CALL
 MOCK_UP_RC=1; export MOCK_UP_RC
 expect_failure "ensure_up propagates a failed start" compose_ensure_up
 MOCK_UP_RC=0; export MOCK_UP_RC
+PANEL_IMAGE="$_old_pi"; PANEL_IP="$_old_pip"
 
 # Fake Docker CLI for daemon/config/pull/digest/architecture/change tests.
 MOCK_DOCKER="$TMP/docker-full"
@@ -495,7 +521,7 @@ assert_not_contains "kill-switch skips Docker wait" "$DISABLED_TRACE" "docker-wa
 if (
   load_env() {
     GATEWAY_DATA_DIR="$TMP/gwdata"; LOG_FILE="$TMP/orchestrator.log"; UPDATE_ENABLED=true; UPDATE_IMAGES="m u"
-    MIHOMO_IMAGE=m; METACUBEXD_IMAGE=u; CF_IMAGE=c; CF_CONTAINER_NAME=cloudflared
+    MIHOMO_IMAGE=m; METACUBEXD_IMAGE=u; PANEL_IMAGE=p; PANEL_IP=192.168.1.101; CF_IMAGE=c; CF_CONTAINER_NAME=cloudflared
     NOTIFY_ON_NOCHANGE=0
   }
   rotate_log() { :; }
@@ -532,7 +558,7 @@ assert_contains "config abort records last-run" "$(cat "$TMP/gwdata/state/last-r
 if (
   load_env() {
     GATEWAY_DATA_DIR="$TMP/gwdata"; LOG_FILE="$TMP/orchestrator.log"; UPDATE_ENABLED=true; UPDATE_IMAGES="m u"
-    MIHOMO_IMAGE=m; METACUBEXD_IMAGE=u; CF_IMAGE=; CF_CONTAINER_NAME=cloudflared
+    MIHOMO_IMAGE=m; METACUBEXD_IMAGE=u; PANEL_IMAGE=p; PANEL_IP=192.168.1.101; CF_IMAGE=; CF_CONTAINER_NAME=cloudflared
     MIHOMO_CONTAINER=mihomo; METACUBEXD_CONTAINER=mihomo-ui
     NOTIFY_ON_NOCHANGE=0; TUN_AUTO_REDIRECT=true
   }
@@ -572,7 +598,7 @@ assert_not_contains "pre-apply auto-redirect failure does not roll back" "$REDIR
 if (
   load_env() {
     GATEWAY_DATA_DIR="$TMP/gwdata"; LOG_FILE="$TMP/orchestrator.log"; UPDATE_ENABLED=true; UPDATE_IMAGES="m u"
-    MIHOMO_IMAGE=m; METACUBEXD_IMAGE=u; CF_IMAGE=c; CF_CONTAINER_NAME=cloudflared
+    MIHOMO_IMAGE=m; METACUBEXD_IMAGE=u; PANEL_IMAGE=p; PANEL_IP=192.168.1.101; CF_IMAGE=c; CF_CONTAINER_NAME=cloudflared
     MIHOMO_CONTAINER=mihomo; METACUBEXD_CONTAINER=mihomo-ui
     NOTIFY_ON_NOCHANGE=0
   }
@@ -612,7 +638,7 @@ assert_contains "failed apply triggers rollback and re-health" "$APPLY_TRACE" "c
 if (
   load_env() {
     GATEWAY_DATA_DIR="$TMP/gwdata"; LOG_FILE="$TMP/orchestrator.log"; UPDATE_ENABLED=true; UPDATE_IMAGES="m u c"
-    MIHOMO_IMAGE=m; METACUBEXD_IMAGE=u; CF_IMAGE=c; CF_CONTAINER_NAME=cloudflared
+    MIHOMO_IMAGE=m; METACUBEXD_IMAGE=u; PANEL_IMAGE=p; PANEL_IP=192.168.1.101; CF_IMAGE=c; CF_CONTAINER_NAME=cloudflared
     MIHOMO_CONTAINER=mihomo; METACUBEXD_CONTAINER=mihomo-ui
     NOTIFY_ON_NOCHANGE=0
   }
@@ -656,7 +682,7 @@ assert_contains "last-run carries the counts" "$(cat "$TMP/gwdata/state/last-run
 if (
   load_env() {
     GATEWAY_DATA_DIR="$TMP/gwdata"; LOG_FILE="$TMP/orchestrator.log"; UPDATE_ENABLED=true; UPDATE_IMAGES="m u"
-    MIHOMO_IMAGE=m; METACUBEXD_IMAGE=u; CF_IMAGE=; CF_CONTAINER_NAME=cloudflared
+    MIHOMO_IMAGE=m; METACUBEXD_IMAGE=u; PANEL_IMAGE=p; PANEL_IP=192.168.1.101; CF_IMAGE=; CF_CONTAINER_NAME=cloudflared
     MIHOMO_CONTAINER=mihomo; METACUBEXD_CONTAINER=mihomo-ui
     NOTIFY_ON_NOCHANGE=0
   }
@@ -698,7 +724,7 @@ assert_contains "partial run records last-run" "$(cat "$TMP/gwdata/state/last-ru
 if (
   load_env() {
     GATEWAY_DATA_DIR="$TMP/gwdata"; LOG_FILE="$TMP/orchestrator.log"; UPDATE_ENABLED=true; UPDATE_IMAGES="m u"
-    MIHOMO_IMAGE=m; METACUBEXD_IMAGE=u; CF_IMAGE=; CF_CONTAINER_NAME=cloudflared
+    MIHOMO_IMAGE=m; METACUBEXD_IMAGE=u; PANEL_IMAGE=p; PANEL_IP=192.168.1.101; CF_IMAGE=; CF_CONTAINER_NAME=cloudflared
     MIHOMO_CONTAINER=mihomo; METACUBEXD_CONTAINER=mihomo-ui
     NOTIFY_ON_NOCHANGE=0
   }
@@ -827,7 +853,7 @@ fi
 if (
   load_env() {
     GATEWAY_DATA_DIR="$TMP/gwdata"; LOG_FILE="$TMP/orchestrator.log"; UPDATE_ENABLED=true; UPDATE_IMAGES="m u p"
-    MIHOMO_IMAGE=m; METACUBEXD_IMAGE=u; PANEL_IMAGE=p; CF_IMAGE=; CF_CONTAINER_NAME=cloudflared
+    MIHOMO_IMAGE=m; METACUBEXD_IMAGE=u; PANEL_IMAGE=p; PANEL_IP=192.168.1.101; CF_IMAGE=; CF_CONTAINER_NAME=cloudflared
     MIHOMO_CONTAINER=mihomo; METACUBEXD_CONTAINER=mihomo-ui; PANEL_CONTAINER=mihomo-panel
     NOTIFY_ON_NOCHANGE=0
   }
@@ -866,6 +892,44 @@ fi
 PANEL_TRACE="$(cat "$TRACE")"
 assert_contains "panel-only update applies compose" "$PANEL_TRACE" "compose-apply"
 assert_contains "panel_old reaches rollback_compose's third argument" "$PANEL_TRACE" "rollback:||sha256:panelold"
+
+# --- Pre-panel .env under a panel-era tree (the v1.8.0-rc NAS lesson): the
+# preflight must abort with a notify NAMING the migration, and must never
+# reach compose_config_check - its generic 'configuration is invalid' plus a
+# raw interpolation error buried in the log misdirected the real cause.
+if (
+  load_env() {
+    GATEWAY_DATA_DIR="$TMP/gwdata"; LOG_FILE="$TMP/orchestrator.log"; UPDATE_ENABLED=true; UPDATE_IMAGES="m u"
+    MIHOMO_IMAGE=m; METACUBEXD_IMAGE=u; PANEL_IMAGE=; PANEL_IP=; CF_IMAGE=; CF_CONTAINER_NAME=cloudflared
+    MIHOMO_CONTAINER=mihomo; METACUBEXD_CONTAINER=mihomo-ui; PANEL_CONTAINER=mihomo-panel
+    NOTIFY_ON_NOCHANGE=0
+  }
+  rotate_log() { :; }
+  acquire_lock() { :; }
+  release_lock() { :; }
+  detect_compose() { DOCKER_BIN=true; return 0; }
+  docker_daemon_ready() { return 0; }
+  validate_update_config() { return 0; }
+  check_arch_expectation() { return 0; }
+  check_tun() { return 0; }
+  check_network() { return 0; }
+  compose_config_check() { printf '%s\n' compose-config-check >> "$TRACE"; return 0; }
+  acr_login() { return 0; }
+  notify() { printf 'notify:%s|%s\n' "$1" "$2" >> "$TRACE"; }
+  : > "$TRACE"
+  auto_update_main
+); then
+  fail "pre-panel .env should abort the update run"
+else
+  _rc=$?
+  if [ "$_rc" -eq "$EXIT_CONFIG" ]; then ok; else fail "pre-panel abort exit code (got $_rc, want EXIT_CONFIG)"; fi
+fi
+PREPANEL_TRACE="$(cat "$TRACE")"
+assert_contains "pre-panel abort names the install.sh migration" "$PREPANEL_TRACE" "install.sh"
+case "$PREPANEL_TRACE" in
+  *compose-config-check*) fail "pre-panel .env still reached compose_config_check" ;;
+  *) ok ;;
+esac
 
 if [ "$FAIL" -ne 0 ]; then
   printf 'FAILED: %s passed, %s failed\n' "$PASS" "$FAIL" >&2

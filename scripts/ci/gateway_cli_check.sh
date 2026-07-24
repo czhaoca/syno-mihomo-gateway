@@ -251,6 +251,8 @@ HEALTH_RETRIES=2
 HEALTH_INTERVAL=0
 PULL_RETRIES=1
 PULL_RETRY_DELAY=0
+PANEL_IMAGE=docker.io/example/mihomo-panel:latest
+PANEL_IP=192.168.1.101
 PANEL_SECRET=stub-panel-tok
 EOF
 printf '%s\n' 'https://sub.example/token' > "$DATA/config/subscription.txt"
@@ -305,6 +307,46 @@ expect_rc 0 gwu deploy --dry-run
 if grep -Eq 'network create|up -d|rm -f|network rm|^pull ' "$CALLS"; then
   fail "deploy --dry-run performed a mutating docker call: $(grep -E 'network create|up -d|rm -f|network rm|^pull ' "$CALLS" | head -n1)"
 else ok; fi
+
+# --- pre-panel .env: a migration pointer, never the raw compose interpolation ----
+# error cascade (the v1.8.0-rc NAS validation regression: gateway.sh redeploy
+# on a v1.6/1.7 .env died inside 'docker compose' with 'required variable
+# PANEL_IMAGE is missing a value' for every recreate). deploy/redeploy/dry-run
+# must all catch it in _gw_load_config with EXIT_CONFIG and name install.sh.
+cp "$ENV_FILE" "$TMP/env.migrated"
+grep -v '^PANEL_' "$TMP/env.migrated" > "$ENV_FILE"
+expect_rc 3 gw redeploy --yes
+grep -q 'predates the gateway panel' "$TMP/out" "$TMP/err" \
+  || fail "redeploy on a pre-panel .env lacks the migration explanation"
+grep -q 'install\.sh' "$TMP/out" "$TMP/err" \
+  || fail "redeploy on a pre-panel .env does not point at install.sh"
+expect_rc 3 gw deploy --yes
+grep -q 'predates the gateway panel' "$TMP/out" "$TMP/err" \
+  || fail "deploy on a pre-panel .env lacks the migration explanation"
+expect_rc 3 gwu deploy --dry-run
+grep -q 'predates the gateway panel' "$TMP/out" "$TMP/err" \
+  || fail "deploy --dry-run on a pre-panel .env lacks the migration explanation"
+# Half-migrated (PANEL_IP saved, image ref lost): still the pointer, and the
+# message must name the missing key so the operator is not sent hunting.
+{ grep -v '^PANEL_IMAGE=' "$TMP/env.migrated"; } > "$ENV_FILE"
+expect_rc 3 gw redeploy --yes
+grep -q 'PANEL_IMAGE' "$TMP/out" "$TMP/err" \
+  || fail "half-migrated .env: the missing key is not named"
+# PANEL_SECRET empty is NOT fatal (compose defaults it; mutations refused) -
+# deploy must proceed past config load and only warn.
+{ grep -v '^PANEL_SECRET=' "$TMP/env.migrated"; } > "$ENV_FILE"
+: > "$CALLS"
+expect_rc 0 gwu deploy --dry-run
+grep -qi 'PANEL_SECRET' "$TMP/err" "$TMP/out" \
+  || fail "empty PANEL_SECRET: no lock warning surfaced"
+# The doctor surfaces the same cause as a first-class value on its FIRST
+# record (visible in --json too): a parsed-but-pre-panel .env reports
+# env=needs-migration instead of cascading opaque 'broken's downstream.
+grep -v '^PANEL_' "$TMP/env.migrated" > "$ENV_FILE"
+expect_rc 3 gwu doctor --json
+grep -q '"name":"env","value":"needs-migration"' "$TMP/out" \
+  || fail "doctor --json does not report env=needs-migration on a pre-panel .env"
+cat "$TMP/env.migrated" > "$ENV_FILE"
 
 # --- foreign compose project: a preserve deploy plan is rejected with 3 ----------
 # The stub reports existing managed containers whose project label differs from
@@ -1040,6 +1082,9 @@ HEALTH_RETRIES=2
 HEALTH_INTERVAL=0
 PULL_RETRIES=1
 PULL_RETRY_DELAY=0
+PANEL_IMAGE=docker.io/example/mihomo-panel:latest
+PANEL_IP=192.168.1.101
+PANEL_SECRET=stub-panel-tok
 EOF
 printf '%s\n' 'https://sub.example/token' > "$HDATA/config/subscription.txt"
 printf 'fixture' > "$HDATA/config/GeoSite.dat"
@@ -1083,7 +1128,7 @@ grep -q '"name":"env","value":"ok"' "$TMP/out" || fail "hermetic doctor --json d
 grep -q '"name":"docker","value":"ok"' "$TMP/out" || fail "hermetic doctor --json docker check not ok (stub docker unreachable?)"
 
 : > "$HCALLS"
-_rc=0; henv FAKE_MIHOMO_RUNNING=true FAKE_UI_RUNNING=true sh "$HGW" deploy --yes </dev/null >"$TMP/out" 2>"$TMP/err" || _rc=$?
+_rc=0; henv FAKE_MIHOMO_RUNNING=true FAKE_UI_RUNNING=true FAKE_PANEL_STATE=running sh "$HGW" deploy --yes </dev/null >"$TMP/out" 2>"$TMP/err" || _rc=$?
 [ "$_rc" = 0 ] && ok || fail "hermetic deploy --yes exited $_rc - a production variable may lack its source-time default (last output: $(tail -n3 "$TMP/out" "$TMP/err" 2>/dev/null | grep -v '^==>' | tail -n3 | tr '\n' ' '))"
 grep -q 'up -d' "$HCALLS" && ok || fail "hermetic deploy --yes never reached compose up"
 if grep -q 'could not acquire lock at *$' "$TMP/err"; then

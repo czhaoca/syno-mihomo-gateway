@@ -187,7 +187,11 @@ load_env() {
   # .env.example's current literal against this case).
   case "${UPDATE_IMAGES:-}" in
     ''|'${MIHOMO_IMAGE} ${METACUBEXD_IMAGE} ${CF_IMAGE}')
-      UPDATE_IMAGES="${MIHOMO_IMAGE:-} ${METACUBEXD_IMAGE:-} ${CF_IMAGE:-}" ;;
+      # The legacy trio template expands PANEL-INCLUSIVELY: a hand-migrated
+      # .env (PANEL_IMAGE set, template untouched) must not make
+      # validate_update_config abort the whole nightly run on a
+      # set-but-unmapped panel ref. Unset members collapse to nothing.
+      UPDATE_IMAGES="${MIHOMO_IMAGE:-} ${METACUBEXD_IMAGE:-} ${PANEL_IMAGE:-} ${CF_IMAGE:-}" ;;
     '${MIHOMO_IMAGE} ${METACUBEXD_IMAGE} ${PANEL_IMAGE} ${CF_IMAGE}')
       UPDATE_IMAGES="${MIHOMO_IMAGE:-} ${METACUBEXD_IMAGE:-} ${PANEL_IMAGE:-} ${CF_IMAGE:-}" ;;
   esac
