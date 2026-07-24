@@ -18,6 +18,7 @@ sh ./scripts/gateway.sh <verb> [options]
 - Every verb accepts --help/-h for its own help; -y is a short alias for --yes.
 - Secrets are never accepted on the command line (argv is visible in ps) - set them in .env.
 - --json (status and doctor only) prints exactly one JSON object on stdout; every log line goes to the log file and stderr.
+- policy verbs are EXEMPT from --yes and root: they change only the panel's own policy database over its authenticated HTTP API - no host state, no container, no file on the gateway is touched directly, and the panel itself re-verifies every apply (parity read-back). The panel token comes from .env (PANEL_SECRET), never the command line.
 
 ## Exit codes
 
@@ -39,8 +40,8 @@ Bring the gateway up end-to-end from the saved .env (derives image refs when abs
 
 | Flag | Description |
 |---|---|
-| `--cleanup-containers preserve|auto` | what to do with existing gateway containers before deploying (default preserve) |
-| `--cleanup-network preserve|auto` | what to do with an existing tproxy network before deploying (default preserve) |
+| `--cleanup-containers preserve\|auto` | what to do with existing gateway containers before deploying (default preserve) |
+| `--cleanup-network preserve\|auto` | what to do with an existing tproxy network before deploying (default preserve) |
 | `--interface IFACE` | LAN parent interface for the macvlan (persisted to .env) |
 | `--yes` | confirm the mutation (required when actually deploying) |
 | `--dry-run` | print the deployment plan and exit without changing anything |
@@ -54,8 +55,8 @@ Deploy strictly from the saved, complete .env (never derives or prompts).
 
 | Flag | Description |
 |---|---|
-| `--cleanup-containers preserve|auto` | same as deploy |
-| `--cleanup-network preserve|auto` | same as deploy |
+| `--cleanup-containers preserve\|auto` | same as deploy |
+| `--cleanup-network preserve\|auto` | same as deploy |
 | `--interface IFACE` | same as deploy |
 | `--yes` | confirm the mutation |
 | `--dry-run` | print the plan and exit without changing anything |
@@ -72,8 +73,8 @@ Change one thing, then re-apply the full fail-closed pipeline.
 | `--mihomo-tag TAG` | with --images, pin the mihomo tag (persisted to .env) |
 | `--metacubexd-tag TAG` | with --images, pin the metacubexd tag (persisted to .env) |
 | `--subscription URL` | replace the stored subscription URL (cleaned + validated first) |
-| `--cleanup-containers preserve|auto` | same as deploy |
-| `--cleanup-network preserve|auto` | same as deploy |
+| `--cleanup-containers preserve\|auto` | same as deploy |
+| `--cleanup-network preserve\|auto` | same as deploy |
 | `--yes` | confirm the mutation |
 | `--dry-run` | validate the change and print the plan without applying it |
 
@@ -133,8 +134,25 @@ Run the unattended updater (execs scripts/auto_update.sh; args pass through) or 
 
 --list-targets/--last/--enable/--disable are handled locally and reject any other flag; --dry-run cannot combine with them (it would bypass the --yes/root gates that protect the managed list).
 
+
+### `policy`
+
+Dynamic device policy via the gateway panel (list entries, or set one device's mode) - a thin token-authed proxy over the panel HTTP API.
+
+| Flag | Description |
+|---|---|
+| `--list` | print the panel's devices document (JSON, machine-readable passthrough) |
+| `--set ADDRESS` | set the policy for an IPv4 address or CIDR (requires --mode; the panel validates and canonicalizes fail-closed) |
+| `--mode full-tunnel\|full-direct\|default` | with --set: the target mode; 'default' removes the entry |
+| `--name NAME` | with --set: a display name for the device (optional) |
+| `--note NOTE` | with --set: a note recorded on the audit entry (optional) |
+
+The verbs reach the panel API from INSIDE the mihomo-panel container (a macvlan child is unreachable from its own host); the panel is the SINGLE write path - nothing here touches SQLite or the provider files directly. The set output carries the panel's honest applied/parity answer: applied=false means the change is SAVED but did NOT reach mihomo yet (see doctor's policy_parity).
+
+Requires the panel companion (deployed at gateway install/upgrade); PANEL_SECRET must be set in .env for mutations - the panel refuses writes without it (fail closed).
+
 ## Machine-readable output (--json)
 
-status --json emits one flat object: {"verb","ok","exit_code","stack_state","mihomo_ip","dashboard_url", "checks":[{"name","value"},...],"last_update":{...}|null} (last_update mirrors state/last-run.json; null before the first run). Its check names are env, docker, mihomo_container, ui_container, network, subscription, tun_enable. last-run.json carries {"ts","exit_code","dry_run","updated","unchanged","failed", "rolled_back","updated_names","failed_names","rolled_back_names"}. doctor --json emits {"verb","ok","exit_code","checks":[...]} with check names env, docker, arch, tun_device, network, compose, mihomo, tun_gateway, controller, image_arch, proxy_groups, dashboard, update_task, boot_task, cloudflared, subscription, host_dns, geodata, dns_privacy, config_rejected, ipv6_bypass, full_proxy (update_task/boot_task verify the DSM Task Scheduler deployment; proxy_groups is ok|default-empty|country-empty|provider-empty for the generated "<Country> Auto" url-test groups - default-empty means the country group selected in Exit Country matches no provider node (default-route traffic is REJECTED, fail closed), country-empty means some other COUNTRY_GROUPS entr(ies) match no node, provider-empty means EVERY url-test group is empty (a cold or dead provider - seed it, not a filter problem); cloudflared is ok|down|absent for the optional tunnel container; host_dns probes every host resolver; geodata is cached|missing; dns_privacy is v2|v1|legacy for the rendered DNS profile - v2 = split-horizon foreign-by-default, v1 = a pre-v1.3.10 render whose fallback dual-query still copies long-tail lookups to the domestic resolvers, legacy = the domestic resolvers see every lookup; config_rejected is ok|render-failed|config-test-failed|rejected - non-ok means the entrypoint gate refused the LAST rendered config (the .config.yaml.rejected marker exists), mihomo is running on the previous config and the latest .env/subscription edit is NOT applied ('rejected' = marker present but its reason line is unreadable); a green redeploy clears it; ipv6_bypass is ok|exposed - exposed means internet-routable global IPv6 (not a private ULA) is live on the LAN interface, a path dual-stack clients use around the IPv4-only gateway; full_proxy is disabled|ok|parity-drift|chain-violation for the per-device full-proxy band (FULL_PROXY_SOURCES) - disabled means the band is not in use, parity-drift means the rendered SRC-IP-CIDR rules differ from the knob (the band edit is not live - redeploy), chain-violation means a non-LAN flow from a band source bypassed the Full-Tunnel Devices group (usually the documented UDP/QUIC fallthrough when the exit node lacks UDP relay; the guarantee also assumes no routable LAN IPv6 - see ipv6_bypass); "unknown" means the surface is not probeable on this box). Exactly one object on stdout; logs never interleave.
+status --json emits one flat object: {"verb","ok","exit_code","stack_state","mihomo_ip","dashboard_url", "checks":[{"name","value"},...],"last_update":{...}|null} (last_update mirrors state/last-run.json; null before the first run). Its check names are env, docker, mihomo_container, ui_container, network, subscription, tun_enable. last-run.json carries {"ts","exit_code","dry_run","updated","unchanged","failed", "rolled_back","updated_names","failed_names","rolled_back_names"}. doctor --json emits {"verb","ok","exit_code","checks":[...]} with check names env, docker, arch, tun_device, network, compose, mihomo, tun_gateway, controller, image_arch, proxy_groups, dashboard, update_task, boot_task, cloudflared, subscription, host_dns, geodata, dns_privacy, config_rejected, ipv6_bypass, full_proxy (update_task/boot_task verify the DSM Task Scheduler deployment; proxy_groups is ok|default-empty|country-empty|provider-empty for the generated "<Country> Auto" url-test groups - default-empty means the country group selected in Exit Country matches no provider node (default-route traffic is REJECTED, fail closed), country-empty means some other COUNTRY_GROUPS entr(ies) match no node, provider-empty means EVERY url-test group is empty (a cold or dead provider - seed it, not a filter problem); cloudflared is ok|down|absent for the optional tunnel container; host_dns probes every host resolver; geodata is cached|missing; dns_privacy is v2|v1|legacy for the rendered DNS profile - v2 = split-horizon foreign-by-default, v1 = a pre-v1.3.10 render whose fallback dual-query still copies long-tail lookups to the domestic resolvers, legacy = the domestic resolvers see every lookup; config_rejected is ok|render-failed|config-test-failed|rejected - non-ok means the entrypoint gate refused the LAST rendered config (the .config.yaml.rejected marker exists), mihomo is running on the previous config and the latest .env/subscription edit is NOT applied ('rejected' = marker present but its reason line is unreadable); a green redeploy clears it; ipv6_bypass is ok|exposed - exposed means internet-routable global IPv6 (not a private ULA) is live on the LAN interface, a path dual-stack clients use around the IPv4-only gateway; full_proxy is disabled|ok|parity-drift|chain-violation for the per-device full-proxy band (FULL_PROXY_SOURCES) - disabled means the band is not in use, parity-drift means the rendered SRC-IP-CIDR rules differ from the knob (the band edit is not live - redeploy), chain-violation means a non-LAN flow from a band source bypassed the Full-Tunnel Devices group (usually the documented UDP/QUIC fallthrough when the exit node lacks UDP relay; the guarantee also assumes no routable LAN IPv6 - see ipv6_bypass; since the panel epic the check also scans DYNAMIC full-tunnel sources from providers/dyn-full-tunnel.txt); companion_health is ok|degraded|down|absent for the gateway-panel companion container - absent (not deployed) is silent, down/degraded warn only: routing is unaffected because the provider files fail static, but policy edits and stats collection are unavailable; policy_parity is ok|drift|unverified for the panel's own DB->provider- file->mihomo apply verification (read via the panel /health) - drift is an ERROR: the last policy change is saved but did NOT reach mihomo (re-apply from the panel; the persistent panel-apply-failed marker backs it); it emits no record while the panel is absent; "unknown" means the surface is not probeable on this box). Exactly one object on stdout; logs never interleave.
 
 Logs: gateway.sh writes <data-dir>/logs/gateway.log (lines carry verb= and run= fields). Direct auto_update.sh runs write auto-update.log - a link to gateway.log when gateway.sh ran first, otherwise a separate file - without those fields.

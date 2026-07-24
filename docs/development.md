@@ -60,6 +60,7 @@ scripts/
     notify.sh                 # notifications: webhook + best-effort Synology DSM push
     resolve.sh                # UI-free config resolution: IP suggestion, image refs, subscription URL, cleanup-plan policy
     scheduler.sh              # safe DSM/BusyBox cron parsing and task commands
+    panel.sh                  # thin docker-exec client for the gateway panel HTTP API
     help.sh                   # GENERATED from cli/spec.yaml - never hand-edit
   ci/
     render_check.py           # CI: runs the real renderer + structural/rule assertions
@@ -171,7 +172,7 @@ Runs on push/PR to `main` and `master`:
 | `package-check` | `python scripts/ci/package_check.py` — builds the dev, enduser, **and linux** bundles in throwaway repos and proves **no secret can ship** (planted `.env`/subscription/`config.yaml` absent from the archives' names *and* bytes), checksums verify, the enduser bundle prunes developer/`.md`/CI files (including both generic-Linux entries), ships the installer + `.txt` guides, contains no identity string, and its leak-gate fails closed on an injected leak; the linux bundle ships the Pi + generic-Linux ports on top of the enduser set, keeps the identity gate fail-closed, tolerates the upstream forge URLs its runtime needs, and accepts `--profile pi` as a warned deprecated alias building the identical `-linux` artifacts |
 | `privacy-check` | Scans tracked files and reachable blobs for private operational identifiers, credentials, private keys, and accidentally tracked runtime files (+ the gate's self-test) |
 | `dsm-shell-tests` | Twelve BusyBox `sh` suites with fake Docker/Compose/service CLIs: `dsm_installer_check`, `lifecycle_check`, `auto_update_check`, `cloudflared_check`, `generic_update_check`, `gateway_cli_check`, `seed_provider_check`, `proxy_groups_check` (the doctor's zero-node guard for the generated country groups — incl. the `default-empty` state, the country `Exit Country` is riding gone empty), `full_proxy_check` (the doctor's per-device full-proxy band guard — knob/render parity both directions, the `/connections` chain scan incl. the LAN-destination exemption and the UDP/QUIC fallthrough flag, plus the proxy_groups unknown short-circuit fixture), `mihomo_entrypoint_check` (the entrypoint's render-to-temp + `mihomo -t` gate: swap on green, last-good fallback + scrubbed rejection marker), `pi_installer_check` (the Raspberry Pi port's shared seams), `linux_installer_check` (the generic-Linux entry: install-linux.sh sourcing, the i18n delta overlay incl. the catalog no-Pi-branding sweep, the lite_ctl output rebranding with exit-code preservation, the menu dispatch into the pi engine, plus the macvlan-viability guard — virt/cloud detection, warn + explicit ack, decline steers to lite, choke points at both the pre-deployment cleanup (ack before any teardown) and create_network — the `EXPECTED_ARCH` auto-pin on the generic flow, and the docker-default registry wizard writing only the user `.env`, incl. closing the express fast-path bypass) — plus `validate_release.sh --self-test`, the unit checks of the on-NAS release-validation helper's measurement functions |
-| `shellcheck` | `sh -n` parse-checks **every** `*.sh` in the repo, then `shellcheck -x` on 22 targets: `install.sh`, `install-pi.sh`, `install-linux.sh`, `gateway.sh`, `auto_update.sh`, `pi/auto_update_lite.sh`, `pi/lite_ctl.sh`, `install_scheduler.sh`, `setup_network.sh`, `render_config.sh`, `mihomo_entrypoint.sh`, `package.sh`, `doctor.sh`, `state_diff.sh`, `seed_provider.sh`, `bootstrap.sh`, `lib/container.sh`, `lib/targets.sh`, `lib/geodata.sh`, `linux/i18n_linux.sh`, `linux/preflight_linux.sh`, `validate_release.sh` (sourced libs followed in-context) |
+| `shellcheck` | `sh -n` parse-checks **every** `*.sh` in the repo, then `shellcheck -x` on 23 targets: `install.sh`, `install-pi.sh`, `install-linux.sh`, `gateway.sh`, `auto_update.sh`, `pi/auto_update_lite.sh`, `pi/lite_ctl.sh`, `install_scheduler.sh`, `setup_network.sh`, `render_config.sh`, `mihomo_entrypoint.sh`, `package.sh`, `doctor.sh`, `state_diff.sh`, `seed_provider.sh`, `bootstrap.sh`, `lib/container.sh`, `lib/targets.sh`, `lib/geodata.sh`, `lib/panel.sh`, `linux/i18n_linux.sh`, `linux/preflight_linux.sh`, `validate_release.sh` (sourced libs followed in-context) |
 | `app-lint` | `ruff check app` — the panel app lint (ruff pinned in `app/requirements-dev.txt`, config scoped via `app/ruff.toml`) |
 | `app-unit` | `python -m pytest app/tests -q` — the hermetic panel unit suite (fake controller client + tmp trees; validation classes, store/migrations/backups, reconciler happy/loud paths, auth matrix, audit append-only) — then `python scripts/ci/panel_contract_check.py`, the committed `app/openapi.json` byte-identity gate (regenerate with `--write`; the /v1 surface is additive-only — breaking = new version prefix + explicit owner acknowledgment) |
 | `app-e2e` | `python scripts/ci/panel_e2e_check.py` — the REAL app under uvicorn against an in-step fake mihomo controller + webhook sink on loopback (daemonless): startup re-sync, bearer-gated mutations, write→refresh→count-parity, the loud failure path (marker + `{title,body}` webhook + `parity=failed`), recovery via `/v1/apply` |
@@ -280,13 +281,13 @@ python3 -m venv /tmp/vp && /tmp/vp/bin/pip install -q -r app/requirements.txt -r
 /tmp/vp/bin/python scripts/ci/panel_contract_check.py   # --write regenerates app/openapi.json
 /tmp/vp/bin/python scripts/ci/panel_e2e_check.py
 
-# shellcheck (via Docker, same 22 targets as CI)
+# shellcheck (via Docker, same 23 targets as CI)
 docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck-alpine:stable \
   shellcheck -x install.sh install-pi.sh install-linux.sh scripts/gateway.sh scripts/auto_update.sh \
   scripts/pi/auto_update_lite.sh scripts/pi/lite_ctl.sh \
   scripts/install_scheduler.sh scripts/setup_network.sh scripts/render_config.sh \
   scripts/mihomo_entrypoint.sh scripts/package.sh scripts/doctor.sh scripts/state_diff.sh \
-  scripts/seed_provider.sh bootstrap.sh scripts/lib/container.sh scripts/lib/targets.sh scripts/lib/geodata.sh \
+  scripts/seed_provider.sh bootstrap.sh scripts/lib/container.sh scripts/lib/targets.sh scripts/lib/geodata.sh scripts/lib/panel.sh \
   scripts/linux/i18n_linux.sh scripts/linux/preflight_linux.sh scripts/validate_release.sh
 
 # compose renders (non-destructive, same as CI - never touches your real .env)

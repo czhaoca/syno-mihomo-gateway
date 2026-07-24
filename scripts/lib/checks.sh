@@ -382,7 +382,14 @@ chk_full_proxy() {
   _cfp_lines=""
   [ -n "${CONFIG_STATE_DIR:-}" ] && [ -r "$_cfp_cfg" ] \
     && _cfp_lines="$(sed -n "s/^  - 'SRC-IP-CIDR,\([^,]*\),Full-Tunnel Devices'\$/\1/p" "$_cfp_cfg" 2>/dev/null)"
-  if [ -z "$_cfp_knob" ] && [ -z "$_cfp_lines" ]; then
+  # Dynamic full-tunnel sources (the panel epic): the panel-written
+  # provider file is host-readable in the config volume - its entries join
+  # the RUNTIME source set below (UDP-fallthrough visibility parity with
+  # the band). Zero-byte (the entrypoint seed) contributes nothing.
+  _cfp_dyn=""
+  [ -n "${CONFIG_STATE_DIR:-}" ] && [ -r "${CONFIG_STATE_DIR:-}/providers/dyn-full-tunnel.txt" ] \
+    && _cfp_dyn="$(sed -n 's/^SRC-IP-CIDR,//p' "${CONFIG_STATE_DIR:-}/providers/dyn-full-tunnel.txt" 2>/dev/null)"
+  if [ -z "$_cfp_knob" ] && [ -z "$_cfp_lines" ] && [ -z "$_cfp_dyn" ]; then
     CHECK_VALUE=disabled CHECK_SEV=silent
     return 0
   fi
@@ -400,16 +407,25 @@ chk_full_proxy() {
     return 0
   fi
   _cfp_n=$(printf '%s\n' "$_cfp_want" | sed '/^$/d' | wc -l | tr -d ' ')
+  _cfp_dn=$(printf '%s\n' "$_cfp_dyn" | sed '/^$/d' | wc -l | tr -d ' ')
+  # runtime source set = the static band + the dynamic full-tunnel entries
+  _cfp_srcs="$_cfp_want"
+  if [ -n "$_cfp_dyn" ]; then
+    _cfp_srcs="${_cfp_srcs:+$_cfp_srcs
+}$_cfp_dyn"
+  fi
+  _cfp_dyntxt=""
+  [ "$_cfp_dn" -gt 0 ] && _cfp_dyntxt=" + $_cfp_dn dynamic full-tunnel source(s)"
   _cfp_raw="$(_pg_ctl /connections)" || _cfp_raw=''
   if [ -z "$_cfp_raw" ]; then
     CHECK_VALUE=ok CHECK_SEV=ok
-    CHECK_DETAIL="band rules live ($_cfp_n entr(y/ies)); runtime scan skipped - controller unreachable (guarantee assumes no routable LAN IPv6 - see ipv6_bypass)"
+    CHECK_DETAIL="band rules live ($_cfp_n entr(y/ies)$_cfp_dyntxt); runtime scan skipped - controller unreachable (guarantee assumes no routable LAN IPv6 - see ipv6_bypass)"
     return 0
   fi
   _cfp_scanned=0; _cfp_viol=0; _cfp_vex=''
   while IFS='|' read -r _cfp_src _cfp_dst _cfp_net _cfp_fp; do
     [ -n "$_cfp_src" ] || continue
-    _fp_in_band "$_cfp_src" "$_cfp_want" || continue
+    _fp_in_band "$_cfp_src" "$_cfp_srcs" || continue
     [ -n "$_cfp_dst" ] || continue      # destination not resolved yet - unjudgeable
     _fp_is_lan "$_cfp_dst" && continue  # LAN destinations stay DIRECT by design
     _cfp_scanned=$((_cfp_scanned + 1))
@@ -422,12 +438,12 @@ $(printf '%s' "$_cfp_raw" | _fp_conns)
 CFPEOF
   if [ "$_cfp_viol" -gt 0 ]; then
     CHECK_VALUE=chain-violation CHECK_SEV=warn
-    CHECK_DETAIL="$_cfp_viol of $_cfp_scanned non-LAN flow(s) from band source(s) bypass Full-Tunnel Devices (e.g. $_cfp_vex) - usually the DEC-A UDP/QUIC fallthrough: the exit node lacks UDP relay, so CN destinations go DIRECT (browsers retry over proxied TCP); the band guarantee also assumes no routable LAN IPv6 (see ipv6_bypass)"
+    CHECK_DETAIL="$_cfp_viol of $_cfp_scanned non-LAN flow(s) from band/dynamic source(s)$_cfp_dyntxt bypass Full-Tunnel Devices (e.g. $_cfp_vex) - usually the DEC-A UDP/QUIC fallthrough: the exit node lacks UDP relay, so CN destinations go DIRECT (browsers retry over proxied TCP); the band guarantee also assumes no routable LAN IPv6 (see ipv6_bypass)"
     CHECK_HINT="      persistent TCP violations mean the rules on disk and in memory disagree - redeploy; UDP-only flags are the documented QUIC residual (an opt-in UDP block ships only if the airport's UDP proves unreliable)"
     return 0
   fi
   CHECK_VALUE=ok CHECK_SEV=ok
-  CHECK_DETAIL="band rules live ($_cfp_n entr(y/ies)); $_cfp_scanned band flow(s) scanned, all riding Full-Tunnel Devices (guarantee assumes no routable LAN IPv6 - see ipv6_bypass)"
+  CHECK_DETAIL="band rules live ($_cfp_n entr(y/ies)$_cfp_dyntxt); $_cfp_scanned band flow(s) scanned, all riding Full-Tunnel Devices (guarantee assumes no routable LAN IPv6 - see ipv6_bypass)"
 }
 
 # proxy_groups - zero-node guard for the generated "<Country> Auto" url-test
@@ -586,6 +602,103 @@ chk_config_rejected() {
   return 0
 }
 
+# --- gateway panel companion (#67) -----------------------------------------
+# The panel is an OPTIONAL companion until the deploy issue wires it into
+# compose: ABSENT is silent (the cloudflared precedent - pre-panel
+# deployments stay green), present-but-dead WARNS only (routing is
+# unaffected: the provider files fail static; policy edits + stats are
+# what is lost), and policy DRIFT is an ERROR - a flip that never reached
+# mihomo must be impossible to miss. Both checks parse the ONE panel
+# /health via docker exec (a macvlan child is unreachable from its own
+# host); the comparison logic lives in the app (the state_diff same-engine
+# principle) - these only map verdicts. The fetch runs once per doctor
+# pass and is shared.
+_ph_fetched=0
+_ph_running=absent
+_ph_body=''
+_panel_health() {
+  [ "$_ph_fetched" = 1 ] && return 0
+  _ph_fetched=1
+  _ph_running="$("$DOCKER_BIN" inspect -f '{{.State.Running}}' \
+    "${PANEL_CONTAINER:-mihomo-panel}" 2>/dev/null || echo absent)"
+  case "$_ph_running" in true) : ;; *) return 0 ;; esac
+  # the panel image is python-slim: python3 is the only HTTP client inside
+  _ph_body="$("$DOCKER_BIN" exec "${PANEL_CONTAINER:-mihomo-panel}" \
+    python3 -c "import urllib.request;print(urllib.request.urlopen('http://127.0.0.1:${PANEL_PORT:-8090}/health',timeout=8).read().decode())" \
+    2>/dev/null)" || _ph_body=''
+}
+# _ph_field NAME - one bare scalar out of the /health JSON (string sans
+# quotes, or a bool/number); '|' scrubbed so a value can never break the
+# record framing.
+_ph_field() {
+  printf '%s' "$_ph_body" \
+    | sed -n "s/.*\"$1\":\"\{0,1\}\([^,\"}]*\)\"\{0,1\}.*/\1/p" \
+    | head -n 1 | tr '|' '/'
+}
+
+chk_companion_health() {
+  if ! detect_compose >/dev/null 2>&1; then
+    CHECK_VALUE=unknown CHECK_SEV=silent
+    return 0
+  fi
+  _panel_health
+  case "$_ph_running" in
+    true) : ;;
+    false)
+      CHECK_VALUE=down CHECK_SEV=warn
+      CHECK_DETAIL="panel container '${PANEL_CONTAINER:-mihomo-panel}' exists but is not running - routing is unaffected (provider files fail static); policy edits and stats collection are unavailable"
+      CHECK_HINT="      start it: docker start ${PANEL_CONTAINER:-mihomo-panel} - or redeploy: sudo sh ./${INSTALLER_ENTRY:-install.sh} (Redeploy)"
+      return 0 ;;
+    *)
+      CHECK_VALUE=absent CHECK_SEV=silent
+      return 0 ;;
+  esac
+  if [ -z "$_ph_body" ]; then
+    CHECK_VALUE=down CHECK_SEV=warn
+    CHECK_DETAIL="panel API is unreachable inside '${PANEL_CONTAINER:-mihomo-panel}' - routing is unaffected (provider files fail static); policy edits and stats collection are unavailable"
+    CHECK_HINT="      inspect: docker logs ${PANEL_CONTAINER:-mihomo-panel}"
+    return 0
+  fi
+  _cch_db="$(_ph_field db_ok)"
+  _cch_col="$(_ph_field collector)"
+  if [ "$_cch_db" != true ]; then
+    CHECK_VALUE=degraded CHECK_SEV=warn
+    CHECK_DETAIL="panel policy store is unavailable (fail-static: provider files untouched, mutations refused) - see docker logs ${PANEL_CONTAINER:-mihomo-panel}"
+    return 0
+  fi
+  case "$_cch_col" in
+    error)
+      CHECK_VALUE=degraded CHECK_SEV=warn
+      CHECK_DETAIL="panel is up but stats collection is broken (collector=error) - policy editing works; history has a hole"
+      return 0 ;;
+  esac
+  CHECK_VALUE=ok CHECK_SEV=ok
+  CHECK_DETAIL="panel healthy (collector=${_cch_col:-unknown})"
+}
+
+chk_policy_parity() {
+  # no record while the panel is absent/dead/unprobeable: companion_health
+  # owns that loudness, and parity is simply unjudgeable without /health
+  detect_compose >/dev/null 2>&1 || return 0
+  _panel_health
+  [ "$_ph_running" = true ] && [ -n "$_ph_body" ] || return 0
+  _cpp_parity="$(_ph_field parity)"
+  _cpp_marker="$(_ph_field marker)"
+  if [ "$_cpp_parity" = failed ] || [ "$_cpp_marker" = true ]; then
+    CHECK_VALUE=drift CHECK_SEV=bad
+    CHECK_DETAIL="policy apply DRIFT: the last device-policy change is saved in the panel but did NOT reach mihomo - device policy on the gateway is STALE (parity=$_cpp_parity, marker=$_cpp_marker)"
+    CHECK_HINT="      re-apply from the panel UI (the drift banner) or: sh scripts/gateway.sh policy --list to inspect; docker logs ${PANEL_CONTAINER:-mihomo-panel} names the failed step"
+    return 0
+  fi
+  if [ "$_cpp_parity" = ok ]; then
+    CHECK_VALUE=ok CHECK_SEV=ok
+    CHECK_DETAIL="policy DB, provider files, and mihomo agree (panel-verified read-back)"
+    return 0
+  fi
+  CHECK_VALUE=unverified CHECK_SEV=warn
+  CHECK_DETAIL="the panel has not verified policy parity yet (parity=${_cpp_parity:-unknown}) - a fresh start settles this on its first apply"
+}
+
 # _c_emit NAME - run chk_NAME and print its record (plus any hint lines).
 # Leaves CHECK_VALUE/CHECK_SEV set for the caller's gate logic.
 _c_emit() {
@@ -633,4 +746,6 @@ checks_run() {
   _c_emit config_rejected
   _c_emit ipv6_bypass
   _c_emit full_proxy
+  _c_emit companion_health
+  _c_emit policy_parity
 }

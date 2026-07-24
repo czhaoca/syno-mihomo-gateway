@@ -65,6 +65,23 @@ case "$1" in
   run) exit 0 ;;
   exec)
     case "$*" in
+      # panel companion (#67) - matched FIRST: 'mihomo-panel' contains
+      # 'mihomo', so the generic patterns below would swallow it. Real
+      # docker exec fails on an absent/stopped container - model that.
+      *mihomo-panel*)
+        case "${FAKE_PANEL_STATE:-absent}" in
+          running) : ;;
+          *) exit 1 ;;
+        esac
+        if [ "${FAKE_PANEL_EXEC_RC:-0}" != 0 ]; then
+          printf '%s' "${FAKE_PANEL_BODY:-}"
+          exit "$FAKE_PANEL_EXEC_RC"
+        fi
+        case "$*" in
+          *'/health'*) printf '%s' "${FAKE_PANEL_HEALTH:-}" ;;
+          *) printf '%s' "${FAKE_PANEL_BODY:-}" ;;
+        esac
+        exit 0 ;;
       *ip_forward*) echo "${FAKE_IP_FORWARD:-1}" ;;
       *sys/class/net*) exit "${FAKE_TUN_IF_RC:-0}" ;;
       *'/version'*) exit "${FAKE_CTL_RC:-0}" ;;
@@ -107,6 +124,12 @@ case "$1" in
     esac ;;
   inspect)
     case "$*" in
+      *'{{.State.Running}}'*mihomo-panel*)
+        case "${FAKE_PANEL_STATE:-absent}" in
+          running) echo true; exit 0 ;;
+          stopped) echo false; exit 0 ;;
+          *) exit 1 ;;
+        esac ;;
       *'{{.State.Running}}'*cloudflared*) echo "${FAKE_CF_RUNNING:-false}"; exit 0 ;;
       *'{{.State.Running}}'*mihomo-ui*) echo "${FAKE_UI_RUNNING:-false}"; exit 0 ;;
       *'{{.State.Running}}'*) echo "${FAKE_MIHOMO_RUNNING:-false}"; exit 0 ;;
@@ -227,6 +250,7 @@ HEALTH_RETRIES=2
 HEALTH_INTERVAL=0
 PULL_RETRIES=1
 PULL_RETRY_DELAY=0
+PANEL_SECRET=stub-panel-tok
 EOF
 printf '%s\n' 'https://sub.example/token' > "$DATA/config/subscription.txt"
 
@@ -442,6 +466,154 @@ fi
 cp "$TMP/config.v2.yaml" "$DATA/config/config.yaml"
 ok
 
+# --- policy verbs (#67): thin token-authed proxies over the panel API -----------
+# DEC-9 exemption: policy mutates no host state - no root, no --yes. The
+# token (PANEL_SECRET) rides .env -> stdin -> container env, never argv.
+FAKE_PANEL_STATE=running
+export FAKE_PANEL_STATE
+
+# list: happy path as an UNPRIVILEGED user with no --yes (the exemption)
+FAKE_PANEL_BODY='{"devices":[{"id":1,"cidr":"192.168.1.50/32","mode":"full-tunnel","name":"tv","band_member":false}],"band":[]}'
+export FAKE_PANEL_BODY
+: > "$CALLS"
+expect_rc 0 gwu policy --list
+grep -q '"devices"' "$TMP/out" \
+  && ok || fail "policy --list must emit the panel's devices document"
+grep -q 'stub-panel-tok' "$CALLS" \
+  && fail "PANEL_SECRET leaked onto docker argv (must ride stdin)" || ok
+
+# set: happy path - the panel's applied/parity answer is VISIBLE in stdout
+FAKE_PANEL_BODY='{"action":"add","device":{"id":2,"cidr":"192.168.1.60/32","mode":"full-direct"},"applied":true,"parity":"ok"}'
+export FAKE_PANEL_BODY
+: > "$CALLS"
+expect_rc 0 gwu policy --set 192.168.1.60 --mode full-direct --name desk
+grep -q '"parity"' "$TMP/out" \
+  && ok || fail "policy --set must surface the applied/parity answer"
+grep -q 'stub-panel-tok' "$CALLS" \
+  && fail "PANEL_SECRET leaked onto docker argv on set" || ok
+
+# 403 without a token: mapped to EXIT_CONFIG with a PANEL_SECRET pointer
+FAKE_PANEL_EXEC_RC=22
+FAKE_PANEL_BODY='{"detail":"mutations disabled: PANEL_SECRET is not set"}'
+export FAKE_PANEL_EXEC_RC FAKE_PANEL_BODY
+expect_rc 3 gwu policy --set 192.168.1.60 --mode full-tunnel
+grep -qi 'PANEL_SECRET' "$TMP/out" "$TMP/err" \
+  && ok || fail "panel refusal must point at PANEL_SECRET in .env"
+unset FAKE_PANEL_EXEC_RC
+
+# panel unreachable: EXIT_CONFIG naming the companion container
+FAKE_PANEL_STATE=absent
+export FAKE_PANEL_STATE
+expect_rc 3 gwu policy --list
+grep -qi 'panel is unreachable' "$TMP/out" "$TMP/err" \
+  && ok || fail "unreachable panel must be named in the error"
+FAKE_PANEL_STATE=running
+export FAKE_PANEL_STATE
+
+# secrets never on argv (the global guard covers the new verb too)
+expect_rc 3 gwu policy --set 192.168.1.60 --mode full-tunnel --token abc
+grep -qi '\.env' "$TMP/err" || fail "policy secret rejection did not point at .env"
+ok
+
+# option validation: an action is required; --set needs a --mode
+expect_rc 3 gwu policy
+expect_rc 3 gwu policy --set 192.168.1.60
+expect_rc 3 gwu policy --set 192.168.1.60 --mode bogus
+unset FAKE_PANEL_STATE FAKE_PANEL_BODY
+
+# --- panel.sh embedded-python smoke: REAL execution ------------------------------
+# The docker stub fakes exec at the door, so the in-container programs
+# (panel_api / panel_policy_set) would otherwise never run in any suite -
+# a wrong sys.argv index or env-var typo would ship. Execute them here
+# against a stdlib fixture panel. Probe-and-SKIP (repo precedent): the
+# alpine CI step has no python3; dev boxes and the NAS do.
+if command -v python3 >/dev/null 2>&1; then
+  PSMOKE="$TMP/psmoke"; mkdir -p "$PSMOKE"
+  python3 - "$ROOT/scripts/lib/panel.sh" "$PSMOKE" <<'PYEOF'
+import re, sys
+src = open(sys.argv[1]).read()
+open(sys.argv[2] + "/pa.py", "w").write(re.search(r"_pa_py='(.*?)'\n", src, re.S).group(1))
+open(sys.argv[2] + "/pps.py", "w").write(re.search(r"_pps_py='(.*?)'\n", src, re.S).group(1))
+PYEOF
+  cat > "$PSMOKE/srv.py" <<'PYEOF'
+import json
+from http.server import BaseHTTPRequestHandler, HTTPServer
+STATE = {"devices": [], "next_id": 1}
+class H(BaseHTTPRequestHandler):
+    def log_message(self, *a):
+        pass
+    def _reply(self, code, obj):
+        body = json.dumps(obj).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+    def _authed(self):
+        return self.headers.get("Authorization", "") == "Bearer smoke-tok"
+    def do_GET(self):
+        self._reply(200, {"devices": STATE["devices"], "band": []})
+    def do_POST(self):
+        if not self._authed():
+            return self._reply(403, {"detail": "invalid or missing bearer token"})
+        n = int(self.headers.get("Content-Length") or 0)
+        b = json.loads(self.rfile.read(n))
+        cidr = b["address"] if "/" in b["address"] else b["address"] + "/32"
+        d = {"id": STATE["next_id"], "cidr": cidr, "mode": b["mode"],
+             "name": b.get("name", "")}
+        STATE["next_id"] += 1
+        STATE["devices"].append(d)
+        self._reply(201, {"device": d, "applied": True, "parity": "ok"})
+    def do_PATCH(self):
+        if not self._authed():
+            return self._reply(403, {"detail": "invalid or missing bearer token"})
+        n = int(self.headers.get("Content-Length") or 0)
+        b = json.loads(self.rfile.read(n))
+        did = int(self.path.rsplit("/", 1)[1])
+        d = next(x for x in STATE["devices"] if x["id"] == did)
+        d.update({k: v for k, v in b.items() if v})
+        self._reply(200, {"device": d, "applied": True, "parity": "ok"})
+    def do_DELETE(self):
+        if not self._authed():
+            return self._reply(403, {"detail": "invalid or missing bearer token"})
+        did = int(self.path.rsplit("/", 1)[1].split("?")[0])
+        STATE["devices"] = [x for x in STATE["devices"] if x["id"] != did]
+        self._reply(200, {"removed": did, "applied": True, "parity": "ok"})
+srv = HTTPServer(("127.0.0.1", 0), H)
+print(srv.server_address[1], flush=True)
+srv.serve_forever()
+PYEOF
+  python3 "$PSMOKE/srv.py" > "$PSMOKE/port" 2>/dev/null & PSRV=$!
+  _ps_i=0
+  while [ ! -s "$PSMOKE/port" ] && [ "$_ps_i" -lt 50 ]; do sleep 0.1 2>/dev/null || sleep 1; _ps_i=$((_ps_i+1)); done
+  SPORT="$(head -n1 "$PSMOKE/port" 2>/dev/null || echo '')"
+  if [ -n "$SPORT" ]; then
+    _pb="http://127.0.0.1:$SPORT"
+    _po="$(SMG_PANEL_TOKEN=smoke-tok python3 "$PSMOKE/pps.py" "$_pb" 192.0.2.90 full-tunnel tv note1)" \
+      && printf '%s' "$_po" | grep -q '"action": "add"' \
+      && ok || fail "psmoke add: $_po"
+    _po="$(SMG_PANEL_TOKEN=smoke-tok python3 "$PSMOKE/pps.py" "$_pb" 192.0.2.90 full-direct '' '')" \
+      && printf '%s' "$_po" | grep -q '"action": "update"' \
+      && ok || fail "psmoke bare-IP resolve + update: $_po"
+    _po="$(SMG_PANEL_TOKEN=smoke-tok python3 "$PSMOKE/pps.py" "$_pb" 192.0.2.90 default '' 'bye')" \
+      && printf '%s' "$_po" | grep -q '"action": "remove"' \
+      && ok || fail "psmoke remove with note: $_po"
+    _po="$(SMG_PANEL_TOKEN=smoke-tok python3 "$PSMOKE/pps.py" "$_pb" 192.0.2.90 default '' '')" \
+      && printf '%s' "$_po" | grep -q '"action": "none"' \
+      && ok || fail "psmoke absent no-op: $_po"
+    _prc=0; _po="$(SMG_PANEL_TOKEN=wrong python3 "$PSMOKE/pps.py" "$_pb" 192.0.2.91 full-tunnel '' '')" || _prc=$?
+    [ "$_prc" = 22 ] && ok || fail "psmoke wrong-token must exit 22 (got $_prc)"
+    _po="$(python3 "$PSMOKE/pa.py" GET "$_pb/v1/devices" '')" \
+      && printf '%s' "$_po" | grep -q '"devices"' \
+      && ok || fail "psmoke panel_api GET: $_po"
+  else
+    fail "psmoke fixture server did not start"
+  fi
+  kill "$PSRV" 2>/dev/null || :
+else
+  echo "SKIP: panel.sh embedded-python smoke needs python3 (absent on the alpine CI step; runs on dev boxes and the NAS)" >&2
+fi
+
 # --- doctor FULL parity (#29): every check, human vs --json classification -------
 # The three cases above cover the UNGATED checks; the deep set is gated on the
 # basics including a raw [ -c /dev/net/tun ] with no test seam - the reason
@@ -506,7 +678,8 @@ if [ "$_fp_run" = 1 ]; then
              'image_arch ok' 'proxy_groups ok' 'dashboard running' \
              'update_task ok' 'boot_task ok' \
              'cloudflared ok' 'subscription ok' 'host_dns ok' 'geodata cached' \
-             'dns_privacy v2' 'config_rejected ok' 'ipv6_bypass ok'; do
+             'dns_privacy v2' 'config_rejected ok' 'ipv6_bypass ok' \
+             'companion_health absent'; do
     # shellcheck disable=SC2086 # deliberate: NAME VALUE split
     jval $_pc && ok || fail "healthy doctor --json lacks ${_pc%% *}:${_pc##* }"
   done
@@ -751,6 +924,54 @@ if [ "$_fp_run" = 1 ]; then
   dpar
   jval config_rejected ok && [ "$_jrc" = 0 ] && [ "$_hrc" = 0 ] \
     && ok || fail "config_rejected clear: want ok rc 0 (json=$_jrc human=$_hrc)"
+
+  # companion_health + policy_parity (#67): panel running + healthy /health
+  # -> both ok, rc unchanged 0
+  FAKE_PANEL_STATE=running
+  FAKE_PANEL_HEALTH='{"db_ok":true,"parity":"ok","last_apply":"2026-07-23T00:00:00Z","marker":false,"collector":"ok","collector_last_ts":"2026-07-23T00:00:00Z","stats_db_bytes":4096,"dashboard_port":8080}'
+  export FAKE_PANEL_STATE FAKE_PANEL_HEALTH
+  dpar
+  jval companion_health ok && jval policy_parity ok \
+    && [ "$_jrc" = 0 ] && [ "$_hrc" = 0 ] \
+    && ok || fail "companion-healthy parity (json=$_jrc human=$_hrc)"
+
+  # panel container present but API dead -> companion down = WARN (routing
+  # unaffected - provider files fail static), rc 2 in both modes
+  FAKE_PANEL_EXEC_RC=1 FAKE_PANEL_HEALTH=''
+  export FAKE_PANEL_EXEC_RC FAKE_PANEL_HEALTH
+  dpar
+  jval companion_health down && [ "$_jrc" = 2 ] && [ "$_hrc" = 2 ] \
+    && grep -q 'WARN' "$TMP/derr" \
+    && ok || fail "companion-down parity (json=$_jrc human=$_hrc)"
+  unset FAKE_PANEL_EXEC_RC
+
+  # policy drift (parity failed + the persistent marker): ERROR rc 3 in
+  # both modes - a flip that never reached mihomo must be impossible to miss
+  FAKE_PANEL_HEALTH='{"db_ok":true,"parity":"failed","last_apply":null,"marker":true,"collector":"ok","collector_last_ts":"2026-07-23T00:00:00Z","stats_db_bytes":4096,"dashboard_port":8080}'
+  export FAKE_PANEL_HEALTH
+  dpar
+  jval policy_parity drift && [ "$_jrc" = 3 ] && [ "$_hrc" = 3 ] \
+    && grep -qi 'ERROR.*stale\|ERROR.*drift\|ERROR.*did NOT reach' "$TMP/derr" \
+    && ok || fail "policy-drift parity (json=$_jrc human=$_hrc)"
+
+  # marker-ALONE drift (parity ok, marker true): the persistent apply-
+  # failure marker is an INDEPENDENT trigger - this is the combination
+  # that proves the OR (an accidental AND would pass the paired fixtures)
+  FAKE_PANEL_HEALTH='{"db_ok":true,"parity":"ok","last_apply":"2026-07-23T00:00:00Z","marker":true,"collector":"ok","collector_last_ts":"2026-07-23T00:00:00Z","stats_db_bytes":4096,"dashboard_port":8080}'
+  export FAKE_PANEL_HEALTH
+  dpar
+  jval policy_parity drift && [ "$_jrc" = 3 ] && [ "$_hrc" = 3 ] \
+    && ok || fail "marker-alone drift parity (json=$_jrc human=$_hrc)"
+
+  # container exists but is STOPPED (distinct from absent): down/warn with
+  # the start-it hint - the 'exists but is not running' arm
+  FAKE_PANEL_STATE=stopped
+  export FAKE_PANEL_STATE
+  dpar
+  jval companion_health down && [ "$_jrc" = 2 ] && [ "$_hrc" = 2 ] \
+    && grep -q 'exists but is not running' "$TMP/derr" \
+    && ok || fail "companion-stopped parity (json=$_jrc human=$_hrc)"
+  unset FAKE_PANEL_STATE FAKE_PANEL_HEALTH
 
   # restore the outer suite's world exactly as the earlier sections left it
   cp "$TMP/env.keep" "$ENV_FILE"

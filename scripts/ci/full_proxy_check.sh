@@ -213,6 +213,50 @@ else
   ok
 fi
 
+# 8b) dynamic full-tunnel sources (#67): entries in the panel-written
+#     providers/dyn-full-tunnel.txt join the RUNTIME source set - a
+#     dyn-only deployment (band knob unset) is NOT 'disabled', and a
+#     non-LAN flow from a dyn source bypassing Full-Tunnel Devices is a
+#     chain-violation exactly like a band source
+ST=$(new_state dynonly)
+write_cfg "$ST" "  - 'GEOSITE,CN,DIRECT'"
+mkdir -p "$ST/config/providers"
+printf 'SRC-IP-CIDR,198.51.100.7/32\n' > "$ST/config/providers/dyn-full-tunnel.txt"
+cat > "$ST/connections.json" <<'EOF'
+{"connections":[
+{"id":"d1","metadata":{"network":"tcp","type":"tun","sourceIP":"198.51.100.7","destinationIP":"203.0.113.80","host":""},"chains":["JP01","Japan Auto","Exit Country","Routing Mode","Full-Tunnel Devices"],"rule":"RuleSet"},
+{"id":"d2","metadata":{"network":"tcp","type":"tun","sourceIP":"198.51.100.7","destinationIP":"203.0.113.81","host":""},"chains":["DIRECT"],"rule":"Match"}
+]}
+EOF
+run_fp "$ST"
+grep -q '^full_proxy|chain-violation|warn|.*1 of 2' "$OUT_F" \
+  && ok || fail "dyn-only: want chain-violation 1 of 2 (dyn sources scanned without the band knob), got: $(cat "$OUT_F")"
+grep -q '^full_proxy|chain-violation|warn|.*dynamic' "$OUT_F" \
+  && ok || fail "dyn-only: detail must mention the dynamic source set"
+
+# 8c) dyn + band compose: both source sets scanned; zero-byte dyn file
+#     (the entrypoint seed) adds nothing and stays ok
+ST=$(new_state dynband)
+write_cfg "$ST" "$CFG_LINES"
+mkdir -p "$ST/config/providers"
+printf 'SRC-IP-CIDR,198.51.100.7/32\n' > "$ST/config/providers/dyn-full-tunnel.txt"
+cat > "$ST/connections.json" <<'EOF'
+{"connections":[
+{"id":"e1","metadata":{"network":"tcp","type":"tun","sourceIP":"192.0.2.20","destinationIP":"203.0.113.80","host":""},"chains":["JP01","Japan Auto","Exit Country","Routing Mode","Full-Tunnel Devices"],"rule":"SrcIPCIDR"},
+{"id":"e2","metadata":{"network":"tcp","type":"tun","sourceIP":"198.51.100.7","destinationIP":"203.0.113.81","host":""},"chains":["JP01","Full-Tunnel Devices"],"rule":"RuleSet"}
+]}
+EOF
+run_fp "$ST" FULL_PROXY_SOURCES="$BAND"
+grep -q '^full_proxy|ok|ok|.*2 band flow(s) scanned' "$OUT_F" \
+  && ok || fail "dyn+band: want ok with both source sets scanned, got: $(cat "$OUT_F")"
+ST=$(new_state dynseed)
+write_cfg "$ST" "  - 'GEOSITE,CN,DIRECT'"
+mkdir -p "$ST/config/providers"
+: > "$ST/config/providers/dyn-full-tunnel.txt"
+run_fp "$ST"
+grep -q '^full_proxy|disabled|silent|' "$OUT_F" \
+  && ok || fail "dyn-seed: a zero-byte dyn file (the entrypoint seed) must stay disabled, got: $(cat "$OUT_F")"
+
 # 9) #45 advisory sibling fixture: /group answers (Exit Country present)
 #    but the Exit Country "now" fetch fails -> proxy_groups short-circuits
 #    to unknown|silent (never misclassifies default-empty as country-empty)

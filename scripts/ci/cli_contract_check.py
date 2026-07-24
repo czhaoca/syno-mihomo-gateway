@@ -236,7 +236,12 @@ def gen_md(spec: dict, lang: str) -> str:
             out.append(f"| {h['flag']} | {h['description']} |")
             out.append("|---|---|")
             for o in verb["options"]:
-                out.append(f"| `{o['flag']}` | {t(o, lang)} |")
+                # GFM splits table rows on '|' even inside backtick code
+                # spans - a flag like `--mode a|b|c` silently sheds cells
+                # unless every pipe is escaped.
+                flag_md = o["flag"].replace("|", "\\|")
+                desc_md = t(o, lang).replace("|", "\\|")
+                out.append(f"| `{flag_md}` | {desc_md} |")
             out.append("")
         for n in verb.get("notes", []):
             out.append(t(n, lang))

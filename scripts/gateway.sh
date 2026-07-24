@@ -18,6 +18,9 @@
 #   update     run the unattended updater (execs scripts/auto_update.sh;
 #              --dry-run and --force pass through), or manage generic targets:
 #              --list-targets | --last (read-only) | --enable N | --disable N
+#   policy     dynamic device policy via the gateway panel API: --list |
+#              --set ADDRESS --mode full-tunnel|full-direct|default
+#              [--name N] [--note N] (exempt from --yes/root - no host state)
 #
 # Guardrails (authoritative reference: docs/cli.md, generated from
 # scripts/cli/spec.yaml - keep this header aligned when the spec changes):
@@ -67,6 +70,8 @@ SELF_DIR="${GATEWAY_SELF_DIR:-$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)}"
 . "$SELF_DIR/lib/checks.sh"
 # shellcheck source=scripts/lib/targets.sh
 . "$SELF_DIR/lib/targets.sh"
+# shellcheck source=scripts/lib/panel.sh
+. "$SELF_DIR/lib/panel.sh"
 # help.sh is GENERATED from scripts/cli/spec.yaml (usage + gw_help) - the CLI
 # contract gate (scripts/ci/cli_contract_check.py) keeps it byte-fresh.
 # shellcheck source=scripts/lib/help.sh
@@ -605,6 +610,55 @@ gateway_cron() {
   return 0
 }
 
+# _gw_policy_err RC BODY - map a panel-client failure to the CLI contract:
+# an auth refusal points at PANEL_SECRET in .env (the token never rides
+# argv), any other HTTP rejection surfaces the panel's own JSON detail,
+# and unreachable names the companion container. Always EXIT_CONFIG -
+# nothing on the host changed.
+_gw_policy_err() {
+  case "$2" in
+    *PANEL_SECRET*)
+      _gw_fail "$EXIT_CONFIG" "the panel refused the request: $2 - set PANEL_SECRET in .env (the panel token; never on the command line)" ;;
+  esac
+  if [ "$1" = 22 ]; then
+    _gw_fail "$EXIT_CONFIG" "the panel rejected the request: ${2:-<no detail>}"
+  fi
+  _gw_fail "$EXIT_CONFIG" "the gateway panel is unreachable - is the '${PANEL_CONTAINER:-mihomo-panel}' container running? (docker logs ${PANEL_CONTAINER:-mihomo-panel})"
+}
+
+# gateway_policy - thin token-authed proxy over the panel HTTP API (#67).
+# DEC-9 exemption: no --yes, no root - the verbs change only the panel's
+# own database over its authenticated API; the panel validates fail-closed
+# and re-verifies every apply (the printed applied/parity fields are its
+# honest answer). The panel is the SINGLE write path: nothing here touches
+# SQLite or the provider files directly.
+gateway_policy() {
+  [ -f "$ENV_FILE" ] || _gw_fail "$EXIT_CONFIG" ".env not found at $ENV_FILE - deploy first"
+  load_env
+  detect_compose >/dev/null 2>&1 \
+    || _gw_fail "$EXIT_CONFIG" "Docker is unavailable - the policy verbs reach the panel via docker exec"
+  case "$GW_POLICY_MODE" in
+    list)
+      _gp_out="$(panel_api GET /v1/devices)" \
+        && { printf '%s\n' "$_gp_out"; return 0; }
+      _gp_rc=$?
+      _gw_policy_err "$_gp_rc" "$_gp_out" ;;
+    set)
+      [ -n "$GW_POLICY_ADDR" ] || _gw_fail "$EXIT_CONFIG" "--set requires an address (IPv4 or CIDR)"
+      case "$GW_POLICY_MODE_VAL" in
+        full-tunnel|full-direct|default) : ;;
+        '') _gw_fail "$EXIT_CONFIG" "--set requires --mode full-tunnel|full-direct|default" ;;
+        *) _gw_fail "$EXIT_CONFIG" "--mode must be full-tunnel, full-direct, or default (got '$GW_POLICY_MODE_VAL')" ;;
+      esac
+      _gp_out="$(panel_policy_set "$GW_POLICY_ADDR" "$GW_POLICY_MODE_VAL" "$GW_POLICY_NAME" "$GW_POLICY_NOTE")" \
+        && { printf '%s\n' "$_gp_out"; return 0; }
+      _gp_rc=$?
+      _gw_policy_err "$_gp_rc" "$_gp_out" ;;
+    *)
+      _gw_fail "$EXIT_CONFIG" "policy requires --list or --set ADDRESS (see: gateway.sh policy --help)" ;;
+  esac
+}
+
 # --- entry ----------------------------------------------------------------------
 
 gateway_main() {
@@ -619,7 +673,7 @@ gateway_main() {
   esac
   GW_VERB="$1"; shift
   case "$GW_VERB" in
-    deploy|redeploy|modify|cron|status|doctor|update) : ;;
+    deploy|redeploy|modify|cron|status|doctor|update|policy) : ;;
     *) log_error "unknown verb: $GW_VERB"; usage >&2; exit "$EXIT_CONFIG" ;;
   esac
 
@@ -639,6 +693,8 @@ gateway_main() {
   GW_DO_NET=0 GW_DO_IMG=0 GW_SUB='' GW_MIHOMO_TAG='' GW_METACUBEXD_TAG=''
   GW_TIME='' GW_SCHED='' GW_TZ='' GW_ENABLE='' GW_APPLY_CRON=0
   GW_PASS=''
+  GW_POLICY_MODE='' GW_POLICY_ADDR='' GW_POLICY_MODE_VAL=''
+  GW_POLICY_NAME='' GW_POLICY_NOTE=''
 
   GW_UPD_MODE='' GW_UPD_NAME=''
   if [ "$GW_VERB" = update ]; then
@@ -707,6 +763,15 @@ gateway_main() {
         cron:--enable) GW_ENABLE=true ;;
         cron:--disable) GW_ENABLE=false ;;
         cron:--apply-crontab) GW_APPLY_CRON=1 ;;
+        policy:--list) GW_POLICY_MODE=list ;;
+        policy:--set=*) GW_POLICY_MODE="set"; GW_POLICY_ADDR="${_a#*=}" ;;
+        policy:--set) shift; GW_POLICY_MODE="set"; GW_POLICY_ADDR="${1:-}" ;;
+        policy:--mode=*) GW_POLICY_MODE_VAL="${_a#*=}" ;;
+        policy:--mode) shift; GW_POLICY_MODE_VAL="${1:-}" ;;
+        policy:--name=*) GW_POLICY_NAME="${_a#*=}" ;;
+        policy:--name) shift; GW_POLICY_NAME="${1:-}" ;;
+        policy:--note=*) GW_POLICY_NOTE="${_a#*=}" ;;
+        policy:--note) shift; GW_POLICY_NOTE="${1:-}" ;;
         *) log_error "unknown option for $GW_VERB: $_a"; exit "$EXIT_CONFIG" ;;
       esac
       # A trailing value-taking flag has already consumed the last word: an
@@ -782,6 +847,7 @@ gateway_main() {
     status) gateway_status; exit $? ;;
     doctor) gateway_doctor; exit $? ;;
     cron)   gateway_cron; exit $? ;;
+    policy) gateway_policy; exit $? ;;
     deploy|redeploy)
       if [ "$GW_DRY_RUN" = 0 ]; then acquire_lock; trap 'release_lock' EXIT INT TERM; fi
       gateway_deploy; _gw_rc=$?

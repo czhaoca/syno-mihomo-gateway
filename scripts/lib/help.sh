@@ -19,6 +19,7 @@ Verbs:
   status     Read-only deployment state (stack, containers, network, dashboard URL).
   doctor     Read-only diagnostics (exit 0 healthy / 2 degraded / 3 broken). Human mode runs scripts/doctor.sh; --json runs the same check set natively.
   update     Run the unattended updater (execs scripts/auto_update.sh; args pass through) or manage its generic targets.
+  policy     Dynamic device policy via the gateway panel (list entries, or set one device's mode) - a thin token-authed proxy over the panel HTTP API.
 
 Guardrails:
   - Mutating verbs (deploy, redeploy, modify, update, cron --apply-crontab) require an explicit --yes; without it they exit 7 and change nothing.
@@ -27,6 +28,7 @@ Guardrails:
   - Every verb accepts --help/-h for its own help; -y is a short alias for --yes.
   - Secrets are never accepted on the command line (argv is visible in ps) - set them in .env.
   - --json (status and doctor only) prints exactly one JSON object on stdout; every log line goes to the log file and stderr.
+  - policy verbs are EXEMPT from --yes and root: they change only the panel's own policy database over its authenticated HTTP API - no host state, no container, no file on the gateway is touched directly, and the panel itself re-verifies every apply (parity read-back). The panel token comes from .env (PANEL_SECRET), never the command line.
 
 Exit codes:
   0  success or clean no-op
@@ -162,6 +164,25 @@ Options:
   --disable NAME  remove a container from generic auto-update (writes the managed list only)
 
 --list-targets/--last/--enable/--disable are handled locally and reject any other flag; --dry-run cannot combine with them (it would bypass the --yes/root gates that protect the managed list).
+
+Global help: gateway.sh --help
+SMG_HELP_EOF
+      ;;
+    policy)
+      cat <<'SMG_HELP_EOF'
+Usage: gateway.sh policy [options]
+
+Dynamic device policy via the gateway panel (list entries, or set one device's mode) - a thin token-authed proxy over the panel HTTP API.
+
+Options:
+  --list                                  print the panel's devices document (JSON, machine-readable passthrough)
+  --set ADDRESS                           set the policy for an IPv4 address or CIDR (requires --mode; the panel validates and canonicalizes fail-closed)
+  --mode full-tunnel|full-direct|default  with --set: the target mode; 'default' removes the entry
+  --name NAME                             with --set: a display name for the device (optional)
+  --note NOTE                             with --set: a note recorded on the audit entry (optional)
+
+The verbs reach the panel API from INSIDE the mihomo-panel container (a macvlan child is unreachable from its own host); the panel is the SINGLE write path - nothing here touches SQLite or the provider files directly. The set output carries the panel's honest applied/parity answer: applied=false means the change is SAVED but did NOT reach mihomo yet (see doctor's policy_parity).
+Requires the panel companion (deployed at gateway install/upgrade); PANEL_SECRET must be set in .env for mutations - the panel refuses writes without it (fail closed).
 
 Global help: gateway.sh --help
 SMG_HELP_EOF

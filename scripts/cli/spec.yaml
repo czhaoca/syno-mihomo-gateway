@@ -62,6 +62,17 @@ guardrails:
     zh: >-
       --json（仅 status 与 doctor）在标准输出只打印一个 JSON 对象；
       所有日志写入日志文件与标准错误。
+  - en: >-
+      policy verbs are EXEMPT from --yes and root: they change only the
+      panel's own policy database over its authenticated HTTP API - no host
+      state, no container, no file on the gateway is touched directly, and
+      the panel itself re-verifies every apply (parity read-back). The panel
+      token comes from .env (PANEL_SECRET), never the command line.
+    zh: >-
+      policy 子命令豁免 --yes 与 root：它们只通过面板自身带鉴权的 HTTP API
+      修改面板的策略数据库——不直接触碰任何主机状态、容器或网关文件，且面板
+      会对每次应用做核对回读（parity）。面板令牌来自 .env（PANEL_SECRET），
+      绝不经命令行传递。
 
 exit_codes:
   - code: 0
@@ -301,6 +312,57 @@ verbs:
           选项；--dry-run 不能与其组合（否则会绕过保护管理列表的 --yes/root
           门槛）。
 
+  - name: policy
+    mutating: false
+    summary:
+      en: >-
+        Dynamic device policy via the gateway panel (list entries, or set one
+        device's mode) - a thin token-authed proxy over the panel HTTP API.
+      zh: >-
+        经网关面板管理动态设备策略（列出条目，或设置某设备的模式）——
+        面板 HTTP API 之上的轻量令牌鉴权代理。
+    options:
+      - flag: "--list"
+        en: print the panel's devices document (JSON, machine-readable passthrough)
+        zh: 打印面板的设备文档（JSON，机器可读的透传）
+      - flag: "--set ADDRESS"
+        en: >-
+          set the policy for an IPv4 address or CIDR (requires --mode; the
+          panel validates and canonicalizes fail-closed)
+        zh: >-
+          为一个 IPv4 地址或 CIDR 设置策略（需要 --mode；由面板做失败即停的
+          校验与规范化）
+      - flag: "--mode full-tunnel|full-direct|default"
+        en: "with --set: the target mode; 'default' removes the entry"
+        zh: "与 --set 连用：目标模式；'default' 表示移除该条目"
+      - flag: "--name NAME"
+        en: "with --set: a display name for the device (optional)"
+        zh: "与 --set 连用：设备显示名（可选）"
+      - flag: "--note NOTE"
+        en: "with --set: a note recorded on the audit entry (optional)"
+        zh: "与 --set 连用：记录到审计条目的备注（可选）"
+    notes:
+      - en: >-
+          The verbs reach the panel API from INSIDE the mihomo-panel
+          container (a macvlan child is unreachable from its own host); the
+          panel is the SINGLE write path - nothing here touches SQLite or the
+          provider files directly. The set output carries the panel's honest
+          applied/parity answer: applied=false means the change is SAVED but
+          did NOT reach mihomo yet (see doctor's policy_parity).
+        zh: >-
+          子命令从 mihomo-panel 容器内部访问面板 API（macvlan 子接口无法从
+          宿主机直接访问）；面板是唯一写入路径——这里不会直接触碰 SQLite 或
+          provider 文件。set 的输出携带面板如实的 applied/parity 结果：
+          applied=false 表示更改已保存但尚未到达 mihomo（参见 doctor 的
+          policy_parity）。
+      - en: >-
+          Requires the panel companion (deployed at gateway install/upgrade);
+          PANEL_SECRET must be set in .env for mutations - the panel refuses
+          writes without it (fail closed).
+        zh: >-
+          需要面板伴随容器（随网关安装/升级部署）；变更操作要求 .env 中已设置
+          PANEL_SECRET——未设置时面板拒绝写入（失败即停）。
+
 json_output:
   en: >-
     status --json emits one flat object:
@@ -347,7 +409,18 @@ json_output:
     chain-violation means a non-LAN flow from a band source bypassed the
     Full-Tunnel Devices group (usually the documented UDP/QUIC fallthrough when
     the exit node lacks UDP relay; the guarantee also assumes no routable
-    LAN IPv6 - see ipv6_bypass); "unknown" means
+    LAN IPv6 - see ipv6_bypass; since the panel epic the check also scans
+    DYNAMIC full-tunnel sources from providers/dyn-full-tunnel.txt);
+    companion_health is ok|degraded|down|absent for the gateway-panel
+    companion container - absent (not deployed) is silent, down/degraded
+    warn only: routing is unaffected because the provider files fail
+    static, but policy edits and stats collection are unavailable;
+    policy_parity is ok|drift|unverified for the panel's own DB->provider-
+    file->mihomo apply verification (read via the panel /health) - drift
+    is an ERROR: the last policy change is saved but did NOT reach mihomo
+    (re-apply from the panel; the persistent panel-apply-failed marker
+    backs it); it emits no record while the panel is absent;
+    "unknown" means
     the surface is not probeable on this box).
     Exactly one object on stdout; logs never interleave.
   zh: >-
@@ -391,5 +464,14 @@ json_output:
     未生效——请重新部署），chain-violation 表示网段设备的非局域网流量
     绕过了 Full-Tunnel Devices 分组（通常是已在文档说明的 UDP/QUIC 穿透：出口
     节点不支持 UDP 中继；该保证同样要求局域网没有可路由 IPv6——参见
-    ipv6_bypass）；"unknown" 表示此机器上该项不可探测）。
+    ipv6_bypass；自面板史诗起，该检查还会扫描来自
+    providers/dyn-full-tunnel.txt 的动态全隧道来源）；
+    companion_health 针对网关面板伴随容器，取值 ok|degraded|down|absent
+    ——absent（未部署）为静默，down/degraded 仅告警：路由不受影响
+    （provider 文件失败即静态保持），但策略编辑与统计采集不可用；
+    policy_parity 针对面板自身的 数据库→provider 文件→mihomo 应用核对
+    （经面板 /health 读取），取值 ok|drift|unverified——drift 为 ERROR：
+    最近一次策略变更已保存但并未到达 mihomo（请在面板中重新应用；持久的
+    panel-apply-failed 标记与之对应）；面板不存在时不输出记录；
+    "unknown" 表示此机器上该项不可探测）。
     标准输出只有这一个对象，日志绝不混入。
