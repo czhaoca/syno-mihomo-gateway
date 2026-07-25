@@ -394,6 +394,24 @@ vr_devices_cidrs() {
     END { if (s) print s }'
 }
 
+# vr_dyn_rule_counts - stdin = GET /providers/rules (compact JSON); prints
+# 'name=count' for each dyn-full-* provider, space-joined ('none' when
+# neither is present). A6 persistence forensics: a restarted mihomo that
+# re-read the on-disk providers shows both names with count >=1 (the probe
+# rows were applied pre-restart) - this line separates 'rules not loaded'
+# from 'flows not caught' when a post-restart judge fails.
+vr_dyn_rule_counts() {
+  sed 's/{/\
+{/g' | awk '
+    /"name":"dyn-full-(direct|tunnel)"/ {
+      c = "?"
+      if (match($0, /"name":"[^"]*"/)) n = substr($0, RSTART+8, RLENGTH-9)
+      if (match($0, /"ruleCount":[0-9]+/)) c = substr($0, RSTART+12, RLENGTH-12)
+      s = s (s ? " " : "") n "=" c
+    }
+    END { print (s ? s : "none") }'
+}
+
 # vr_ui_marker - the single source for the UI-shell reach marker: a stable
 # attribute the shipped app/static/index.html carries (i18n-proof - the
 # rendered TEXT changes per language, the data-i18n key does not).
@@ -816,6 +834,11 @@ All Nodes' ]; then st_ok; else st_bad "urltest_groups got: $(printf '%s' "$_name
   else st_bad "vr_devices_cidrs did not extract exactly the device cidrs"; fi
   if [ -z "$(printf '{"devices":[],"band":["192.0.2.40/32"]}' | vr_devices_cidrs)" ]; then st_ok
   else st_bad "vr_devices_cidrs invented cidrs from an empty device list"; fi
+  _rpj='{"providers":{"cn-domains":{"behavior":"domain","name":"cn-domains","ruleCount":80000,"type":"Rule"},"dyn-full-direct":{"behavior":"ipcidr","name":"dyn-full-direct","ruleCount":1,"type":"Rule"},"dyn-full-tunnel":{"behavior":"ipcidr","name":"dyn-full-tunnel","ruleCount":3,"type":"Rule"}}}'
+  if [ "$(printf '%s' "$_rpj" | vr_dyn_rule_counts)" = 'dyn-full-direct=1 dyn-full-tunnel=3' ]; then st_ok
+  else st_bad "vr_dyn_rule_counts did not extract exactly the dyn provider counts"; fi
+  if [ "$(printf '{"providers":{}}' | vr_dyn_rule_counts)" = none ]; then st_ok
+  else st_bad "vr_dyn_rule_counts did not say 'none' with no dyn providers"; fi
   _ftl=$(printf '{"id":"1","sourceIP":"192.0.2.7","chains":["JP01","Japan Auto","Full-Tunnel Devices"]}' | conn_probe_lines 192.0.2.7)
   if printf '%s\n' "$_ftl" | conn_mode_ok full-tunnel; then st_ok
   else st_bad "full-tunnel chain with a real head was rejected"; fi
@@ -846,7 +869,7 @@ All Nodes' ]; then st_ok; else st_bad "urltest_groups got: $(printf '%s' "$_name
 
   echo "validate_release self-test: $_stp passed, $_stf failed"
   [ "$_stf" -eq 0 ] || exit 1
-  echo "OK: measurement helpers (policy/knob/psn/split-core rule anchoring incl. bootstrap-pin + comment-prose immunity, provider-node counting + real-member egress gate, filtered-group discovery + %XX name encoding + COMPATIBLE/REJECT placeholder exclusion, full-proxy band connection parsing + CIDR membership, quoted-.env parsing, .env.example key coverage, scrubbed child env, doctor rc gate, summary accumulator, cache unpark, keep-split-horizon auto-decision, LAN-probe chain classification + probe-IP derivation, panel probe parsers: /health + policy-set field extraction, device-doc mode lookup, full-tunnel chain arm, UI marker pin)"
+  echo "OK: measurement helpers (policy/knob/psn/split-core rule anchoring incl. bootstrap-pin + comment-prose immunity, provider-node counting + real-member egress gate, filtered-group discovery + %XX name encoding + COMPATIBLE/REJECT placeholder exclusion, full-proxy band connection parsing + CIDR membership, quoted-.env parsing, .env.example key coverage, scrubbed child env, doctor rc gate, summary accumulator, cache unpark, keep-split-horizon auto-decision, LAN-probe chain classification + probe-IP derivation, panel probe parsers: /health + policy-set field extraction, device-doc mode lookup, dyn rule-provider counts, full-tunnel chain arm, UI marker pin)"
   exit 0
 }
 [ "$SELF_TEST" = 1 ] && self_test
@@ -1521,27 +1544,30 @@ if [ "$_a6_go" = 1 ]; then
       _ "$MIHOMO_IP" >/dev/null 2>&1 \
     || { bad "A6: full-direct probe client failed to start (ip $A6_IP2)"; _a6_go=0; }
 fi
-# a6_judge LABEL - both flows judged from /connections (12s window each).
+# a6_judge LABEL [WINDOW] - both flows judged from /connections (WINDOW
+# seconds each, default 12; post-restart passes a wider one - the probes only
+# attempt a fetch every ~1-5s and a flow must be CAUGHT mid-flight).
 a6_judge() {
+  _a6j_w="${2:-12}"
   _a6j_ok1=0; _a6j_i=0
-  while [ "$_a6j_i" -lt 12 ]; do
+  while [ "$_a6j_i" -lt "$_a6j_w" ]; do
     if ctl_get /connections | conn_probe_lines "$A6_IP1" | conn_mode_ok full-tunnel; then _a6j_ok1=1; break; fi
     _a6j_i=$((_a6j_i + 1)); sleep 1
   done
   if [ "$_a6j_ok1" = 1 ]; then
     ok "$1: flow from $A6_IP1 rides Full-Tunnel Devices behind a real node"
   else
-    bad "$1: no full-tunnel ride observed from $A6_IP1 within 12s"
+    bad "$1: no full-tunnel ride observed from $A6_IP1 within ${_a6j_w}s"
   fi
   _a6j_ok2=0; _a6j_i=0
-  while [ "$_a6j_i" -lt 12 ]; do
+  while [ "$_a6j_i" -lt "$_a6j_w" ]; do
     if ctl_get /connections | conn_probe_lines "$A6_IP2" | conn_mode_ok direct; then _a6j_ok2=1; break; fi
     _a6j_i=$((_a6j_i + 1)); sleep 1
   done
   if [ "$_a6j_ok2" = 1 ]; then
     ok "$1: flow from $A6_IP2 stays group-free (full-direct)"
   else
-    bad "$1: no group-free flow observed from $A6_IP2 within 12s"
+    bad "$1: no group-free flow observed from $A6_IP2 within ${_a6j_w}s"
   fi
   [ "$_a6j_ok1" = 1 ] && [ "$_a6j_ok2" = 1 ]
 }
@@ -1560,7 +1586,45 @@ if [ "$_a6_go" = 1 ]; then
   done
   if [ "$_a6_i" -lt 30 ]; then
     ok "controller back after restart (persistence window)"
-    a6_judge "post-restart"
+    # Direct persistence proof (forensics, not a gate - the flow judge
+    # stays the verdict): both dyn providers were carrying a probe row
+    # when mihomo restarted, so a boot that re-read the on-disk files
+    # shows count >=1 for each.
+    echo "  restart rule providers: $(ctl_get /providers/rules | vr_dyn_rule_counts)"
+    # The controller answers well before DNS/providers/groups serve
+    # traffic (rc run 3: both post-restart judges timed out at 12s; the
+    # file providers reload at boot, so the gap is readiness, not
+    # persistence). Wait for a real provider node - 90s, the cold-start
+    # leg's precedent - kick the urltest so the groups have a judged
+    # head, then judge on a wider window.
+    _a6_i=0; _a6_n=0
+    while [ "$_a6_i" -lt 18 ]; do
+      _a6_n="$(ctl_get /proxies/All%20Nodes | real_node_count)"; _a6_n=${_a6_n:-0}
+      [ "$_a6_n" -gt 0 ] && break
+      _a6_i=$((_a6_i + 1)); sleep 5
+    done
+    echo "  restart+$((_a6_i * 5))s provider nodes: $_a6_n"
+    kick_urltest
+    if ! a6_judge "post-restart" 45; then
+      # The probes die in the teardown below - snapshot their flows NOW
+      # or the failure is untriageable. A 204 flow lives well under a
+      # second, so one instant usually shows nothing: take up to four
+      # 1s-spaced snapshots per IP and say '(none)' explicitly.
+      for _a6_p in "$A6_IP1" "$A6_IP2"; do
+        _a6_fl=""
+        for _a6_t in 1 2 3 4; do
+          _a6_fl="$(ctl_get /connections | conn_probe_lines "$_a6_p")"
+          [ -n "$_a6_fl" ] && break
+          sleep 1
+        done
+        echo "  diag flows from $_a6_p:"
+        if [ -n "$_a6_fl" ]; then
+          printf '%s\n' "$_a6_fl" | awk -F"$US" '{print "    head=" $1 "  chains=" $2}'
+        else
+          echo "    (none caught in 4 snapshots)"
+        fi
+      done
+    fi
     _a6_h2="$(panel_get /health || true)"
     if [ "$(printf '%s' "$_a6_h2" | vr_panel_field parity)" = ok ]; then
       ok "panel parity ok after the mihomo restart"
