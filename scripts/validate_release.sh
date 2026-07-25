@@ -303,19 +303,39 @@ probe_ua() {
 }
 
 # conn_probe_lines SRC - stdin = /connections JSON; one line per flow from
-# SRC: '<chain-head><US><chains array>' (head = chains[0], the final hop).
+# SRC: '<chain-head><US><chains array><US><host>' (head = chains[0], the
+# final hop; host = metadata.host, empty when absent - forensics only).
 # The unit separator, NEVER '|': node names carry pipes in the wild and '|'
-# as a delimiter already bit run 3 once (see the US comment below).
+# as a delimiter already bit run 3 once (see the US comment below). The
+# chains array is scanned quote-aware, not regex-chopped: ']' inside a
+# node name ("[VIP] JP01") is DATA, and a chop there would hide every
+# trailing GROUP name - a group-riding flow would classify group-free.
 conn_probe_lines() {
   sed 's/{"id":/\
 {"id":/g' | awk -v src="$1" -v sep="$US" '
     /"id":/ {
       if (index($0, "\"sourceIP\":\"" src "\"") == 0) next
-      if (!match($0, /"chains":\[[^]]*\]/)) next
-      c = substr($0, RSTART+10, RLENGTH-10)
+      i = index($0, "\"chains\":[")
+      if (i == 0) next
+      rest = substr($0, i + 10)
+      c = ""; inq = 0; done = 0
+      n = length(rest)
+      for (j = 1; j <= n && !done; j++) {
+        ch = substr(rest, j, 1)
+        if (inq) {
+          if (ch == "\\") { c = c ch substr(rest, j + 1, 1); j++; continue }
+          if (ch == "\"") inq = 0
+          c = c ch
+        } else if (ch == "\"") { inq = 1; c = c ch }
+        else if (ch == "]") done = 1
+        else c = c ch
+      }
+      c = "[" c "]"
       h = c
       if (match(h, /"[^"]*"/)) h = substr(h, RSTART+1, RLENGTH-2)
-      print h sep c
+      host = ""
+      if (match($0, /"host":"[^"]*"/)) host = substr($0, RSTART+8, RLENGTH-9)
+      print h sep c sep host
     }'
 }
 
@@ -775,6 +795,17 @@ All Nodes' ]; then st_ok; else st_bad "urltest_groups got: $(printf '%s' "$_name
   else st_ok; fi
   if printf '%s' "$_lp_pipe" | conn_probe_lines 192.0.2.66 | conn_mode_ok proxy; then st_ok
   else st_bad "pipe-named real node rejected by the proxy verdict"; fi
+  # ']' is DATA inside a node name ("[VIP] JP01") - the bracket cousin of
+  # the pipe lesson: a regex chop at the first ']' would hide the trailing
+  # groups and let a group-riding flow classify group-free.
+  _lp_br='{"connections":[{"id":"v","metadata":{"network":"tcp","sourceIP":"192.0.2.55","destinationIP":"203.0.113.13","host":"g.example"},"chains":["[VIP] JP01","Japan Auto","Exit Country","Routing Mode"],"rule":"Match"}]}'
+  if printf '%s' "$_lp_br" | conn_probe_lines 192.0.2.55 | conn_mode_ok direct; then
+    st_bad "bracket-named node flow passed the direct verdict"
+  else st_ok; fi
+  if printf '%s' "$_lp_br" | conn_probe_lines 192.0.2.55 | conn_mode_ok proxy; then st_ok
+  else st_bad "bracket-named real node rejected by the proxy verdict"; fi
+  if [ "$(printf '%s\n' "$_lp_l77" | head -n 1 | awk -F"$US" '{print $3}')" = www.baidu.com ]; then st_ok
+  else st_bad "conn_probe_lines did not carry metadata.host as the third field"; fi
   # ip_in_band: bare-IP and CIDR entries both count; outsiders never do.
   if ip_in_band 192.0.2.50 '192.0.2.50'; then st_ok; else st_bad "ip_in_band bare-IP match"; fi
   if ip_in_band 192.0.2.50 '203.0.113.7,192.0.2.48/28'; then st_ok
@@ -1544,30 +1575,63 @@ if [ "$_a6_go" = 1 ]; then
       _ "$MIHOMO_IP" >/dev/null 2>&1 \
     || { bad "A6: full-direct probe client failed to start (ip $A6_IP2)"; _a6_go=0; }
 fi
+# a6_dump LABEL FLOWS - forensics for a failed judge arm: the flow-set the
+# window actually saw (or an explicit none), printed while it still exists.
+a6_dump() {
+  echo "  diag flows from $1:"
+  if [ -n "$2" ]; then
+    printf '%s\n' "$2" | awk -F"$US" '{print "    head=" $1 "  chains=" $2 "  host=" $3}'
+  else
+    echo "    (none caught during the window)"
+  fi
+}
+
 # a6_judge LABEL [WINDOW] - both flows judged from /connections (WINDOW
-# seconds each, default 12; post-restart passes a wider one - the probes only
-# attempt a fetch every ~1-5s and a flow must be CAUGHT mid-flight).
+# seconds each, default 45). The probes attempt a fetch every ~1-5s and a
+# flow is visible only while in-flight, so a flow must be CAUGHT mid-poll;
+# the direct probe's foreign-dest DIRECT dial is additionally at the GFW's
+# mercy (rc run 4: zero dials completed inside 12s on a healthy gateway).
+# Arms differ on purpose:
+#   full-tunnel: positive evidence required - keep polling until a flow
+#     rides the group behind a REAL head (an early COMPATIBLE head during
+#     post-restart warm-up must not fail the arm).
+#   direct: first caught evidence decides - probe-b exists only after the
+#     policy applied, so any flow from it already tells the truth; a
+#     group-riding flow is a definitive violation (fail fast), a
+#     group-free set is the pass.
 a6_judge() {
-  _a6j_w="${2:-12}"
-  _a6j_ok1=0; _a6j_i=0
+  _a6j_w="${2:-45}"
+  _a6j_ok1=0; _a6j_i=0; _a6j_seen1=""
   while [ "$_a6j_i" -lt "$_a6j_w" ]; do
-    if ctl_get /connections | conn_probe_lines "$A6_IP1" | conn_mode_ok full-tunnel; then _a6j_ok1=1; break; fi
+    _a6j_fl="$(ctl_get /connections | conn_probe_lines "$A6_IP1")"
+    [ -z "$_a6j_fl" ] || _a6j_seen1="$_a6j_fl"
+    if [ -n "$_a6j_fl" ] && printf '%s\n' "$_a6j_fl" | conn_mode_ok full-tunnel; then _a6j_ok1=1; break; fi
     _a6j_i=$((_a6j_i + 1)); sleep 1
   done
   if [ "$_a6j_ok1" = 1 ]; then
     ok "$1: flow from $A6_IP1 rides Full-Tunnel Devices behind a real node"
   else
     bad "$1: no full-tunnel ride observed from $A6_IP1 within ${_a6j_w}s"
+    a6_dump "$A6_IP1" "$_a6j_seen1"
   fi
-  _a6j_ok2=0; _a6j_i=0
+  _a6j_ok2=0; _a6j_i=0; _a6j_seen2=""
   while [ "$_a6j_i" -lt "$_a6j_w" ]; do
-    if ctl_get /connections | conn_probe_lines "$A6_IP2" | conn_mode_ok direct; then _a6j_ok2=1; break; fi
+    _a6j_fl="$(ctl_get /connections | conn_probe_lines "$A6_IP2")"
+    if [ -n "$_a6j_fl" ]; then
+      _a6j_seen2="$_a6j_fl"
+      printf '%s\n' "$_a6j_fl" | conn_mode_ok direct && _a6j_ok2=1
+      break
+    fi
     _a6j_i=$((_a6j_i + 1)); sleep 1
   done
   if [ "$_a6j_ok2" = 1 ]; then
     ok "$1: flow from $A6_IP2 stays group-free (full-direct)"
+  elif [ -n "$_a6j_seen2" ]; then
+    bad "$1: a flow from $A6_IP2 rode a proxy group (a full-direct source must stay group-free)"
+    a6_dump "$A6_IP2" "$_a6j_seen2"
   else
-    bad "$1: no group-free flow observed from $A6_IP2 within ${_a6j_w}s"
+    bad "$1: no flow observed from $A6_IP2 within ${_a6j_w}s (a foreign-dest DIRECT dial from this uplink completes only at the GFW's mercy, and mihomo tracks a flow only after the dial - a healthy gateway CAN sit flowless here; retry before treating as real)"
+    a6_dump "$A6_IP2" "$_a6j_seen2"
   fi
   [ "$_a6j_ok1" = 1 ] && [ "$_a6j_ok2" = 1 ]
 }
@@ -1605,26 +1669,7 @@ if [ "$_a6_go" = 1 ]; then
     done
     echo "  restart+$((_a6_i * 5))s provider nodes: $_a6_n"
     kick_urltest
-    if ! a6_judge "post-restart" 45; then
-      # The probes die in the teardown below - snapshot their flows NOW
-      # or the failure is untriageable. A 204 flow lives well under a
-      # second, so one instant usually shows nothing: take up to four
-      # 1s-spaced snapshots per IP and say '(none)' explicitly.
-      for _a6_p in "$A6_IP1" "$A6_IP2"; do
-        _a6_fl=""
-        for _a6_t in 1 2 3 4; do
-          _a6_fl="$(ctl_get /connections | conn_probe_lines "$_a6_p")"
-          [ -n "$_a6_fl" ] && break
-          sleep 1
-        done
-        echo "  diag flows from $_a6_p:"
-        if [ -n "$_a6_fl" ]; then
-          printf '%s\n' "$_a6_fl" | awk -F"$US" '{print "    head=" $1 "  chains=" $2}'
-        else
-          echo "    (none caught in 4 snapshots)"
-        fi
-      done
-    fi
+    a6_judge "post-restart"
     _a6_h2="$(panel_get /health || true)"
     if [ "$(printf '%s' "$_a6_h2" | vr_panel_field parity)" = ok ]; then
       ok "panel parity ok after the mihomo restart"
