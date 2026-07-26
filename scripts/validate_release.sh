@@ -25,6 +25,10 @@
 #                 helpers and exit (used by CI; needs no docker/root)
 #   --skip-knob   skip block D (the DNS_GEOIP_NO_RESOLVE spot-check)
 #   --no-extract  validate the installed tree as-is (skip A0/A1)
+#   --a6-only     DEBUG LOOP, NOT A RELEASE GATE: run only the A2.5
+#                 preflight + the A6 panel gate against the tree that is
+#                 already deployed (implies --no-extract; no redeploy, no
+#                 cold-start recreate, one mihomo restart instead of seven)
 #   --keep        keep split-horizon enabled in .env at the end
 #   --revert      restore the original .env at the end
 #                 (neither flag -> decided automatically, no prompt: an
@@ -72,15 +76,18 @@ set -u
 STAGE="${SMG_STAGE:-/volume1/docker/smg-staging}"
 REL="${SMG_RELEASE_DIR:-/volume1/docker/syno-mihomo-gateway}"
 SELF_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
-LOG="$STAGE/validate-results.log"
+LOG="$STAGE/validate-results.log"   # release transcript; --a6-only re-points it below
 BLACKHOLE="https://192.0.2.1/dns-query#All Nodes"  # RFC 5737 TEST-NET-1: never routes
 
-SELF_TEST=0; SKIP_KNOB=0; NO_EXTRACT=0; FINAL=""; PROBE_IP=""
+SELF_TEST=0; SKIP_KNOB=0; NO_EXTRACT=0; FINAL=""; PROBE_IP=""; A6_ONLY=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --self-test) SELF_TEST=1 ;;
     --skip-knob) SKIP_KNOB=1 ;;
     --no-extract) NO_EXTRACT=1 ;;
+    # a debug loop must never overwrite the release transcript: that file
+    # IS the kept NAS-validation evidence for the ship flow.
+    --a6-only) A6_ONLY=1; NO_EXTRACT=1; LOG="$STAGE/validate-a6only.log" ;;
     --keep) FINAL=keep ;;
     --revert) FINAL=revert ;;
     --probe-ip)
@@ -303,8 +310,11 @@ probe_ua() {
 }
 
 # conn_probe_lines SRC - stdin = /connections JSON; one line per flow from
-# SRC: '<chain-head><US><chains array><US><host>' (head = chains[0], the
-# final hop; host = metadata.host, empty when absent - forensics only).
+# SRC: '<chain-head><US><chains array><US><host><US><rulePayload>' (head =
+# chains[0], the final hop; host = metadata.host, empty when absent;
+# rulePayload names the rule that routed the flow - for a rule-set match it
+# is the PROVIDER name, which is positive proof the panel's own rules chose
+# the route rather than the destination merely happening to be group-free).
 # The unit separator, NEVER '|': node names carry pipes in the wild and '|'
 # as a delimiter already bit run 3 once (see the US comment below). The
 # chains array is scanned quote-aware, not regex-chopped: ']' inside a
@@ -335,8 +345,30 @@ conn_probe_lines() {
       if (match(h, /"[^"]*"/)) h = substr(h, RSTART+1, RLENGTH-2)
       host = ""
       if (match($0, /"host":"[^"]*"/)) host = substr($0, RSTART+8, RLENGTH-9)
-      print h sep c sep host
+      rp = ""
+      if (match($0, /"rulePayload":"[^"]*"/)) rp = substr($0, RSTART+15, RLENGTH-16)
+      print h sep c sep host sep rp
     }'
+}
+
+# conn_rule_is NAME - stdin = conn_probe_lines output; rc 0 iff some flow was
+# routed by the rule payload NAME (i.e. the panel's own provider).
+conn_rule_is() {
+  awk -v want="$1" -F"$US" '$4 == want { f = 1 } END { exit !f }'
+}
+
+# conn_escaped_tunnel - stdin = conn_probe_lines output for a FULL-TUNNEL
+# source; rc 0 iff some flow rides a proxy group while NOT under Full-Tunnel
+# Devices, i.e. a genuine leak. Nesting matters: Full-Tunnel Devices selects
+# Routing Mode by default, so a correct tunnel flow's chain legitimately
+# contains BOTH names and a naive "rides Routing Mode" test would condemn
+# every healthy run. A bare DIRECT chain is NOT a leak either - LAN
+# destinations match GEOIP,LAN,DIRECT above the dynamic rules by design.
+conn_escaped_tunnel() {
+  awk -F"$US" '
+    $2 ~ /Full-Tunnel Devices/ { next }
+    $2 ~ /Routing Mode|Streaming Unlock/ { f = 1 }
+    END { exit !f }'
 }
 
 # conn_mode_ok MODE - classify conn_probe_lines output (stdin).
@@ -432,6 +464,84 @@ vr_dyn_rule_counts() {
     END { print (s ? s : "none") }'
 }
 
+# vr_match_lines SRC - stdin = mihomo's own log (log-level info, which the
+# template pins); prints '<matched rule><US><outbound>' for every routing
+# decision whose source is SRC. mihomo writes TWO shapes, and both are
+# needed for full coverage (verified against a real mihomo v1.19.x):
+#   dial OK   info:    [TCP] SRC:p --> host:443 match RuleSet(dyn-full-direct) using DIRECT
+#   dial FAIL warning: [TCP] dial DIRECT (match RuleSet/dyn-full-direct) SRC:p --> host:80 error: ...
+# Note the payload separator differs - parens with the rule name in the
+# first, a SLASH in the second - so match on the provider name, not the
+# punctuation.
+# WHY this exists: /connections holds a flow only while its connection is
+# OPEN, so a source whose dials fail leaves nothing there, and neither does
+# one whose flows are too short-lived to sample. The log records EVERY
+# routing decision and keeps it, which is what makes the A6 verdicts
+# decidable at all. A blocked foreign destination - the normal, correct
+# outcome for a full-direct client here - shows up only in the warning
+# form, and it still names the rule that routed it.
+vr_match_lines() {
+  awk -v src="$1" -v sep="$US" '
+    BEGIN { q = src; gsub(/\./, "\\.", q); q = q ":[0-9]+ -->" }
+    # Anchored on "<src>:<port> -->": a bare substring test also matches the
+    # DESTINATION side of every line, so a scanner probing our address (or a
+    # public IP ending in the same digits) would be attributed to the probe.
+    $0 !~ q { next }
+    {
+      # failed-dial form first: it also contains " match ", so the info
+      # parser below would misread it.
+      i = index($0, " dial ")
+      j = index($0, " (match ")
+      if (i > 0 && j > i) {
+        o = substr($0, i + 6, j - (i + 6))
+        rest = substr($0, j + 8)
+        k = index(rest, ")")
+        if (k > 1) { print substr(rest, 1, k - 1) sep o; next }
+      }
+      i = index($0, " match ")
+      if (i == 0) next
+      rest = substr($0, i + 7)
+      j = index(rest, " using ")
+      if (j == 0) next
+      r = substr(rest, 1, j - 1)
+      o = substr(rest, j + 7)
+      # mihomo logs through logrus: with stdout a pipe (compose sets no
+      # tty) the message is logfmt and WRAPPED IN QUOTES, so the outbound
+      # arrives as DIRECT" - which no equality test would ever match.
+      sub(/[[:space:]]*"?[[:space:]]*$/, "", o)
+      print r sep o
+    }'
+}
+
+# vr_match_group_ride - stdin = vr_match_lines output; rc 0 iff at least one
+# decision sent this source through a proxy group. For a full-direct source
+# a single such line condemns, whatever else the window holds.
+vr_match_group_ride() {
+  awk -F"$US" '$2 ~ /Routing Mode|Full-Tunnel Devices|Streaming Unlock/ { f = 1 } END { exit !f }'
+}
+
+# vr_match_mode_ok MODE - classify vr_match_lines output (stdin). Demands
+# POSITIVE proof that the panel's own rule set decided the route: the named
+# dyn provider matched AND the outbound is the one that provider targets.
+# 'direct' additionally tolerates no group-riding line from that source -
+# one misrouted flow is a violation however many correct ones exist.
+# 'full-tunnel' insists on the SUCCESSFUL-dial shape, which alone carries
+# the selected node in brackets: the failed-dial shape prints the bare group
+# name, so accepting it would green a group whose every dial failed - a
+# zero-node provider reads identically to a working tunnel.
+vr_match_mode_ok() {
+  awk -v mode="$1" -F"$US" '
+    NF >= 2 { n++ }
+    $2 ~ /Routing Mode|Full-Tunnel Devices|Streaming Unlock/ { grp++ }
+    mode == "direct" && $1 ~ /dyn-full-direct/ && $2 == "DIRECT" { good++ }
+    mode == "full-tunnel" && $1 ~ /dyn-full-tunnel/ && $2 ~ /Full-Tunnel Devices\[/ \
+      && $2 !~ /\[(COMPATIBLE|REJECT|REJECT-DROP|DIRECT|PASS|GLOBAL)\]/ { good++ }
+    END {
+      if (mode == "direct") exit !(good > 0 && grp == 0)
+      exit !(good > 0)
+    }'
+}
+
 # vr_ui_marker - the single source for the UI-shell reach marker: a stable
 # attribute the shipped app/static/index.html carries (i18n-proof - the
 # rendered TEXT changes per language, the data-i18n key does not).
@@ -478,6 +588,27 @@ derive_probe_ip() {
         ping -c 1 -W 1 "$1" >/dev/null 2>&1 && return 0
       _dpi_c=$((_dpi_c + 1))
     done
+    # ARP is the ground truth on a shared LAN; ICMP is only a hint. A
+    # firewalled or power-saving device answers no ping but still answers
+    # ARP, and a real deployment subnet holds several of them.
+    # Claiming such an address would put a DUPLICATE on the wire: the
+    # probe's traffic dies at layer 2 (no flows, no logs, no diagnosis) and
+    # a policy row briefly lands on a stranger's device. The pings above
+    # already forced a resolution attempt, so a completed neighbour entry
+    # here (lladdr present; FAILED/INCOMPLETE carry none) means TAKEN.
+    # Flush first: Linux keeps a neighbour entry in STALE (lladdr intact)
+    # long after the peer is gone, and this script's own probe containers
+    # leave exactly such records behind. Without the flush every repeat run
+    # would burn its previous addresses and eventually run out of
+    # candidates. After the flush, an lladdr means somebody answered NOW.
+    run_scrubbed "${DOCKER_BIN:-docker}" exec "${MIHOMO_CONTAINER:-mihomo}" \
+      ip neigh flush to "$1" >/dev/null 2>&1 || true
+    run_scrubbed "${DOCKER_BIN:-docker}" exec "${MIHOMO_CONTAINER:-mihomo}" \
+      ping -c 1 -W 1 "$1" >/dev/null 2>&1 && return 0
+    case "$(run_scrubbed "${DOCKER_BIN:-docker}" exec "${MIHOMO_CONTAINER:-mihomo}" \
+              ip neigh show "$1" 2>/dev/null || true)" in
+      *lladdr*) return 0 ;;
+    esac
     return 1
   }
   mihomo_owns_ip() { return 1; }   # the gateway's own IP is never spare
@@ -833,6 +964,28 @@ All Nodes' ]; then st_ok; else st_bad "urltest_groups got: $(printf '%s' "$_name
     exit 0 )
   # shellcheck disable=SC2181 # the subshell above is the tested unit
   if [ $? -eq 0 ]; then st_ok; else st_bad "derive_probe_ip candidate/band logic"; fi
+  # ICMP-silent but ARP-answering neighbour: a firewalled/sleeping device is
+  # NOT a spare address. Claiming it duplicates a live address, and the
+  # probe then sends into a black hole with no flow and no log to show for
+  # it - which is precisely how a healthy gateway got a FAIL.
+  # shellcheck disable=SC2329 # stubs are invoked indirectly (network.sh callees)
+  ( log_info() { :; }; log_warn() { :; }; log_error() { :; }
+    # shellcheck source=scripts/lib/network.sh
+    . "$ROOT/scripts/lib/network.sh"
+    run_scrubbed() {
+      case " $* " in
+        *" neigh "*)
+          case " $* " in
+            *" 192.0.2.11 "*) echo "192.0.2.11 dev eth0 lladdr aa:bb:cc:dd:ee:ff STALE"; return 0 ;;
+            *" 192.0.2.12 "*) echo "192.0.2.12 dev eth0  FAILED"; return 0 ;;
+          esac ;;
+      esac
+      return 1
+    }
+    [ "$(derive_probe_ip 192.0.2.10 192.0.2.0/24 192.0.2.1 '')" = 192.0.2.12 ] || exit 1
+    exit 0 )
+  # shellcheck disable=SC2181 # the subshell above is the tested unit
+  if [ $? -eq 0 ]; then st_ok; else st_bad "derive_probe_ip claimed an ARP-answering (ping-silent) address"; fi
 
   # 3c) panel probe parsers (#69): scalar field extraction from /health and
   #     policy-set responses (booleans/numbers bare, strings unquoted, an
@@ -870,6 +1023,54 @@ All Nodes' ]; then st_ok; else st_bad "urltest_groups got: $(printf '%s' "$_name
   else st_bad "vr_dyn_rule_counts did not extract exactly the dyn provider counts"; fi
   if [ "$(printf '{"providers":{}}' | vr_dyn_rule_counts)" = none ]; then st_ok
   else st_bad "vr_dyn_rule_counts did not say 'none' with no dyn providers"; fi
+  # vr_match_lines/vr_match_mode_ok. These fixtures are VERBATIM real
+  # mihomo output (only the addresses are TEST-NET): logrus logfmt, message
+  # wrapped in quotes because compose gives the container no tty. An earlier
+  # cut of this suite invented a friendlier format and passed 113/113 while
+  # the real parser could not match a single successful DIRECT dial.
+  _mlog='time="2026-07-26T10:00:00.885500594Z" level=info msg="[TCP] 192.0.2.8:46754 --> www.baidu.com:443 match RuleSet(dyn-full-direct) using DIRECT"
+time="2026-07-26T10:00:01.101210000Z" level=info msg="[TCP] 192.0.2.7:56466 --> www.google.com:443 match RuleSet(dyn-full-tunnel) using Full-Tunnel Devices[JP01]"
+time="2026-07-26T10:00:02.000000000Z" level=info msg="[TCP] 192.0.2.9:41236 --> other.example:443 match Match using Routing Mode[DIRECT]"'
+  if [ "$(printf '%s\n' "$_mlog" | vr_match_lines 192.0.2.8)" = "RuleSet(dyn-full-direct)${US}DIRECT" ]; then st_ok
+  else st_bad "vr_match_lines kept logrus's closing quote on the outbound"; fi
+  if printf '%s\n' "$_mlog" | vr_match_lines 192.0.2.8 | vr_match_mode_ok direct; then st_ok
+  else st_bad "vr_match_mode_ok rejected a real successful dyn-full-direct -> DIRECT line"; fi
+  if printf '%s\n' "$_mlog" | vr_match_lines 192.0.2.7 | vr_match_mode_ok full-tunnel; then st_ok
+  else st_bad "vr_match_mode_ok rejected a real dyn-full-tunnel ride behind a node"; fi
+  if printf '%s\n' "$_mlog" | vr_match_lines 192.0.2.9 | vr_match_group_ride; then st_ok
+  else st_bad "vr_match_group_ride missed a real 'using Routing Mode[...]' line"; fi
+  if printf '%s\n' "$_mlog" | vr_match_lines 192.0.2.9 | vr_match_mode_ok direct; then
+    st_bad "a catch-all MATCH -> Routing Mode line passed as full-direct"
+  else st_ok; fi
+  if [ -z "$(printf '%s\n' "$_mlog" | vr_match_lines 192.0.2.99)" ]; then st_ok
+  else st_bad "vr_match_lines invented lines for an absent source"; fi
+  # The FAILED-dial form (level=warning, rule after '(match ' separated by a
+  # SLASH) is the ONLY trace a correctly-routed full-direct client leaves
+  # when its foreign destination is blocked - the normal case on this
+  # uplink. Missing it turns the expected outcome back into a silent FAIL.
+  _mwarn='time="2026-07-26T10:00:03.552310000Z" level=warning msg="[TCP] dial DIRECT (match RuleSet/dyn-full-direct) 192.0.2.8:41169 --> www.google.com:443 error: dial tcp 198.51.100.7:443: i/o timeout"'
+  if [ "$(printf '%s\n' "$_mwarn" | vr_match_lines 192.0.2.8)" = "RuleSet/dyn-full-direct${US}DIRECT" ]; then st_ok
+  else st_bad "vr_match_lines did not parse the failed-dial (warning) form"; fi
+  if printf '%s\n' "$_mwarn" | vr_match_lines 192.0.2.8 | vr_match_mode_ok direct; then st_ok
+  else st_bad "a blocked foreign DIRECT dial was not accepted as full-direct evidence"; fi
+  # The failed-dial form prints the BARE group name (no [node]), so it must
+  # NOT satisfy the tunnel arm: a provider with zero nodes fails every dial
+  # and would otherwise read as 'behind a real node'.
+  _mwft='time="2026-07-26T10:00:04.000000000Z" level=warning msg="[TCP] dial Full-Tunnel Devices (match RuleSet/dyn-full-tunnel) 192.0.2.7:36280 --> www.google.com:443 error: dial tcp: i/o timeout"'
+  if printf '%s\n' "$_mwft" | vr_match_lines 192.0.2.7 | vr_match_mode_ok full-tunnel; then
+    st_bad "a tunnel group whose every dial FAILED passed as 'behind a real node'"
+  else st_ok; fi
+  # a degraded group prints its placeholder pick in brackets; not a node.
+  _mdeg='time="2026-07-26T10:00:05.000000000Z" level=info msg="[TCP] 192.0.2.7:36281 --> www.google.com:443 match RuleSet(dyn-full-tunnel) using Full-Tunnel Devices[COMPATIBLE]"'
+  if printf '%s\n' "$_mdeg" | vr_match_lines 192.0.2.7 | vr_match_mode_ok full-tunnel; then
+    st_bad "vr_match_mode_ok accepted a COMPATIBLE placeholder as a real node"
+  else st_ok; fi
+  # the source filter is anchored on '<src>:<port> -->': a line whose
+  # DESTINATION merely contains those digits is somebody else's flow.
+  _mdst='time="2026-07-26T10:00:06.000000000Z" level=info msg="[TCP] 198.51.100.4:5566 --> 192.0.2.8:443 match Match using Routing Mode[JP01]"'
+  if [ -z "$(printf '%s\n' "$_mdst" | vr_match_lines 192.0.2.8)" ]; then st_ok
+  else st_bad "vr_match_lines attributed a flow to the probe by its DESTINATION"; fi
+
   _ftl=$(printf '{"id":"1","sourceIP":"192.0.2.7","chains":["JP01","Japan Auto","Full-Tunnel Devices"]}' | conn_probe_lines 192.0.2.7)
   if printf '%s\n' "$_ftl" | conn_mode_ok full-tunnel; then st_ok
   else st_bad "full-tunnel chain with a real head was rejected"; fi
@@ -881,6 +1082,35 @@ All Nodes' ]; then st_ok; else st_bad "urltest_groups got: $(printf '%s' "$_name
   _fdl=$(printf '{"id":"3","sourceIP":"192.0.2.8","chains":["DIRECT"]}' | conn_probe_lines 192.0.2.8)
   if printf '%s\n' "$_fdl" | conn_mode_ok direct; then st_ok
   else st_bad "full-direct DIRECT-only chain was rejected"; fi
+  # rulePayload names the rule that routed the flow. For a rule-set match it
+  # is the PROVIDER name, so a flow can prove the panel's own rule chose the
+  # route - group-freedom alone cannot, because the probe's domestic target
+  # rides DIRECT with or without any policy at all.
+  _rpj='{"id":"4","metadata":{"sourceIP":"192.0.2.8","host":"www.baidu.com"},"chains":["DIRECT"],"rule":"RuleSet","rulePayload":"dyn-full-direct"}'
+  if printf '%s' "$_rpj" | conn_probe_lines 192.0.2.8 | conn_rule_is dyn-full-direct; then st_ok
+  else st_bad "conn_rule_is did not read rulePayload off a real flow"; fi
+  _rpg='{"id":"5","metadata":{"sourceIP":"192.0.2.8","host":"www.baidu.com"},"chains":["DIRECT"],"rule":"GeoSite","rulePayload":"cn"}'
+  if printf '%s' "$_rpg" | conn_probe_lines 192.0.2.8 | conn_rule_is dyn-full-direct; then
+    st_bad "conn_rule_is accepted a CN-geosite flow as proof of the panel's rule"
+  else st_ok; fi
+  # conn_escaped_tunnel: Full-Tunnel Devices SELECTS Routing Mode by default,
+  # so a healthy tunnel chain contains both names - condemning on 'rides
+  # Routing Mode' would fail every correct run. Only a group ride OUTSIDE the
+  # tunnel group is a leak; a bare DIRECT chain is not (LAN destinations
+  # match GEOIP,LAN,DIRECT above the dynamic rules by design).
+  _etn=$(printf '{"id":"6","metadata":{"sourceIP":"192.0.2.7"},"chains":["JP01","Japan Auto","Exit Country","Routing Mode","Full-Tunnel Devices"]}' | conn_probe_lines 192.0.2.7)
+  if printf '%s\n' "$_etn" | conn_escaped_tunnel; then
+    st_bad "conn_escaped_tunnel condemned a healthy nested Full-Tunnel chain"
+  else st_ok; fi
+  if printf '%s\n' "$_etn" | conn_mode_ok full-tunnel; then st_ok
+  else st_bad "nested Full-Tunnel chain rejected by the tunnel arm"; fi
+  _etl=$(printf '{"id":"7","metadata":{"sourceIP":"192.0.2.7"},"chains":["JP01","Japan Auto","Exit Country","Routing Mode"]}' | conn_probe_lines 192.0.2.7)
+  if printf '%s\n' "$_etl" | conn_escaped_tunnel; then st_ok
+  else st_bad "conn_escaped_tunnel missed a flow riding Routing Mode outside the tunnel group"; fi
+  _etd=$(printf '{"id":"8","metadata":{"sourceIP":"192.0.2.7"},"chains":["DIRECT"]}' | conn_probe_lines 192.0.2.7)
+  if printf '%s\n' "$_etd" | conn_escaped_tunnel; then
+    st_bad "conn_escaped_tunnel condemned a LAN-destined DIRECT chain"
+  else st_ok; fi
   if [ "$(vr_ui_marker)" = 'data-i18n="app_title"' ]; then st_ok
   else st_bad "vr_ui_marker drifted from its pinned value"; fi
   # When the app tree is present (repo checkout; the NAS release dir ships
@@ -900,7 +1130,7 @@ All Nodes' ]; then st_ok; else st_bad "urltest_groups got: $(printf '%s' "$_name
 
   echo "validate_release self-test: $_stp passed, $_stf failed"
   [ "$_stf" -eq 0 ] || exit 1
-  echo "OK: measurement helpers (policy/knob/psn/split-core rule anchoring incl. bootstrap-pin + comment-prose immunity, provider-node counting + real-member egress gate, filtered-group discovery + %XX name encoding + COMPATIBLE/REJECT placeholder exclusion, full-proxy band connection parsing + CIDR membership, quoted-.env parsing, .env.example key coverage, scrubbed child env, doctor rc gate, summary accumulator, cache unpark, keep-split-horizon auto-decision, LAN-probe chain classification + probe-IP derivation, panel probe parsers: /health + policy-set field extraction, device-doc mode lookup, dyn rule-provider counts, full-tunnel chain arm, UI marker pin)"
+  echo "OK: measurement helpers (policy/knob/psn/split-core rule anchoring incl. bootstrap-pin + comment-prose immunity, provider-node counting + real-member egress gate, filtered-group discovery + %XX name encoding + COMPATIBLE/REJECT placeholder exclusion, full-proxy band connection parsing + CIDR membership, quoted-.env parsing, .env.example key coverage, scrubbed child env, doctor rc gate, summary accumulator, cache unpark, keep-split-horizon auto-decision, LAN-probe chain classification + probe-IP derivation incl. ARP-taken refusal, flow rulePayload + tunnel-escape detection, mihomo routing-log evidence (real logfmt: quoted success line, failed-dial form, node-less group refusal, source anchoring), panel probe parsers: /health + policy-set field extraction, device-doc mode lookup, dyn rule-provider counts, full-tunnel chain arm, UI marker pin)"
   exit 0
 }
 [ "$SELF_TEST" = 1 ] && self_test
@@ -1039,7 +1269,151 @@ restore_env() {  # put the pre-validation .env back
 # panel_probe_teardown - remove the A6 panel-probe clients if any are up;
 # torn down at phase end AND from on_abort.
 panel_probe_teardown() {
-  "${DOCKER_BIN:-docker}" rm -f smg-panel-probe-a smg-panel-probe-b >/dev/null 2>&1 || true
+  "${DOCKER_BIN:-docker}" rm -f smg-panel-probe-a smg-panel-probe-b smg-panel-probe-seat \
+    >/dev/null 2>&1 || true
+}
+
+# a6_seat_ok NAME IP - is IP a USABLE macvlan seat on the live LAN? A
+# one-shot client there fetches the panel UI (on-subnet, so this needs no
+# gateway route - it tests the address itself: ARP, L2, no duplicate
+# occupant). ICMP silence is not proof an address is free, so every probe
+# address earns this before anything is concluded from its traffic - and
+# before a policy row is written onto it, which on a stranger's device
+# would be a real intrusion, not just a bad measurement.
+a6_seat_ok() {
+  # A dropped SSH session (SIGHUP) can leave a previous run's container
+  # holding this name; without this the seat check fails on a name clash and
+  # blames the panel or the address.
+  "${DOCKER_BIN:-docker}" rm -f "$1" >/dev/null 2>&1 || true
+  # shellcheck disable=SC2016 # "$1" expands in the probe container's shell
+  run_scrubbed "${DOCKER_BIN:-docker}" run --rm --name "$1" \
+      --network "${TPROXY_NETWORK:-tproxy_network}" --ip "$2" \
+      --entrypoint /bin/sh "${MIHOMO_IMAGE:?}" -c \
+      'wget -q -T 8 -O - "$1"' _ "http://${PANEL_IP}:${PANEL_PORT:-8090}/ui/" 2>/dev/null \
+    | grep -qF "$(vr_ui_marker)"
+}
+
+# probe_cn_url / probe_foreign_url - the ONE source for the probe targets,
+# shared by A6 and section C's hard gates (.env.example documents both knobs). The DOMESTIC target is reachable BOTH directly and through the
+# tunnel; the FOREIGN one is CN-blocked on the direct path. Every A6 probe
+# fetches both, which is what makes the verdicts decidable:
+#   full-tunnel source: both targets ride the group -> evidence either way;
+#   full-direct source: the domestic fetch is the LIVENESS half (a working
+#     client always produces a flow), the foreign fetch is the VIOLATION
+#     detector (it can only succeed - and so only appear - if the flow was
+#     wrongly sent through the tunnel).
+# Runs 3-5 used the foreign target alone, so "no flow" meant either "policy
+# correct, dial blocked" or "probe client broken" with no way to tell.
+probe_cn_url() { printf '%s' "${SMG_PROBE_CN_URL:-https://www.baidu.com}"; }
+probe_foreign_url() { printf '%s' "${SMG_PROBE_FOREIGN_URL:-https://www.google.com/generate_204}"; }
+
+# a6_probe_start NAME IP - long-lived LAN client at IP routed through the
+# gateway, alternating both targets and echoing one line per attempt.
+# Detached output is normally discarded; here it is the client-side truth a
+# failed judge reads back with docker logs.
+a6_probe_start() {
+  "${DOCKER_BIN:-docker}" rm -f "$1" >/dev/null 2>&1 || true
+  # shellcheck disable=SC2016 # "$1".."$3" expand in the probe container's shell
+  run_scrubbed "${DOCKER_BIN:-docker}" run -d --rm --name "$1" \
+      --network "${TPROXY_NETWORK:-tproxy_network}" --ip "$2" \
+      --dns "${MIHOMO_IP:?}" --cap-add NET_ADMIN \
+      --entrypoint /bin/sh "${MIHOMO_IMAGE:?}" -c \
+      'ip route replace default via "$1" 2>/dev/null || { route del default 2>/dev/null; route add default gw "$1"; };
+       echo "route: $(ip route show default 2>/dev/null)";
+       i=0;
+       while [ "$i" -lt 400 ]; do
+         for u in "$2" "$3"; do
+           [ -n "$u" ] || continue;
+           wget -q -T 4 -O /dev/null "$u" 2>/dev/null;
+           echo "attempt=$i rc=$? $u";
+         done;
+         sleep 1;
+         i=$((i + 1));
+       done' \
+      _ "${MIHOMO_IP:?}" "$(probe_cn_url)" "$(probe_foreign_url)" >/dev/null 2>&1
+}
+
+# a6_flows IP [SECONDS] - conn_probe_lines for IP, sampled CONTINUOUSLY from
+# INSIDE the container for SECONDS (default 2) or until a flow appears.
+#
+# THE ROOT CAUSE of the v1.8.0-rc A6 direct-arm failures, and the reason
+# this exists: mihomo's /connections is a snapshot of OPEN connections, not
+# an event log - a flow is inserted after its dial succeeds and dropped the
+# moment it closes. Measured against a real mihomo, a bodyless 204 fetched
+# DIRECT from a ~12ms-away edge is visible for 13-24ms (median 15) out of
+# every ~1050ms probe cycle: a ~1.4% duty cycle. Each ctl_get from the host
+# costs a docker exec (~1.2s), so the old one-poll-per-second judge sampled
+# a 1.4%-duty signal at a period close to the probe's own - aliasing, not
+# measurement. Replaying that judge shape against a KNOWN-HEALTHY gateway
+# reproduced "zero flows in 45s" in four of six trials, which is precisely
+# the symptom three NAS runs were spent chasing. It gets MORE likely to miss
+# the healthier (= shorter-lived) the direct path is, which is why the
+# tunnelled arm - whose flows live 5-15x longer - never had trouble.
+# The bound must be WALL CLOCK, not a request count: sampling is ~2000/s, so
+# a fixed 60 requests would cover 30ms and change nothing. Sampling without
+# gaps for longer than one probe cycle is what makes a 15ms window certain.
+a6_flows() {
+  # The auth header is a single argument with spaces - never let it word-split
+  # (and never put the secret on argv, where ps would show it).
+  # shellcheck disable=SC2016 # every $-ref below expands in the CONTAINER's shell
+  _a6fl='end=$(( $(date +%s) + $3 ))
+i=0
+while :; do
+  if [ -n "${SMG_AUTH:-}" ]; then
+    b=$(wget -q -T 3 -O - --header "$SMG_AUTH" "http://127.0.0.1:$1/connections" 2>/dev/null)
+  else
+    b=$(wget -q -T 3 -O - "http://127.0.0.1:$1/connections" 2>/dev/null)
+  fi
+  case "$b" in *"\"sourceIP\":\"$2\""*) printf "%s" "$b"; exit 0 ;; esac
+  i=$((i + 1))
+  [ "$i" -ge 20000 ] && break
+  if [ $((i % 5)) -eq 0 ] && [ "$(date +%s)" -ge "$end" ]; then break; fi
+done
+exit 1'
+  # shellcheck disable=SC2016 # "$4" is the sampler above, evaluated container-side
+  if [ -n "${CONTROLLER_SECRET:-}" ]; then
+    printf 'Authorization: Bearer %s\n' "$CONTROLLER_SECRET" | \
+      "$DOCKER_BIN" exec -i "$MIHOMO_CONTAINER" \
+      sh -c 'IFS= read -r SMG_AUTH; export SMG_AUTH; eval "$4"' \
+      _ "${CONTROLLER_PORT:-9090}" "$1" "${2:-2}" "$_a6fl" 2>/dev/null | conn_probe_lines "$1"
+  else
+    "$DOCKER_BIN" exec "$MIHOMO_CONTAINER" \
+      sh -c 'eval "$4"' _ "${CONTROLLER_PORT:-9090}" "$1" "${2:-2}" "$_a6fl" 2>/dev/null | conn_probe_lines "$1"
+  fi
+}
+
+# a6_match_log IP [SINCE_EPOCH] - mihomo's routing lines for IP (see
+# vr_match_lines), read from SINCE_EPOCH onwards.
+# --since, not --tail alone: a gateway carrying real LAN traffic writes
+# thousands of lines during a judge window, and a fixed tail would scroll the
+# probe's own decisions away before anyone read them.
+# The window is CALLER-SCOPED for a reason: docker keeps a container's log
+# across `docker restart`, so a fixed relative window would let the
+# post-restart persistence judge pass on pre-restart evidence and prove
+# nothing at all. Callers stamp A6_SINCE after the event they are judging.
+a6_match_log() {
+  "${DOCKER_BIN:-docker}" logs --since "${2:-$(( $(date +%s) - 240 ))}" --tail 8000 \
+    "${MIHOMO_CONTAINER:-mihomo}" 2>&1 | vr_match_lines "$1"
+}
+
+# a6_forensics NAME IP - everything needed to tell the three failure worlds
+# apart, captured while the probe still exists: client-side fetch results,
+# whether another device answers ARP for the address we claimed, and whether
+# any packet from it ever reached the rule engine.
+a6_forensics() {
+  echo "  diag [$1] state: $("${DOCKER_BIN:-docker}" inspect -f '{{.State.Status}} exit={{.State.ExitCode}}' "$1" 2>/dev/null || echo 'absent (container already gone)')"
+  echo "  diag [$1] last fetch attempts (rc=0 = the client got a reply):"
+  "${DOCKER_BIN:-docker}" logs --tail 6 "$1" 2>&1 | sed 's/^/      /'
+  echo "  diag neighbour entry for $2 from the gateway (a foreign lladdr = the address was NOT free):"
+  run_scrubbed "${DOCKER_BIN:-docker}" exec "${MIHOMO_CONTAINER:-mihomo}" \
+    ip neigh show "$2" 2>&1 | sed 's/^/      /'
+  echo "  diag mihomo lines mentioning $2:"
+  _a6f_l="$("${DOCKER_BIN:-docker}" logs --since 240s --tail 8000 "${MIHOMO_CONTAINER:-mihomo}" 2>&1 | grep -F "$2" | tail -6)"
+  if [ -n "$_a6f_l" ]; then
+    printf '%s\n' "$_a6f_l" | sed 's/^/      /'
+  else
+    echo "      (none - no packet from $2 ever reached the rule engine)"
+  fi
 }
 
 # panel_policy_cleanup - remove the A6 policy entries (mode 'default'
@@ -1129,14 +1503,25 @@ on_abort() {
   fp_probe_teardown; lan_probe_teardown; panel_probe_teardown; panel_policy_cleanup
   restore_env
   # recreate parses compose: impossible (and pure noise) on a pre-panel .env
-  # that the restore above may have just brought back.
-  if _env_file_has "$ENV_FILE" PANEL_IMAGE && _env_file_has "$ENV_FILE" PANEL_IP; then
+  # that the restore above may have just brought back. --a6-only never
+  # writes .env, so there is nothing to put back and no reason to take the
+  # LAN's gateway down as abort cleanup.
+  if [ "$A6_ONLY" = 0 ] && _env_file_has "$ENV_FILE" PANEL_IMAGE \
+     && _env_file_has "$ENV_FILE" PANEL_IP; then
     recreate
   fi
   exit 1
 }
-trap on_abort INT TERM
+trap on_abort INT TERM HUP
 
+if [ "$A6_ONLY" = 1 ]; then
+  echo
+  echo "*** --a6-only: DEBUG LOOP, NOT A RELEASE GATE ***"
+  echo "    A2 (migrate/redeploy), A3-A5, B/B2/B3, C and D are skipped; the"
+  echo "    tree already deployed is measured as-is. A release still needs a"
+  echo "    full green run."
+fi
+if [ "$A6_ONLY" = 0 ]; then
 say "A2: migrate (installer precheck) + redeploy + baseline doctor"
 # The REAL upgrade path first: a pre-panel .env is migrated by the installer's
 # own precheck_deploy - the exact code the install.sh menu runs - before
@@ -1195,6 +1580,8 @@ if [ "$RC" = 0 ]; then ok "redeploy rc 0"; else bad "redeploy rc $RC"; fi
 run_scrubbed sh "$REL/scripts/doctor.sh"; RC=$?
 if doctor_rc_ok "$RC"; then ok "baseline doctor rc $RC (0 healthy | 2 degraded)"; else bad "baseline doctor rc $RC (crash or broken)"; fi
 
+fi
+
 say "A2.5: measurement preflight (controller reachable from inside the container)"
 if mihomo_controller_probe >/dev/null 2>&1; then
   ok "controller probe (docker exec)"
@@ -1232,6 +1619,7 @@ else
   bad "GEOIP,LAN,DIRECT,no-resolve rule missing from the render"
 fi
 
+if [ "$A6_ONLY" = 0 ]; then
 say "A3: the saved .env renders the v2 split-horizon policy (the only DNS profile)"
 if rendered_policy_on "$CFG"; then
   ok "nameserver-policy rendered (split-horizon v2)"
@@ -1444,6 +1832,8 @@ else
   ok "A5 skipped (band feature not in use)"
 fi
 
+fi
+
 say "A6: gateway panel - dynamic device policy (REQUIRED release gate, #69)"
 # The panel is a standard service (brief DEC-5): a release is NOT valid
 # without it. Gates, in order: companion present + healthy (db_ok, never a
@@ -1507,16 +1897,11 @@ fi
 if [ "$_a6_go" = 1 ]; then
   # LAN-client UI reach: a one-shot client at the first spare IP fetches the
   # UI shell and must see the stable app marker (vr_ui_marker) - the real
-  # user path, not a host-side shortcut.
-  # shellcheck disable=SC2016 # "$1" expands in the probe container's shell
-  _a6_ui="$(run_scrubbed "$DOCKER_BIN" run --rm --name smg-panel-probe-a \
-      --network "${TPROXY_NETWORK:-tproxy_network}" --ip "$A6_IP1" \
-      --entrypoint /bin/sh "${MIHOMO_IMAGE:?}" -c \
-      'wget -q -T 8 -O - "$1"' _ "http://${PANEL_IP}:${PANEL_PORT:-8090}/ui/" 2>/dev/null || true)"
-  if printf '%s' "$_a6_ui" | grep -qF "$(vr_ui_marker)"; then
+  # user path, not a host-side shortcut. Doubles as IP1's seat proof.
+  if a6_seat_ok smg-panel-probe-a "$A6_IP1"; then
     ok "panel UI reachable from a LAN client at http://${PANEL_IP}:${PANEL_PORT:-8090}/ui/"
   else
-    bad "panel UI not reachable from a LAN client (no '$(vr_ui_marker)' in the response)"; _a6_go=0
+    bad "panel UI not reachable from a LAN client at $A6_IP1 (no '$(vr_ui_marker)' in the response - either the panel is unreachable or that address is not a usable LAN seat)"; _a6_go=0
   fi
 fi
 if [ "$_a6_go" = 1 ]; then
@@ -1529,16 +1914,10 @@ if [ "$_a6_go" = 1 ]; then
 fi
 if [ "$_a6_go" = 1 ]; then
   # The long-lived full-tunnel client re-uses IP1 (the one-shot has exited);
-  # it must be UP before the second derivation so its ping-liveness excludes
+  # it must be UP before the second derivation so its liveness check excludes
   # IP1 from IP2's candidates.
   panel_probe_teardown
-  # shellcheck disable=SC2016 # "$1" expands in the probe container's shell
-  if ! run_scrubbed "$DOCKER_BIN" run -d --rm --name smg-panel-probe-a \
-      --network "${TPROXY_NETWORK:-tproxy_network}" --ip "$A6_IP1" \
-      --dns "${MIHOMO_IP:?}" --cap-add NET_ADMIN \
-      --entrypoint /bin/sh "${MIHOMO_IMAGE:?}" -c \
-      'ip route replace default via "$1" 2>/dev/null || { route del default 2>/dev/null; route add default gw "$1"; }; i=0; while [ "$i" -lt 600 ]; do wget -q -T 4 -O /dev/null http://www.gstatic.com/generate_204 2>/dev/null; sleep 1; i=$((i+1)); done' \
-      _ "$MIHOMO_IP" >/dev/null 2>&1; then
+  if ! a6_probe_start smg-panel-probe-a "$A6_IP1"; then
     bad "A6: full-tunnel probe client failed to start (ip $A6_IP1)"; _a6_go=0
   fi
 fi
@@ -1546,6 +1925,17 @@ if [ "$_a6_go" = 1 ]; then
   A6_IP2="$(derive_probe_ip '' '' '' "${_a6_excl:+$_a6_excl,}$A6_IP1" || true)"
   if [ -z "$A6_IP2" ] || [ "$A6_IP2" = "$A6_IP1" ]; then
     bad "A6: no second distinct spare LAN IP derivable (got '${A6_IP2:-none}')"; _a6_go=0
+  fi
+fi
+if [ "$_a6_go" = 1 ]; then
+  # IP1 proved its seat by fetching the UI; IP2 must earn the same before a
+  # policy row is written onto it and before its silence is read as a
+  # product verdict.
+  if a6_seat_ok smg-panel-probe-seat "$A6_IP2"; then
+    ok "second probe address $A6_IP2 is a usable LAN seat (one-shot client reached the panel UI)"
+  else
+    bad "A6: $A6_IP2 is not a usable probe address - a one-shot client there cannot reach the panel UI, so the address is most likely claimed by a device that answers neither ping nor the panel. Refusing to write a policy row onto it"
+    _a6_go=0
   fi
 fi
 if [ "$_a6_go" = 1 ]; then
@@ -1566,14 +1956,10 @@ if [ "$_a6_go" = 1 ]; then
   fi
 fi
 if [ "$_a6_go" = 1 ]; then
-  # shellcheck disable=SC2016
-  run_scrubbed "$DOCKER_BIN" run -d --rm --name smg-panel-probe-b \
-      --network "${TPROXY_NETWORK:-tproxy_network}" --ip "$A6_IP2" \
-      --dns "${MIHOMO_IP:?}" --cap-add NET_ADMIN \
-      --entrypoint /bin/sh "${MIHOMO_IMAGE:?}" -c \
-      'ip route replace default via "$1" 2>/dev/null || { route del default 2>/dev/null; route add default gw "$1"; }; i=0; while [ "$i" -lt 600 ]; do wget -q -T 4 -O /dev/null http://www.gstatic.com/generate_204 2>/dev/null; sleep 1; i=$((i+1)); done' \
-      _ "$MIHOMO_IP" >/dev/null 2>&1 \
+  a6_probe_start smg-panel-probe-b "$A6_IP2" \
     || { bad "A6: full-direct probe client failed to start (ip $A6_IP2)"; _a6_go=0; }
+  # Everything the pre-restart judge may cite starts here.
+  A6_SINCE=$(date +%s)
 fi
 # a6_dump LABEL FLOWS - forensics for a failed judge arm: the flow-set the
 # window actually saw (or an explicit none), printed while it still exists.
@@ -1586,54 +1972,98 @@ a6_dump() {
   fi
 }
 
-# a6_judge LABEL [WINDOW] - both flows judged from /connections (WINDOW
-# seconds each, default 45). The probes attempt a fetch every ~1-5s and a
-# flow is visible only while in-flight, so a flow must be CAUGHT mid-poll;
-# the direct probe's foreign-dest DIRECT dial is additionally at the GFW's
-# mercy (rc run 4: zero dials completed inside 12s on a healthy gateway).
-# Arms differ on purpose:
-#   full-tunnel: positive evidence required - keep polling until a flow
-#     rides the group behind a REAL head (an early COMPATIBLE head during
-#     post-restart warm-up must not fail the arm).
-#   direct: first caught evidence decides - probe-b exists only after the
-#     policy applied, so any flow from it already tells the truth; a
-#     group-riding flow is a definitive violation (fail fast), a
-#     group-free set is the pass.
-a6_judge() {
-  _a6j_w="${2:-45}"
-  _a6j_ok1=0; _a6j_i=0; _a6j_seen1=""
-  while [ "$_a6j_i" -lt "$_a6j_w" ]; do
-    _a6j_fl="$(ctl_get /connections | conn_probe_lines "$A6_IP1")"
-    [ -z "$_a6j_fl" ] || _a6j_seen1="$_a6j_fl"
-    if [ -n "$_a6j_fl" ] && printf '%s\n' "$_a6j_fl" | conn_mode_ok full-tunnel; then _a6j_ok1=1; break; fi
-    _a6j_i=$((_a6j_i + 1)); sleep 1
-  done
-  if [ "$_a6j_ok1" = 1 ]; then
-    ok "$1: flow from $A6_IP1 rides Full-Tunnel Devices behind a real node"
-  else
-    bad "$1: no full-tunnel ride observed from $A6_IP1 within ${_a6j_w}s"
-    a6_dump "$A6_IP1" "$_a6j_seen1"
-  fi
-  _a6j_ok2=0; _a6j_i=0; _a6j_seen2=""
-  while [ "$_a6j_i" -lt "$_a6j_w" ]; do
-    _a6j_fl="$(ctl_get /connections | conn_probe_lines "$A6_IP2")"
-    if [ -n "$_a6j_fl" ]; then
-      _a6j_seen2="$_a6j_fl"
-      printf '%s\n' "$_a6j_fl" | conn_mode_ok direct && _a6j_ok2=1
-      break
+# a6_judge LABEL [SETTLE] - judge both probe sources after SETTLE seconds
+# (default 10) of probe traffic.
+# Evidence, in the order that survives contact with reality:
+#   1. mihomo's own routing log covers EVERY decision in the window and
+#      KEEPS it - including the correct-but-invisible case where a
+#      full-direct source dials a foreign host this uplink blocks. It names
+#      the rule provider, so it is POSITIVE proof that the panel's rule
+#      routed the flow, not merely that the flow was group-free.
+#   2. a caught flow corroborates, and if it rides a group it condemns.
+# The reverse order is what the first three rc runs used, and it cost three
+# NAS cycles: /connections holds a flow only while its connection is OPEN,
+# so a perfectly healthy probe routinely leaves nothing to find there.
+# Verdicts are three-way, never two: right route, wrong route, or a probe
+# that never reached the gateway - the last is a PROBE fault and says so
+# rather than blaming the product.
+# a6_verdict IP MODE - rc 0 pass | 1 condemned | 2 inconclusive | 3 silent.
+# Leaves the evidence it used in _a6v_flows/_a6v_log and the sentence tail in
+# _a6v_why. Definitive verdicts come first: live contradicting evidence
+# outranks any amount of agreeable evidence elsewhere in the window.
+a6_verdict() {
+  _a6v_flows="$(a6_flows "$1" 3)"
+  _a6v_log="$(a6_match_log "$1" "${A6_SINCE:-}")"
+  case "$2" in
+    full-tunnel)
+      if [ -n "$_a6v_flows" ] && printf '%s\n' "$_a6v_flows" | conn_escaped_tunnel; then
+        _a6v_why="a live flow rode a proxy group OUTSIDE Full-Tunnel Devices - the tunnel policy is not in effect"; return 1
+      fi
+      if [ -n "$_a6v_flows" ] && printf '%s\n' "$_a6v_flows" | conn_mode_ok full-tunnel; then
+        _a6v_why="rides Full-Tunnel Devices behind a real node"; return 0
+      fi
+      if printf '%s\n' "$_a6v_log" | vr_match_mode_ok full-tunnel; then
+        _a6v_why="was routed by dyn-full-tunnel to Full-Tunnel Devices behind a real node (mihomo's own routing log)"; return 0
+      fi
+      ;;
+    direct)
+      if [ -n "$_a6v_flows" ] && ! printf '%s\n' "$_a6v_flows" | conn_mode_ok direct; then
+        _a6v_why="a live flow rode a proxy group - a full-direct source must stay group-free"; return 1
+      fi
+      if printf '%s\n' "$_a6v_log" | vr_match_group_ride; then
+        _a6v_why="mihomo's routing log sent this source through a proxy group"; return 1
+      fi
+      if printf '%s\n' "$_a6v_log" | vr_match_mode_ok direct; then
+        _a6v_why="was routed by dyn-full-direct to DIRECT, with no group ride in the window (mihomo's own routing log)"; return 0
+      fi
+      # No log (wrong driver / level)? A flow still proves it if it names the
+      # provider that routed it. Group-freedom ALONE would be vacuous here:
+      # the probe's domestic target rides DIRECT with or without any policy.
+      if [ -n "$_a6v_flows" ] && printf '%s\n' "$_a6v_flows" | conn_rule_is dyn-full-direct; then
+        _a6v_why="has a group-free flow carrying rulePayload dyn-full-direct (the panel's own rule routed it)"; return 0
+      fi
+      ;;
+  esac
+  [ -n "$_a6v_flows$_a6v_log" ] && return 2
+  return 3
+}
+
+# a6_arm LABEL IP MODE PROBE-NAME - verdict with retries; rc 0 on pass.
+# Only inconclusive and silent outcomes are retried - a condemnation is
+# never re-rolled until it goes away.
+a6_arm() {
+  _a6a_r=0
+  while :; do
+    _a6a_r=$((_a6a_r + 1))
+    a6_verdict "$2" "$3"; _a6a_v=$?
+    if [ "$_a6a_v" = 0 ]; then ok "$1: $2 $_a6v_why"; return 0; fi
+    if [ "$_a6a_v" = 1 ]; then
+      bad "$1: $2 - $_a6v_why"
+      a6_dump "$2" "$_a6v_flows"
+      [ -z "$_a6v_log" ] || printf '%s\n' "$_a6v_log" | awk -F"$US" '{print "      match=" $1 "  using=" $2}' | tail -6
+      return 1
     fi
-    _a6j_i=$((_a6j_i + 1)); sleep 1
+    if [ "$_a6a_r" -lt 3 ]; then sleep 4; continue; fi
+    if [ "$_a6a_v" = 2 ]; then
+      bad "$1: $2 reached the rule engine but was not routed by its $3 policy"
+      a6_dump "$2" "$_a6v_flows"
+      [ -z "$_a6v_log" ] || printf '%s\n' "$_a6v_log" | awk -F"$US" '{print "      match=" $1 "  using=" $2}' | tail -6
+    else
+      bad "$1: nothing from $2 - no flow AND no routing decision logged, so the probe client never reached the gateway (address not actually free, or its route never came up). This is a PROBE fault, not a policy verdict"
+      a6_forensics "$4" "$2"
+    fi
+    return 1
   done
-  if [ "$_a6j_ok2" = 1 ]; then
-    ok "$1: flow from $A6_IP2 stays group-free (full-direct)"
-  elif [ -n "$_a6j_seen2" ]; then
-    bad "$1: a flow from $A6_IP2 rode a proxy group (a full-direct source must stay group-free)"
-    a6_dump "$A6_IP2" "$_a6j_seen2"
-  else
-    bad "$1: no flow observed from $A6_IP2 within ${_a6j_w}s (a foreign-dest DIRECT dial from this uplink completes only at the GFW's mercy, and mihomo tracks a flow only after the dial - a healthy gateway CAN sit flowless here; retry before treating as real)"
-    a6_dump "$A6_IP2" "$_a6j_seen2"
-  fi
-  [ "$_a6j_ok1" = 1 ] && [ "$_a6j_ok2" = 1 ]
+}
+
+a6_judge() {
+  # Let both probes cycle their two targets a few times before judging: the
+  # log window only proves what actually happened inside it.
+  sleep "${2:-10}"
+  _a6j_a=0; _a6j_b=0
+  a6_arm "$1" "$A6_IP1" full-tunnel smg-panel-probe-a && _a6j_a=1
+  a6_arm "$1" "$A6_IP2" direct smg-panel-probe-b && _a6j_b=1
+  [ "$_a6j_a" = 1 ] && [ "$_a6j_b" = 1 ]
 }
 if [ "$_a6_go" = 1 ]; then
   a6_judge "pre-restart" || _a6_go=0
@@ -1643,6 +2073,10 @@ if [ "$_a6_go" = 1 ]; then
   # re-read them and keep routing both sources by mode (no re-apply needed).
   run_scrubbed "$DOCKER_BIN" restart "$MIHOMO_CONTAINER" >/dev/null 2>&1 \
     || bad "A6: mihomo restart failed"
+  # Re-stamp the evidence window: docker keeps the log across a restart, so
+  # without this the persistence judge could pass on decisions mihomo made
+  # BEFORE it restarted - proving precisely nothing about reloading.
+  A6_SINCE=$(date +%s)
   _a6_i=0
   while [ "$_a6_i" -lt 30 ]; do
     [ -n "$(ctl_get /version || true)" ] && break
@@ -1692,6 +2126,7 @@ if [ -n "$A6_IP1$A6_IP2" ]; then
   fi
 fi
 
+if [ "$A6_ONLY" = 0 ]; then
 say "B: cold start - parked caches + black-holed tunnel resolvers"
 CACHES=""
 if [ -f "$GATEWAY_DATA_DIR/config/cache.db" ]; then
@@ -1804,13 +2239,13 @@ if [ "$SKIP_KNOB" = 0 ]; then
   # with a Chrome UA and judged by the flow's chain in /connections - a
   # fetch alone cannot distinguish DIRECT from a node (the gstatic lesson).
   if [ -n "${LAN_PROBE_IP:-}" ]; then
-    lan_probe direct "${SMG_PROBE_CN_URL:-https://www.baidu.com}"; _c_rc=$?
+    lan_probe direct "$(probe_cn_url)"; _c_rc=$?
     case "$_c_rc" in
       0) ok "LAN-client CN fetch rides DIRECT (Chrome UA; chain via /connections)" ;;
       2) bad "LAN-client CN probe container failed to start (network/IP issue)" ;;
       *) bad "LAN-client CN fetch did NOT ride DIRECT - a CN destination is being proxied or dropped" ;;
     esac
-    lan_probe proxy "${SMG_PROBE_FOREIGN_URL:-https://www.google.com/generate_204}"; _c_rc=$?
+    lan_probe proxy "$(probe_foreign_url)"; _c_rc=$?
     case "$_c_rc" in
       0) ok "LAN-client foreign fetch rides Routing Mode via a real node (Chrome UA; CN-blocked endpoint = genuine egress proof)" ;;
       2) bad "LAN-client foreign probe container failed to start (network/IP issue)" ;;
@@ -1848,6 +2283,8 @@ else
   echo "original .env restored"
 fi
 
+fi
+
 say "final doctor"
 run_scrubbed sh "$REL/scripts/doctor.sh"; RC=$?
 if doctor_rc_ok "$RC"; then ok "final doctor rc $RC (0 healthy | 2 degraded)"; else bad "final doctor rc $RC (crash or broken)"; fi
@@ -1862,9 +2299,20 @@ echo "FAIL:"; printf '%s\n' "$FAIL" | tr "$US" '\n' | sed '/^$/d;s/^/  - /'
 echo
 echo "log: $LOG"
 if [ -z "$FAIL" ]; then
-  echo "VALIDATION: ALL GREEN"; echo 0 > "$STAGE/.v138rc"
+  # A truncated run must never read as a release verdict, however green.
+  if [ "$A6_ONLY" = 1 ]; then
+    echo "A6-ONLY DEBUG RUN: GREEN - this is NOT a release verdict (A2, A3-A5, B/B2/B3, C and D never ran)"
+  else
+    echo "VALIDATION: ALL GREEN"
+  fi
+  echo 0 > "$STAGE/.v138rc"
 else
-  echo "VALIDATION: HAS FAILURES"; echo 1 > "$STAGE/.v138rc"
+  if [ "$A6_ONLY" = 1 ]; then
+    echo "A6-ONLY DEBUG RUN: HAS FAILURES"
+  else
+    echo "VALIDATION: HAS FAILURES"
+  fi
+  echo 1 > "$STAGE/.v138rc"
 fi
 }
 
