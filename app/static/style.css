@@ -39,7 +39,20 @@ nav { display: flex; border-bottom: 1px solid var(--line); background: var(--car
 }
 .tab.active { border-bottom-color: var(--accent); color: var(--accent); }
 
-main { padding: 0.8rem; max-width: 640px; margin: 0 auto; }
+/* Per-view widths. The device cards and the add form read best in a narrow
+   column; the stats and audit tables want every pixel the viewport has.
+   Padding and cap stay on the SAME box (border-box): a shell padding
+   outside the cap would be subtracted before it applies, rendering every
+   view wider than its cap intends. Below the first breakpoint this
+   reproduces the original 640px column exactly. */
+.view { padding: 0.8rem; max-width: 640px; margin: 0 auto; }
+
+@media (min-width: 760px) {
+  #view-stats, #view-audit { max-width: 1040px; }
+}
+@media (min-width: 1200px) {
+  #view-audit { max-width: 1440px; }
+}
 
 #add-form { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; }
 #add-form input, #add-form select, #add-form button {
