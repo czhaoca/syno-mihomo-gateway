@@ -92,9 +92,79 @@ nav { display: flex; border-bottom: 1px solid var(--line); background: var(--car
   border: 1px solid var(--line); border-radius: 6px; }
 table { width: 100%; border-collapse: collapse; background: var(--card);
   border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+/* No word-breaking rule at all here, deliberately. `break-all` shattered
+   every cell at whatever character hit the edge - `2026-07-26T14:03:11Z`
+   became `2026-07-2 / 6T14:03:1 / 1Z` and IPs split mid-octet - and even
+   `break-word` splits an unbreakable token that cannot fit. Removing it
+   is necessary but NOT sufficient: the default line-breaker still offers
+   a break after `/` (Unicode class SY - the same rule that wraps long
+   URLs with no CSS at all), so a CIDR needs explicit `nowrap` below.
+   This rule is shared with the stats table, whose device column carries
+   IPs, so nothing that breaks inside a word belongs here. */
 th, td { text-align: left; padding: 0.45rem 0.6rem; border-bottom: 1px solid var(--line);
-  font-size: 0.9rem; word-break: break-all; }
+  font-size: 0.9rem; }
 .note, .empty { color: #52606d; font-size: 0.9rem; }
+
+/* ---- audit table --------------------------------------------------- */
+/* Phone-first, like the rest of this sheet: the five-column log is one
+   card per entry by default and becomes a table only once there is room.
+   Folding the other way round (cards under a max-width) would leave the
+   fractional band between the two queries matching neither. */
+#audit-table, #audit-table tbody, #audit-table tr, #audit-table td {
+  display: block; width: 100%; }
+#audit-table thead { position: absolute; width: 1px; height: 1px;
+  overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+#audit-table { border: 0; background: none; }
+#audit-table tr { background: var(--card); border: 1px solid var(--line);
+  border-radius: 8px; margin-bottom: 0.6rem; padding: 0.2rem 0.1rem; }
+#audit-table td { border-bottom: 0; padding: 0.25rem 0.7rem;
+  display: flex; gap: 0.6rem; justify-content: space-between; }
+#audit-table td::before { content: attr(data-label); color: #52606d;
+  font-size: 0.8rem; flex: 0 0 auto; }
+/* the note is the only OPTIONAL field - drop it when absent rather than
+   leaving a labelled blank line on every card. Target and requester stay
+   even when empty, so a card always shows the same fields. */
+#audit-table td.col-note:empty { display: none; }
+
+/* Column priority, in both layouts: time, target and requester are all
+   atomic tokens (an ISO stamp, a CIDR, an IP) and never wrap at all -
+   the target especially, since the default breaker would split it after
+   the `/`. The note is the only free-text column, so it absorbs the
+   slack and is the one place an intra-word break is right. */
+#audit-table td.col-time, #audit-table td.col-target,
+#audit-table td.col-requester { white-space: nowrap; }
+#audit-table td.col-note { overflow-wrap: anywhere; }
+#audit-table td.col-time { font-variant-numeric: tabular-nums; }
+#audit-table td.col-time, #audit-table td.col-requester,
+#audit-table td.col-target { font-family: ui-monospace, monospace;
+  font-size: 0.82rem; }
+
+@media (min-width: 760px) {
+  #audit-table { display: table; border: 1px solid var(--line);
+    background: var(--card); }
+  #audit-table tbody { display: table-row-group; }
+  #audit-table tr { display: table-row; background: none; border: 0;
+    border-radius: 0; margin-bottom: 0; padding: 0; }
+  /* every property the card layout set is reset here, including the two
+     that are inert on a table-cell (gap, justify-content) - leaving them
+     live would silently reactivate if this display ever changes again */
+  #audit-table td { display: table-cell; width: auto; gap: normal;
+    justify-content: normal; border-bottom: 1px solid var(--line);
+    padding: 0.45rem 0.6rem; }
+  #audit-table td::before { content: none; }
+  #audit-table td.col-note:empty { display: table-cell; }
+  #audit-table thead { position: static; display: table-header-group;
+    width: auto; height: auto; overflow: visible; clip-path: none;
+    white-space: normal; }
+  #audit-table th { position: sticky; top: 0; background: var(--card); }
+}
+
+.pager { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.6rem; }
+.pager button { padding: 0.45rem 0.8rem; font-size: 0.9rem; min-height: 2.4rem;
+  border: 1px solid var(--line); border-radius: 6px; background: var(--card); }
+.pager button[disabled] { opacity: 0.45; }
+#audit-range { color: #52606d; font-size: 0.85rem; }
+#audit-paused, #audit-stale { color: var(--warn); }
 
 dialog { border: 1px solid var(--line); border-radius: 8px; max-width: 90vw; }
 dialog input { width: 100%; padding: 0.5rem; margin: 0.6rem 0; }

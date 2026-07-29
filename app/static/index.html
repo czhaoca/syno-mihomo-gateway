@@ -87,18 +87,33 @@
     </section>
 
     <section id="view-audit" class="view hidden">
-      <table id="audit-table">
-        <thead>
-          <tr>
-            <th data-i18n="col_time">Time</th>
-            <th data-i18n="col_action">Action</th>
-            <th data-i18n="col_target">Target</th>
-            <th data-i18n="col_requester">Requester</th>
-            <th data-i18n="col_note">Note</th>
+      <!-- The card fold below 760px sets display:block on these elements,
+           which drops their implicit table semantics; the explicit roles
+           put them back. -->
+      <table id="audit-table" role="table">
+        <thead role="rowgroup">
+          <tr role="row">
+            <th role="columnheader" data-i18n="col_time">Time</th>
+            <th role="columnheader" data-i18n="col_action">Action</th>
+            <th role="columnheader" data-i18n="col_target">Target</th>
+            <th role="columnheader" data-i18n="col_requester">Requester</th>
+            <th role="columnheader" data-i18n="col_note">Note</th>
           </tr>
         </thead>
-        <tbody id="audit-rows" data-testid="audit-rows"></tbody>
+        <tbody id="audit-rows" data-testid="audit-rows" role="rowgroup"></tbody>
       </table>
+      <p id="audit-empty" data-testid="audit-empty" class="empty hidden"
+         data-i18n="audit_empty">No audit entries yet - policy changes will
+         appear here.</p>
+      <div class="pager" data-testid="audit-pager">
+        <button id="audit-prev" data-testid="audit-prev" type="button"
+                data-i18n="prev_page">Newer</button>
+        <button id="audit-next" data-testid="audit-next" type="button"
+                data-i18n="next_page">Older</button>
+        <span id="audit-range" data-testid="audit-range"></span>
+        <span id="audit-paused" data-testid="audit-paused" class="hidden"></span>
+        <span id="audit-stale" data-testid="audit-stale" class="hidden"></span>
+      </div>
     </section>
   </main>
 

@@ -84,10 +84,19 @@ async function api(method, path, body) {
   if (body !== undefined) headers["Content-Type"] = "application/json";
   const mutating = method !== "GET";
   if (mutating && token()) headers["Authorization"] = `Bearer ${token()}`;
-  const res = await fetch(path, {
-    method, headers,
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
+  // A DOWN backend rejects the promise rather than answering, so without
+  // this catch the failure escapes every caller and the UI silently keeps
+  // showing stale data. Status 0 means "never reached the panel" and is
+  // falsy for every `status === 200` check already in this file.
+  let res;
+  try {
+    res = await fetch(path, {
+      method, headers,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+  } catch (e) {
+    return { status: 0, data: null };
+  }
   if (res.status === 403 && mutating) {
     const entered = await askToken();
     if (entered) return api(method, path, body);
@@ -117,9 +126,11 @@ let BAND = [];
 
 async function renderDevices() {
   const { status, data } = await api("GET", "/v1/devices");
+  // Clear only once the answer is good: a failed refresh must not wipe a
+  // correctly-rendered list and leave the user staring at nothing.
+  if (status !== 200) return;
   const list = $("#device-list");
   list.textContent = "";
-  if (status !== 200) return;
   BAND = data.band || [];
   $("#devices-empty").classList.toggle("hidden", data.devices.length !== 0);
   const tpl = $("#device-row-template");
@@ -264,9 +275,11 @@ async function renderStats() {
     api("GET", "/v1/stats/gaps"),
     api("GET", "/v1/stats/domains"),
   ]);
-  const tbody = $("#stats-rows");
-  tbody.textContent = "";
   if (devices.status === 200) {
+    // same rule as the device list: only discard rows once a good answer
+    // is in hand
+    const tbody = $("#stats-rows");
+    tbody.textContent = "";
     for (const row of devices.data.rows) {
       const tr = document.createElement("tr");
       for (const value of [row.device, fmtBytes(row.up), fmtBytes(row.down)]) {
@@ -280,15 +293,19 @@ async function renderStats() {
   if (timeline.status === 200) {
     drawSparkline($("#stats-sparkline"), timeline.data.rows);
   }
-  const gapsNote = $("#gaps-note");
-  if (gaps.status === 200 && gaps.data.rows.length) {
-    gapsNote.textContent = `${t("gaps_note")}: ${gaps.data.rows.length}`;
-    gapsNote.classList.remove("hidden");
-  } else {
-    gapsNote.classList.add("hidden");
+  // Same rule again: a failed sub-fetch says nothing about the gaps or
+  // the domain switch, so it must not silently retract a note that is
+  // still true. Only a good answer may change what these claim.
+  if (gaps.status === 200) {
+    const gapsNote = $("#gaps-note");
+    gapsNote.textContent = gaps.data.rows.length
+      ? `${t("gaps_note")}: ${gaps.data.rows.length}` : "";
+    gapsNote.classList.toggle("hidden", !gaps.data.rows.length);
   }
-  $("#domains-note").classList.toggle(
-    "hidden", !(domains.status === 200 && domains.data.enabled === false));
+  if (domains.status === 200) {
+    $("#domains-note").classList.toggle(
+      "hidden", domains.data.enabled !== false);
+  }
 }
 
 async function purgeStats() {
@@ -298,23 +315,98 @@ async function purgeStats() {
 }
 
 /* ---- audit --------------------------------------------------------- */
+// One screenful at a time instead of the server's 200-row default. The
+// column order matches the <thead>; the labels ride along per cell so the
+// card fold below the breakpoint can name each field without a second
+// dictionary.
+const AUDIT_PAGE = 50;
+const AUDIT_COLUMNS = [
+  { cls: "col-time", label: "col_time" },
+  { cls: "col-action", label: "col_action" },
+  { cls: "col-target", label: "col_target" },
+  { cls: "col-requester", label: "col_requester" },
+  { cls: "col-note", label: "col_note" },
+];
+let auditOffset = 0;
+// The offset actually PAINTED, which is not always the one we asked for:
+// a superseded or failed render leaves the table showing an older page.
+// Rolling back to this rather than to the previously-intended offset is
+// what keeps the pager honest after a rapid turn whose answer never came.
+let auditShown = 0;
+// Monotonic request id: a slow answer for an abandoned page must never
+// repaint over a newer one, or the rows and the pager disagree.
+let auditRequest = 0;
+
 async function renderAudit() {
-  const { status, data } = await api("GET", "/v1/audit");
+  const offset = auditOffset;
+  const generation = ++auditRequest;
+  // Ask for one more row than we show: its presence is the only honest
+  // "there is a next page" signal the API offers, and without it a log
+  // whose length is an exact multiple of the page size leaves Next
+  // enabled onto a blank page.
+  const { status, data } = await api(
+    "GET", `/v1/audit?limit=${AUDIT_PAGE + 1}&offset=${offset}`);
+  if (generation !== auditRequest) return true;
+  const stale = $("#audit-stale");
+  if (status !== 200) {
+    // Keep whatever is on screen, but never let it pass for current -
+    // a silently frozen audit log is the bug this replaced. Reporting
+    // false lets a failed page turn put the offset back, so the pager
+    // never claims a page the table is not showing.
+    stale.textContent = t("audit_stale");
+    stale.classList.remove("hidden");
+    return false;
+  }
+  stale.classList.add("hidden");
+  const hasMore = data.entries.length > AUDIT_PAGE;
+  const entries = data.entries.slice(0, AUDIT_PAGE);
   const tbody = $("#audit-rows");
   tbody.textContent = "";
-  if (status !== 200) return;
-  for (const e of data.entries) {
+  for (const e of entries) {
     const tr = document.createElement("tr");
-    const target = [e.cidr, e.mode].filter(Boolean).join(" ");
-    for (const value of [e.ts, t(`action_${e.action}`) === `action_${e.action}`
-                         ? e.action : t(`action_${e.action}`),
-                         target, e.requester, e.note || e.details || ""]) {
+    tr.setAttribute("role", "row");
+    const action = t(`action_${e.action}`) === `action_${e.action}`
+      ? e.action : t(`action_${e.action}`);
+    const values = [e.ts, action, [e.cidr, e.mode].filter(Boolean).join(" "),
+                    e.requester, e.note || e.details || ""];
+    AUDIT_COLUMNS.forEach((col, i) => {
       const td = document.createElement("td");
-      td.textContent = value;
+      td.setAttribute("role", "cell");
+      td.className = col.cls;
+      td.dataset.label = t(col.label);
+      td.textContent = values[i];
       tr.appendChild(td);
-    }
+    });
     tbody.appendChild(tr);
   }
+  // Say something whenever there is nothing to show. A later page can
+  // still come back empty if entries were removed under us, and a blank
+  // table with no explanation is exactly the silence this ticket is about.
+  $("#audit-empty").classList.toggle("hidden", entries.length !== 0);
+  $("#audit-range").textContent = entries.length
+    ? `${offset + 1}-${offset + entries.length}` : "";
+  $("#audit-prev").disabled = offset === 0;
+  $("#audit-next").disabled = !hasMore;
+  // Older pages are a snapshot: re-fetching a raw offset under the user
+  // while new entries push rows down would duplicate some and skip
+  // others. Freeze the auto-refresh there and say so, rather than
+  // shuffling the page they are reading.
+  const paused = $("#audit-paused");
+  paused.textContent = offset === 0 ? "" : t("audit_paused");
+  paused.classList.toggle("hidden", offset === 0);
+  auditShown = offset;
+  return true;
+}
+
+async function pageAudit(delta) {
+  const next = auditOffset + delta * AUDIT_PAGE;
+  if (next < 0) return;
+  auditOffset = next;
+  // A page turn that never landed must not leave the offset ahead of the
+  // table, or the next click jumps two pages and quietly skips the one in
+  // between. Fall back to what is actually on screen - the page we last
+  // INTENDED may itself never have been painted.
+  if (await renderAudit() === false) auditOffset = auditShown;
 }
 
 /* ---- health + shell ------------------------------------------------ */
@@ -343,7 +435,10 @@ async function reapply() {
   await renderDevices();
 }
 
-function switchView(name) {
+// `resetPaging` separates "the user just entered this tab", where landing
+// on the newest page is right, from a re-render of the tab they are
+// already on (the language toggle), where throwing away their page is not.
+function switchView(name, resetPaging = true) {
   document.querySelectorAll(".tab").forEach((tab) => {
     tab.classList.toggle("active", tab.dataset.view === name);
   });
@@ -352,7 +447,10 @@ function switchView(name) {
   });
   if (name === "devices") renderDevices();
   if (name === "stats") renderStats();
-  if (name === "audit") renderAudit();
+  if (name === "audit") {
+    if (resetPaging) auditOffset = 0;
+    renderAudit();
+  }
 }
 
 function activeView() {
@@ -369,12 +467,15 @@ async function main() {
   $("#stats-refresh").addEventListener("click", renderStats);
   $("#stats-tier").addEventListener("change", renderStats);
   $("#stats-purge").addEventListener("click", purgeStats);
+  $("#audit-prev").addEventListener("click", () => pageAudit(-1));
+  $("#audit-next").addEventListener("click", () => pageAudit(1));
   $("#reapply-btn").addEventListener("click", reapply);
   $("#lang-toggle").addEventListener("click", async () => {
     LANG = LANG === "zh" ? "en" : "zh";
     localStorage.setItem("panel_lang", LANG);
     await loadI18n();
-    switchView(activeView());
+    // a repaint, not a fresh entry - keep the page the user is reading
+    switchView(activeView(), false);
   });
   await refreshHealth();
   switchView("devices");
@@ -383,6 +484,9 @@ async function main() {
     await refreshHealth();
     if (activeView() === "stats") renderStats();
     if (activeView() === "devices") renderDevices();
+    // page 1 only - see renderAudit: refreshing a deeper offset would
+    // reshuffle rows under the reader
+    if (activeView() === "audit" && auditOffset === 0) renderAudit();
   }, 10000);
 }
 
