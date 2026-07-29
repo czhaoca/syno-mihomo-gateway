@@ -32,6 +32,15 @@ h1 { font-size: 1.1rem; margin: 0; }
 }
 .hidden { display: none !important; }
 
+/* The notice must be impossible to miss from ANY scroll position. alert()
+   was at least unmissable; an in-page banner sitting in normal flow above
+   the fold would trade a suppressible warning for an invisible one, which
+   is the same silent failure in a new costume. */
+#notice { position: sticky; top: 0; z-index: 10; margin: 0; border-radius: 0;
+  align-items: flex-start; }
+#notice-text { display: flex; flex-direction: column; gap: 0.3rem; flex: 1; }
+.notice-line + .notice-line { border-top: 1px solid var(--bad); padding-top: 0.3rem; }
+
 nav { display: flex; border-bottom: 1px solid var(--line); background: var(--card); }
 .tab {
   flex: 1; padding: 0.6rem; border: 0; background: none; font-size: 1rem;

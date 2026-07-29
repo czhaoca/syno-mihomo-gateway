@@ -9,7 +9,8 @@ from pathlib import Path
 
 from app.tests.conftest import auth_headers
 
-STATIC = Path(__file__).resolve().parents[1] / "static"
+APP = Path(__file__).resolve().parents[1]
+STATIC = APP / "static"
 
 
 def test_i18n_key_sets_identical():
@@ -23,20 +24,122 @@ def test_i18n_key_sets_identical():
         assert isinstance(value, str) and value.strip(), f"empty entry: {key}"
 
 
+def _audit_actions():
+    """Every action string written into the audit log as a literal, across
+    the whole app (tests excluded). The UI renders each as
+    `action_<value>`, so one added server-side without a translation leaks
+    a raw key into the table - which no dictionary-only check can see.
+
+    Literal-only by construction: an action passed through a variable or a
+    default would not be found. That is why the floor assertion below
+    exists - it catches the sweep going quiet after a rename or a move,
+    which is the failure mode that would turn this gate into a no-op."""
+    actions = set()
+    for path in APP.rglob("*.py"):
+        if "tests" in path.parts:
+            continue
+        actions |= set(re.findall(r"append_audit\(.*?action=[\"']([^\"']+)[\"']",
+                                  path.read_text(), re.S))
+    assert len(actions) >= 5, (
+        "the audit-action sweep found almost nothing - append_audit was "
+        f"probably renamed or moved, which would silently empty this "
+        f"gate: {actions}")
+    return actions
+
+
 def test_every_used_i18n_key_exists():
     """Usage-side parity (the dictionaries agreeing with each other is not
     enough): every data-i18n/data-i18n-placeholder key in the HTML and
-    every static t("...")/`state_*`/`action_*` key the JS renders must
-    resolve, or the raw key leaks into the UI."""
+    every key the JS renders must resolve, or the raw key leaks into the
+    UI. Template-literal keys - t(`action_${...}`) - are invisible to a
+    plain regex, so each prefix is resolved against the values that
+    actually reach it at runtime."""
     en = json.loads((STATIC / "i18n" / "en.json").read_text())
     html = (STATIC / "index.html").read_text()
     js = (STATIC / "app.js").read_text()
     used = set(re.findall(r'data-i18n(?:-placeholder)?="([^"]+)"', html))
     used |= set(re.findall(r'(?<![A-Za-z0-9_.])t\("([^"]+)"\)', js))
-    for state in re.findall(r'"(saved|applying|confirmed|drift)"', js):
-        used.add(f"state_{state}")
+
+    prefixes = set(re.findall(r"(?<![A-Za-z0-9_.])t\(`([a-z]+)_\$\{", js))
+    assert prefixes, (
+        "no template-literal t(`prefix_${...}`) call was found - if the UI "
+        "stopped building keys dynamically this gate should be simplified, "
+        "not left silently matching nothing")
+    resolvers = {
+        "state": lambda: set(re.findall(r'"(saved|applying|confirmed|drift)"', js)),
+        "action": _audit_actions,
+    }
+    unknown = prefixes - resolvers.keys()
+    assert not unknown, (
+        f"the UI builds i18n keys from prefixes this gate cannot resolve: "
+        f"{sorted(unknown)} - teach it where those values come from, or a "
+        f"missing translation ships unnoticed")
+    for prefix in prefixes:
+        used |= {f"{prefix}_{value}" for value in resolvers[prefix]()}
+
     missing = sorted(k for k in used if k not in en)
     assert not missing, f"used i18n keys missing from the dictionaries: {missing}"
+
+
+def _js_code_only(js):
+    """`app.js` with its comments removed, so prose explaining why an API
+    is banned does not itself trip the ban.
+
+    Only FULL-LINE `//` comments are stripped. A blanket `//.*` would also
+    truncate the protocol-relative URL this file builds
+    (`` `//${location.hostname}:...` ``) and, with it, anything sharing
+    that line - which is enough to hide a real banned call from the check.
+    Keeping trailing text means a trailing comment naming a banned API
+    trips the ban, a false RED; that is the safe direction to err in."""
+    js = re.sub(r"/\*.*?\*/", "", js, flags=re.S)
+    return re.sub(r"^[ \t]*//.*$", "", js, flags=re.M)
+
+
+def test_no_warning_rides_on_a_suppressible_dialog():
+    """`alert()` is a no-op once a browser's "prevent this page from
+    creating additional dialogs" box is ticked, so a warning delivered
+    that way can vanish with nothing in its place. That is fatal for the
+    apply-drift message in particular: swallowing it leaves the UI
+    implying the gateway matches the store when it may not. `confirm()`
+    stays - it fails CLOSED, since a suppressed dialog returns false and
+    the guarded action is abandoned."""
+    js = (STATIC / "app.js").read_text()
+    html = (STATIC / "index.html").read_text()
+    code = _js_code_only(js).replace("window.alert", "alert")
+    assert not re.search(r"(?<![\w.])alert\s*\(", code), \
+        "no user-facing warning may depend on alert() - render it in-page"
+    tag = re.search(r"<div\b[^>]*\bid=\"notice\"[^>]*>", html)
+    assert tag, "an in-page notice surface must exist to carry those messages"
+    assert 'role="alert"' in tag.group(0), (
+        "the notice must be announced to assistive tech - that is the part "
+        "of alert() worth keeping")
+    assert "data-testid=" in tag.group(0), "the notice needs a stable testid"
+    # the drift message specifically must be handed TO notify - a loose
+    # "both strings appear somewhere in setMode" check would be satisfied
+    # by the sibling error branch's own notify() call
+    drift = js.split("async function setMode")[1].split("\nasync function")[0]
+    assert re.search(r'notify\(\s*t\("delete_drift_warn"\)\s*\)', drift), \
+        "the apply-drift warning must be rendered through the in-page surface"
+
+    body = _js_code_only(js).split("function notify(")[1].split("\nfunction")[0]
+    # Without this the surface stays `display: none !important` and the
+    # warning is suppressed permanently - a worse failure than alert().
+    assert re.search(r'classList\.remove\("hidden"\)', body), \
+        "notify() must actually reveal the notice, not just fill it in"
+    # An in-page banner in normal flow is invisible to a scrolled-down
+    # user, which would swap a suppressible warning for an unseen one.
+    base, _ = _split_media((STATIC / "style.css").read_text())
+    assert re.search(r"position:\s*sticky", _decls_for(base, "#notice")), (
+        "the notice must stay on screen from any scroll position - being "
+        "unsuppressible is worthless if it renders above the fold")
+    # alert() queued; a single-slot banner would silently drop an unread
+    # warning when a second failure followed it.
+    assert "appendChild" in body, \
+        "notify() must add a message rather than replace the surface"
+    # an ASSIGNMENT to textContent before the new line is built would mean
+    # the previous message was wiped (`===` is a comparison, not that)
+    assert not re.search(r"textContent\s*=(?!=)", body.split("createElement")[0]), \
+        "notify() must stack messages, not overwrite an unread one"
 
 
 def test_band_confirm_guards_both_mutation_paths():

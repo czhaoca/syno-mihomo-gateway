@@ -3,6 +3,7 @@
   "dashboard_link": "Node dashboard",
   "parity_drift_banner": "Apply drift: the gateway may not reflect the saved policy. Check /health and re-apply.",
   "reapply": "Re-apply",
+  "dismiss": "Dismiss",
   "tab_devices": "Devices",
   "tab_stats": "Stats",
   "tab_audit": "Audit",

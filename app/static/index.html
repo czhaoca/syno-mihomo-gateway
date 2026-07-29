@@ -27,6 +27,17 @@
             data-i18n="reapply">Re-apply</button>
   </div>
 
+  <!-- Warnings live here, not in alert(): a browser can switch dialogs off
+       for a page, and a swallowed drift warning would leave the UI implying
+       the gateway matches the store when it may not. role="alert" keeps the
+       one genuinely useful property of the dialog - assistive tech
+       announces it. -->
+  <div id="notice" data-testid="notice" class="banner hidden" role="alert">
+    <span id="notice-text" data-testid="notice-text"></span>
+    <button id="notice-dismiss" data-testid="notice-dismiss" type="button"
+            data-i18n="dismiss">Dismiss</button>
+  </div>
+
   <nav>
     <button class="tab active" data-view="devices" data-testid="tab-devices"
             type="button" data-i18n="tab_devices">Devices</button>

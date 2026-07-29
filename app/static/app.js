@@ -106,6 +106,39 @@ async function api(method, path, body) {
   return { status: res.status, data };
 }
 
+/* ---- notices ------------------------------------------------------- */
+// The in-page replacement for alert(). A browser can disable dialogs for
+// a page, which turns alert() into a silent no-op - fine for a nag, fatal
+// for a warning that the gateway may not match what the UI shows. This
+// cannot be suppressed, and it stays up until dismissed or replaced.
+const NOTICE_KEEP = 4;
+
+function notify(message) {
+  const box = $("#notice");
+  const list = $("#notice-text");
+  // Reveal BEFORE writing: a live region that is display:none when its
+  // text changes is not reliably announced.
+  box.classList.remove("hidden");
+  // Stack rather than overwrite. alert() queued - each message had to be
+  // dismissed before the next - so a single slot would silently drop an
+  // unread warning when a second failure followed. Identical consecutive
+  // messages collapse, and only the last few are kept.
+  const last = list.lastElementChild;
+  if (last && last.textContent === message) return;
+  const line = document.createElement("div");
+  line.className = "notice-line";
+  line.textContent = message;
+  list.appendChild(line);
+  while (list.childElementCount > NOTICE_KEEP) {
+    list.removeChild(list.firstElementChild);
+  }
+}
+
+function dismissNotice() {
+  $("#notice").classList.add("hidden");
+  $("#notice-text").textContent = "";
+}
+
 /* ---- badges -------------------------------------------------------- */
 function badgeFor(cidr) {
   const state = applyState.get(cidr)
@@ -164,7 +197,7 @@ async function renameDevice(dev) {
   if (name === null || name === dev.name) return;
   const result = await api("PATCH", `/v1/devices/${dev.id}`, { name });
   if (result.status !== 200 && result.status !== 403) {
-    window.alert((result.data && result.data.detail) || t("error_generic"));
+    notify((result.data && result.data.detail) || t("error_generic"));
   }
   await renderDevices();
 }
@@ -185,11 +218,11 @@ async function setMode(dev, mode) {
     if (mode === "default" && result.data && result.data.applied === false) {
       // the row is gone, so no per-row badge can carry this drift - say
       // it out loud (the parity banner stays up via refreshHealth too)
-      window.alert(t("delete_drift_warn"));
+      notify(t("delete_drift_warn"));
     }
   } else if (result.status !== 403) {
     applyState.set(dev.cidr, "drift");
-    window.alert((result.data && result.data.detail) || t("error_generic"));
+    notify((result.data && result.data.detail) || t("error_generic"));
   } else {
     applyState.delete(dev.cidr);
   }
@@ -219,7 +252,7 @@ async function addDevice(evt) {
     noteApplyResult(result.data.device.cidr, result.data);
     $("#add-form").reset();
   } else if (result.status !== 403) {
-    window.alert((result.data && result.data.detail) || t("error_generic"));
+    notify((result.data && result.data.detail) || t("error_generic"));
   }
   await refreshHealth();
   await renderDevices();
@@ -469,6 +502,7 @@ async function main() {
   $("#stats-purge").addEventListener("click", purgeStats);
   $("#audit-prev").addEventListener("click", () => pageAudit(-1));
   $("#audit-next").addEventListener("click", () => pageAudit(1));
+  $("#notice-dismiss").addEventListener("click", dismissNotice);
   $("#reapply-btn").addEventListener("click", reapply);
   $("#lang-toggle").addEventListener("click", async () => {
     LANG = LANG === "zh" ? "en" : "zh";

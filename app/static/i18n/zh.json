@@ -3,6 +3,7 @@
   "dashboard_link": "节点仪表盘",
   "parity_drift_banner": "应用偏移：网关可能未反映已保存的策略。请检查 /health 并重新应用。",
   "reapply": "重新应用",
+  "dismiss": "关闭",
   "tab_devices": "设备",
   "tab_stats": "统计",
   "tab_audit": "审计",
