@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 from app import config
 from app.api.auth import require_mutation_auth
 from app.collector.core import GAP_FACTOR, effective_interval_s
+from app.store import identity
 from app.store import stats as stats_store
 from app.store.audit import append_audit, list_audit
 from app.store.policy import (
@@ -50,6 +51,12 @@ class DeviceUpdate(BaseModel):
     mode: Mode | None = None
     name: str | None = None
     note: str | None = None
+
+
+class IdentityUpdate(BaseModel):
+    alias: str = Field(
+        default="",
+        description="Human name for this host; blank removes the alias")
 
 
 def _conn(request: Request):
@@ -219,6 +226,26 @@ def _with_band_flags(rows: list) -> list:
     return rows
 
 
+def _with_aliases(conn, rows: list) -> list:
+    """Decorate on the way out, so the policy store stays free of identity.
+    Exact /32 match only - a range has no single host, and lending it the
+    alias of an address it contains would put one device's name on a whole
+    subnet.
+
+    A policied device can therefore carry TWO human names: the shipped
+    `devices.name` (policy-scoped, PATCHable, audited as `rename`) and this
+    `alias` (identity-scoped, survives the policy being removed). They are
+    both returned and neither is derived from the other. The shipped UI
+    still renders `name`; deciding which one wins in the interface belongs
+    to the React device views (#80), which is where a precedence rule can
+    be applied consistently rather than guessed at per call site.
+    """
+    aliases = identity.resolve(conn)
+    for row in rows:
+        row["alias"] = aliases.get(row["cidr"], "")
+    return rows
+
+
 @router.get("/v1/devices")
 def get_devices(request: Request) -> dict:
     """`band` (the canonical FULL_PROXY_SOURCES entries) rides along so
@@ -226,8 +253,8 @@ def get_devices(request: Request) -> dict:
     BEFORE posting — DEC-4 covers adds, not just flips on listed rows."""
     with request.app.state.mutex:
         conn = _conn(request)
-        return {"devices": _with_band_flags(list_devices(conn)),
-                "band": _band_entries()}
+        rows = _with_aliases(conn, _with_band_flags(list_devices(conn)))
+        return {"devices": rows, "band": _band_entries()}
 
 
 @router.post("/v1/devices", status_code=201,
@@ -282,6 +309,62 @@ def delete_device(device_id: int, request: Request, note: str = "") -> dict:
             raise HTTPException(status_code=404,
                                 detail="no such device") from None
         return {"removed": removed["id"], **_reconcile(request, conn)}
+
+
+@router.get("/v1/identity")
+def get_identity(request: Request) -> dict:
+    """Aliases for hosts that may or may not carry a routing policy - the
+    reason this is not folded into /v1/devices, which only ever lists
+    devices that HAVE one."""
+    with request.app.state.mutex:
+        return {"identities": identity.list_aliases(_conn(request))}
+
+
+@router.put("/v1/identity/{ip}",
+            dependencies=[Depends(require_mutation_auth)])
+def put_identity(ip: str, body: IdentityUpdate, request: Request) -> dict:
+    """Set (or clear) the alias for one host. PUT replaces the resource, so
+    a body carrying no alias clears it - `removed` reports whether a row
+    actually went away, since the cleared state is otherwise identical to
+    an address that never had one.
+
+    Naming a device applies no policy and triggers no reconcile: there is
+    nothing for the gateway to do about a label. That also means an alias
+    write is NOT followed by a `backup_db` the way a policy mutation is -
+    aliases enter a backup on the next policy change (deliberate: a bulk
+    import must not VACUUM per row).
+
+    `{ip}` is a single host by construction. A CIDR's `/` is a path
+    separator, so a range cannot address this endpoint at all.
+    """
+    with request.app.state.mutex:
+        conn = _conn(request)
+        try:
+            result = identity.set_alias(conn, ip, body.alias,
+                                        requester=_requester(request))
+        except ValidationError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
+        return {"identity": {"ip": result["ip"], "alias": result["alias"]},
+                "removed": result.get("removed", False)}
+
+
+@router.delete("/v1/identity/{ip}",
+               dependencies=[Depends(require_mutation_auth)])
+def delete_identity(ip: str, request: Request) -> dict:
+    """Answers 200 with `removed: false` when there was no alias, NOT 404.
+    This diverges deliberately from `DELETE /v1/devices/{id}`: a device id
+    either names a resource or does not, whereas every valid host address
+    exists whether or not it carries a label, so "there was nothing to
+    remove" is a truthful outcome rather than a missing resource.
+    """
+    with request.app.state.mutex:
+        conn = _conn(request)
+        try:
+            removed = identity.remove_alias(conn, ip,
+                                            requester=_requester(request))
+        except ValidationError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
+        return {"removed": removed}
 
 
 @router.post("/v1/apply", dependencies=[Depends(require_mutation_auth)])

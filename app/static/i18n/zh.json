@@ -48,6 +48,7 @@
   "purge_confirm": "删除全部已采集统计（含域名数据）？策略审计不受影响。",
   "error_generic": "请求被拒绝——请查看提示信息。",
   "action_add": "添加",
+  "action_alias": "别名",
   "action_flip": "切换模式",
   "action_rename": "重命名",
   "action_readdress": "改地址",

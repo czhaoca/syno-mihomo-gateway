@@ -44,6 +44,22 @@ Delete Device
 
 Parameters: `device_id`, `note`
 
+## `GET /v1/identity`
+
+Get Identity
+
+## `DELETE /v1/identity/{ip}`
+
+Delete Identity
+
+Parameters: `ip`
+
+## `PUT /v1/identity/{ip}`
+
+Put Identity
+
+Parameters: `ip`
+
 ## `GET /v1/stats/chains`
 
 Stats Chains

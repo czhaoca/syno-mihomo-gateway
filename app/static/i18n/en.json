@@ -48,6 +48,7 @@
   "purge_confirm": "Delete ALL collected statistics (domains included)? The policy audit is not touched.",
   "error_generic": "The request was rejected - see the message.",
   "action_add": "add",
+  "action_alias": "alias",
   "action_flip": "mode flip",
   "action_rename": "rename",
   "action_readdress": "readdress",

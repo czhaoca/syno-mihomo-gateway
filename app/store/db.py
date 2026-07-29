@@ -74,6 +74,32 @@ MIGRATIONS = [
         details TEXT NOT NULL DEFAULT ''
     );
     """),
+    # v2 - device identity, separate from policy. `devices.mode` is NOT
+    # NULL with a CHECK, so no row there can exist without a routing
+    # decision; naming a device must not force one. Relaxing that column
+    # would need SQLite's 12-step rebuild, which cannot run here - by the
+    # time _migrate opens its transaction PRAGMA foreign_keys is already
+    # ON, and pragmas cannot be toggled mid-transaction. A pure CREATE
+    # TABLE sidecar leaves every shipped row and the devices DDL itself
+    # byte-identical on a populated v1.8.0 database.
+    #
+    # Keyed on the canonical /32, matching `devices.cidr`, because the only
+    # consumer today is the /v1/devices listing. NOTE the stats tables key
+    # on the BARE `metadata.sourceIP` (stats.py:120), so a stats-side join
+    # must normalize - `identity.host_key()` is the single place that
+    # conversion lives, and `identity.resolve()` returns /32 keys.
+    #
+    # NOT NULL is explicit: `cidr TEXT PRIMARY KEY` alone is a rowid-table
+    # key, and SQLite accepts NULL there - several of them, since NULLs are
+    # distinct in the implicit index. The shipped `devices.cidr` is
+    # `TEXT NOT NULL UNIQUE` for the same reason.
+    (2, """
+    CREATE TABLE device_identity (
+        cidr TEXT PRIMARY KEY NOT NULL,
+        alias TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );
+    """),
 ]
 
 
@@ -129,6 +155,16 @@ def _migrate(conn: sqlite3.Connection, migrations) -> None:
             continue
         conn.execute("BEGIN IMMEDIATE")
         try:
+            # Re-read INSIDE the transaction. The check above raced: two
+            # processes opening the same database (the panel and a CLI
+            # invocation) both see the old version, both queue on
+            # BEGIN IMMEDIATE, and the loser would then re-run a
+            # CREATE TABLE that already exists and abort the open. Only
+            # this read is serialized against the winner's COMMIT.
+            applied = conn.execute("PRAGMA user_version").fetchone()[0]
+            if version <= applied:
+                conn.execute("COMMIT")
+                continue
             # executescript() would auto-COMMIT first; run statements
             # individually so the migration stays one transaction.
             for stmt in (s.strip() for s in sql.split(";")):

@@ -11,6 +11,8 @@ MUTATION_CALLS = [
     ("patch", "/v1/devices/1", {"mode": "full-direct"}),
     ("delete", "/v1/devices/1", None),
     ("post", "/v1/apply", None),
+    ("put", "/v1/identity/192.0.2.5", {"alias": "x"}),
+    ("delete", "/v1/identity/192.0.2.5", None),
 ]
 
 

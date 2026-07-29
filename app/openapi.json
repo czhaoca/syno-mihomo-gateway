@@ -101,6 +101,18 @@
         "title": "HTTPValidationError",
         "type": "object"
       },
+      "IdentityUpdate": {
+        "properties": {
+          "alias": {
+            "default": "",
+            "description": "Human name for this host; blank removes the alias",
+            "title": "Alias",
+            "type": "string"
+          }
+        },
+        "title": "IdentityUpdate",
+        "type": "object"
+      },
       "ValidationError": {
         "properties": {
           "ctx": {
@@ -400,6 +412,119 @@
           }
         },
         "summary": "Patch Device"
+      }
+    },
+    "/v1/identity": {
+      "get": {
+        "description": "Aliases for hosts that may or may not carry a routing policy - the\nreason this is not folded into /v1/devices, which only ever lists\ndevices that HAVE one.",
+        "operationId": "get_identity_v1_identity_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Identity V1 Identity Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Identity"
+      }
+    },
+    "/v1/identity/{ip}": {
+      "delete": {
+        "description": "Answers 200 with `removed: false` when there was no alias, NOT 404.\nThis diverges deliberately from `DELETE /v1/devices/{id}`: a device id\neither names a resource or does not, whereas every valid host address\nexists whether or not it carries a label, so \"there was nothing to\nremove\" is a truthful outcome rather than a missing resource.",
+        "operationId": "delete_identity_v1_identity__ip__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "ip",
+            "required": true,
+            "schema": {
+              "title": "Ip",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Delete Identity V1 Identity  Ip  Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Identity"
+      },
+      "put": {
+        "description": "Set (or clear) the alias for one host. PUT replaces the resource, so\na body carrying no alias clears it - `removed` reports whether a row\nactually went away, since the cleared state is otherwise identical to\nan address that never had one.\n\nNaming a device applies no policy and triggers no reconcile: there is\nnothing for the gateway to do about a label. That also means an alias\nwrite is NOT followed by a `backup_db` the way a policy mutation is -\naliases enter a backup on the next policy change (deliberate: a bulk\nimport must not VACUUM per row).\n\n`{ip}` is a single host by construction. A CIDR's `/` is a path\nseparator, so a range cannot address this endpoint at all.",
+        "operationId": "put_identity_v1_identity__ip__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "ip",
+            "required": true,
+            "schema": {
+              "title": "Ip",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IdentityUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Put Identity V1 Identity  Ip  Put",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put Identity"
       }
     },
     "/v1/stats/chains": {
