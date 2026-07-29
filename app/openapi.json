@@ -101,6 +101,51 @@
         "title": "HTTPValidationError",
         "type": "object"
       },
+      "IdentityImport": {
+        "properties": {
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/IdentityImportEntry"
+            },
+            "title": "Entries",
+            "type": "array"
+          },
+          "override": {
+            "default": false,
+            "description": "Adopt hosts whose alias was typed by an operator. Attended use only - a scheduled sync leaves this off",
+            "title": "Override",
+            "type": "boolean"
+          }
+        },
+        "title": "IdentityImport",
+        "type": "object"
+      },
+      "IdentityImportEntry": {
+        "properties": {
+          "alias": {
+            "description": "Human name; blank is refused on import",
+            "title": "Alias",
+            "type": "string"
+          },
+          "ip": {
+            "description": "IPv4 host address (a range is refused)",
+            "title": "Ip",
+            "type": "string"
+          },
+          "source": {
+            "description": "Where this alias came from, e.g. unifi or nimbus. 'hand-edit' is reserved for an operator's own edit",
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ip",
+          "alias",
+          "source"
+        ],
+        "title": "IdentityImportEntry",
+        "type": "object"
+      },
       "IdentityUpdate": {
         "properties": {
           "alias": {
@@ -412,6 +457,47 @@
           }
         },
         "summary": "Patch Device"
+      }
+    },
+    "/v1/identities/import": {
+      "post": {
+        "description": "Bulk-import aliases from ANY source. Vendor-agnostic on purpose:\n`source` is just a label, so UniFi, Nimbus and a hand-written file all\nuse this one path and no vendor code or credential lives in the panel.\n\nAn alias an operator typed OUTRANKS every importer, so a row whose\nrecorded source differs is left alone. The response is therefore a\nper-row LEDGER rather than a count - a skip is a designed refusal, and\nthe caller has to see WHICH hosts kept their typed name. Reporting only\na total would hide exactly the case the rule exists to protect.\n\n`override: true` is the attended escape hatch, so re-pointing a renamed\nhost at its vendor name does not require destroying the name first.",
+        "operationId": "post_identities_import_v1_identities_import_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IdentityImport"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Post Identities Import V1 Identities Import Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Post Identities Import"
       }
     },
     "/v1/identity": {

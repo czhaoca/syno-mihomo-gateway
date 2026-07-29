@@ -59,6 +59,22 @@ class IdentityUpdate(BaseModel):
         description="Human name for this host; blank removes the alias")
 
 
+class IdentityImportEntry(BaseModel):
+    ip: str = Field(description="IPv4 host address (a range is refused)")
+    alias: str = Field(description="Human name; blank is refused on import")
+    source: str = Field(
+        description="Where this alias came from, e.g. unifi or nimbus. "
+                    "'hand-edit' is reserved for an operator's own edit")
+
+
+class IdentityImport(BaseModel):
+    entries: list[IdentityImportEntry] = Field(default_factory=list)
+    override: bool = Field(
+        default=False,
+        description="Adopt hosts whose alias was typed by an operator. "
+                    "Attended use only - a scheduled sync leaves this off")
+
+
 def _conn(request: Request):
     conn = getattr(request.app.state, "conn", None)
     if conn is None:
@@ -345,6 +361,7 @@ def put_identity(ip: str, body: IdentityUpdate, request: Request) -> dict:
         except ValidationError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from None
         return {"identity": {"ip": result["ip"], "alias": result["alias"]},
+                "source": result.get("source", identity.HAND),
                 "removed": result.get("removed", False)}
 
 
@@ -365,6 +382,34 @@ def delete_identity(ip: str, request: Request) -> dict:
         except ValidationError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from None
         return {"removed": removed}
+
+
+@router.post("/v1/identities/import",
+             dependencies=[Depends(require_mutation_auth)])
+def post_identities_import(body: IdentityImport, request: Request) -> dict:
+    """Bulk-import aliases from ANY source. Vendor-agnostic on purpose:
+    `source` is just a label, so UniFi, Nimbus and a hand-written file all
+    use this one path and no vendor code or credential lives in the panel.
+
+    An alias an operator typed OUTRANKS every importer, so a row whose
+    recorded source differs is left alone. The response is therefore a
+    per-row LEDGER rather than a count - a skip is a designed refusal, and
+    the caller has to see WHICH hosts kept their typed name. Reporting only
+    a total would hide exactly the case the rule exists to protect.
+
+    `override: true` is the attended escape hatch, so re-pointing a renamed
+    host at its vendor name does not require destroying the name first.
+    """
+    with request.app.state.mutex:
+        conn = _conn(request)
+        report = identity.import_aliases(
+            conn, [e.model_dump() for e in body.entries],
+            requester=_requester(request), override=body.override)
+        # one backup for the batch, never per row: a VACUUM INTO per alias
+        # would make a large sync pathological
+        if report["changed"]:
+            backup_db(conn, config.db_path(), config.backup_keep())
+        return report
 
 
 @router.post("/v1/apply", dependencies=[Depends(require_mutation_auth)])

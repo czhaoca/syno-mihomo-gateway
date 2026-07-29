@@ -100,6 +100,22 @@ MIGRATIONS = [
         updated_at TEXT NOT NULL
     );
     """),
+    # v3 - provenance, so an unattended import cannot overwrite a name a
+    # human typed (issue #74 DEC-A: hand-edit wins).
+    #
+    # The DEFAULT is deliberately EMPTY, not 'hand-edit'. Every row that
+    # predates this column really is an operator's own work - nothing else
+    # could write one - so the UPDATE below claims that authority for them
+    # explicitly, inside this same migration transaction. Making the
+    # DEFAULT itself authoritative would be indistinguishable from a future
+    # writer that simply forgot the column, and would hand that writer the
+    # one value which blocks every subsequent sync. '' therefore means
+    # "provenance unknown": the weakest precedence, always overwritable,
+    # and unreachable through the API (which rejects a blank source).
+    (3, """
+    ALTER TABLE device_identity ADD COLUMN source TEXT NOT NULL DEFAULT '';
+    UPDATE device_identity SET source = 'hand-edit';
+    """),
 ]
 
 

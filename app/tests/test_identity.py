@@ -9,6 +9,7 @@ identity lives in an IP-keyed sidecar, and the shipped table is untouched.
 
 import re
 import sqlite3
+from pathlib import Path
 
 import pytest
 from app.store import identity
@@ -95,13 +96,13 @@ def test_alias_change_is_audited(conn):
     note - the convention `policy.py`'s rename already uses. Recording both
     ends is what lets a reader tell a rename from a removal and recover the
     previous name from history."""
-    identity.set_alias(conn, "192.0.2.56", "Named", requester="10.0.0.9")
+    identity.set_alias(conn, "192.0.2.56", "Named", requester="203.0.113.9")
     rows = conn.execute(
         "SELECT action, cidr, requester, note, details FROM audit").fetchall()
     assert [r["action"] for r in rows] == ["alias"]
     assert rows[0]["cidr"] == "192.0.2.56/32"
-    assert rows[0]["requester"] == "10.0.0.9"
-    assert rows[0]["details"] == "'' -> 'Named'"
+    assert rows[0]["requester"] == "203.0.113.9"
+    assert rows[0]["details"] == "'' -> 'Named' [hand-edit]"
     assert rows[0]["note"] == ""
 
 
@@ -114,8 +115,9 @@ def test_a_rename_and_a_removal_are_distinguishable_in_the_audit(conn):
     identity.remove_alias(conn, "192.0.2.58", requester="t")
     details = [r["details"] for r in conn.execute(
         "SELECT details FROM audit WHERE action = 'alias' ORDER BY id")]
-    assert details == ["'' -> 'First'", "'First' -> 'Second'",
-                       "'Second' -> ''"]
+    assert details == ["'' -> 'First' [hand-edit]",
+                       "'First' -> 'Second' [hand-edit]",
+                       "'Second' -> '' [hand-edit]"]
 
 
 def test_a_no_op_removal_manufactures_no_history(conn):
@@ -207,7 +209,7 @@ def test_upgrading_a_populated_v180_database_preserves_every_row(tmp_path):
     old.close()
 
     new = open_db(path)
-    assert new.execute("PRAGMA user_version").fetchone()[0] == 2
+    assert new.execute("PRAGMA user_version").fetchone()[0] == len(MIGRATIONS)
     assert [tuple(r) for r in new.execute(
         "SELECT * FROM devices ORDER BY id")] == before_devices
     assert [tuple(r) for r in new.execute(
@@ -296,7 +298,7 @@ def test_a_concurrent_upgrade_does_not_abort_the_second_opener(tmp_path):
     _migrate(_Interleaver(conn, other_process_finishes_first), MIGRATIONS)
     winner.close()
 
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 2
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == len(MIGRATIONS)
     # and the connection is still usable - a left-open transaction would
     # surface here as "cannot start a transaction within a transaction"
     identity.set_alias(conn, "192.0.2.13", "After", requester="t")
@@ -386,8 +388,11 @@ def test_identity_api_round_trip(client, panel_env):
     assert made.status_code == 200
     assert made.json()["identity"] == {"ip": "192.0.2.70",
                                        "alias": "Study Mac"}
+    # the lock is surfaced where it is created, not only in the docs
+    assert made.json()["source"] == "hand-edit"
     listed = client.get("/v1/identity").json()["identities"]
-    assert listed == [{"ip": "192.0.2.70", "alias": "Study Mac"}]
+    assert listed == [{"ip": "192.0.2.70", "alias": "Study Mac",
+                       "source": "hand-edit"}]
     gone = client.delete("/v1/identity/192.0.2.70", headers=h)
     assert gone.status_code == 200
     assert client.get("/v1/identity").json() == {"identities": []}
@@ -454,3 +459,216 @@ def test_a_range_device_row_reports_no_alias(client, panel_env):
                 headers=h)
     rows = client.get("/v1/devices").json()["devices"]
     assert [(r["cidr"], r["alias"]) for r in rows] == [("192.0.2.96/28", "")]
+
+
+# --- import + provenance (issue #74, DEC-A: hand-edit wins) -------------
+
+def _v2_db(path):
+    """A database at the identity-sidecar schema BEFORE provenance existed."""
+    return open_db(path, migrations=MIGRATIONS[:2])
+
+
+def test_migration_three_claims_authority_only_for_pre_existing_rows(tmp_path):
+    """Every row written before the `source` column existed really is an
+    operator's own work - nothing else could write one - so the backfill
+    claims `hand-edit` for exactly those."""
+    path = tmp_path / "policy.db"
+    old = _v2_db(path)
+    old.execute("INSERT INTO device_identity (cidr, alias, updated_at) "
+                "VALUES ('192.0.2.20/32', 'Typed Long Ago', 't')")
+    old.commit()
+    old.close()
+    new = open_db(path)
+    assert new.execute("PRAGMA user_version").fetchone()[0] == len(MIGRATIONS)
+    row = new.execute("SELECT alias, source FROM device_identity").fetchone()
+    assert (row["alias"], row["source"]) == ("Typed Long Ago", "hand-edit")
+    new.close()
+
+
+def test_the_column_default_does_not_hand_out_authority(tmp_path):
+    """The DEFAULT is '' on purpose. If it were 'hand-edit', any future
+    writer that simply forgot the column would silently claim the one value
+    that blocks every sync - indistinguishable from the backfill. '' means
+    unknown provenance: the weakest precedence, always overwritable."""
+    conn = open_db(tmp_path / "policy.db")
+    default = [r for r in conn.execute("PRAGMA table_info(device_identity)")
+               if r["name"] == "source"][0]["dflt_value"]
+    assert default in ("''", '""'), (
+        f"the source default must be blank, not authoritative; got {default!r}")
+    # a column-omitting raw INSERT lands as unknown provenance...
+    conn.execute("INSERT INTO device_identity (cidr, alias, updated_at) "
+                 "VALUES ('192.0.2.21/32', 'No Provenance', 't')")
+    conn.commit()
+    assert conn.execute("SELECT source FROM device_identity").fetchone()[
+        "source"] == ""
+    # ...and an importer may therefore overwrite it, unlike a hand-edit
+    report = identity.import_aliases(
+        conn, [{"ip": "192.0.2.21", "alias": "From Unifi", "source": "unifi"}],
+        requester="cron")
+    assert report["results"][0]["outcome"] == "applied"
+    conn.close()
+
+
+def test_an_import_cannot_overwrite_a_name_the_operator_typed(conn):
+    identity.set_alias(conn, "192.0.2.22", "Typed By Owner", requester="op")
+    report = identity.import_aliases(
+        conn, [{"ip": "192.0.2.22", "alias": "unifi-name", "source": "unifi"}],
+        requester="cron")
+    row = report["results"][0]
+    assert row["outcome"] == "skipped"
+    assert row["existing_alias"] == "Typed By Owner"
+    assert row["existing_source"] == "hand-edit"
+    assert "may not overwrite" in row["reason"]
+    assert identity.get_alias(conn, "192.0.2.22") == "Typed By Owner"
+    assert report["skipped"] == 1 and report["changed"] == 0
+
+
+def test_a_blank_alias_from_an_import_cannot_delete_a_hand_edit(conn):
+    """The trap this rule would otherwise walk into: `set_alias` treats a
+    blank alias as a REMOVAL and `remove_alias` has no precedence check, so
+    a vendor device with an empty name would silently destroy a typed one
+    while appearing to honour the rule."""
+    identity.set_alias(conn, "192.0.2.23", "Keep Me", requester="op")
+    for blank in ("", "   ", None):
+        report = identity.import_aliases(
+            conn, [{"ip": "192.0.2.23", "alias": blank, "source": "unifi"}],
+            requester="cron")
+        assert report["results"][0]["outcome"] == "rejected"
+        assert "may not clear a name" in report["results"][0]["reason"]
+    assert identity.get_alias(conn, "192.0.2.23") == "Keep Me"
+
+
+def test_an_import_may_not_claim_operator_authority(conn):
+    """Only the hand-edit route may write `hand-edit`; otherwise an importer
+    could promote itself above every other importer - and above the
+    operator's own future edits."""
+    report = identity.import_aliases(
+        conn, [{"ip": "192.0.2.24", "alias": "x", "source": "hand-edit"}],
+        requester="cron")
+    assert report["results"][0]["outcome"] == "rejected"
+    assert "reserved" in report["results"][0]["reason"]
+    assert identity.list_aliases(conn) == []
+
+
+def test_a_repeated_sync_is_idempotent_and_says_so(conn):
+    first = identity.import_aliases(
+        conn, [{"ip": "192.0.2.25", "alias": "AP-1", "source": "unifi"}],
+        requester="cron")
+    again = identity.import_aliases(
+        conn, [{"ip": "192.0.2.25", "alias": "AP-1", "source": "unifi"}],
+        requester="cron")
+    renamed = identity.import_aliases(
+        conn, [{"ip": "192.0.2.25", "alias": "AP-1b", "source": "unifi"}],
+        requester="cron")
+    assert [r["results"][0]["outcome"] for r in (first, again, renamed)] == [
+        "applied", "unchanged", "applied"]
+    # only real changes are audited, so an unchanged row writes no history
+    assert conn.execute(
+        "SELECT COUNT(*) FROM audit").fetchone()[0] == 2
+
+
+def test_one_importer_cannot_steal_anothers_row(conn):
+    identity.import_aliases(
+        conn, [{"ip": "192.0.2.26", "alias": "unifi-name", "source": "unifi"}],
+        requester="cron")
+    report = identity.import_aliases(
+        conn, [{"ip": "192.0.2.26", "alias": "nimbus-name",
+                "source": "nimbus"}], requester="cron")
+    assert report["results"][0]["outcome"] == "skipped"
+    assert identity.get_alias(conn, "192.0.2.26") == "unifi-name"
+
+
+def test_override_adopts_without_destroying_the_name_first(conn):
+    """The attended escape hatch. Without it the only way to re-point a
+    renamed host at its vendor name is to delete the name."""
+    identity.set_alias(conn, "192.0.2.27", "Typed", requester="op")
+    report = identity.import_aliases(
+        conn, [{"ip": "192.0.2.27", "alias": "vendor", "source": "unifi"}],
+        requester="op", override=True)
+    assert report["results"][0]["outcome"] == "applied"
+    assert identity.get_alias(conn, "192.0.2.27") == "vendor"
+    # and authority moved with it, so the operator can take it back
+    assert identity.list_aliases(conn)[0]["source"] == "unifi"
+    identity.set_alias(conn, "192.0.2.27", "Typed Again", requester="op")
+    assert identity.list_aliases(conn)[0]["source"] == "hand-edit"
+
+
+def test_the_import_ledger_accounts_for_every_row(conn):
+    """A batch mixes outcomes, and the totals must reconcile - an aggregate
+    'N imported' would hide the skips this rule exists to produce."""
+    identity.set_alias(conn, "192.0.2.30", "Typed", requester="op")
+    report = identity.import_aliases(conn, [
+        {"ip": "192.0.2.30", "alias": "vendor", "source": "unifi"},   # skipped
+        {"ip": "192.0.2.31", "alias": "New", "source": "unifi"},      # applied
+        {"ip": "192.0.2.0/28", "alias": "Range", "source": "unifi"},  # rejected
+        {"ip": "unknown", "alias": "Pseudo", "source": "unifi"},      # rejected
+    ], requester="cron")
+    assert [r["outcome"] for r in report["results"]] == [
+        "skipped", "applied", "rejected", "rejected"]
+    assert (report["applied"], report["skipped"], report["rejected"],
+            report["unchanged"]) == (1, 1, 2, 0)
+    assert len(report["results"]) == 4
+
+
+def test_an_import_records_its_provenance_in_the_audit(conn):
+    identity.import_aliases(
+        conn, [{"ip": "192.0.2.32", "alias": "AP", "source": "unifi"}],
+        requester="cron")
+    row = conn.execute("SELECT details FROM audit").fetchone()
+    assert row["details"] == "'' -> 'AP' [unifi]", (
+        "the audit must answer 'typed or synced'")
+
+
+# --- import API --------------------------------------------------------
+
+def test_import_endpoint_is_token_gated(client, panel_env):
+    body = {"entries": [{"ip": "192.0.2.40", "alias": "x", "source": "unifi"}]}
+    r = client.post("/v1/identities/import", json=body)
+    assert r.status_code == 403
+    assert "test-panel-secret" not in r.text
+
+
+def test_import_endpoint_returns_the_ledger(client, panel_env):
+    h = auth_headers(panel_env)
+    client.put("/v1/identity/192.0.2.41", json={"alias": "Typed"}, headers=h)
+    r = client.post("/v1/identities/import", headers=h, json={"entries": [
+        {"ip": "192.0.2.41", "alias": "vendor", "source": "unifi"},
+        {"ip": "192.0.2.42", "alias": "AP-2", "source": "unifi"},
+    ]})
+    assert r.status_code == 200
+    body = r.json()
+    assert [x["outcome"] for x in body["results"]] == ["skipped", "applied"]
+    assert body["applied"] == 1 and body["skipped"] == 1
+    # the operator's name is still there
+    rows = {d["ip"]: d["alias"] for d in
+            client.get("/v1/identity").json()["identities"]}
+    assert rows["192.0.2.41"] == "Typed"
+
+
+def test_import_endpoint_carries_no_vendor_specific_code():
+    """AC1: the endpoint must serve UniFi, Nimbus and a hand-written file
+    equally. Naming a vendor as an EXAMPLE label is exactly what
+    vendor-agnostic looks like - `source` is a string the caller supplies.
+    What must not exist is vendor LOGIC: an import, a branch on a vendor
+    literal, a vendor URL, or a vendor credential."""
+    app_root = Path(__file__).resolve().parents[1]
+    vendors = ("unifi", "ubiquiti", "nimbus")
+    offenders = []
+    for path in list((app_root / "api").rglob("*.py")) + \
+            list((app_root / "store").rglob("*.py")):
+        text = path.read_text()
+        low = text.lower()
+        for vendor in vendors:
+            for pattern in (f"import {vendor}", f"from {vendor}",
+                            f'== "{vendor}"', f"== '{vendor}'",
+                            f'!= "{vendor}"', f"{vendor}_url",
+                            f"{vendor}_user", f"{vendor}_password",
+                            f"{vendor}.com", f"{vendor}os"):
+                if pattern in low:
+                    offenders.append(f"{path.name}: {pattern}")
+    assert not offenders, (
+        f"the panel must hold no vendor logic or credential: {offenders}")
+    # and no vendor credential may be read from the environment here
+    for path in (app_root / "config.py",):
+        assert "UNIFI" not in path.read_text().upper(), \
+            "a vendor credential must never be a panel config knob"

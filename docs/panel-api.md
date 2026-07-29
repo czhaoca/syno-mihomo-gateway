@@ -44,6 +44,10 @@ Delete Device
 
 Parameters: `device_id`, `note`
 
+## `POST /v1/identities/import`
+
+Post Identities Import
+
 ## `GET /v1/identity`
 
 Get Identity
