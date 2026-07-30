@@ -73,6 +73,20 @@ guardrails:
       修改面板的策略数据库——不直接触碰任何主机状态、容器或网关文件，且面板
       会对每次应用做核对回读（parity）。面板令牌来自 .env（PANEL_SECRET），
       绝不经命令行传递。
+  - en: >-
+      alias --list inherits the policy exemption (one authenticated read), but
+      alias --sync does NOT: whatever the source, it reads its input out of the
+      root-owned data dir (--from unifi the credential in .env, --from file the
+      document beside it) and starts a container, so it requires root. --adopt
+      additionally requires --yes, because it is the only mode that can
+      overwrite an alias a human typed. Vendor credentials live in .env
+      (UNIFI_*), never on the command line.
+    zh: >-
+      alias --list 沿用 policy 的豁免（只做一次带鉴权的读取），但 alias --sync
+      不豁免：无论用哪个来源，它都要从仅 root 可读的数据目录读取输入（--from
+      unifi 读 .env 中的凭据，--from file 读同目录下的文档），并启动一个容器，
+      因此需要 root。--adopt 还额外需要 --yes，因为它是唯一可能覆盖人工输入
+      别名的模式。厂商凭据存放在 .env（UNIFI_*），绝不经命令行传递。
 
 exit_codes:
   - code: 0
@@ -362,6 +376,73 @@ verbs:
         zh: >-
           需要面板伴随容器（随网关安装/升级部署）；变更操作要求 .env 中已设置
           PANEL_SECRET——未设置时面板拒绝写入（失败即停）。
+
+  - name: alias
+    mutating: false
+    summary:
+      en: >-
+        Device names via the gateway panel (list them, or import a batch from
+        a source). The panel endpoint is vendor-agnostic and never holds a
+        vendor credential - every adapter runs on the host.
+      zh: >-
+        经网关面板管理设备名称（列出，或从某个来源批量导入）。面板接口与厂商
+        无关且从不持有厂商凭据——所有适配器都运行在宿主机一侧。
+    options:
+      - flag: "--list"
+        en: print the panel's identities document (JSON, machine-readable passthrough)
+        zh: 打印面板的别名文档（JSON，机器可读的透传）
+      - flag: "--sync"
+        en: "import a batch of aliases (requires --from; requires root)"
+        zh: "批量导入一批别名（需要 --from；需要 root）"
+      - flag: "--from unifi|file"
+        en: >-
+          with --sync: where the aliases come from. 'unifi' reads UNIFI_URL,
+          UNIFI_USER and UNIFI_PASSWORD (optionally UNIFI_SITE and
+          UNIFI_INSECURE) from .env; 'file' reads an {"entries":[...]}
+          document from <data-dir>/identity/aliases.json
+        zh: >-
+          与 --sync 连用：别名来自哪里。'unifi' 从 .env 读取 UNIFI_URL、
+          UNIFI_USER 与 UNIFI_PASSWORD（可选 UNIFI_SITE 与 UNIFI_INSECURE）；
+          'file' 读取 <data-dir>/identity/aliases.json 中的
+          {"entries":[...]} 文档
+      - flag: "--adopt"
+        en: >-
+          with --sync: also overwrite aliases a human typed (attended use
+          only - it needs --yes, and a scheduled sync never sets it)
+        zh: >-
+          与 --sync 连用：同时覆盖人工输入的别名（仅限有人值守——需要 --yes，
+          计划任务绝不设置它）
+    notes:
+      - en: >-
+          An alias a human typed OUTRANKS every importer. A sync leaves those
+          rows untouched and reports each as skipped, so naming a host in the
+          panel deliberately stops it following later vendor renames; clear
+          the alias, or re-run with --adopt, to hand that host back to the
+          sync. The output is a per-row ledger (applied / unchanged / skipped
+          / rejected) because a bare total would hide exactly the rows the
+          rule exists to protect - a skip is a designed refusal and still
+          exits 0.
+        zh: >-
+          人工输入的别名优先级高于任何导入来源。同步会原样保留这些行并逐条报告
+          skipped，因此在面板中为某台主机命名，就是有意让它不再跟随厂商侧后续
+          的改名；清除该别名或改用 --adopt 重新运行，即可把该主机交还给同步。
+          输出是逐行台账（applied / unchanged / skipped / rejected），因为只给
+          出总数恰恰会掩盖该规则所要保护的那些行——跳过是设计中的拒绝，退出码
+          仍为 0。
+      - en: >-
+          No vendor code or credential ships inside the panel image: the
+          adapter runs in a ONE-SHOT container built from that image and used
+          only as a python runtime, and the credential reaches it on stdin -
+          never argv (visible in ps on both sides), never the container
+          environment. TLS certificates are VERIFIED by default, so a
+          self-signed UniFi console needs an explicit UNIFI_INSECURE=true in
+          .env rather than a silent downgrade.
+        zh: >-
+          面板镜像内不含任何厂商代码或凭据：适配器运行在由该镜像启动的一次性
+          容器中（仅把它当作 python 运行时），凭据经标准输入传入——绝不经 argv
+          （主机与容器两侧的 ps 都能看到），也绝不进入容器环境变量。默认校验
+          TLS 证书，因此自签名的 UniFi 控制台需要在 .env 中显式设置
+          UNIFI_INSECURE=true，而不是被静默降级。
 
 json_output:
   en: >-

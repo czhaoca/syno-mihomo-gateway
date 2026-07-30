@@ -19,6 +19,7 @@ sh ./scripts/gateway.sh <verb> [options]
 - Secrets are never accepted on the command line (argv is visible in ps) - set them in .env.
 - --json (status and doctor only) prints exactly one JSON object on stdout; every log line goes to the log file and stderr.
 - policy verbs are EXEMPT from --yes and root: they change only the panel's own policy database over its authenticated HTTP API - no host state, no container, no file on the gateway is touched directly, and the panel itself re-verifies every apply (parity read-back). The panel token comes from .env (PANEL_SECRET), never the command line.
+- alias --list inherits the policy exemption (one authenticated read), but alias --sync does NOT: whatever the source, it reads its input out of the root-owned data dir (--from unifi the credential in .env, --from file the document beside it) and starts a container, so it requires root. --adopt additionally requires --yes, because it is the only mode that can overwrite an alias a human typed. Vendor credentials live in .env (UNIFI_*), never on the command line.
 
 ## Exit codes
 
@@ -150,6 +151,22 @@ Dynamic device policy via the gateway panel (list entries, or set one device's m
 The verbs reach the panel API from INSIDE the mihomo-panel container (a macvlan child is unreachable from its own host); the panel is the SINGLE write path - nothing here touches SQLite or the provider files directly. The set output carries the panel's honest applied/parity answer: applied=false means the change is SAVED but did NOT reach mihomo yet (see doctor's policy_parity).
 
 Requires the panel companion (deployed at gateway install/upgrade); PANEL_SECRET must be set in .env for mutations - the panel refuses writes without it (fail closed).
+
+
+### `alias`
+
+Device names via the gateway panel (list them, or import a batch from a source). The panel endpoint is vendor-agnostic and never holds a vendor credential - every adapter runs on the host.
+
+| Flag | Description |
+|---|---|
+| `--list` | print the panel's identities document (JSON, machine-readable passthrough) |
+| `--sync` | import a batch of aliases (requires --from; requires root) |
+| `--from unifi\|file` | with --sync: where the aliases come from. 'unifi' reads UNIFI_URL, UNIFI_USER and UNIFI_PASSWORD (optionally UNIFI_SITE and UNIFI_INSECURE) from .env; 'file' reads an {"entries":[...]} document from <data-dir>/identity/aliases.json |
+| `--adopt` | with --sync: also overwrite aliases a human typed (attended use only - it needs --yes, and a scheduled sync never sets it) |
+
+An alias a human typed OUTRANKS every importer. A sync leaves those rows untouched and reports each as skipped, so naming a host in the panel deliberately stops it following later vendor renames; clear the alias, or re-run with --adopt, to hand that host back to the sync. The output is a per-row ledger (applied / unchanged / skipped / rejected) because a bare total would hide exactly the rows the rule exists to protect - a skip is a designed refusal and still exits 0.
+
+No vendor code or credential ships inside the panel image: the adapter runs in a ONE-SHOT container built from that image and used only as a python runtime, and the credential reaches it on stdin - never argv (visible in ps on both sides), never the container environment. TLS certificates are VERIFIED by default, so a self-signed UniFi console needs an explicit UNIFI_INSECURE=true in .env rather than a silent downgrade.
 
 ## Machine-readable output (--json)
 

@@ -188,6 +188,22 @@ ref knobs live in the image table above). `PANEL_IP` + `PANEL_IMAGE` are compose
 | `PANEL_STATS_DOMAINS` | | | Opt-in per-device domain breakdown (`true`/`1`; off by default — domain rows always keep a forced 7-day retention). | `false` |
 | `PANEL_BACKUP_KEEP` | | | Rotating `policy.db.bak-<timestamp>` snapshots kept **alongside `policy.db`** (taken on every policy mutation — the committed DB state, whether or not that apply reached mihomo; policy only — `stats.db` is derived history and is not auto-backed-up; default 5). | `5` |
 
+### Device-alias sync (optional; read on the HOST only)
+
+Used by `gateway.sh alias --sync --from unifi`. These are **never** passed to the panel:
+no vendor code or credential ships inside the panel image, and the adapter that reads them
+runs in a one-shot container with the values on stdin, never on the command line. `--from
+file` needs none of them — it reads `<data-dir>/identity/aliases.json` instead. See
+[panel](panel.md#device-names-aliases) for the hand-edit-wins precedence rule.
+
+| Key | Req | Sec | Description | Example |
+|---|:--:|:--:|---|---|
+| `UNIFI_URL` | | | Controller base URL. A UniFi OS console and a self-hosted controller are both detected automatically. | `https://unifi.example.com` |
+| `UNIFI_USER` | | | Controller account; a **read-only** one is enough. | `…` |
+| `UNIFI_PASSWORD` | | 🔒 | Its password. Never accepted on the command line (`ps` shows argv). | `…` |
+| `UNIFI_SITE` | | | Controller site id (default `default`). | `default` |
+| `UNIFI_INSECURE` | | | TLS certificates are **verified by default**. A UniFi console ships a self-signed certificate, so set this to `true` — knowingly — if you have not installed a trusted one. | `false` |
+
 ### Private registry / Alibaba ACR (used when `REGISTRY_MODE=acr`)
 
 | Key | Upd | Sec | Description | Example |

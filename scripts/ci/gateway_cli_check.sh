@@ -62,7 +62,13 @@ case "$1" in
       *'{{.Architecture}}'*) echo "${FAKE_IMG_ARCH:-$HOST_ARCH}" ;;
     esac
     exit 0 ;;
-  run) exit 0 ;;
+  # `docker run` is the alias adapter's one-shot container (#74): the panel
+  # IMAGE used as a python runtime, never the panel CONTAINER. Emit a fixed
+  # normalized payload so the surrounding pipeline is exercised; $CALLS keeps
+  # the full argv so the credential-never-on-argv assertions can read it.
+  run)
+    printf '%s' "${FAKE_ADAPTER_BODY:-}"
+    exit "${FAKE_ADAPTER_RC:-0}" ;;
   exec)
     case "$*" in
       # panel companion (#67) - matched FIRST: 'mihomo-panel' contains
@@ -563,6 +569,337 @@ expect_rc 3 gwu policy
 expect_rc 3 gwu policy --set 192.168.1.60
 expect_rc 3 gwu policy --set 192.168.1.60 --mode bogus
 unset FAKE_PANEL_STATE FAKE_PANEL_BODY
+
+# --- alias verb (#74): host-side identity import, no vendor code in the panel ----
+# Privilege split, decided for this verb and recorded in spec.yaml:
+#   --list  exempt from --yes AND root, exactly like policy - one authenticated
+#           GET against the panel's own API, no host state, no new container.
+#   --sync  needs ROOT: it reads a vendor credential out of the root-owned .env
+#           and starts a container that talks to a THIRD-PARTY system. That is
+#           strictly more than policy's "only the panel's own localhost API",
+#           which is the whole basis of policy's exemption (spec.yaml).
+#   --adopt additionally needs --yes: it is the one mode that can overwrite an
+#           alias a human typed, and --yes exists for exactly that class of act.
+FAKE_PANEL_STATE=running
+export FAKE_PANEL_STATE
+
+# list: unprivileged, no --yes - the policy-identical exemption.
+FAKE_PANEL_BODY='{"identities":[{"ip":"192.0.2.10","alias":"tv","source":"hand-edit"}]}'
+export FAKE_PANEL_BODY
+: > "$CALLS"
+expect_rc 0 gwu alias --list
+grep -q '"identities"' "$TMP/out" \
+  && ok || fail "alias --list must emit the panel's identities document"
+grep -q 'stub-panel-tok' "$CALLS" \
+  && fail "PANEL_SECRET leaked onto docker argv (alias --list)" || ok
+
+# The vendor credential lives ONLY in the root-owned .env (AC3 + the DEC-7
+# constraint): never argv, never the panel image, never the panel container.
+cat >> "$ENV_FILE" <<'EOF'
+UNIFI_URL=https://unifi.example.com
+UNIFI_USER=stub-unifi-user
+UNIFI_PASSWORD=stub-unifi-pw
+EOF
+
+# privilege gates, in the order gateway_main applies them (--yes before root)
+expect_rc 6 gwu alias --sync --from unifi
+expect_rc 7 gw  alias --sync --from unifi --adopt
+expect_rc 7 gwu alias --sync --from unifi --adopt
+expect_rc 6 gwu alias --sync --from unifi --adopt --yes
+
+# sync happy path: the panel's per-row LEDGER reaches stdout unaltered. A count
+# would hide precisely the rows the hand-edit-wins rule exists to protect.
+FAKE_ADAPTER_BODY='{"entries":[{"ip":"192.0.2.10","alias":"tv","source":"unifi"}],"override":false}'
+FAKE_PANEL_BODY='{"results":[{"ip":"192.0.2.10","outcome":"skipped","alias":"tv","source":"unifi","existing_alias":"lounge tv","existing_source":"hand-edit","reason":"hand-edit owns this alias"}],"changed":0,"applied":0,"unchanged":0,"skipped":1,"rejected":0}'
+export FAKE_ADAPTER_BODY FAKE_PANEL_BODY
+: > "$CALLS"
+expect_rc 0 gw alias --sync --from unifi
+grep -q '"outcome":"skipped"' "$TMP/out" \
+  && ok || fail "alias --sync must print the panel's per-row ledger verbatim"
+
+# AC3, the load-bearing assertion: the vendor password never reaches argv on
+# either side, and never rides the container ENVIRONMENT either (-e would keep
+# it off argv while still handing it to the container).
+grep -q 'stub-unifi-pw' "$CALLS" \
+  && fail "UNIFI_PASSWORD leaked onto docker argv (it must ride stdin)" || ok
+grep -qE '(^| )(-e|--env)[= ]?UNIFI' "$CALLS" \
+  && fail "the vendor credential was handed to the container via -e (stdin only)" || ok
+grep -q 'stub-panel-tok' "$CALLS" \
+  && fail "PANEL_SECRET leaked onto docker argv (alias --sync)" || ok
+
+# DEC-7: the vendor fetch runs in a ONE-SHOT container (the panel image used as
+# a python runtime), never `docker exec` into the running panel - so the panel
+# PROCESS never sees a vendor credential. (The import body that follows does
+# reach the panel and legitimately carries source:"unifi" - it is the
+# CREDENTIAL, asserted absent above, that must never get there.)
+# Note $CALLS holds `$*` per invocation and the adapter program text carries
+# newlines, so only the first line of that record starts with `run`.
+grep -q '^run --rm -i --entrypoint python3 ' "$CALLS" \
+  && ok || fail "the vendor fetch must be a one-shot docker run, not a panel exec"
+
+# --adopt is what sets override on the import body; it is decided on the HOST
+# and reaches the adapter as a plain (non-secret) argument.
+mkdir -p "$DATA/identity"
+printf '%s' '{"entries":[{"ip":"192.0.2.11","alias":"nas"}]}' > "$DATA/identity/aliases.json"
+FAKE_ADAPTER_BODY='{"entries":[{"ip":"192.0.2.11","alias":"nas","source":"file"}],"override":false}'
+export FAKE_ADAPTER_BODY
+: > "$CALLS"
+expect_rc 0 gw alias --sync --from file
+grep -q ' file false$' "$CALLS" \
+  && ok || fail "a sync without --adopt must pass override=false to the adapter"
+grep -q ' file true$' "$CALLS" \
+  && fail "override=true reached the adapter without --adopt" || ok
+: > "$CALLS"
+expect_rc 0 gw alias --sync --from file --adopt --yes
+grep -q ' file true$' "$CALLS" \
+  && ok || fail "--adopt must pass override=true to the adapter"
+
+# a missing local source file is a config error - and must NOT start a container.
+# The exit code alone proves little here: without the explicit check the input
+# redirection fails on its own, also exiting 3 with no container. What the
+# guard actually buys is a DIAGNOSABLE refusal, so assert the message too.
+rm -f "$DATA/identity/aliases.json"
+: > "$CALLS"
+expect_rc 3 gw alias --sync --from file
+grep -q '^run ' "$CALLS" \
+  && fail "alias --sync started a container before checking its input existed" || ok
+grep -q 'no alias document' "$TMP/out" "$TMP/err" \
+  && ok || fail "a missing alias document must say so, not fail as a shell redirection"
+
+# adapter failure (vendor unreachable / rejected the login) -> EXIT_CONFIG
+FAKE_ADAPTER_RC=21
+export FAKE_ADAPTER_RC
+expect_rc 3 gw alias --sync --from unifi
+unset FAKE_ADAPTER_RC
+
+# the panel's own refusal keeps the policy verbs' mapping: point at PANEL_SECRET
+FAKE_PANEL_EXEC_RC=22
+FAKE_PANEL_BODY='{"detail":"mutations disabled: PANEL_SECRET is not set"}'
+export FAKE_PANEL_EXEC_RC FAKE_PANEL_BODY
+expect_rc 3 gw alias --sync --from unifi
+grep -qi 'PANEL_SECRET' "$TMP/out" "$TMP/err" \
+  && ok || fail "a panel refusal on import must point at PANEL_SECRET in .env"
+unset FAKE_PANEL_EXEC_RC
+
+# panel unreachable: EXIT_CONFIG naming the companion container
+FAKE_PANEL_STATE=absent
+export FAKE_PANEL_STATE
+expect_rc 3 gwu alias --list
+grep -qi 'panel is unreachable' "$TMP/out" "$TMP/err" \
+  && ok || fail "an unreachable panel must be named on the alias verb too"
+FAKE_PANEL_STATE=running
+export FAKE_PANEL_STATE
+
+# option validation: an action is required, --sync needs a known --from
+expect_rc 3 gw alias
+expect_rc 3 gw alias --sync
+expect_rc 3 gw alias --sync --from bogus
+grep -qi 'unifi' "$TMP/out" "$TMP/err" \
+  && ok || fail "an unknown --from must name the sources that do exist"
+
+# the global argv-secret guard covers the new verb (flag NAME match)
+expect_rc 3 gw alias --sync --from unifi --unifi-password abc
+grep -qi '\.env' "$TMP/err" \
+  && ok || fail "alias secret rejection did not point at .env"
+
+# a vendor credential missing from .env is a config error named by KEY, and it
+# must be caught BEFORE a container starts (no half-run, nothing to clean up).
+grep -v '^UNIFI_' "$ENV_FILE" > "$TMP/env.nounifi" && cp "$TMP/env.nounifi" "$ENV_FILE"
+: > "$CALLS"
+expect_rc 3 gw alias --sync --from unifi
+grep -q 'UNIFI_URL\|UNIFI_USER\|UNIFI_PASSWORD' "$TMP/out" "$TMP/err" \
+  && ok || fail "a missing vendor credential must name the .env keys"
+grep -q '^run ' "$CALLS" \
+  && fail "alias --sync started a container before validating its credentials" || ok
+unset FAKE_PANEL_STATE FAKE_PANEL_BODY FAKE_ADAPTER_BODY
+
+# --- identity.sh embedded-python smoke: REAL execution ---------------------------
+# Same reasoning as the panel.sh smoke below: the docker stub fakes `run` at the
+# door, so the in-container adapter would otherwise never execute in any suite -
+# a wrong UniFi endpoint, a wrong merge key or an inverted TLS default would
+# ship green. Run it for real against stdlib fixture controllers.
+# Probe-and-SKIP (repo precedent): the alpine CI step has no python3.
+if command -v python3 >/dev/null 2>&1; then
+  ISMOKE="$TMP/ismoke"; mkdir -p "$ISMOKE"
+  python3 - "$ROOT/scripts/lib/identity.sh" "$ISMOKE" <<'PYEOF'
+import re, sys
+src = open(sys.argv[1]).read()
+m = re.search(r"_ia_py='(.*?)'\n", src, re.S)
+if not m:
+    raise SystemExit("could not extract _ia_py from identity.sh")
+open(sys.argv[2] + "/ia.py", "w").write(m.group(1))
+PYEOF
+  cat > "$ISMOKE/unifi.py" <<'PYEOF'
+import json, ssl, sys
+from http.server import BaseHTTPRequestHandler, HTTPServer
+# argv: [family(os|legacy), certfile|'']  - 'os' serves the UniFi OS shape
+# (/api/auth/login + a /proxy/network prefix), 'legacy' the self-hosted
+# controller shape (/api/login, no prefix and a 404 on the OS route).
+FAMILY = sys.argv[1]
+CERT = sys.argv[2] if len(sys.argv) > 2 else ""
+PREFIX = "/proxy/network" if FAMILY == "os" else ""
+LOGIN = "/api/auth/login" if FAMILY == "os" else "/api/login"
+USERS = [
+    # fixed-IP client, operator-set name wins over the DHCP hostname
+    {"mac": "aa:bb:cc:00:00:01", "name": "lounge tv", "hostname": "tv-1",
+     "use_fixedip": True, "fixed_ip": "192.0.2.21"},
+    # no fixed IP: the address must come from the ACTIVE client list
+    {"mac": "aa:bb:cc:00:00:02", "hostname": "nas-1", "use_fixedip": False},
+    # named but never seen and no fixed IP -> unaddressable, must be dropped
+    {"mac": "aa:bb:cc:00:00:03", "name": "old-laptop", "use_fixedip": False},
+    # addressable but nameless -> nothing to import
+    {"mac": "aa:bb:cc:00:00:04", "use_fixedip": True, "fixed_ip": "192.0.2.24"},
+]
+ACTIVE = [
+    {"mac": "aa:bb:cc:00:00:02", "ip": "192.0.2.22", "hostname": "nas-1"},
+    # active-only client, absent from rest/user entirely
+    {"mac": "aa:bb:cc:00:00:05", "ip": "192.0.2.25", "name": "phone"},
+]
+class H(BaseHTTPRequestHandler):
+    def log_message(self, *a):
+        pass
+    def _reply(self, code, obj, extra=None):
+        body = json.dumps(obj).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        for k, v in (extra or {}).items():
+            self.send_header(k, v)
+        self.end_headers()
+        self.wfile.write(body)
+    def do_POST(self):
+        if self.path != LOGIN:
+            return self._reply(404, {"meta": {"rc": "error"}})
+        n = int(self.headers.get("Content-Length") or 0)
+        b = json.loads(self.rfile.read(n) or b"{}")
+        if b.get("username") != "smoke-user" or b.get("password") != "smoke-pw":
+            return self._reply(401, {"meta": {"rc": "error", "msg": "api.err.Invalid"}})
+        self._reply(200, {"meta": {"rc": "ok"}},
+                    {"Set-Cookie": "TOKEN=smoke; Path=/"})
+    def do_GET(self):
+        if self.headers.get("Cookie", "").find("TOKEN=smoke") < 0:
+            return self._reply(401, {"meta": {"rc": "error"}})
+        if self.path == PREFIX + "/api/s/smokesite/rest/user":
+            return self._reply(200, {"data": USERS})
+        if self.path == PREFIX + "/api/s/smokesite/stat/sta":
+            return self._reply(200, {"data": ACTIVE})
+        self._reply(404, {"meta": {"rc": "error"}})
+srv = HTTPServer(("127.0.0.1", 0), H)
+if CERT:
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ctx.load_cert_chain(CERT)
+    srv.socket = ctx.wrap_socket(srv.socket, server_side=True)
+print(srv.server_address[1], flush=True)
+srv.serve_forever()
+PYEOF
+  # ia_run FAMILY CERT SCHEME PASSWORD INSECURE OVERRIDE -> stdout = adapter body
+  _ia_srv=''
+  ia_start() { # FAMILY CERT
+    # Truncate BEFORE starting: clearing it afterwards races the server, which
+    # may already have printed its port - the wait below would then time out
+    # against a perfectly healthy fixture.
+    : > "$ISMOKE/port"
+    python3 "$ISMOKE/unifi.py" "$1" "$2" > "$ISMOKE/port" 2>/dev/null &
+    _ia_srv=$!
+    _ia_i=0
+    while [ ! -s "$ISMOKE/port" ] && [ "$_ia_i" -lt 50 ]; do
+      sleep 0.1 2>/dev/null || sleep 1; _ia_i=$((_ia_i+1))
+    done
+    IPORT="$(head -n1 "$ISMOKE/port" 2>/dev/null || echo '')"
+  }
+  ia_stop() { kill "$_ia_srv" 2>/dev/null || :; }
+
+  ia_start os ''
+  if [ -n "$IPORT" ]; then
+    _iout="$(printf '%s\n' "http://127.0.0.1:$IPORT" smoke-user smoke-pw smokesite false \
+      | python3 "$ISMOKE/ia.py" unifi false)" && _irc=0 || _irc=$?
+    [ "$_irc" = 0 ] || fail "ismoke unifi-os adapter exited $_irc"
+    printf '%s' "$_iout" | grep -q '"ip": "192.0.2.21", "alias": "lounge tv"' \
+      && ok || fail "ismoke: fixed-IP client with an operator name: $_iout"
+    printf '%s' "$_iout" | grep -q '"ip": "192.0.2.22", "alias": "nas-1"' \
+      && ok || fail "ismoke: active-IP fallback merged by MAC: $_iout"
+    printf '%s' "$_iout" | grep -q '"ip": "192.0.2.25", "alias": "phone"' \
+      && ok || fail "ismoke: active-only client not in rest/user: $_iout"
+    printf '%s' "$_iout" | grep -q 'old-laptop' \
+      && fail "ismoke: a named but unaddressable client must be dropped" || ok
+    printf '%s' "$_iout" | grep -q '192.0.2.24' \
+      && fail "ismoke: an addressable but nameless client must be dropped" || ok
+    printf '%s' "$_iout" | grep -q '"source": "unifi"' \
+      && ok || fail "ismoke: every entry must carry its source: $_iout"
+    printf '%s' "$_iout" | grep -q '"override": false' \
+      && ok || fail "ismoke: override must be echoed into the body: $_iout"
+
+    # wrong password: a REJECTED login must fail, never fall through to the
+    # legacy family and never emit an empty (destructive-looking) batch.
+    # Exit code alone does not pin this - falling through would ALSO fail, just
+    # as a 404 from the other family, sending the operator to fix UNIFI_URL
+    # when the real fault is the credential. Assert the reported status.
+    _irc=0
+    _iout="$(printf '%s\n' "http://127.0.0.1:$IPORT" smoke-user wrong-pw smokesite false \
+      | python3 "$ISMOKE/ia.py" unifi false 2>"$ISMOKE/err")" || _irc=$?
+    [ "$_irc" != 0 ] && ok || fail "ismoke: a rejected UniFi login must exit non-zero (got '$_iout')"
+    grep -q 'HTTP 401' "$ISMOKE/err" \
+      && ok || fail "a rejected login must report the controller's own 401, not a fallthrough 404: $(cat "$ISMOKE/err")"
+    ia_stop
+  else
+    fail "ismoke UniFi-OS fixture did not start"
+  fi
+
+  ia_start legacy ''
+  if [ -n "$IPORT" ]; then
+    _iout="$(printf '%s\n' "http://127.0.0.1:$IPORT" smoke-user smoke-pw smokesite false \
+      | python3 "$ISMOKE/ia.py" unifi false)" && _irc=0 || _irc=$?
+    [ "$_irc" = 0 ] || fail "ismoke legacy adapter exited $_irc"
+    printf '%s' "$_iout" | grep -q '"ip": "192.0.2.21", "alias": "lounge tv"' \
+      && ok || fail "ismoke: legacy /api/login fallback: $_iout"
+    ia_stop
+  else
+    fail "ismoke legacy fixture did not start"
+  fi
+
+  # file source: the document arrives on stdin, entries keep their own source
+  # when they name one, and --adopt's override reaches the body.
+  _iout="$(printf '%s' '{"entries":[{"ip":"192.0.2.31","alias":"nas"},{"ip":"192.0.2.32","alias":"pi","source":"nimbus"}]}' \
+    | python3 "$ISMOKE/ia.py" file true)" && _irc=0 || _irc=$?
+  [ "$_irc" = 0 ] || fail "ismoke file adapter exited $_irc"
+  printf '%s' "$_iout" | grep -q '"ip": "192.0.2.31", "alias": "nas", "source": "file"' \
+    && ok || fail "ismoke file: a source-less entry defaults to the adapter name: $_iout"
+  printf '%s' "$_iout" | grep -q '"source": "nimbus"' \
+    && ok || fail "ismoke file: an entry naming its own source keeps it: $_iout"
+  printf '%s' "$_iout" | grep -q '"override": true' \
+    && ok || fail "ismoke file: --adopt must set override on the body: $_iout"
+  _irc=0
+  printf '%s' 'not json at all' | python3 "$ISMOKE/ia.py" file false >/dev/null 2>&1 || _irc=$?
+  [ "$_irc" != 0 ] && ok || fail "ismoke file: malformed input must fail, not import nothing"
+
+  # TLS is verified by DEFAULT (fail closed); UNIFI_INSECURE is the explicit
+  # opt-out a self-signed controller needs. Both directions, or the assertion
+  # proves nothing. Needs openssl for a throwaway cert - probe and SKIP.
+  if command -v openssl >/dev/null 2>&1 \
+     && openssl req -x509 -newkey rsa:2048 -nodes -keyout "$ISMOKE/k.pem" \
+          -out "$ISMOKE/c.pem" -days 1 -subj "/CN=127.0.0.1" >/dev/null 2>&1; then
+    cat "$ISMOKE/k.pem" "$ISMOKE/c.pem" > "$ISMOKE/pair.pem"
+    ia_start os "$ISMOKE/pair.pem"
+    if [ -n "$IPORT" ]; then
+      _irc=0
+      printf '%s\n' "https://127.0.0.1:$IPORT" smoke-user smoke-pw smokesite false \
+        | python3 "$ISMOKE/ia.py" unifi false >/dev/null 2>&1 || _irc=$?
+      [ "$_irc" != 0 ] && ok || fail "an unverifiable TLS certificate must be REFUSED by default"
+      _irc=0
+      _iout="$(printf '%s\n' "https://127.0.0.1:$IPORT" smoke-user smoke-pw smokesite true \
+        | python3 "$ISMOKE/ia.py" unifi false 2>/dev/null)" || _irc=$?
+      [ "$_irc" = 0 ] && printf '%s' "$_iout" | grep -q '192.0.2.21' \
+        && ok || fail "UNIFI_INSECURE=true must accept the self-signed controller (rc=$_irc)"
+      ia_stop
+    else
+      fail "ismoke TLS fixture did not start"
+    fi
+  else
+    echo "SKIP: TLS-default assertions need openssl to mint a throwaway certificate" >&2
+  fi
+else
+  echo "SKIP: identity.sh embedded-python smoke needs python3 (absent on the alpine CI step; runs on dev boxes and the NAS)" >&2
+fi
 
 # --- panel.sh embedded-python smoke: REAL execution ------------------------------
 # The docker stub fakes exec at the door, so the in-container programs

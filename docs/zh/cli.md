@@ -19,6 +19,7 @@ sh ./scripts/gateway.sh <verb> [options]
 - 命令行绝不接受机密参数（argv 在 ps 中可见）——请写入 .env。
 - --json（仅 status 与 doctor）在标准输出只打印一个 JSON 对象； 所有日志写入日志文件与标准错误。
 - policy 子命令豁免 --yes 与 root：它们只通过面板自身带鉴权的 HTTP API 修改面板的策略数据库——不直接触碰任何主机状态、容器或网关文件，且面板 会对每次应用做核对回读（parity）。面板令牌来自 .env（PANEL_SECRET）， 绝不经命令行传递。
+- alias --list 沿用 policy 的豁免（只做一次带鉴权的读取），但 alias --sync 不豁免：无论用哪个来源，它都要从仅 root 可读的数据目录读取输入（--from unifi 读 .env 中的凭据，--from file 读同目录下的文档），并启动一个容器， 因此需要 root。--adopt 还额外需要 --yes，因为它是唯一可能覆盖人工输入 别名的模式。厂商凭据存放在 .env（UNIFI_*），绝不经命令行传递。
 
 ## 退出码
 
@@ -150,6 +151,22 @@ sh ./scripts/gateway.sh <verb> [options]
 子命令从 mihomo-panel 容器内部访问面板 API（macvlan 子接口无法从 宿主机直接访问）；面板是唯一写入路径——这里不会直接触碰 SQLite 或 provider 文件。set 的输出携带面板如实的 applied/parity 结果： applied=false 表示更改已保存但尚未到达 mihomo（参见 doctor 的 policy_parity）。
 
 需要面板伴随容器（随网关安装/升级部署）；变更操作要求 .env 中已设置 PANEL_SECRET——未设置时面板拒绝写入（失败即停）。
+
+
+### `alias`
+
+经网关面板管理设备名称（列出，或从某个来源批量导入）。面板接口与厂商 无关且从不持有厂商凭据——所有适配器都运行在宿主机一侧。
+
+| 选项 | 说明 |
+|---|---|
+| `--list` | 打印面板的别名文档（JSON，机器可读的透传） |
+| `--sync` | 批量导入一批别名（需要 --from；需要 root） |
+| `--from unifi\|file` | 与 --sync 连用：别名来自哪里。'unifi' 从 .env 读取 UNIFI_URL、 UNIFI_USER 与 UNIFI_PASSWORD（可选 UNIFI_SITE 与 UNIFI_INSECURE）； 'file' 读取 <data-dir>/identity/aliases.json 中的 {"entries":[...]} 文档 |
+| `--adopt` | 与 --sync 连用：同时覆盖人工输入的别名（仅限有人值守——需要 --yes， 计划任务绝不设置它） |
+
+人工输入的别名优先级高于任何导入来源。同步会原样保留这些行并逐条报告 skipped，因此在面板中为某台主机命名，就是有意让它不再跟随厂商侧后续 的改名；清除该别名或改用 --adopt 重新运行，即可把该主机交还给同步。 输出是逐行台账（applied / unchanged / skipped / rejected），因为只给 出总数恰恰会掩盖该规则所要保护的那些行——跳过是设计中的拒绝，退出码 仍为 0。
+
+面板镜像内不含任何厂商代码或凭据：适配器运行在由该镜像启动的一次性 容器中（仅把它当作 python 运行时），凭据经标准输入传入——绝不经 argv （主机与容器两侧的 ps 都能看到），也绝不进入容器环境变量。默认校验 TLS 证书，因此自签名的 UniFi 控制台需要在 .env 中显式设置 UNIFI_INSECURE=true，而不是被静默降级。
 
 ## 机器可读输出（--json）
 

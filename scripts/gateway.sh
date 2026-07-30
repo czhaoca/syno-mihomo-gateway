@@ -21,6 +21,10 @@
 #   policy     dynamic device policy via the gateway panel API: --list |
 #              --set ADDRESS --mode full-tunnel|full-direct|default
 #              [--name N] [--note N] (exempt from --yes/root - no host state)
+#   alias      device names via the gateway panel API: --list (exempt like
+#              policy) | --sync --from unifi|file [--adopt] (needs root - every
+#              source reads out of the root-owned data dir and starts a
+#              container; --adopt also needs --yes: it can overwrite a typed name)
 #
 # Guardrails (authoritative reference: docs/cli.md, generated from
 # scripts/cli/spec.yaml - keep this header aligned when the spec changes):
@@ -72,6 +76,8 @@ SELF_DIR="${GATEWAY_SELF_DIR:-$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)}"
 . "$SELF_DIR/lib/targets.sh"
 # shellcheck source=scripts/lib/panel.sh
 . "$SELF_DIR/lib/panel.sh"
+# shellcheck source=scripts/lib/identity.sh
+. "$SELF_DIR/lib/identity.sh"
 # help.sh is GENERATED from scripts/cli/spec.yaml (usage + gw_help) - the CLI
 # contract gate (scripts/ci/cli_contract_check.py) keeps it byte-fresh.
 # shellcheck source=scripts/lib/help.sh
@@ -630,12 +636,13 @@ gateway_cron() {
   return 0
 }
 
-# _gw_policy_err RC BODY - map a panel-client failure to the CLI contract:
+# _gw_panel_err RC BODY - map a panel-client failure to the CLI contract:
 # an auth refusal points at PANEL_SECRET in .env (the token never rides
 # argv), any other HTTP rejection surfaces the panel's own JSON detail,
 # and unreachable names the companion container. Always EXIT_CONFIG -
-# nothing on the host changed.
-_gw_policy_err() {
+# nothing on the host changed. Shared by every panel-talking verb (policy
+# and alias): the failure modes are the panel client's, not the verb's.
+_gw_panel_err() {
   case "$2" in
     *PANEL_SECRET*)
       _gw_fail "$EXIT_CONFIG" "the panel refused the request: $2 - set PANEL_SECRET in .env (the panel token; never on the command line)" ;;
@@ -662,7 +669,7 @@ gateway_policy() {
       _gp_out="$(panel_api GET /v1/devices)" \
         && { printf '%s\n' "$_gp_out"; return 0; }
       _gp_rc=$?
-      _gw_policy_err "$_gp_rc" "$_gp_out" ;;
+      _gw_panel_err "$_gp_rc" "$_gp_out" ;;
     set)
       [ -n "$GW_POLICY_ADDR" ] || _gw_fail "$EXIT_CONFIG" "--set requires an address (IPv4 or CIDR)"
       case "$GW_POLICY_MODE_VAL" in
@@ -673,9 +680,63 @@ gateway_policy() {
       _gp_out="$(panel_policy_set "$GW_POLICY_ADDR" "$GW_POLICY_MODE_VAL" "$GW_POLICY_NAME" "$GW_POLICY_NOTE")" \
         && { printf '%s\n' "$_gp_out"; return 0; }
       _gp_rc=$?
-      _gw_policy_err "$_gp_rc" "$_gp_out" ;;
+      _gw_panel_err "$_gp_rc" "$_gp_out" ;;
     *)
       _gw_fail "$EXIT_CONFIG" "policy requires --list or --set ADDRESS (see: gateway.sh policy --help)" ;;
+  esac
+}
+
+# gateway_alias - device names via the panel API (#74). The panel endpoint is
+# vendor-agnostic and holds no vendor credential (DEC-7); every vendor detail
+# lives in scripts/lib/identity.sh, on the host.
+#
+# Privilege split (the explicit declaration this verb owes, since it cannot
+# simply inherit policy's exemption): --list is one authenticated GET and is
+# exempt from --yes and root exactly like policy. --sync is NOT, for a reason
+# that holds for EVERY source, not just the vendor one: it reads its input out
+# of the root-owned data dir (unifi the credential in .env, file the document
+# beside it) and starts a container. That is strictly more than "only the
+# panel's own localhost API" - the whole basis of policy's exemption. --from
+# unifi is merely the sharpest case, since the credential then also leaves the
+# host. --adopt additionally requires --yes because it is the one mode that can
+# overwrite an alias a human typed; both gates live in gateway_main.
+gateway_alias() {
+  [ -f "$ENV_FILE" ] || _gw_fail "$EXIT_CONFIG" ".env not found at $ENV_FILE - deploy first"
+  load_env
+  detect_compose >/dev/null 2>&1 \
+    || _gw_fail "$EXIT_CONFIG" "Docker is unavailable - the alias verbs reach the panel via docker exec, and --sync runs its adapter in a one-shot container"
+  case "$GW_ALIAS_MODE" in
+    list)
+      _ga_out="$(panel_api GET /v1/identity)" \
+        && { printf '%s\n' "$_ga_out"; return 0; }
+      _ga_rc=$?
+      _gw_panel_err "$_ga_rc" "$_ga_out" ;;
+    sync)
+      [ -n "$GW_ALIAS_FROM" ] \
+        || _gw_fail "$EXIT_CONFIG" "--sync requires --from SOURCE (known sources: $IDENTITY_SOURCES)"
+      _ga_over=false
+      [ "$GW_ALIAS_ADOPT" = 1 ] && _ga_over=true
+      # The adapter runs BEFORE the panel is touched, so a source that cannot
+      # be reached leaves the stored aliases exactly as they were.
+      _ga_body="$(identity_fetch "$GW_ALIAS_FROM" "$_ga_over")" || {
+        _ga_rc=$?
+        # identity_fetch already said what was wrong; map anything that is not
+        # already a documented code onto EXIT_CONFIG rather than leaking the
+        # adapter's own status through the CLI contract.
+        [ "$_ga_rc" = "$EXIT_CONFIG" ] && return "$EXIT_CONFIG"
+        _gw_fail "$EXIT_CONFIG" "the '$GW_ALIAS_FROM' alias source failed - nothing was imported"
+      }
+      [ -n "$_ga_body" ] \
+        || _gw_fail "$EXIT_CONFIG" "the '$GW_ALIAS_FROM' alias source produced no document - refusing to send an empty import"
+      # The panel answers with a per-row LEDGER; print it verbatim. A skip is a
+      # designed refusal (an alias a human typed outranks every importer), and
+      # collapsing it to a count would hide exactly the rows the rule protects.
+      _ga_out="$(panel_api POST /v1/identities/import "$_ga_body")" \
+        && { printf '%s\n' "$_ga_out"; return 0; }
+      _ga_rc=$?
+      _gw_panel_err "$_ga_rc" "$_ga_out" ;;
+    *)
+      _gw_fail "$EXIT_CONFIG" "alias requires --list or --sync --from SOURCE (see: gateway.sh alias --help)" ;;
   esac
 }
 
@@ -693,7 +754,7 @@ gateway_main() {
   esac
   GW_VERB="$1"; shift
   case "$GW_VERB" in
-    deploy|redeploy|modify|cron|status|doctor|update|policy) : ;;
+    deploy|redeploy|modify|cron|status|doctor|update|policy|alias) : ;;
     *) log_error "unknown verb: $GW_VERB"; usage >&2; exit "$EXIT_CONFIG" ;;
   esac
 
@@ -715,6 +776,7 @@ gateway_main() {
   GW_PASS=''
   GW_POLICY_MODE='' GW_POLICY_ADDR='' GW_POLICY_MODE_VAL=''
   GW_POLICY_NAME='' GW_POLICY_NOTE=''
+  GW_ALIAS_MODE='' GW_ALIAS_FROM='' GW_ALIAS_ADOPT=0
 
   GW_UPD_MODE='' GW_UPD_NAME=''
   if [ "$GW_VERB" = update ]; then
@@ -792,6 +854,11 @@ gateway_main() {
         policy:--name) shift; GW_POLICY_NAME="${1:-}" ;;
         policy:--note=*) GW_POLICY_NOTE="${_a#*=}" ;;
         policy:--note) shift; GW_POLICY_NOTE="${1:-}" ;;
+        alias:--list) GW_ALIAS_MODE=list ;;
+        alias:--sync) GW_ALIAS_MODE=sync ;;
+        alias:--from=*) GW_ALIAS_FROM="${_a#*=}" ;;
+        alias:--from) shift; GW_ALIAS_FROM="${1:-}" ;;
+        alias:--adopt) GW_ALIAS_ADOPT=1 ;;
         *) log_error "unknown option for $GW_VERB: $_a"; exit "$EXIT_CONFIG" ;;
       esac
       # A trailing value-taking flag has already consumed the last word: an
@@ -817,17 +884,28 @@ gateway_main() {
   fi
 
   # Guardrails: --yes for anything mutating (dry-run exempt), then per-verb root.
+  # _gw_root_only is the second, WEAKER gate: root without --yes. It exists
+  # because `alias --sync` needs a privilege the panel verbs do not (it reads a
+  # vendor credential from the root-owned .env and starts a container) while
+  # still being non-destructive by construction - the panel refuses to
+  # overwrite an alias a human typed unless --adopt says so, and --adopt is
+  # what promotes the run to fully mutating.
   _gw_mutating=0
+  _gw_root_only=0
   case "$GW_VERB" in
     deploy|redeploy|modify) _gw_mutating=1 ;;
     update) case "$GW_UPD_MODE" in list|last) : ;; *) _gw_mutating=1 ;; esac ;;
     cron) [ "$GW_APPLY_CRON" = 1 ] && _gw_mutating=1 ;;
+    alias)
+      if [ "$GW_ALIAS_MODE" = sync ]; then
+        if [ "$GW_ALIAS_ADOPT" = 1 ]; then _gw_mutating=1; else _gw_root_only=1; fi
+      fi ;;
   esac
   if [ "$_gw_mutating" = 1 ] && [ "$GW_DRY_RUN" = 0 ] && [ "$GW_YES" = 0 ]; then
     log_error "refusing to change the system without an explicit --yes ($GW_VERB affects the running gateway)"
     exit "$EXIT_CONFIRM"
   fi
-  if [ "$_gw_mutating" = 1 ] && [ "$GW_DRY_RUN" = 0 ]; then
+  if { [ "$_gw_mutating" = 1 ] || [ "$_gw_root_only" = 1 ]; } && [ "$GW_DRY_RUN" = 0 ]; then
     need_root || exit "$EXIT_ROOT"
   fi
 
@@ -868,6 +946,7 @@ gateway_main() {
     doctor) gateway_doctor; exit $? ;;
     cron)   gateway_cron; exit $? ;;
     policy) gateway_policy; exit $? ;;
+    alias)  gateway_alias; exit $? ;;
     deploy|redeploy)
       if [ "$GW_DRY_RUN" = 0 ]; then acquire_lock; trap 'release_lock' EXIT INT TERM; fi
       gateway_deploy; _gw_rc=$?

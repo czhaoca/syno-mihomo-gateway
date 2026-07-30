@@ -174,6 +174,21 @@ compose 层面的 fail-closed（`${VAR:?}`）：面板出现之前的旧 `.env` 
 | `PANEL_STATS_DOMAINS` | | | 可选开启的分设备域名明细（`true`/`1`；默认关闭——域名行始终强制保留 7 天）。 | `false` |
 | `PANEL_BACKUP_KEEP` | | | 在 `policy.db` **旁边**保留的滚动 `policy.db.bak-<时间戳>` 快照份数（每次策略变更时生成——记录已提交的数据库状态，无论那次应用是否到达 mihomo；仅策略——`stats.db` 是派生历史，无自动备份；默认 5）。 | `5` |
 
+### 设备别名同步（可选；仅在宿主机一侧读取）
+
+供 `gateway.sh alias --sync --from unifi` 使用。这些值**绝不**会传给面板：面板镜像内不含
+任何厂商代码或凭据，读取它们的适配器运行在一次性容器中，且这些值经标准输入传入，绝不
+经命令行。`--from file` 不需要它们中的任何一个——它改为读取
+`<数据目录>/identity/aliases.json`。人工命名优先的规则见[面板](panel.md#设备名称别名)。
+
+| 键 | 必填 | Sec | 说明 | 示例 |
+|---|:--:|:--:|---|---|
+| `UNIFI_URL` | | | 控制器基础 URL。UniFi OS 控制台与自建控制器都会被自动识别。 | `https://unifi.example.com` |
+| `UNIFI_USER` | | | 控制器账号；**只读**账号即可。 | `…` |
+| `UNIFI_PASSWORD` | | 🔒 | 其密码。绝不接受经命令行传入（`ps` 可以看到 argv）。 | `…` |
+| `UNIFI_SITE` | | | 控制器站点 id（默认 `default`）。 | `default` |
+| `UNIFI_INSECURE` | | | **默认校验** TLS 证书。UniFi 控制台出厂使用自签名证书，因此若你尚未安装受信任的证书，请在知情的前提下将其设为 `true`。 | `false` |
+
 ### 私有镜像仓库 / 阿里云 ACR（当 `REGISTRY_MODE=acr` 时使用）
 
 | 键 | Upd | Sec | 说明 | 示例 |

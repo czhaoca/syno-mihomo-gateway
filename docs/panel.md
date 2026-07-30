@@ -42,6 +42,60 @@ device row and asks for confirmation before overriding a band address
 (the panel, not `.env`, is the operational authority for day-to-day flips —
 the band remains the declarative baseline that survives a panel reset).
 
+## Device names (aliases)
+
+A name and a routing policy are separate things: the shipped `devices` table
+requires a mode on every row, so naming a host there would force a routing
+decision onto it. Aliases therefore live in their own sidecar, keyed on the
+host address, and a device can be named whether or not it carries a policy.
+Naming applies no policy and triggers no reconcile — there is nothing for
+the gateway to *do* about a label.
+
+Every alias records **where it came from**, and that provenance decides who
+may overwrite it:
+
+- **An alias you typed outranks every importer.** A sync leaves those rows
+  untouched and reports each one as `skipped`.
+- **The consequence is deliberate, and worth knowing before you use it:**
+  once you name a host in the panel, it stops following later renames on the
+  vendor side. To hand that host back to the sync, clear its alias — or
+  re-run the sync with `--adopt`, attended.
+- An importer may always update a row **it** wrote, and may claim a row whose
+  provenance is unknown (only raw SQL that omitted the column can produce
+  one, so it carries no authority).
+
+Import a batch from the host with `gateway.sh alias --sync --from <source>`
+(`--list` prints what is stored). Two sources ship: `unifi` reads a
+controller through `UNIFI_*` in `.env`, and `file` reads an
+`{"entries":[{"ip":…,"alias":…}]}` document from
+`<data-dir>/identity/aliases.json` — the same path a Nimbus export or a
+hand-written list uses. The output is a **per-row ledger**:
+`applied` / `unchanged` / `skipped` / `rejected`, and a row that met an
+existing alias also reports the alias and provenance already stored, so a
+skip names who owns the name it declined to overwrite. (A `rejected` row
+never reached the store, so it carries only the address and the reason.) A
+skip is a designed refusal, not a failure — the run still exits 0 — and a
+bare total would hide exactly the rows the rule exists to protect.
+
+The panel itself stays vendor-agnostic and **never holds a vendor
+credential**. `POST /v1/identities/import` knows only `{ip, alias, source}`;
+no vendor code ships inside the panel image. The adapter runs on the host in
+a **one-shot container** built from the panel image and used purely as a
+python runtime, and the credential reaches it on **stdin** — never on the
+command line (`ps` shows argv on both sides) and never in the container's
+environment. `alias --sync` requires root whichever source it uses: it reads
+its input out of the root-owned data dir (`unifi` the credential in `.env`,
+`file` the document beside it) and starts a container — more than the
+`policy` verbs' "only the panel's own authenticated API" exemption covers,
+with `unifi` the sharpest case since the credential then also leaves the
+host. `--adopt` requires `--yes` as well, because it is the one mode that
+can overwrite a name a human typed.
+
+TLS certificates are **verified by default**. A UniFi console ships a
+self-signed certificate, so the first sync against one fails on purpose;
+`UNIFI_INSECURE=true` in `.env` is the explicit opt-out, rather than a
+silent downgrade on a credential-bearing call.
+
 ## Deployment
 
 The panel deploys with the stack — `install.sh` (fresh) prompts for
