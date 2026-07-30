@@ -13,6 +13,7 @@ MUTATION_CALLS = [
     ("post", "/v1/apply", None),
     ("put", "/v1/identity/192.0.2.5", {"alias": "x"}),
     ("delete", "/v1/identity/192.0.2.5", None),
+    ("put", "/v1/settings", {"values": {"timezone": "Asia/Tokyo"}}),
 ]
 
 

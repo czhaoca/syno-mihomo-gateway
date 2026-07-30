@@ -217,10 +217,15 @@ def test_upgrading_a_populated_v180_database_preserves_every_row(tmp_path):
     after_schema = sorted(
         tuple(r) for r in new.execute("SELECT type, name, sql FROM sqlite_master"))
     added = sorted(r[1] for r in after_schema if r not in before_schema)
-    # the sidecar table plus the implicit index SQLite builds for its TEXT
-    # PRIMARY KEY - and nothing else
-    assert added == ["device_identity", "sqlite_autoindex_device_identity_1"], (
-        f"the upgrade changed more of the schema than the sidecar: {added}")
+    # Each sidecar table plus the implicit index SQLite builds for its TEXT
+    # PRIMARY KEY - and nothing else. UPDATED (never relaxed) as migrations
+    # land: #74 added device_identity.source, which alters no schema object
+    # name, and #75 added `settings`. If this list ever needs a name it
+    # cannot justify, the migration touched something it should not have.
+    assert added == ["device_identity", "settings",
+                     "sqlite_autoindex_device_identity_1",
+                     "sqlite_autoindex_settings_1"], (
+        f"the upgrade changed more of the schema than the sidecars: {added}")
     assert all(r in after_schema for r in before_schema), \
         "the upgrade removed or rewrote part of the shipped schema"
     new.close()

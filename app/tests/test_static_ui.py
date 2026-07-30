@@ -3,6 +3,7 @@ identical key sets, a data-testid on every interactive element, ZERO
 external references anywhere under app/static (fully self-contained), and
 the same-origin serving mount."""
 
+import ast
 import json
 import re
 from pathlib import Path
@@ -25,21 +26,59 @@ def test_i18n_key_sets_identical():
 
 
 def _audit_actions():
-    """Every action string written into the audit log as a literal, across
-    the whole app (tests excluded). The UI renders each as
-    `action_<value>`, so one added server-side without a translation leaks
-    a raw key into the table - which no dictionary-only check can see.
+    """Every action string written into the audit log, across the whole app
+    (tests excluded). The UI renders each as `action_<value>`, so one added
+    server-side without a translation leaks a raw key into the table -
+    which no dictionary-only check can see.
 
-    Literal-only by construction: an action passed through a variable or a
-    default would not be found. That is why the floor assertion below
-    exists - it catches the sweep going quiet after a rename or a move,
-    which is the failure mode that would turn this gate into a no-op."""
+    Resolves a literal OR a module-level constant. The literal-only version
+    of this sweep had a hole big enough to drive a feature through:
+    `append_audit(conn, action=AUDIT_ACTION, ...)` was simply invisible, so
+    a new audited surface could ship with no translation in either
+    dictionary and this gate would stay green. Anything it still cannot
+    resolve is a hard failure rather than a silent skip - that is the whole
+    difference between a gate and a decoration."""
     actions = set()
+    unresolved = []
     for path in APP.rglob("*.py"):
         if "tests" in path.parts:
             continue
-        actions |= set(re.findall(r"append_audit\(.*?action=[\"']([^\"']+)[\"']",
-                                  path.read_text(), re.S))
+        # Parsed, not grepped. A regex cannot tell a call from prose about a
+        # call: a comment explaining this very gate was enough to make the
+        # textual version report an unresolvable action. ast sees only code.
+        tree = ast.parse(path.read_text(), filename=str(path))
+        consts = {
+            t.id: node.value.value
+            for node in tree.body
+            if isinstance(node, ast.Assign)
+            and isinstance(node.value, ast.Constant)
+            and isinstance(node.value.value, str)
+            for t in node.targets if isinstance(t, ast.Name)
+        }
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            name = getattr(node.func, "id", None) or getattr(
+                node.func, "attr", None)
+            if name != "append_audit":
+                continue
+            for kw in node.keywords:
+                if kw.arg != "action":
+                    continue
+                if (isinstance(kw.value, ast.Constant)
+                        and isinstance(kw.value.value, str)):
+                    actions.add(kw.value.value)
+                elif (isinstance(kw.value, ast.Name)
+                        and kw.value.id in consts):
+                    actions.add(consts[kw.value.id])
+                else:
+                    unresolved.append(
+                        f"{path.name}:{node.lineno} action="
+                        f"{ast.dump(kw.value)[:60]}")
+    assert not unresolved, (
+        "an audit action this gate cannot resolve - use a string literal or "
+        "a module-level constant so the bilingual check can see it: "
+        f"{unresolved}")
     assert len(actions) >= 5, (
         "the audit-action sweep found almost nothing - append_audit was "
         f"probably renamed or moved, which would silently empty this "

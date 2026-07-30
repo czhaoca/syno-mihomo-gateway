@@ -83,6 +83,13 @@ def panel_env(tmp_path, monkeypatch):
     # collection is driven explicitly via poll_once/rollup with fake clocks
     monkeypatch.setenv("PANEL_STATS_POLL_S", "0")
     monkeypatch.delenv("PANEL_STATS_DOMAINS", raising=False)
+    # TZ is an INPUT to the panel (config.timezone_default reads it), so an
+    # ambient value on a dev box or CI image would silently change what the
+    # settings default resolves to - and a test asserting an override took
+    # effect would fail purely because the ambient zone happened to equal
+    # the value it wrote. Cleared here like every other knob; tests that
+    # care set it explicitly.
+    monkeypatch.delenv("TZ", raising=False)
     return {"data": data, "providers": providers, "secret": "test-panel-secret"}
 
 

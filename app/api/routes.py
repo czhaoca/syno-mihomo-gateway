@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field
 from app import config
 from app.api.auth import require_mutation_auth
 from app.collector.core import GAP_FACTOR, effective_interval_s
-from app.store import identity
+from app.store import identity, settings
 from app.store import stats as stats_store
 from app.store.audit import append_audit, list_audit
 from app.store.policy import (
@@ -65,6 +65,16 @@ class IdentityImportEntry(BaseModel):
     source: str = Field(
         description="Where this alias came from, e.g. unifi or nimbus. "
                     "'hand-edit' is reserved for an operator's own edit")
+
+
+class SettingsUpdate(BaseModel):
+    values: dict[str, str] = Field(
+        default_factory=dict,
+        description="Overrides to apply; a blank value reverts that key to "
+                    "its code default")
+    note: str = Field(
+        default="",
+        description="Recorded on the audit entry for this change")
 
 
 class IdentityImport(BaseModel):
@@ -410,6 +420,49 @@ def post_identities_import(body: IdentityImport, request: Request) -> dict:
         if report["changed"]:
             backup_db(conn, config.db_path(), config.backup_keep())
         return report
+
+
+@router.get("/v1/settings")
+def get_settings(request: Request) -> dict:
+    """Every known setting with its effective value, the default it would
+    fall back to, and whether an override is in force.
+
+    Reporting all three is deliberate: an inherited value shown as if it
+    were a stored choice is the same class of lie as a badge that claims
+    an apply reached mihomo when it did not. The timezone default is the
+    container's own `TZ`, so an untouched panel agrees with mihomo and the
+    updater about what "today" means.
+    """
+    with request.app.state.mutex:
+        return {"settings": settings.effective(_conn(request))}
+
+
+@router.put("/v1/settings", dependencies=[Depends(require_mutation_auth)])
+def put_settings(body: SettingsUpdate, request: Request) -> dict:
+    """Apply a partial map of overrides. A blank value REVERTS that key to
+    its code default rather than storing an empty string.
+
+    The batch is all-or-nothing: every key and value is validated before
+    anything is written, so a typo cannot leave half a change behind. This
+    diverges from `POST /v1/identities/import`, whose per-row ledger is
+    the honest answer there because the rows are independent hosts - a
+    settings write is a single operator intent.
+
+    `changed` lists the keys whose stored OVERRIDE moved. That is broader
+    than "the resolved value moved" on purpose: pinning today's default, or
+    reverting a pin that equals today's default, changes nothing visible now
+    but changes what a later redeploy does. Re-sending an identical
+    configuration is still a truthful no-op.
+    """
+    with request.app.state.mutex:
+        conn = _conn(request)
+        try:
+            changed = settings.apply_values(
+                conn, body.values, requester=_requester(request),
+                note=body.note)
+        except ValidationError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
+        return {"settings": settings.effective(conn), "changed": changed}
 
 
 @router.post("/v1/apply", dependencies=[Depends(require_mutation_auth)])

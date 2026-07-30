@@ -116,6 +116,24 @@ MIGRATIONS = [
     ALTER TABLE device_identity ADD COLUMN source TEXT NOT NULL DEFAULT '';
     UPDATE device_identity SET source = 'hand-edit';
     """),
+    # v4 - operator settings. The k/v shape mirrors `stats_meta`
+    # (stats.py:61-64), the existing idiom; what it does NOT mirror is
+    # where the default lives. This table stores ONLY overrides: an unset
+    # key resolves through code, so shipping a new default actually
+    # reaches every existing install instead of being shadowed forever by
+    # a row written once at first boot.
+    #
+    # NOT NULL on `k` is explicit for the same reason it is on
+    # `device_identity.cidr`: `k TEXT PRIMARY KEY` alone is a rowid-table
+    # key and SQLite accepts NULL there - several of them, since NULLs are
+    # distinct in the implicit index.
+    (4, """
+    CREATE TABLE settings (
+        k TEXT PRIMARY KEY NOT NULL,
+        v TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );
+    """),
 ]
 
 

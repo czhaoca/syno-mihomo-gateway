@@ -58,5 +58,6 @@
   "rename": "Rename",
   "rename_prompt": "New name for this device:",
   "delete_drift_warn": "The entry was removed from the store, but the gateway apply FAILED - the device policy may still be live on the gateway. Check the drift banner and re-apply.",
-  "band_confirm_unknown": "Could not check the router band list. This address MIGHT be a router-pinned band member - apply the override anyway?"
+  "band_confirm_unknown": "Could not check the router band list. This address MIGHT be a router-pinned band member - apply the override anyway?",
+  "action_setting": "Setting changed"
 }

@@ -158,6 +158,26 @@
         "title": "IdentityUpdate",
         "type": "object"
       },
+      "SettingsUpdate": {
+        "properties": {
+          "note": {
+            "default": "",
+            "description": "Recorded on the audit entry for this change",
+            "title": "Note",
+            "type": "string"
+          },
+          "values": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Overrides to apply; a blank value reverts that key to its code default",
+            "title": "Values",
+            "type": "object"
+          }
+        },
+        "title": "SettingsUpdate",
+        "type": "object"
+      },
       "ValidationError": {
         "properties": {
           "ctx": {
@@ -611,6 +631,66 @@
           }
         },
         "summary": "Put Identity"
+      }
+    },
+    "/v1/settings": {
+      "get": {
+        "description": "Every known setting with its effective value, the default it would\nfall back to, and whether an override is in force.\n\nReporting all three is deliberate: an inherited value shown as if it\nwere a stored choice is the same class of lie as a badge that claims\nan apply reached mihomo when it did not. The timezone default is the\ncontainer's own `TZ`, so an untouched panel agrees with mihomo and the\nupdater about what \"today\" means.",
+        "operationId": "get_settings_v1_settings_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Settings V1 Settings Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Settings"
+      },
+      "put": {
+        "description": "Apply a partial map of overrides. A blank value REVERTS that key to\nits code default rather than storing an empty string.\n\nThe batch is all-or-nothing: every key and value is validated before\nanything is written, so a typo cannot leave half a change behind. This\ndiverges from `POST /v1/identities/import`, whose per-row ledger is\nthe honest answer there because the rows are independent hosts - a\nsettings write is a single operator intent.\n\n`changed` lists the keys whose stored OVERRIDE moved. That is broader\nthan \"the resolved value moved\" on purpose: pinning today's default, or\nreverting a pin that equals today's default, changes nothing visible now\nbut changes what a later redeploy does. Re-sending an identical\nconfiguration is still a truthful no-op.",
+        "operationId": "put_settings_v1_settings_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SettingsUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Put Settings V1 Settings Put",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put Settings"
       }
     },
     "/v1/stats/chains": {

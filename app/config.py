@@ -119,6 +119,23 @@ def full_proxy_sources() -> str:
     return os.environ.get("FULL_PROXY_SOURCES", "")
 
 
+def timezone_default() -> str:
+    """The container's own TZ, which docker-compose already passes to the
+    panel alongside mihomo and the updater (DEC-5). Deliberately NOT a zone
+    written into this file: a panel that disagrees with the rest of the
+    stack about what "today" means is a bug generator, and a baked-in
+    default would silently be that disagreement on every install whose
+    operator never opened the settings page.
+
+    Blank falls back to UTC, which is the ABSENCE of a zone choice rather
+    than a regional one - and is already what the minute and hour tiers
+    store in (DEC-4), so an unconfigured panel stays self-consistent. The
+    blank check matters because compose passes empty strings through for
+    unset knobs, so "" must never become the effective value.
+    """
+    return os.environ.get("TZ", "").strip() or "UTC"
+
+
 def dashboard_port() -> int:
     """MetaCubexD's published port for the UI deep-link (brief DEC-12:
     node ops stay on the dashboard). Default mirrors .env.example's

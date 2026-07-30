@@ -64,6 +64,14 @@ Put Identity
 
 Parameters: `ip`
 
+## `GET /v1/settings`
+
+Get Settings
+
+## `PUT /v1/settings`
+
+Put Settings
+
 ## `GET /v1/stats/chains`
 
 Stats Chains
