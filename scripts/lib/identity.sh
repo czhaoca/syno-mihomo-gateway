@@ -21,8 +21,9 @@
 # detect_compose) sourced first, and load_env already run. POSIX/BusyBox sh.
 
 # Adapters that exist. `file` is not a fallback - it is how a hand-written
-# list and a future Nimbus export reach the same endpoint on equal terms,
-# which is the promise the vendor-agnostic payload was designed around.
+# list and any future inventory export reach the same endpoint on equal
+# terms, which is the promise the vendor-agnostic payload was designed
+# around.
 : "${IDENTITY_SOURCES:=unifi file}"
 
 # identity_file - where `--from file` reads its document.
@@ -64,8 +65,9 @@ if source == "file":
             die("every alias entry must be an object carrying ip and alias")
         ip = str(row.get("ip", "") or "").strip()
         alias = str(row.get("alias", "") or "").strip()
-        # An entry may name its OWN origin (a Nimbus export routed through a
-        # file keeps saying nimbus), otherwise it inherits the adapter name.
+        # An entry may name its OWN origin (an inventory export routed
+        # through a file keeps saying where it came from), otherwise it
+        # inherits the adapter name.
         # Provenance is what the panel precedence rule keys on, so guessing
         # it wrong is what silently overwrites the wrong rows.
         src = str(row.get("source", "") or "").strip() or "file"
