@@ -113,6 +113,17 @@ def create_app(*, mihomo_client=None, notifier=None) -> FastAPI:
     # image and is served by the app itself - the reason the API can run
     # with ZERO CORS headers. Neither the mount nor the root redirect
     # belongs in the /v1 contract (the gate allows only /health + /v1/*).
+    # The built React shell (#78), mounted BEFORE /ui so the more specific
+    # path wins. Additive on purpose: the classic tree below stays the panel
+    # users actually have until the rewrite item replaces it, because
+    # shipping a scaffold over a working UI would be a regression dressed as
+    # progress. Mounted only when the build exists, so a source checkout
+    # (where dist/ is gitignored) still starts.
+    ui_dist = Path(__file__).resolve().parent / "ui" / "dist"
+    if (ui_dist / "index.html").exists():
+        app.mount("/ui/next", StaticFiles(directory=ui_dist, html=True),
+                  name="ui-next")
+
     static_dir = Path(__file__).resolve().parent / "static"
     app.mount("/ui", StaticFiles(directory=static_dir, html=True),
               name="ui")

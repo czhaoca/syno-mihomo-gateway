@@ -10,3 +10,10 @@ Dockerfile
 .dockerignore
 ruff.toml
 requirements-dev.txt
+
+# Frontend (#78): the builder stage runs `npm ci` itself and produces dist,
+# so neither belongs in the build context. Excluding node_modules also keeps
+# a ~200MB tree out of every layer and out of the runtime image, where
+# `COPY . ./app` would otherwise pick it up.
+ui/node_modules/
+ui/dist/

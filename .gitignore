@@ -44,3 +44,8 @@ legacy-capture-*.txt
 .DS_Store
 .ruff_cache/
 __pycache__/
+
+# Frontend toolchain (#78): source is committed, deps are not. The build
+# output is already covered by the bare `dist/` pattern above, which
+# predates this and was added for the release artifacts.
+node_modules/

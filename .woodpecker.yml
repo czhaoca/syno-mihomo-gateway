@@ -97,6 +97,25 @@ steps:
       - 'for f in $(find . -path ./.git -prune -o -name "*.sh" -print); do sh -n "$f" || exit 1; done'
       - shellcheck -x install.sh install-pi.sh install-linux.sh scripts/gateway.sh scripts/auto_update.sh scripts/pi/auto_update_lite.sh scripts/pi/lite_ctl.sh scripts/install_scheduler.sh scripts/setup_network.sh scripts/render_config.sh scripts/mihomo_entrypoint.sh scripts/package.sh scripts/doctor.sh scripts/state_diff.sh scripts/seed_provider.sh bootstrap.sh scripts/lib/container.sh scripts/lib/targets.sh scripts/lib/geodata.sh scripts/lib/panel.sh scripts/linux/i18n_linux.sh scripts/linux/preflight_linux.sh scripts/validate_release.sh
 
+  - name: ui-build
+    image: node:22-slim
+    commands:
+      # The frontend toolchain (#78). `npm ci` so the lockfile is
+      # authoritative - a CI build resolving different versions than the one
+      # that was tested proves nothing about the shipped image. The gate
+      # script then asserts, against the BUILT artifact, that the A6 release
+      # marker survived the bundler and that every external URL in the
+      # bundle is in the documented inert allowlist.
+      - apt-get update -qq && apt-get install -y -qq --no-install-recommends python3 >/dev/null
+      - npm --prefix app/ui ci --no-audit --no-fund
+      - npm --prefix app/ui run lint
+      - python3 scripts/ci/ui_build_check.py --build
+      # Positive AND negative controls for the gate itself (the
+      # privacy_check_test.py idiom): a gate that only ever runs against a
+      # healthy tree cannot show what it would REJECT, and both of this
+      # one's rules fail silently when they stop working.
+      - cd scripts/ci && python3 ui_build_check_test.py && cd ../..
+
   - name: app-lint
     image: python:3.12-slim
     commands:
@@ -108,6 +127,12 @@ steps:
   - name: app-unit
     image: python:3.12-slim
     commands:
+      # NOTE this step runs AFTER ui-build and shares its workspace, so
+      # app/ui/dist exists here and the served-build assertions in
+      # test_static_ui.py are live rather than skipped. Reordering the two
+      # would make those assertions skip silently - they are written to
+      # tolerate an unbuilt checkout, which is correct for a dev tree and
+      # is exactly why the ordering matters in CI.
       # Panel unit suite (hermetic: fake controller client + tmp trees, no
       # docker/network) plus the committed OpenAPI contract gate
       # (byte-identity against a fresh export; --write regenerates).

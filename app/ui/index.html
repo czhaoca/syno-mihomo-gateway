@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      data-i18n="app_title" MUST survive `vite build` into dist/index.html.
+      validate_release.sh:548 greps this exact string out of a raw wget during
+      release phase A6, a REQUIRED gate, with NO JavaScript running - so it
+      can never come from React. It lives in this static shell, and
+      scripts/ci/ui_build_check.py asserts it against the BUILT artifact
+      rather than against this file, because only the built one ships.
+    -->
+    <title data-i18n="app_title">Gateway Panel</title>
+  </head>
+  <body>
+    <noscript data-i18n="app_title">Gateway Panel</noscript>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>

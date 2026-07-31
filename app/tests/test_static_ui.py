@@ -12,6 +12,11 @@ from app.tests.conftest import auth_headers
 
 APP = Path(__file__).resolve().parents[1]
 STATIC = APP / "static"
+# The Vite source tree (#78). Its BUILT output is checked separately by
+# scripts/ci/ui_build_check.py, because only the built file ships and only
+# it can prove the A6 marker survived the bundler.
+UI_SRC = APP / "ui"
+JSX = sorted((UI_SRC / "src").rglob("*.jsx")) if (UI_SRC / "src").exists() else []
 
 
 def test_i18n_key_sets_identical():
@@ -202,12 +207,64 @@ def test_band_confirm_guards_both_mutation_paths():
 
 
 def test_every_interactive_element_has_testid():
+    """The CLASSIC tree. It is still the panel users have until the React
+    rewrite replaces it, so its floor stays exactly where it was - a gate
+    repointed at a tree that has not been written yet would pass on an
+    empty set and protect nothing in the meantime."""
     html = (STATIC / "index.html").read_text()
     for tag in re.finditer(r"<(button|input|select|textarea|a)\b[^>]*>", html):
         assert "data-testid=" in tag.group(0), (
             f"interactive element without data-testid: {tag.group(0)[:90]}")
     assert html.count("data-testid=") >= 10, \
         "the UI must carry stable testids throughout"
+
+
+def test_every_interactive_jsx_element_has_testid():
+    """The same rule on the React side, applied from the moment the tree
+    exists rather than from the moment it is finished. It is vacuous today
+    (the scaffold renders no interactive element) and bites the instant one
+    appears - which is the point: the Playwright gate rides on these ids,
+    and adding them retroactively is how they end up unstable.
+
+    Deliberately NO count floor here: a floor on a tree that is still a
+    scaffold would either fail now or be set so low it proves nothing. The
+    floor belongs with the rewrite that populates it.
+    """
+    assert JSX, "app/ui/src has no .jsx - the scaffold moved, so this gate " \
+                "is reading nothing and would pass on anything"
+    interactive = re.compile(
+        r"<(button|input|select|textarea|Button|IconButton|TextField|Select|"
+        r"Switch|Checkbox|Tab|MenuItem)\b[^>]*>")
+    for path in JSX:
+        for tag in interactive.finditer(path.read_text(encoding="utf-8")):
+            assert "data-testid=" in tag.group(0), (
+                f"{path.name}: interactive element without data-testid: "
+                f"{tag.group(0)[:90]}")
+
+
+def test_the_jsx_source_makes_no_external_reference():
+    """Same rule as the static tree, applied to the source we author. The
+    BUILT bundle is a different question - React and MUI embed inert
+    error-explainer URLs of their own - and it has its own documented
+    allowlist in scripts/ci/ui_build_check.py. What must stay true here is
+    that nothing WE wrote reaches off-box."""
+    assert JSX, "app/ui/src has no .jsx - this gate is reading nothing"
+    for path in [*JSX, UI_SRC / "index.html", UI_SRC / "vite.config.js"]:
+        text = path.read_text(encoding="utf-8")
+        found = re.findall(r"https?://[^\s\"'`)]+", text)
+        assert not found, f"{path.name}: external reference(s) {found[:3]}"
+
+
+def test_the_vite_shell_carries_the_a6_marker_in_source():
+    """A fast source-side tripwire. It does NOT replace
+    scripts/ci/ui_build_check.py, which asserts the same string against the
+    BUILT artifact - only the built one ships, and a bundler setting can
+    drop what the source clearly contains."""
+    html = (UI_SRC / "index.html").read_text(encoding="utf-8")
+    stripped = re.sub(r"<!--.*?-->", "", html, flags=re.S)
+    assert 'data-i18n="app_title"' in stripped, (
+        "the Vite shell must carry data-i18n=\"app_title\" outside a comment "
+        "- release phase A6 greps it from raw HTML with no JavaScript running")
 
 
 def _split_media(css):
@@ -463,6 +520,39 @@ def test_static_tree_is_served_same_origin(client, panel_env):
     r = client.get("/", follow_redirects=False)
     assert r.status_code in (302, 307)
     assert r.headers["location"] == "/ui/"
+
+
+def test_the_new_ui_is_additive_and_never_displaces_the_classic_one(
+        client, panel_env):
+    """The whole shape of #78: introduce the toolchain WITHOUT replacing a
+    working panel. `/ui/` must still answer with the classic tree and the
+    root redirect must still land there - shipping a scaffold over the UI
+    users have would be a regression dressed as progress.
+
+    The built tree is skipped when absent, because dist/ is gitignored and
+    a source checkout must still start. That is exactly why this asserts
+    the CLASSIC side unconditionally and the new side only when built: a
+    test that silently skipped both would protect nothing.
+    """
+    classic = client.get("/ui/")
+    assert classic.status_code == 200
+    assert "data-testid" in classic.text
+    assert client.get("/ui/i18n/en.json").status_code == 200
+    root = client.get("/", follow_redirects=False)
+    assert root.headers["location"] == "/ui/", (
+        "the root redirect must keep landing on the panel users have")
+
+    dist = APP / "ui" / "dist" / "index.html"
+    if not dist.exists():
+        return  # unbuilt checkout; scripts/ci/ui_build_check.py covers built
+    built = client.get("/ui/next/")
+    assert built.status_code == 200
+    assert 'data-i18n="app_title"' in built.text, (
+        "the served build must carry the A6 marker - release phase A6 greps "
+        "it from raw HTML with no JavaScript running")
+    assert "/ui/next/assets/" in built.text, (
+        "vite `base` must match the mount, or every asset 404s while the "
+        "page still renders - a blank screen that reads like a JS error")
 
 
 def test_band_member_flag_semantics(client, panel_env, monkeypatch):
