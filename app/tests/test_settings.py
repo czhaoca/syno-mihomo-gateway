@@ -208,6 +208,55 @@ def test_get_of_an_unknown_key_raises_rather_than_inventing_a_default(conn):
         settings.get(conn, "timzone")
 
 
+# --- the landing stats range (#80 DEC-A) ------------------------------------
+
+def test_the_stats_range_default_is_seven_days(conn):
+    """The landing view's range is an operator preference, not a constant in
+    the UI. It lives here for the same reason every other default does: a
+    value baked into the bundle can only be changed by shipping a new
+    bundle."""
+    assert settings.default("stats_default_range") == "7d"
+    assert settings.get(conn, "stats_default_range") == "7d"
+
+
+def test_the_stats_range_accepts_exactly_what_the_ui_can_show(conn):
+    """The setting and the view's selector are ONE list. A default naming a
+    range the UI cannot render would land the operator on a blank tab with
+    nothing saying why - the setting would look honoured and be unusable."""
+    assert settings.STATS_RANGES == ("48h", "7d", "30d", "daily")
+    for value in settings.STATS_RANGES:
+        settings.set_value(conn, "stats_default_range", value, requester="t")
+        assert settings.get(conn, "stats_default_range") == value
+
+
+def test_an_unknown_stats_range_is_refused_and_names_the_alternatives(conn):
+    """Rejecting is not enough on its own: a validator that says only "no"
+    leaves the operator guessing at a closed vocabulary they cannot see."""
+    with pytest.raises(ValidationError, match="48h, 7d, 30d, daily"):
+        settings.set_value(conn, "stats_default_range", "90d", requester="t")
+    assert conn.execute("SELECT COUNT(*) FROM settings").fetchone()[0] == 0
+
+
+def test_a_blank_stats_range_reverts_rather_than_storing_emptiness(conn):
+    settings.set_value(conn, "stats_default_range", "30d", requester="t")
+    settings.set_value(conn, "stats_default_range", "", requester="t")
+    assert settings.get(conn, "stats_default_range") == "7d"
+    assert conn.execute(
+        "SELECT COUNT(*) FROM settings WHERE k = 'stats_default_range'"
+    ).fetchone()[0] == 0
+
+
+def test_the_new_key_did_not_disturb_the_shipped_ones(conn):
+    """Adding a SPEC entry must be additive. `effective()` is generic over
+    SPEC, so a key that changed the shape of the others would surface as a
+    settings page that stops round-tripping the ones it already had."""
+    eff = settings.effective(conn)
+    assert set(eff) == {"timezone", "day_boundary", "stats_default_range"}
+    for key, row in eff.items():
+        assert set(row) == {"value", "default", "overridden"}, key
+        assert row["overridden"] is False
+
+
 def test_a_failed_write_partway_through_a_batch_rolls_the_whole_batch_back(
         conn, monkeypatch):
     """Up-front validation only rules out VALIDATION failures. A disk error

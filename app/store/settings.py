@@ -23,9 +23,9 @@ from app.store.audit import append_audit
 from app.validation import ValidationError
 
 # The audit action for every settings mutation. The bilingual gate in
-# app/tests/test_static_ui.py sweeps every literal append_audit(action=...)
-# in app/ and demands a matching `action_<name>` key in BOTH i18n
-# dictionaries, so this string and app/static/i18n/{en,zh}.json move
+# app/tests/test_ui.py sweeps every literal append_audit(action=...) in
+# app/ and demands a matching `action_<name>` key in BOTH i18n
+# dictionaries, so this string and app/ui/public/i18n/{en,zh}.json move
 # together.
 AUDIT_ACTION = "setting"
 
@@ -108,6 +108,33 @@ def _check_day_boundary(raw: str) -> str:
     return value
 
 
+# The ranges the stats view can actually render, in the order it offers
+# them. This tuple and the view's selector are ONE list, not two that agree
+# today: a stored default naming a range the UI cannot draw would land the
+# operator on a blank tab with nothing saying why - honoured, and useless.
+#
+# `48h` is here rather than dropped because it is the only window the minute
+# tier covers (config.stats_minute_hours), and retiring it would have taken
+# a shipped capability out of the panel under cover of an IA change.
+# `daily` reads the day tier, whose rows carry their own framing (#76) - a
+# rolling "today" would have been a fourth spelling of a window the hour
+# tier already answers.
+STATS_RANGES = ("48h", "7d", "30d", "daily")
+DEFAULT_STATS_RANGE = "7d"
+
+
+def _check_stats_range(raw: str) -> str:
+    """One of STATS_RANGES. The message names the whole vocabulary: this is
+    a closed set the operator cannot see from the outside, and a validator
+    that answers only "no" leaves them guessing at it."""
+    value = (raw or "").strip()
+    if value not in STATS_RANGES:
+        raise ValidationError(
+            f"stats_default_range {value!r} is not a range the stats view "
+            f"can show - use one of: {', '.join(STATS_RANGES)}")
+    return value
+
+
 class _Setting:
     __slots__ = ("default", "check", "description")
 
@@ -131,6 +158,11 @@ SPEC = {
         check=_check_day_boundary,
         description="Local time at which a stats day starts (HH:MM). 03:00 "
                     "keeps a late-night session on the day it began"),
+    "stats_default_range": _Setting(
+        default=lambda: DEFAULT_STATS_RANGE,
+        check=_check_stats_range,
+        description="Window the stats tab lands on (48h | 7d | 30d | daily). "
+                    "The operator's own preference, not a bundle constant"),
 }
 
 
@@ -168,7 +200,7 @@ def effective(conn) -> dict:
 
     `description` is deliberately NOT part of the payload: it is hardcoded
     English, and every user-facing string in this app goes through
-    app/static/i18n/{en,zh}.json. Returning it would hand a future settings
+    app/ui/public/i18n/{en,zh}.json. Returning it would hand the settings
     page an untranslated label that no bilingual gate watches, which is how
     English leaks into the Chinese UI. It stays next to the key it
     documents, for whoever reads SPEC.

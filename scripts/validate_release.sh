@@ -543,8 +543,11 @@ vr_match_mode_ok() {
 }
 
 # vr_ui_marker - the single source for the UI-shell reach marker: a stable
-# attribute the shipped app/static/index.html carries (i18n-proof - the
-# rendered TEXT changes per language, the data-i18n key does not).
+# attribute the shipped panel shell carries (i18n-proof - the rendered TEXT
+# changes per language, the data-i18n key does not). Since #80 the shell is
+# app/ui/index.html, built by Vite into the image; the marker rides a real
+# attribute there precisely because this probe runs a raw wget with no
+# JavaScript, so nothing React renders could satisfy it.
 vr_ui_marker() { printf '%s' 'data-i18n="app_title"'; }
 
 # ip_in_band IP BAND - 0 iff IP falls inside the comma-separated band list
@@ -1116,9 +1119,14 @@ time="2026-07-26T10:00:02.000000000Z" level=info msg="[TCP] 192.0.2.9:41236 --> 
   # When the app tree is present (repo checkout; the NAS release dir ships
   # no app/ - the UI is image-delivered), the marker must exist in the real
   # shell, or the A6 UI probe would chase a string the app no longer serves.
-  if [ -f "$ROOT/app/static/index.html" ]; then
-    if grep -qF "$(vr_ui_marker)" "$ROOT/app/static/index.html"; then st_ok
-    else st_bad "vr_ui_marker not found in app/static/index.html"; fi
+  # The SOURCE shell is checked, not the build: dist/ is gitignored and a
+  # release checkout has none, whereas app/ui/index.html is committed. Two
+  # gates already cover the built artifact (scripts/ci/ui_build_check.py and
+  # the served-build assertion in app/tests/test_ui.py), so what is left for
+  # this one is that the marker never leaves the source it is built from.
+  if [ -f "$ROOT/app/ui/index.html" ]; then
+    if grep -qF "$(vr_ui_marker)" "$ROOT/app/ui/index.html"; then st_ok
+    else st_bad "vr_ui_marker not found in app/ui/index.html"; fi
   fi
 
   # B3's streaming heuristic is a single marker substring by design (#61e);

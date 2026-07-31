@@ -5,11 +5,12 @@ import { defineConfig } from "vite";
 // mount in app/main.py or every asset 404s while the page still renders -
 // the failure mode that looks like a blank screen and reads like a JS error.
 //
-// /ui/next/ rather than /ui/: the classic panel at /ui/ is the one users
-// have, and it keeps working until the rewrite item replaces it. Shipping a
-// scaffold over a working UI would be a regression dressed as progress.
+// /ui/ since #80: this tree IS the panel now. It was mounted additively at
+// /ui/next/ for exactly one item, while it was still a scaffold and the
+// classic tree was the UI users had; the rewrite that replaced that tree
+// moved the mount, the base and the browser gate together.
 export default defineConfig({
-  base: "/ui/next/",
+  base: "/ui/",
   plugins: [react()],
   build: { outDir: "dist", emptyOutDir: true },
 });

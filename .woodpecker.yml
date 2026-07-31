@@ -144,7 +144,7 @@ steps:
     commands:
       # NOTE this step runs AFTER ui-build and shares its workspace, so
       # app/ui/dist exists here and the served-build assertions in
-      # test_static_ui.py are live rather than skipped. Reordering the two
+      # test_ui.py are live rather than skipped. Reordering the two
       # would make those assertions skip silently - they are written to
       # tolerate an unbuilt checkout, which is correct for a dev tree and
       # is exactly why the ordering matters in CI.

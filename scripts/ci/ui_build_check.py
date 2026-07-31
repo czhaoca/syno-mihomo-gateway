@@ -10,8 +10,9 @@ is a separate script rather than a pytest:
    into `dist/index.html` - asserting it against the SOURCE template proves
    nothing about what ships, because only the built file is served.
 
-2. The external-URL allowlist. `app/tests/test_static_ui.py` forbids
-   `http(s)://` under the committed static tree, but a React bundle carries
+2. The external-URL allowlist. `app/tests/test_ui.py` forbids `http(s)://`
+   under the committed source and served trees (app/ui/src, app/ui/index.html,
+   app/ui/public/i18n), but a React bundle carries
    inert URLs of its own (error-explainer links, XML namespaces). Those are
    never fetched - they are string constants - so the rule for the built
    tree is an explicit allowlist rather than an outright ban, and anything
@@ -43,6 +44,10 @@ ALLOWED_URL_PREFIXES = {
     # code path that has already failed.
     "https://react.dev/errors/": "react error-explainer text, never fetched",
     "https://mui.com/production-error/": "MUI error-explainer text, never fetched",
+    # Inside a console.warn body in useMediaQuery, emitted only for a query
+    # containing "print" (the audit fold asks for min-width). A console
+    # message, not a request - and unreachable on the queries this app issues.
+    "https://mui.com/system/display/": "MUI console.warn docs pointer, never fetched",
     # XML namespaces - identifiers, not addresses. The first two are the same
     # pair the committed static tree already allowlists.
     "http://www.w3.org/2000/svg": "SVG namespace identifier",

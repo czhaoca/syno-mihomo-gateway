@@ -42,6 +42,47 @@ device row and asks for confirmation before overriding a band address
 (the panel, not `.env`, is the operational authority for day-to-day flips —
 the band remains the declarative baseline that survives a panel reset).
 
+## The web UI
+
+Four tabs, and **Stats is the one it opens on** — the question you open a
+gateway panel with is what the network is doing, not which policy row to
+edit.
+
+- **Stats** — a range selector (48h / 7 days / 30 days / long-term daily), a
+  traffic sparkline, and per-device totals with aliases resolved onto them.
+  The window it lands on is the `stats_default_range` **setting**, not a
+  constant in the bundle, so changing it does not mean shipping a new panel.
+  Notes appear only when they have something to say: collection gaps (honest
+  holes, never interpolated), the share of traffic attributable to an app
+  together with the window that share was measured over, and — on the daily
+  range — a warning when the *definition of a day* changed inside the window
+  you asked about.
+- **Devices** — the policy editor, with the band badge, the confirm before
+  overriding a band address, and the apply badge described above.
+- **Audit** — one screenful at a time through the server's existing
+  `offset`. Below 760px each entry is a card with labelled fields; above it,
+  a table. Timestamps, addresses and requester IPs never wrap mid-token.
+  Only the newest page auto-refreshes: re-fetching a raw offset while new
+  entries push rows down would duplicate some and skip others, so an older
+  page says it is paused rather than shuffling under you.
+- **Settings** — timezone, the hour a stats day starts, the landing range,
+  and device aliases. Each setting shows whether the value is **yours or
+  inherited**, and clearing a field reverts it to the shipped default rather
+  than storing an empty string.
+
+The panel is a single-page app served **same-origin** from the panel itself,
+which is why the API needs no CORS headers at all. It makes **zero external
+requests** — no fonts, no CDN, nothing — which is enforced at runtime in a
+real browser rather than by reading the source. Writes are token-gated: the
+first one prompts for `PANEL_SECRET` and the token is kept only in that
+browser.
+
+Warnings never ride on `alert()`. A browser can switch dialogs off for a
+page, which would silently swallow the one message that matters most — that
+the gateway may not match what the panel is showing. They render in-page, on
+a banner that stays put when you scroll and stacks rather than overwriting an
+unread one.
+
 ## Device names (aliases)
 
 A name and a routing policy are separate things: the shipped `devices` table
@@ -90,6 +131,26 @@ its input out of the root-owned data dir (`unifi` the credential in `.env`,
 with `unifi` the sharpest case since the credential then also leaves the
 host. `--adopt` requires `--yes` as well, because it is the one mode that
 can overwrite a name a human typed.
+
+### Which name you see
+
+A device that carries a policy can hold **two** independent names: the alias
+above, and the older policy-scoped `name` on the `devices` row itself. The
+store defines no precedence between them on purpose, so that the rule is
+applied once — in the interface — instead of guessed at per call site.
+
+- **The alias wins**, wherever it can exist. It is the identity-layer name:
+  it survives the device's policy being removed, and yours outranks every
+  importer.
+- **A range keeps its `name`.** An alias is keyed on a single host, so a CIDR
+  wider than one address cannot carry one at all; there its `name` is simply
+  its name.
+- **Rename writes whichever layer the address can carry** — one control, no
+  choice to make.
+- **A displaced policy label is still shown**, labelled as such, with a
+  **Retire label** action beside it. Hiding a stored name would be the only
+  dishonest way to do this; retiring is explicit and confirmed, never a side
+  effect of renaming, and the old text stays recoverable from the audit trail.
 
 TLS certificates are **verified by default**. A UniFi console ships a
 self-signed certificate, so the first sync against one fails on purpose;

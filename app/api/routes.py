@@ -322,10 +322,15 @@ def _with_aliases(conn, rows: list) -> list:
     A policied device can therefore carry TWO human names: the shipped
     `devices.name` (policy-scoped, PATCHable, audited as `rename`) and this
     `alias` (identity-scoped, survives the policy being removed). They are
-    both returned and neither is derived from the other. The shipped UI
-    still renders `name`; deciding which one wins in the interface belongs
-    to the React device views (#80), which is where a precedence rule can
-    be applied consistently rather than guessed at per call site.
+    both returned and neither is derived from the other, and no precedence
+    rule lives here on purpose.
+
+    #80 settled it IN THE INTERFACE, which is the only place it can be
+    applied consistently rather than guessed at per call site: the alias
+    wins wherever it can exist, a range keeps its `name` (identity keys on
+    a /32, so a wider CIDR cannot carry an alias at all), and a displaced
+    `name` stays visible with its own retire action. This function keeps
+    returning both, unchanged - the store still states no preference.
     """
     aliases = identity.resolve(conn)
     for row in rows:

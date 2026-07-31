@@ -14,7 +14,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
-from fastapi.responses import RedirectResponse
+from fastapi.responses import PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from app import config
@@ -109,24 +109,28 @@ def create_app(*, mihomo_client=None, notifier=None) -> FastAPI:
     app = FastAPI(title="Syno Mihomo Gateway Panel", version="1.0.0",
                   description=API_DESCRIPTION, lifespan=lifespan)
     app.include_router(router)
-    # Same-origin UI (#66): the no-build static tree ships inside the
-    # image and is served by the app itself - the reason the API can run
-    # with ZERO CORS headers. Neither the mount nor the root redirect
+    # Same-origin UI (#66, rebuilt in React at #80): the built tree ships
+    # inside the image and is served by the app itself - the reason the API
+    # can run with ZERO CORS headers. Neither the mount nor the root redirect
     # belongs in the /v1 contract (the gate allows only /health + /v1/*).
-    # The built React shell (#78), mounted BEFORE /ui so the more specific
-    # path wins. Additive on purpose: the classic tree below stays the panel
-    # users actually have until the rewrite item replaces it, because
-    # shipping a scaffold over a working UI would be a regression dressed as
-    # progress. Mounted only when the build exists, so a source checkout
-    # (where dist/ is gitignored) still starts.
+    #
+    # `dist/` is gitignored and built by app/Dockerfile, so a bare source
+    # checkout has none. That must fail LOUDLY rather than 404: a mysterious
+    # missing page reads like a routing bug, and the fix is one command. The
+    # placeholder deliberately carries no `data-i18n="app_title"`, so release
+    # phase A6 - which greps that marker out of raw HTML - can never mistake
+    # an unbuilt panel for a working one.
     ui_dist = Path(__file__).resolve().parent / "ui" / "dist"
     if (ui_dist / "index.html").exists():
-        app.mount("/ui/next", StaticFiles(directory=ui_dist, html=True),
-                  name="ui-next")
-
-    static_dir = Path(__file__).resolve().parent / "static"
-    app.mount("/ui", StaticFiles(directory=static_dir, html=True),
-              name="ui")
+        app.mount("/ui", StaticFiles(directory=ui_dist, html=True), name="ui")
+    else:
+        @app.get("/ui/{path:path}", include_in_schema=False)
+        def _ui_unbuilt(path: str = "") -> PlainTextResponse:
+            return PlainTextResponse(
+                "The panel UI is not built in this checkout.\n"
+                "Run: npm --prefix app/ui ci && npm --prefix app/ui run build\n"
+                "(the shipped image builds it during docker build).\n",
+                status_code=503)
 
     @app.get("/", include_in_schema=False)
     def _root() -> RedirectResponse:

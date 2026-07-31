@@ -295,16 +295,28 @@ def run_scenario(app_port: int, providers: Path, marker: Path,
     expect("add" in actions and "stats-purge" in actions,
            f"policy audit survives the purge and records it: {actions}")
 
-    # 12) the UI (#66) is served same-origin: root redirects into /ui/,
-    #     the page carries testids, the dictionaries resolve, and the API
-    #     the page calls needs no CORS because origin == API
+    # 12) the UI (#66, React since #80) is served same-origin: root redirects
+    #     into /ui/, the shell carries the A6 release marker, its assets point
+    #     at the mount, the dictionaries resolve, and the API the page calls
+    #     needs no CORS because origin == API.
+    #
+    #     This asserted `data-testid` in the raw HTML until #80. That only
+    #     held while the UI was hand-written markup - React renders its
+    #     testids with JavaScript, which this probe deliberately does not run
+    #     (app/ui/e2e/panel.spec.js drives a real browser for that). What a
+    #     JS-free probe CAN check is exactly what release phase A6 checks, so
+    #     it now guards that same string here rather than a weaker proxy for
+    #     it.
     status, _ = api("GET", app_port, "/v1/devices")
     expect(status == 200, "sanity: API up before the UI probe")
     req = urllib.request.Request(f"http://127.0.0.1:{app_port}/ui/")
     with urllib.request.urlopen(req, timeout=10) as resp:
         page = resp.read().decode()
-        expect(resp.status == 200 and "data-testid" in page,
-               "the UI page must serve with testids")
+        expect(resp.status == 200 and 'data-i18n="app_title"' in page,
+               "the UI shell must serve with the A6 marker in raw HTML")
+        expect("/ui/assets/" in page,
+               "the shell's asset paths must match the mount, or every asset "
+               "404s while the page still renders")
     req = urllib.request.Request(
         f"http://127.0.0.1:{app_port}/ui/i18n/zh.json")
     with urllib.request.urlopen(req, timeout=10) as resp:

@@ -39,6 +39,15 @@ READY_TIMEOUT_S = 40
 
 
 def main() -> int:
+    # The suite drives the BUILT panel, so a missing build must say so once
+    # rather than surface as every spec failing for its own reason. CI orders
+    # ui-build before ui-e2e and they share a workspace; locally it is one
+    # command.
+    if not (REPO / "app" / "ui" / "dist" / "index.html").exists():
+        print("FAIL: app/ui/dist is not built - the browser suite drives the "
+              "BUILT panel.\n      Run: npm --prefix app/ui ci && "
+              "npm --prefix app/ui run build", file=sys.stderr)
+        return 1
     with tempfile.TemporaryDirectory() as td:
         data = Path(td) / "data"
         providers = data / "config" / "providers"
