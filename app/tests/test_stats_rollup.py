@@ -119,8 +119,11 @@ def test_cap_noop_when_under(panel_env, stats_conn):
     db_path = panel_env["data"] / "state" / "stats.db"
     seed_minute(stats_conn, "2026-07-23T09:59")
     pruned = enforce_cap(stats_conn, db_path, cap_mb=512)
+    # UPDATED (never relaxed) as tiers land: #77 added `coverage`. An
+    # exact-set assertion is the point - it is what catches a tier added
+    # without a deliberate place in the drain order.
     assert pruned == {"day": 0, "hour": 0, "minute": 0, "domain": 0,
-                      "gap": 0}
+                      "coverage": 0, "gap": 0}
     assert stats_conn.execute(
         "SELECT COUNT(*) c FROM stats_minute").fetchone()["c"] == 1
 

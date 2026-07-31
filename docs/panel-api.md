@@ -78,6 +78,12 @@ Stats Chains
 
 Parameters: `tier`, `since`, `until`
 
+## `GET /v1/stats/coverage`
+
+Stats Coverage
+
+Parameters: `since`, `until`
+
 ## `GET /v1/stats/devices`
 
 Stats Devices

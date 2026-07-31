@@ -25,6 +25,22 @@ from app.store.db import open_db
 # what the PANEL_STATS_* knobs say.
 DOMAIN_RETENTION_DAYS = 7
 
+# The attribution classes (#77, DEC-B: hostname-only). A hostname is the
+# only signal that names an application; `rule`/`rulePayload` are routing
+# categories, and the release gate already refuses to treat GeoSite/cn as
+# proof of anything (validate_release.sh:1089-1092). Counting a routing
+# category as attribution would inflate the exact number DEC-6 exists to
+# measure honestly before blocking is built on it.
+KLASS_HOSTNAME = "hostname"
+KLASS_IP_ONLY = "ip_only"
+COVERAGE_CLASSES = (KLASS_HOSTNAME, KLASS_IP_ONLY)
+
+# Every table the token-gated purge clears. A new privacy-adjacent table
+# that is not in here would survive the one operation whose whole promise
+# is that nothing does.
+PURGE_TABLES = ("stats_minute", "stats_hour", "stats_day", "stats_domain",
+                "stats_coverage", "stats_gap")
+
 STATS_MIGRATIONS = [
     (1, """
     CREATE TABLE conn_baseline (
@@ -99,6 +115,35 @@ STATS_MIGRATIONS = [
     DROP TABLE stats_day;
     ALTER TABLE stats_day_v2 RENAME TO stats_day;
     """),
+    # v3 - attribution coverage (#77, DEC-6): measure what share of traffic
+    # could be attributed to an app at all, BEFORE a dictionary exists to
+    # attribute it with.
+    #
+    # `sniff_host` is retained here rather than in stats_domain, because
+    # widening THAT table's write-guard would change what an existing,
+    # shipped table stores under an unchanged operator configuration -
+    # which AC1 forbids outright. It is written ONLY when the
+    # off-by-default PANEL_STATS_DOMAINS gate is on, so in the default
+    # configuration the column is uniformly empty and the panel still
+    # persists zero hostname-derived rows, exactly as the bilingual docs
+    # promise. That is the panel's DEC-A rider met literally: a raw
+    # hostname may be persisted only behind the opt-in gate AND under the
+    # forced 7-day cap, never by default.
+    #
+    # `rule`/`rule_payload` ARE stored: they are routing categories, the
+    # same class of fact the chain tier already keeps, and the breakdown
+    # they give is what lets an operator tell a designed exclusion from a
+    # real attribution gap. Hour-keyed like stats_domain, which keeps it
+    # UTC and out of the day tier's bucket_tz/day_boundary contract.
+    (3, """
+    CREATE TABLE stats_coverage (
+        bucket TEXT NOT NULL, device TEXT NOT NULL, klass TEXT NOT NULL,
+        rule TEXT NOT NULL DEFAULT '', rule_payload TEXT NOT NULL DEFAULT '',
+        sniff_host TEXT NOT NULL DEFAULT '',
+        up INTEGER NOT NULL DEFAULT 0, down INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (bucket, device, klass, rule, rule_payload, sniff_host)
+    );
+    """),
 ]
 
 
@@ -157,6 +202,15 @@ def flush_poll(conn, raw_conns: list, now: str, *, domains_enabled: bool,
             chains = rc.get("chains") or []
             chain = str(chains[-1]) if chains else "DIRECT"
             host = str(meta.get("host") or "")
+            # #77: the classification signal already on the wire, previously
+            # discarded. `sniffHost` is what the sniffer recovered when the
+            # DNS path gave no name - so for CLASSIFYING a flow it counts
+            # exactly like `host`, but as a hostname it is stored only where
+            # hostnames already live (the opt-in domain table below).
+            sniff = str(meta.get("sniffHost") or "")
+            rule = str(rc.get("rule") or "")
+            payload = str(rc.get("rulePayload") or "")
+            named = host or sniff
             base = conn.execute(
                 "SELECT up, down FROM conn_baseline WHERE conn_id = ?",
                 (cid,)).fetchone()
@@ -173,6 +227,22 @@ def flush_poll(conn, raw_conns: list, now: str, *, domains_enabled: bool,
                     "ON CONFLICT(bucket, device, chain) DO UPDATE SET "
                     "up = up + excluded.up, down = down + excluded.down",
                     (minute_bucket, device, chain, d_up, d_down))
+                conn.execute(
+                    "INSERT INTO stats_coverage (bucket, device, klass, "
+                    "rule, rule_payload, sniff_host, up, down) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+                    "ON CONFLICT(bucket, device, klass, rule, rule_payload, "
+                    "sniff_host) "
+                    "DO UPDATE SET up = up + excluded.up, "
+                    "down = down + excluded.down",
+                    (hour_bucket, device,
+                     KLASS_HOSTNAME if named else KLASS_IP_ONLY,
+                     rule, payload,
+                     # the raw hostname ONLY behind the opt-in gate; empty
+                     # in the default configuration, so the column adds no
+                     # cardinality and no privacy surface there
+                     sniff if domains_enabled else "",
+                     d_up, d_down))
                 if domains_enabled and host:
                     conn.execute(
                         "INSERT INTO stats_domain "
@@ -278,6 +348,12 @@ def rollup(conn, now: str, *, day) -> None:
         conn.execute("DELETE FROM stats_day WHERE bucket < ?", (day_slack,))
         conn.execute("DELETE FROM stats_domain WHERE bucket < ?",
                      (domain_cut,))
+        # DEC-A (panel-confirmed): coverage inherits the domain table's
+        # FORCED horizon rather than gaining a knob of its own. The rejected
+        # option would have extended retention of hostname-adjacent data
+        # past a documented, deliberately non-configurable promise.
+        conn.execute("DELETE FROM stats_coverage WHERE bucket < ?",
+                     (domain_cut,))
         # gap history ages out with the oldest data tier: a gap older than
         # any retained measurement explains nothing (and an unbounded gap
         # table could otherwise defeat the hard size cap)
@@ -299,6 +375,11 @@ _CAP_TIERS = (("day", "stats_day", "bucket"),
               ("hour", "stats_hour", "bucket"),
               ("minute", "stats_minute", "bucket"),
               ("domain", "stats_domain", "bucket"),
+              # After the day tier, deliberately: enforce_cap drains
+              # data-age-first and eats `day` FIRST, so a 7-day-bounded
+              # table placed early would cost long-term history to reclaim
+              # a week of counters.
+              ("coverage", "stats_coverage", "bucket"),
               ("gap", "stats_gap", "started"))
 
 
@@ -339,8 +420,9 @@ def purge_stats(conn) -> None:
     lives in policy.db and is untouched by construction."""
     conn.execute("BEGIN IMMEDIATE")
     try:
-        for table in ("stats_minute", "stats_hour", "stats_day",
-                      "stats_domain", "stats_gap"):
+        # PURGE_TABLES is the single list, so a table added later cannot
+        # quietly survive the one operation whose promise is that none does.
+        for table in PURGE_TABLES:
             conn.execute(f"DELETE FROM {table}")
         conn.execute("COMMIT")
     except BaseException:
@@ -456,3 +538,113 @@ def read_gaps(conn, limit: int = 100) -> list:
         "SELECT started, ended, reason FROM stats_gap "
         "ORDER BY id DESC LIMIT ?", (max(1, min(limit, 1000)),)).fetchall()
     return [dict(r) for r in rows]
+
+
+def read_coverage(conn, since: str = "", until: str = "") -> list:
+    """Bytes per attribution class over a window.
+
+    The classes are the whole point of #77: `hostname` means the flow
+    carried a name an app dictionary could eventually match, `ip_only`
+    means it did not. Routing signals never promote a flow (DEC-B) - the
+    release gate already refuses to read GeoSite/cn as proof of anything.
+    """
+    where, params = [], []
+    if since:
+        where.append("bucket >= ?")
+        params.append(since)
+    if until:
+        where.append("bucket <= ?")
+        params.append(until)
+    clause = f"WHERE {' AND '.join(where)}" if where else ""
+    rows = conn.execute(
+        f"SELECT klass, SUM(up) AS up, SUM(down) AS down "
+        f"FROM stats_coverage {clause} GROUP BY klass ORDER BY klass",
+        params).fetchall()
+    return [dict(r) for r in rows]
+
+
+def coverage_rules(conn, since: str = "", until: str = "") -> list:
+    """Unattributable bytes, broken down by the rule that routed them.
+
+    AC2 asks for a "deliberately excluded" share. This does not produce
+    one, for a reason worth stating precisely rather than confidently.
+
+    VERIFIED here: the template's skip-domain list lives entirely inside
+    the `sniffer:` block and no `rules:` entry references it, so it
+    changes sniffing rather than routing.
+
+    NOT verified here, and deliberately not asserted: whether mihomo still
+    reports `metadata.sniffHost` for a flow whose sniffing was skipped.
+    This repo vendors no mihomo source and captures no fixture of such a
+    flow. If it DOES report one, that flow carries a name and is
+    attributable under DEC-B - correctly counted, just not visible as an
+    exclusion. If it does NOT, the flow is indistinguishable from ordinary
+    IP-only residue. Either way, separating exclusions out would require
+    hardcoding the exclusion list, which CLAUDE.md forbids outright.
+
+    So what is reported is what is observable: which rule routed each
+    unattributable byte. An operator can read a designed exclusion off its
+    own rule name where one exists, without the panel guessing on their
+    behalf - and which of the two cases actually holds is precisely the
+    sort of thing this ticket's own output is meant to reveal.
+    """
+    where = ["klass = ?"]
+    params = [KLASS_IP_ONLY]
+    if since:
+        where.append("bucket >= ?")
+        params.append(since)
+    if until:
+        where.append("bucket <= ?")
+        params.append(until)
+    clause = "WHERE " + " AND ".join(where)
+    rows = conn.execute(
+        f"SELECT rule, rule_payload, SUM(up) AS up, SUM(down) AS down "
+        f"FROM stats_coverage {clause} GROUP BY rule, rule_payload "
+        f"ORDER BY SUM(up) + SUM(down) DESC, rule, rule_payload",
+        params).fetchall()
+    return [dict(r) for r in rows]
+
+
+def coverage_report(conn, since: str = "", until: str = "") -> dict:
+    """The measurement DEC-6 asks for: what share of bytes is attributable.
+
+    EVERY known class is listed even at zero, so a consumer never has to
+    guess whether a missing class means "none" or means "not measured" -
+    the same honesty rule the apply badge and the import ledger follow.
+    Shares are of total bytes (up + down) and sum to 100 by construction,
+    or to 0 on an empty window rather than dividing by it.
+    """
+    counted = {r["klass"]: r for r in read_coverage(conn, since, until)}
+    oldest = conn.execute(
+        "SELECT MIN(bucket) FROM stats_coverage").fetchone()[0]
+    total_up = sum(r["up"] for r in counted.values())
+    total_down = sum(r["down"] for r in counted.values())
+    total = total_up + total_down
+    classes = []
+    for klass in COVERAGE_CLASSES:
+        row = counted.get(klass) or {"up": 0, "down": 0}
+        share = round(100.0 * (row["up"] + row["down"]) / total, 6) if total else 0.0
+        classes.append({"klass": klass, "up": row["up"], "down": row["down"],
+                        "share": share})
+    # Attribution lives ONLY here, under the forced 7-day cap - the 90/730
+    # day byte tiers carry no klass or rule column at all. So a caller
+    # asking for 30 days gets a percentage computed over at most 7, and
+    # saying so is the difference between a measurement and a number.
+    # DEC-6 exists to stop a blocking decision resting on quiet inaccuracy;
+    # a silently truncated window would be exactly that.
+    return {"total": {"up": total_up, "down": total_down},
+            "classes": classes,
+            "rules": coverage_rules(conn, since, until),
+            "window": {
+                "requested_since": since,
+                "requested_until": until,
+                "oldest_bucket": oldest or "",
+                "retention_days": DOMAIN_RETENTION_DAYS,
+                # True when the requested range starts before the oldest
+                # row held: the answer is correct for what it covers but
+                # does not answer the question asked. Deliberately does NOT
+                # distinguish retention pruning from a young install - the
+                # consequence for the caller is identical, and guessing
+                # which it was would be the panel inventing a story.
+                "truncated": bool(since and oldest and since < oldest),
+            }}

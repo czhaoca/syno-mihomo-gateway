@@ -236,6 +236,31 @@ def stats_timeline(request: Request, tier: Tier = "minute",
                                                   since, until)}
 
 
+@router.get("/v1/stats/coverage")
+def stats_coverage(request: Request, since: str = "", until: str = "") -> dict:
+    """What share of traffic could be attributed to an app at all (#77).
+
+    DEC-6 makes this the deliverable: the per-app feature exists to enable
+    BLOCKING, and blocking on bad attribution takes out the wrong app on a
+    gateway carrying all LAN traffic. So the number comes first, and it is
+    measured rather than assumed.
+
+    A flow counts as attributable only when it carried a hostname (DEC-B).
+    Routing signals never promote one - `rule`/`rulePayload` name a
+    routing category, not an application, and the release gate already
+    refuses to read `GeoSite/cn` as proof of anything. `rules` breaks the
+    unattributable remainder down by the rule that routed it, which is
+    what distinguishes a deliberate exclusion from a real gap.
+
+    No hostname is stored to produce this: the counters are hostname-free
+    by construction, so the report needs none of the privacy surface the
+    opt-in domain table carries.
+    """
+    with request.app.state.stats_lock:
+        conn = _stats_conn(request)
+        return stats_store.coverage_report(conn, since, until)
+
+
 @router.get("/v1/stats/gaps")
 def stats_gaps(request: Request, limit: int = 100) -> dict:
     with request.app.state.stats_lock:

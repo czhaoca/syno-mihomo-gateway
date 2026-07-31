@@ -140,7 +140,8 @@ def test_a_populated_v180_database_migrates_with_every_number_intact(tmp_path,
 
     new = open_stats_db(path)
     try:
-        assert new.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert new.execute(
+            "PRAGMA user_version").fetchone()[0] == len(STATS_MIGRATIONS)
         # every shipped row survives with its numbers, stamped as the UTC
         # framing that actually produced it
         assert [tuple(r) for r in new.execute(
@@ -164,9 +165,16 @@ def test_a_populated_v180_database_migrates_with_every_number_intact(tmp_path,
 
 
 def test_the_day_tier_is_stats_migration_two(sconn):
+    """The day tier is entry 2 and stays entry 2. The tail moves as later
+    tickets append (#77 added 3) - what must never change is that 2 is the
+    day-tier rebuild, because editing an existing entry would re-run
+    different DDL against databases that already applied the old one."""
     versions = [v for v, _ in STATS_MIGRATIONS]
-    assert versions == [1, 2], versions
-    assert sconn.execute("PRAGMA user_version").fetchone()[0] == 2
+    assert versions == sorted(set(versions)), versions
+    assert versions[:2] == [1, 2], versions
+    assert "stats_day_v2" in dict(STATS_MIGRATIONS)[2]
+    assert sconn.execute(
+        "PRAGMA user_version").fetchone()[0] == len(STATS_MIGRATIONS)
 
 
 def test_the_shipped_five_column_insert_idiom_still_works(sconn):
