@@ -116,6 +116,21 @@ steps:
       # one's rules fail silently when they stop working.
       - cd scripts/ci && python3 ui_build_check_test.py && cd ../..
 
+  - name: ui-e2e
+    # Browsers come from the IMAGE, never a per-run CDN download: a gate
+    # that fetches ~100MB of Chromium on every push is one network blip
+    # away from a red build that means nothing. The tag pins the browser
+    # build alongside the Playwright version, so the two can never drift.
+    image: mcr.microsoft.com/playwright:v1.62.1-noble
+    commands:
+      # The app under test is the REAL panel driven by uvicorn against the
+      # same FakeController the API e2e uses (scripts/ci/ui_e2e_server.py).
+      - apt-get update -qq && apt-get install -y -qq --no-install-recommends python3 python3-venv >/dev/null
+      - python3 -m venv /tmp/panelvenv
+      - /tmp/panelvenv/bin/pip install --quiet -r app/requirements.txt
+      - npm --prefix app/ui ci --no-audit --no-fund
+      - cd app/ui && PANEL_E2E_PYTHON=/tmp/panelvenv/bin/python npx playwright test
+
   - name: app-lint
     image: python:3.12-slim
     commands:

@@ -186,24 +186,18 @@ def test_no_warning_rides_on_a_suppressible_dialog():
         "notify() must stack messages, not overwrite an unread one"
 
 
-def test_band_confirm_guards_both_mutation_paths():
-    """CI has no JS runtime, so pin the DEC-4 gate textually: the confirm
-    key must guard BOTH the flip path and the add path, and the add path
-    must refresh the band list before deciding (the race the cycle-2
-    judge caught)."""
-    js = (STATIC / "app.js").read_text()
-    assert js.count('t("band_confirm")') >= 2, \
-        "the band confirm must gate flips AND adds"
-    add_body = js.split("async function addDevice")[1].split(
-        "async function")[0]
-    assert "band_confirm" in add_body and "BAND" in add_body
-    assert 'api("GET", "/v1/devices")' in add_body, \
-        "the add path must refresh the band list before deciding"
-    assert "if (!BAND.length)" not in add_body, \
-        "the refresh must be UNCONDITIONAL - a stale non-empty cache " \
-        "must never decide the gate"
-    assert "band_confirm_unknown" in add_body, \
-        "an unreadable band list must fail closed (confirm), not open"
+# test_band_confirm_guards_both_mutation_paths lived here until #79.
+# It string-split `app.js` function bodies - `js.split("async function
+# addDevice")[1]` - because CI had no JS runtime, and its own docstring
+# said so. It is DELETED rather than extended: splitting on a function name
+# proves the SOURCE contains a call, never that the dialog fires, and it
+# breaks on a rename that changes nothing real.
+#
+# All three properties it held are now asserted in the browser, against the
+# rendered page, in app/ui/e2e/panel.spec.js: the confirm gates a band
+# address, does NOT gate a non-band one, and the add path re-reads the band
+# rather than trusting a stale cache. Each is mutation-proven to fail when
+# the guard is removed, inverted, or allowed to go stale.
 
 
 def test_every_interactive_element_has_testid():
@@ -584,3 +578,24 @@ def test_band_member_flag_semantics(client, panel_env, monkeypatch):
     assert r.status_code == 200
     assert all(row["band_member"] is False for row in r.json()["devices"])
     assert r.json()["band"] == []
+
+
+def test_the_playwright_image_matches_the_pinned_playwright():
+    """Browsers come from the CI image, so the image tag and the package
+    version are one fact stored twice - and two copies of one fact drift.
+
+    They drifted the moment this step was written: the image said v1.56.0
+    while the lockfile resolved 1.62.1, which is a browser mismatch that
+    would either error or silently pull ~100MB per run, defeating the
+    whole point of pre-baking them.
+    """
+    import json
+    pkg = json.loads((APP / "ui" / "package.json").read_text())
+    pinned = pkg["devDependencies"]["@playwright/test"]
+    assert not pinned.startswith(("^", "~")), (
+        f"@playwright/test must be pinned EXACTLY (got {pinned!r}) - a range "
+        f"lets npm resolve a version the CI image has no browsers for")
+    ci = (APP.parent / ".woodpecker.yml").read_text()
+    assert f"mcr.microsoft.com/playwright:v{pinned}-" in ci, (
+        f"the ui-e2e image must be the v{pinned} Playwright image; the tag "
+        f"and the package version are the same fact and must move together")

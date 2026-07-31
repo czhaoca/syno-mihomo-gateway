@@ -49,3 +49,6 @@ __pycache__/
 # output is already covered by the bare `dist/` pattern above, which
 # predates this and was added for the release artifacts.
 node_modules/
+# Playwright run artifacts (#79) - traces/screenshots, never committed.
+test-results/
+playwright-report/
