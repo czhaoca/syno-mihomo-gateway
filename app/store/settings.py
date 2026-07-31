@@ -18,6 +18,7 @@ import zoneinfo
 from datetime import UTC, datetime
 
 from app import config
+from app.store import dayframe
 from app.store.audit import append_audit
 from app.validation import ValidationError
 
@@ -86,6 +87,27 @@ def _check_timezone(raw: str) -> str:
     return value
 
 
+# 03:00 rather than midnight: a session that starts at 01:00 belongs to the
+# day it began, not to the one that just started while nobody was awake.
+# Existing v1.8.0 day rows keep their own 00:00 stamp - this default applies
+# only to rows rolled from here on (#76).
+DEFAULT_DAY_BOUNDARY = "03:00"
+
+
+def _check_day_boundary(raw: str) -> str:
+    """A 24-hour HH:MM local time. Anchored deliberately: "3pm" or "25:00"
+    silently truncated into something plausible would mis-file every day
+    row from then on, and the stamp would make the wrong answer look
+    deliberate."""
+    value = (raw or "").strip()
+    if not dayframe.BOUNDARY_RE.match(value):
+        raise ValidationError(
+            f"day_boundary {value!r} must be a whole hour on a 24-hour "
+            f"clock, e.g. {DEFAULT_DAY_BOUNDARY} - the day tier rolls hour "
+            f"buckets, so a boundary inside an hour cannot be honoured")
+    return value
+
+
 class _Setting:
     __slots__ = ("default", "check", "description")
 
@@ -104,6 +126,11 @@ SPEC = {
         check=_check_timezone,
         description="IANA zone for day-tier rollups and displayed times; "
                     "defaults to the container's own TZ"),
+    "day_boundary": _Setting(
+        default=lambda: DEFAULT_DAY_BOUNDARY,
+        check=_check_day_boundary,
+        description="Local time at which a stats day starts (HH:MM). 03:00 "
+                    "keeps a late-night session on the day it began"),
 }
 
 

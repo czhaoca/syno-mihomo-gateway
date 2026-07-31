@@ -144,6 +144,26 @@ def health(request: Request) -> dict:
         # this port (DEC-12: node ops stay on the dashboard; no URL
         # literal may live in the static tree)
         "dashboard_port": config.dashboard_port(),
+        # The day tier's framing (#76). FLAT keys deliberately: the doctor
+        # reads /health with a sed scalar extractor (checks.sh _ph_field),
+        # which cannot see into a nested object. `day_framing` is
+        # ok|degraded|unknown - degraded means the configured zone would
+        # not resolve and the tier is keying in UTC, which the rows say
+        # too. It is reported here rather than through `last_error`,
+        # because every successful poll clears that within 10s while
+        # maintenance only runs once a minute: the symptom would erase
+        # itself faster than it could appear.
+        **_day_status(request),
+    }
+
+
+def _day_status(request: Request) -> dict:
+    collector = getattr(request.app.state, "collector", None)
+    status = getattr(collector, "status", None) or {}
+    return {
+        "day_tz": status.get("day_tz", ""),
+        "day_cut": status.get("day_cut", ""),
+        "day_framing": status.get("day_framing", "unknown"),
     }
 
 
@@ -160,6 +180,20 @@ def _stats_conn(request: Request):
 Tier = Literal["minute", "hour", "day"]
 
 
+def _day_framings(conn, tier: str, since: str, until: str) -> dict:
+    """Day-tier totals sum ACROSS framings, which is arithmetically exact -
+    every hour bucket rolls exactly once. What the sum cannot show is that
+    the day BOUNDARY moved inside the requested window, so the framings
+    present travel with the totals. More than one means the window is a
+    union of differently-defined days, not a single 24-hour one.
+
+    Absent on the minute and hour tiers, which have no framing at all.
+    """
+    if tier != "day":
+        return {}
+    return {"framings": stats_store.day_framings(conn, since, until)}
+
+
 @router.get("/v1/stats/devices")
 def stats_devices(request: Request, tier: Tier = "minute",
                   since: str = "", until: str = "") -> dict:
@@ -167,7 +201,8 @@ def stats_devices(request: Request, tier: Tier = "minute",
         conn = _stats_conn(request)
         return {"tier": tier,
                 "rows": stats_store.read_grouped(conn, tier, "device",
-                                                 since, until)}
+                                                 since, until),
+                **_day_framings(conn, tier, since, until)}
 
 
 @router.get("/v1/stats/chains")
@@ -177,7 +212,8 @@ def stats_chains(request: Request, tier: Tier = "minute",
         conn = _stats_conn(request)
         return {"tier": tier,
                 "rows": stats_store.read_grouped(conn, tier, "chain",
-                                                 since, until)}
+                                                 since, until),
+                **_day_framings(conn, tier, since, until)}
 
 
 @router.get("/v1/stats/domains")

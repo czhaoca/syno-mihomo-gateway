@@ -2,12 +2,18 @@
 hard size cap with oldest-tier-first pruning."""
 
 import pytest
+from app.store import dayframe
 from app.store.stats import (
     _db_bytes,
     enforce_cap,
     open_stats_db,
     rollup,
 )
+
+# These tests predate the local day tier and assert UTC day behaviour, so
+# they pin the UTC framing EXPLICITLY. Inheriting a default would let a
+# keying regression pass here unnoticed.
+_UTC = dayframe.utc_frame()
 
 
 @pytest.fixture()
@@ -31,7 +37,7 @@ def test_minute_rolls_into_hour_after_retention(stats_conn):
     seed_minute(stats_conn, "2026-07-20T09:01")
     seed_minute(stats_conn, "2026-07-20T09:02")
     seed_minute(stats_conn, "2026-07-23T09:59")
-    rollup(stats_conn, now="2026-07-23T10:00:00Z")  # minute retention 48h
+    rollup(stats_conn, now="2026-07-23T10:00:00Z", day=_UTC)  # minute retention 48h
     minutes = stats_conn.execute(
         "SELECT bucket FROM stats_minute ORDER BY bucket").fetchall()
     assert [r["bucket"] for r in minutes] == ["2026-07-23T09:59"]
@@ -49,7 +55,7 @@ def test_hour_rolls_into_day_and_day_expires(stats_conn):
     stats_conn.execute(
         "INSERT INTO stats_day (bucket, device, chain, up, down) "
         "VALUES ('2023-01-01', '192.0.2.20', 'Routing Mode', 1, 10)")
-    rollup(stats_conn, now="2026-07-23T10:00:00Z")  # hour 90d, day 2y
+    rollup(stats_conn, now="2026-07-23T10:00:00Z", day=_UTC)  # hour 90d, day 2y
     assert stats_conn.execute("SELECT * FROM stats_hour").fetchall() == []
     days = stats_conn.execute(
         "SELECT bucket, up, down FROM stats_day ORDER BY bucket").fetchall()
@@ -63,7 +69,7 @@ def test_rollup_aggregates_by_device_and_chain(stats_conn):
     seed_minute(stats_conn, "2026-07-20T09:01", device="192.0.2.21")
     seed_minute(stats_conn, "2026-07-20T09:02", device="192.0.2.20",
                 chain="Full-Tunnel Devices")
-    rollup(stats_conn, now="2026-07-23T10:00:00Z")
+    rollup(stats_conn, now="2026-07-23T10:00:00Z", day=_UTC)
     hours = stats_conn.execute(
         "SELECT device, chain, up FROM stats_hour "
         "ORDER BY device, chain").fetchall()
@@ -129,6 +135,6 @@ def test_gap_history_ages_out_with_day_retention(stats_conn, monkeypatch):
     stats_conn.execute(
         "INSERT INTO stats_gap (started, ended, reason) VALUES "
         "('2026-07-20T00:00:00Z', '2026-07-20T01:00:00Z', 'recent')")
-    rollup(stats_conn, now="2026-07-23T10:00:00Z")
+    rollup(stats_conn, now="2026-07-23T10:00:00Z", day=_UTC)
     gaps = stats_conn.execute("SELECT reason FROM stats_gap").fetchall()
     assert [r["reason"] for r in gaps] == ["recent"]

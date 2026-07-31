@@ -23,6 +23,7 @@ from app.collector.core import Collector, CollectorLoop
 from app.mihomo_client.client import MihomoClient
 from app.notify import webhook_notify
 from app.reconciler.core import Reconciler
+from app.store import dayframe, settings
 from app.store.db import StoreError, open_db
 from app.store.policy import desired_state
 from app.store.stats import open_stats_db
@@ -71,8 +72,25 @@ def create_app(*, mihomo_client=None, notifier=None) -> FastAPI:
         except StoreError:
             pass  # surfaced via /health; policy is unaffected by design
         if app.state.stats_conn is not None:
+            def day_source():
+                """The day tier's framing, resolved FRESH every maintenance
+                pass so a settings change lands within 60s without a panel
+                restart. The POLICY connection is read here rather than
+                handed to the collector: the connection alone is not the
+                unit of safety, it needs `app.state.mutex` with it."""
+                pconn = app.state.conn
+                if pconn is None:
+                    return dayframe.unusable(
+                        "the policy store is unavailable, so the configured "
+                        "timezone cannot be read")
+                with app.state.mutex:
+                    tz = settings.get(pconn, "timezone")
+                    cut = settings.get(pconn, "day_boundary")
+                return dayframe.resolve(tz, cut)
+
             app.state.collector = Collector(client=client,
-                                            conn=app.state.stats_conn)
+                                            conn=app.state.stats_conn,
+                                            day_source=day_source)
             interval = config.stats_poll_s()
             if interval > 0:
                 stats_loop = CollectorLoop(app.state.collector,

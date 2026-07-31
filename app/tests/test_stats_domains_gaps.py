@@ -3,9 +3,13 @@ regardless of any knob), honest gap rows on collector downtime, and the
 /health collector verdicts."""
 
 from app.collector.core import Collector
+from app.store import dayframe
 from app.store.stats import open_stats_db, rollup
 from app.tests.conftest import conn_fixture
 from fastapi.testclient import TestClient
+
+# Predates the local day tier: pin UTC framing explicitly.
+_UTC = dayframe.utc_frame()
 
 
 def _stats_conn(panel_env):
@@ -51,7 +55,7 @@ def test_domain_retention_forced_7d(panel_env, monkeypatch):
     conn.execute(
         "INSERT INTO stats_domain (bucket, device, domain, up, down) "
         "VALUES ('2026-07-22T10', '192.0.2.20', 'new.example.com', 1, 1)")
-    rollup(conn, now="2026-07-23T10:00:00Z")
+    rollup(conn, now="2026-07-23T10:00:00Z", day=_UTC)
     rows = conn.execute("SELECT domain FROM stats_domain").fetchall()
     assert [r["domain"] for r in rows] == ["new.example.com"]
     conn.close()

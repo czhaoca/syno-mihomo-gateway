@@ -13,6 +13,7 @@ import threading
 from datetime import UTC, datetime
 
 from app import config
+from app.store import dayframe
 from app.store import stats as stats_store
 
 POLL_INTERVAL_DEFAULT_S = 10  # DEC-C: the one place the cadence lives
@@ -31,12 +32,37 @@ def effective_interval_s() -> int:
     return knob if knob > 0 else POLL_INTERVAL_DEFAULT_S
 
 
+def _no_day_source() -> dayframe.DayFrame:
+    """The default when nobody wired a timezone source in: loudly unusable
+    rather than quietly UTC. A collector that guessed the framing would
+    stamp rows with a decision no one made."""
+    return dayframe.unusable("no timezone source is wired into this collector")
+
+
 class Collector:
-    def __init__(self, *, client, conn):
+    def __init__(self, *, client, conn, day_source=_no_day_source):
         self.client = client
         self.conn = conn
-        self.status = {"last_poll_ts": None, "last_error": None}
+        # DAY_SOURCE is a zero-arg callable resolved FRESH on every
+        # maintenance pass, never cached: a timezone change has to take
+        # effect on the next pass (<=60s) with no panel restart, and a
+        # cache with an invalidation hook would turn one missed bump into
+        # silently mis-filed rows - the failure class this epic removes.
+        self.day_source = day_source
+        self.status = {"last_poll_ts": None, "last_error": None,
+                       "day_tz": "", "day_cut": "", "day_framing": "unknown"}
         self._last_maintenance = None
+
+    def day_frame(self) -> dayframe.DayFrame:
+        """Resolve the framing, converting a raising source into a recorded
+        degraded frame. Called OUTSIDE the stats lock (see CollectorLoop):
+        the production source takes the POLICY mutex, and the two locks are
+        never nested anywhere today."""
+        try:
+            return self.day_source()
+        except Exception as exc:
+            return dayframe.unusable(
+                f"timezone lookup failed: {exc.__class__.__name__}: {exc}")
 
     def poll_once(self, now: str | None = None, _strict: bool = False,
                   lock=None) -> None:
@@ -60,11 +86,24 @@ class Collector:
                 raise
             self.status["last_error"] = f"{exc.__class__.__name__}: {exc}"
 
-    def maintain(self, now: str | None = None) -> None:
-        """Rollup cascade + cap enforcement; failures degrade like polls."""
+    def maintain(self, now: str | None = None, *, day=None) -> None:
+        """Rollup cascade + cap enforcement; failures degrade like polls.
+
+        DAY is the resolved framing. The loop passes it in, having resolved
+        it outside the stats lock; a direct caller may omit it and have it
+        resolved here (tests hold no lock, so the ordering cannot bite).
+        The day-tier state is recorded in its OWN status fields rather than
+        `last_error`, which every successful poll clears within 10s - a
+        rollup failing once a minute would otherwise erase its own symptom.
+        """
         now = now or _now_str()
+        frame = day if day is not None else self.day_frame()
+        self.status["day_tz"] = frame.tz or dayframe.UTC_TZ
+        self.status["day_cut"] = frame.cut or dayframe.UTC_CUT
+        self.status["day_framing"] = "ok" if frame.ok else "degraded"
+        self.status["day_error"] = frame.error
         try:
-            stats_store.rollup(self.conn, now)
+            stats_store.rollup(self.conn, now, day=frame)
             stats_store.enforce_cap(self.conn, config.stats_db_path(),
                                     config.stats_cap_mb())
         except Exception as exc:
@@ -104,8 +143,14 @@ class CollectorLoop:
             self.collector.poll_once(lock=self.lock)
             self._since_maintenance += self.interval_s
             if self._since_maintenance >= MAINTENANCE_EVERY_S:
+                # Resolved BEFORE the stats lock: the production source
+                # takes the POLICY mutex, and routes.py takes the two
+                # strictly sequentially, never nested. Resolving inside the
+                # lock would invent a stats->policy ordering that no path
+                # has today, leaving a deadlock one future route away.
+                frame = self.collector.day_frame()
                 with self.lock:
-                    self.collector.maintain()
+                    self.collector.maintain(day=frame)
                 self._since_maintenance = 0.0
             if self._stop.wait(self.interval_s):
                 return

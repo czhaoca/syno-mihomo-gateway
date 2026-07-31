@@ -35,7 +35,7 @@ def test_maintain_degrades_on_failure(panel_env, stats_conn, fake_client,
                                       monkeypatch):
     col = Collector(client=fake_client, conn=stats_conn)
 
-    def exploding_rollup(conn, now):
+    def exploding_rollup(conn, now, *, day=None):
         raise RuntimeError("rollup defect")
 
     monkeypatch.setattr(collector_core.stats_store, "rollup",
@@ -54,9 +54,9 @@ def test_loop_schedules_polls_and_maintenance(panel_env, stats_conn,
     maintained = threading.Event()
     real_maintain = col.maintain
 
-    def spy_maintain(now=None):
+    def spy_maintain(now=None, *, day=None):
         maintained.set()
-        real_maintain(now)
+        real_maintain(now, day=day)
 
     col.maintain = spy_maintain
     loop = CollectorLoop(col, threading.RLock(), interval_s=1)

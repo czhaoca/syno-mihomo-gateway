@@ -17,6 +17,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from app import config
+from app.store import dayframe
 from app.store.db import open_db
 
 # Forced, deliberately NOT a knob: per-domain data is privacy-sensitive
@@ -62,6 +63,41 @@ STATS_MIGRATIONS = [
         k TEXT PRIMARY KEY,
         v TEXT NOT NULL
     );
+    """),
+    # v2 - the day tier becomes LOCAL-keyed and stamps the framing that
+    # produced each row (#76, DEC-4). Minute and hour stay UTC.
+    #
+    # A full rebuild is unavoidable: the stamps have to join the PRIMARY
+    # KEY, SQLite cannot widen one, and `ALTER TABLE ADD COLUMN` cannot add
+    # to it. Leaving the shipped key alone is the actual danger - with
+    # PRIMARY KEY (bucket, device, chain), a locally-keyed row would UPSERT
+    # into the UTC row for the same date, which is precisely the silent
+    # relabel of shipped history this ticket forbids.
+    #
+    # The stamps are APPENDED (not inserted) so v1 column positions
+    # survive, and both carry DEFAULTs so the shipped five-column
+    # `INSERT INTO stats_day (bucket, device, chain, up, down)` idiom keeps
+    # working - a migration that broke the existing write shape would be a
+    # breaking change wearing an additive costume.
+    #
+    # Every pre-existing row is stamped UTC/00:00 because that is the
+    # framing that genuinely produced it, so no shipped number changes
+    # meaning. `auto_vacuum` is a database-level pragma and survives the
+    # table swap (enforce_cap's incremental_vacuum depends on it).
+    (2, """
+    CREATE TABLE stats_day_v2 (
+        bucket TEXT NOT NULL, device TEXT NOT NULL, chain TEXT NOT NULL,
+        up INTEGER NOT NULL DEFAULT 0, down INTEGER NOT NULL DEFAULT 0,
+        bucket_tz TEXT NOT NULL DEFAULT 'UTC',
+        day_boundary TEXT NOT NULL DEFAULT '00:00',
+        PRIMARY KEY (bucket, device, chain, bucket_tz, day_boundary)
+    );
+    INSERT INTO stats_day_v2
+        (bucket, device, chain, up, down, bucket_tz, day_boundary)
+        SELECT bucket, device, chain, up, down, 'UTC', '00:00'
+        FROM stats_day;
+    DROP TABLE stats_day;
+    ALTER TABLE stats_day_v2 RENAME TO stats_day;
     """),
 ]
 
@@ -180,17 +216,28 @@ def flush_poll(conn, raw_conns: list, now: str, *, domains_enabled: bool,
         raise
 
 
-def rollup(conn, now: str) -> None:
+def rollup(conn, now: str, *, day) -> None:
     """Cascade + retention in one transaction: minute rows older than the
     minute window aggregate into hours, hours into days, days expire; the
-    domain table prunes at its FORCED 7-day horizon."""
+    domain table prunes at its FORCED 7-day horizon.
+
+    DAY is a `dayframe.DayFrame` and is REQUIRED, deliberately. Defaulting
+    it would let a call site that forgot the framing produce UTC-keyed rows
+    that look like a decision; "cannot key locally" is a value
+    (`DayFrame.ok is False`), not an omitted argument, so it has exactly
+    one representation. An unusable frame degrades to UTC here rather than
+    skipping the roll: the hour DELETE below is also the hour tier's ONLY
+    retention, and `_CAP_TIERS` drains the DAY tier first under size
+    pressure - so a paused roll would grow `stats_hour` without bound while
+    the cap destroyed the long-term day history to make room for it.
+    """
     now_dt = _parse_ts(now)
     minute_cut = (now_dt - timedelta(
         hours=config.stats_minute_hours())).strftime("%Y-%m-%dT%H:%M")
     hour_cut = (now_dt - timedelta(
         days=config.stats_hour_days())).strftime("%Y-%m-%dT%H")
-    day_cut = (now_dt - timedelta(
-        days=config.stats_day_days())).strftime("%Y-%m-%d")
+    day_slack = (now_dt - timedelta(
+        days=config.stats_day_days() + 1)).strftime("%Y-%m-%d")
     domain_cut = (now_dt - timedelta(
         days=DOMAIN_RETENTION_DAYS)).strftime("%Y-%m-%dT%H")
     conn.execute("BEGIN IMMEDIATE")
@@ -205,22 +252,36 @@ def rollup(conn, now: str) -> None:
             (minute_cut,))
         conn.execute("DELETE FROM stats_minute WHERE bucket < ?",
                      (minute_cut,))
-        conn.execute(
-            "INSERT INTO stats_day (bucket, device, chain, up, down) "
-            "SELECT substr(bucket, 1, 10), device, chain, "
-            "SUM(up), SUM(down) FROM stats_hour WHERE bucket < ? "
-            "GROUP BY substr(bucket, 1, 10), device, chain "
-            "ON CONFLICT(bucket, device, chain) DO UPDATE SET "
-            "up = up + excluded.up, down = down + excluded.down",
-            (hour_cut,))
+        # The day tier is LOCAL-keyed, and SQLite cannot do timezone maths,
+        # so the key is computed per distinct hour bucket in Python while
+        # SQL still does every summation. `frame` supplies both the mapping
+        # and the stamp written into the row's identity.
+        frame = day if day.ok else dayframe.utc_frame()
+        for (hour_bucket,) in conn.execute(
+                "SELECT DISTINCT bucket FROM stats_hour WHERE bucket < ?",
+                (hour_cut,)).fetchall():
+            conn.execute(
+                "INSERT INTO stats_day (bucket, device, chain, up, down, "
+                "bucket_tz, day_boundary) "
+                "SELECT ?, device, chain, SUM(up), SUM(down), ?, ? "
+                "FROM stats_hour WHERE bucket = ? GROUP BY device, chain "
+                "ON CONFLICT(bucket, device, chain, bucket_tz, day_boundary) "
+                "DO UPDATE SET up = up + excluded.up, "
+                "down = down + excluded.down",
+                (dayframe.day_key(hour_bucket, frame), frame.tz, frame.cut,
+                 hour_bucket))
         conn.execute("DELETE FROM stats_hour WHERE bucket < ?", (hour_cut,))
-        conn.execute("DELETE FROM stats_day WHERE bucket < ?", (day_cut,))
+        # Retention stays UTC-derived with a day of slack: a local day key
+        # can sit either side of the UTC date it was rolled from, so
+        # comparing it against a UTC-derived horizon could otherwise evict
+        # a day the operator has not yet finished accumulating.
+        conn.execute("DELETE FROM stats_day WHERE bucket < ?", (day_slack,))
         conn.execute("DELETE FROM stats_domain WHERE bucket < ?",
                      (domain_cut,))
         # gap history ages out with the oldest data tier: a gap older than
         # any retained measurement explains nothing (and an unbounded gap
         # table could otherwise defeat the hard size cap)
-        conn.execute("DELETE FROM stats_gap WHERE ended < ?", (day_cut,))
+        conn.execute("DELETE FROM stats_gap WHERE ended < ?", (day_slack,))
         conn.execute("COMMIT")
     except BaseException:
         try:
@@ -314,6 +375,33 @@ def read_grouped(conn, tier: str, group_col: str, since: str = "",
     return [dict(r) for r in rows]
 
 
+def day_framings(conn, since: str = "", until: str = "") -> list:
+    """Every (bucket_tz, day_boundary) present in a day-tier window.
+
+    `read_grouped` deliberately keeps summing ACROSS framings: each hour
+    bucket is rolled exactly once, so the total is exact - no double count,
+    no loss - and splitting a by-device total into one row per framing
+    would change the shape of a table that answers "how much traffic".
+
+    What summing cannot show is that the WINDOW changed meaning partway:
+    two framings of one calendar date are two different 24-hour windows.
+    So the framings travel alongside the totals, and a caller seeing more
+    than one knows the boundary moved inside the range it asked about.
+    """
+    where, params = [], []
+    if since:
+        where.append("bucket >= ?")
+        params.append(since)
+    if until:
+        where.append("bucket <= ?")
+        params.append(until)
+    clause = f"WHERE {' AND '.join(where)}" if where else ""
+    rows = conn.execute(
+        f"SELECT DISTINCT bucket_tz, day_boundary FROM stats_day {clause} "
+        f"ORDER BY bucket_tz, day_boundary", params).fetchall()
+    return [dict(r) for r in rows]
+
+
 def read_timeline(conn, tier: str, device: str = "", since: str = "",
                   until: str = "") -> list:
     """Bucket-granular rows (optionally one device) - the UI's history
@@ -330,6 +418,17 @@ def read_timeline(conn, tier: str, device: str = "", since: str = "",
         where.append("bucket <= ?")
         params.append(until)
     clause = f"WHERE {' AND '.join(where)}" if where else ""
+    if tier == "day":
+        # The day tier groups by the STAMP as well as the bucket. Grouping
+        # on `bucket` alone would sum two framings of the same calendar
+        # date back into one row - hiding the seam in exactly the read
+        # someone would look at to find it. Minute and hour are unchanged.
+        rows = conn.execute(
+            f"SELECT bucket, bucket_tz, day_boundary, SUM(up) AS up, "
+            f"SUM(down) AS down FROM {table} {clause} "
+            f"GROUP BY bucket, bucket_tz, day_boundary "
+            f"ORDER BY bucket, bucket_tz, day_boundary", params).fetchall()
+        return [dict(r) for r in rows]
     rows = conn.execute(
         f"SELECT bucket, SUM(up) AS up, SUM(down) AS down FROM {table} "
         f"{clause} GROUP BY bucket ORDER BY bucket", params).fetchall()
