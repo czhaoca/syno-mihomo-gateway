@@ -84,7 +84,8 @@ scripts/
     panel_e2e_check.py        # CI: real uvicorn panel vs an in-step fake controller on loopback
     lib/assert.sh             # shared assertions for the sh suites
 app/                          # the gateway panel: FastAPI service core (store/reconciler/api/tests)
-.woodpecker.yml               # CI: 12 blocking steps (see the CI table below)
+.woodpecker.yml               # CI: 15 blocking steps (see the CI table below)
+.github/workflows/panel-image.yml  # CI: the panel-image build check (GitHub Actions; see the CI section)
 docs/                         # manual (EN) + docs/zh mirrors (中文) + docs/*.txt enduser guides
 ```
 
@@ -170,12 +171,24 @@ Runs on push/PR to `main` and `master`:
 | `cli-contract` | `python scripts/ci/cli_contract_check.py` — byte-diffs the committed `help.sh`/`cli.md` (en+zh)/`CLI.txt` (en+zh) against a fresh regeneration from `scripts/cli/spec.yaml`, and asserts the spec's exit codes match `common.sh`, its verb set matches `gateway.sh`'s dispatch, and `gateway.sh --help` serves the spec text verbatim |
 | `compose-policy` | `python scripts/ci/compose_policy_check.py` — asserts **fail-closed** image refs: every compose `image:` is exactly `${VAR}`/`${VAR:?msg}` (no defaults, no hardcoded refs) and `.env.example` defines the image vars and ships `REGISTRY_MODE=acr` (ACR default; `docker` upstream is an explicit opt-in, not forbidden); also freezes the **container-name contract** — every service pins `container_name:`, the core pair is exactly `mihomo`/`mihomo-ui`, and `scripts/lib/compose.sh`'s defaults mirror them (a rename is a breaking operator-contract change) |
 | `package-check` | `python scripts/ci/package_check.py` — builds the dev, enduser, **and linux** bundles in throwaway repos and proves **no secret can ship** (planted `.env`/subscription/`config.yaml` absent from the archives' names *and* bytes), checksums verify, the enduser bundle prunes developer/`.md`/CI files (including both generic-Linux entries), ships the installer + `.txt` guides, contains no identity string, and its leak-gate fails closed on an injected leak; the linux bundle ships the Pi + generic-Linux ports on top of the enduser set, keeps the identity gate fail-closed, tolerates the upstream forge URLs its runtime needs, and accepts `--profile pi` as a warned deprecated alias building the identical `-linux` artifacts |
+| `release-bundle` | `sh scripts/package.sh --profile enduser` then `--profile linux` — the **real** packager on the **real** tree: both curated bundles must build from HEAD, leak-gate included, on every push. `package-check` above proves the packager's guards *fire* (in a throwaway fixture); this step proves today's tree actually *passes* them — the two are complementary, and the second half is what was missing when the #74 identity leak survived to v1.9.0's release day and made the first tag unpackageable |
 | `privacy-check` | Scans tracked files and reachable blobs for private operational identifiers, credentials, private keys, and accidentally tracked runtime files (+ the gate's self-test) |
 | `dsm-shell-tests` | Twelve BusyBox `sh` suites with fake Docker/Compose/service CLIs: `dsm_installer_check`, `lifecycle_check`, `auto_update_check`, `cloudflared_check`, `generic_update_check`, `gateway_cli_check`, `seed_provider_check`, `proxy_groups_check` (the doctor's zero-node guard for the generated country groups — incl. the `default-empty` state, the country `Exit Country` is riding gone empty), `full_proxy_check` (the doctor's per-device full-proxy band guard — knob/render parity both directions, the `/connections` chain scan incl. the LAN-destination exemption and the UDP/QUIC fallthrough flag, plus the proxy_groups unknown short-circuit fixture), `mihomo_entrypoint_check` (the entrypoint's render-to-temp + `mihomo -t` gate: swap on green, last-good fallback + scrubbed rejection marker), `pi_installer_check` (the Raspberry Pi port's shared seams), `linux_installer_check` (the generic-Linux entry: install-linux.sh sourcing, the i18n delta overlay incl. the catalog no-Pi-branding sweep, the lite_ctl output rebranding with exit-code preservation, the menu dispatch into the pi engine, plus the macvlan-viability guard — virt/cloud detection, warn + explicit ack, decline steers to lite, choke points at both the pre-deployment cleanup (ack before any teardown) and create_network — the `EXPECTED_ARCH` auto-pin on the generic flow, and the docker-default registry wizard writing only the user `.env`, incl. closing the express fast-path bypass) — plus `validate_release.sh --self-test`, the unit checks of the on-NAS release-validation helper's measurement functions |
 | `shellcheck` | `sh -n` parse-checks **every** `*.sh` in the repo, then `shellcheck -x` on 23 targets: `install.sh`, `install-pi.sh`, `install-linux.sh`, `gateway.sh`, `auto_update.sh`, `pi/auto_update_lite.sh`, `pi/lite_ctl.sh`, `install_scheduler.sh`, `setup_network.sh`, `render_config.sh`, `mihomo_entrypoint.sh`, `package.sh`, `doctor.sh`, `state_diff.sh`, `seed_provider.sh`, `bootstrap.sh`, `lib/container.sh`, `lib/targets.sh`, `lib/geodata.sh`, `lib/panel.sh`, `linux/i18n_linux.sh`, `linux/preflight_linux.sh`, `validate_release.sh` (sourced libs followed in-context) |
+| `ui-build` | `npm --prefix app/ui ci` + `npm run lint`, then `python3 scripts/ci/ui_build_check.py --build` — the frontend toolchain (#78): `npm ci` so the lockfile is authoritative, then the **built-artifact** gate: the A6 release marker (`data-i18n="app_title"`) survived the bundler outside any comment, and every external URL in the bundle is in the documented inert allowlist — plus the gate's own positive/negative self-test (`ui_build_check_test.py`) |
+| `ui-e2e` | `npx playwright test` — the REAL panel under uvicorn against the same FakeController the API e2e uses (`scripts/ci/ui_e2e_server.py`); browsers come from the pinned `mcr.microsoft.com/playwright` image, never a per-run CDN download, so the browser build can never drift from the Playwright version |
 | `app-lint` | `ruff check app` — the panel app lint (ruff pinned in `app/requirements-dev.txt`, config scoped via `app/ruff.toml`) |
 | `app-unit` | `python -m pytest app/tests -q` — the hermetic panel unit suite (fake controller client + tmp trees; validation classes, store/migrations/backups, reconciler happy/loud paths, auth matrix, audit append-only) — then `python scripts/ci/panel_contract_check.py`, the committed contract gate: `app/openapi.json` AND the generated `docs/panel-api.md` byte-identity (regenerate both with `--write`; the /v1 surface is additive-only — breaking = new version prefix + explicit owner acknowledgment) |
 | `app-e2e` | `python scripts/ci/panel_e2e_check.py` — the REAL app under uvicorn against an in-step fake mihomo controller + webhook sink on loopback (daemonless): startup re-sync, bearer-gated mutations, write→refresh→count-parity, the loud failure path (marker + `{title,body}` webhook + `parity=failed`), recovery via `/v1/apply` |
+
+One check runs **outside** Woodpecker: the **`panel-image` GitHub Actions workflow**
+(`.github/workflows/panel-image.yml`) runs `docker build -f app/Dockerfile app/` on every push —
+build-and-discard, no registry login, no push. It lives on GitHub Actions because the Woodpecker
+repo is untrusted (no socket mounts, no privileged steps) and CI step containers deliberately stay
+plain daemonless images; the sibling Panel Build workflow already proves GitHub Actions builds this
+exact Dockerfile at release time. Publishing stays exclusively the sibling's job. **The pre-tag
+gate is BOTH surfaces green on the release commit**: Woodpecker's 15 steps *and* the `panel-image`
+check.
 
 ## The CLI contract (generated files)
 
@@ -210,8 +223,11 @@ sh scripts/package.sh --version 1.2.12         # override the VERSION file
   `dist/`. Run from a **clean checkout** — it refuses a dirty tree unless `--allow-dirty`.
 - Source-only: container images are not bundled. They reach the NAS via the `docker-china-sync`
   ACR mirror (see [Relationship to docker-china-sync](#relationship-to-docker-china-sync)).
-- Safeguards: `package.sh` refuses to build if a secret path is tracked, and CI's `package-check`
-  (`scripts/ci/package_check.py`) proves the archive ships no secret on every push.
+- Safeguards: `package.sh` refuses to build if a secret path is tracked; CI's `package-check`
+  (`scripts/ci/package_check.py`) proves the archive ships no secret on every push; and CI's
+  `release-bundle` builds both curated bundles from the real tree on every push, so an
+  unpackageable tree (the v1.9.0 incident: a forbidden identity string in a tracked file)
+  fails the push, not the release.
 - The default (enduser) profile prunes developer/CI files via the `ENDUSER_EXCLUDES` pathspec in
   `package.sh` (README.md, AGENTS.md, `docs/*.md`, `docs/zh`, `scripts/ci`, `scripts/cli`, the
   Pi + generic-Linux ports, …) and ships the `.txt` guides + `install.sh`; a `leak_scan` identity
@@ -227,7 +243,7 @@ Publishing follows a fixed order — the NAS validation sits **before** the tag 
 caught live bugs CI could not):
 
 1. Commit to `master` and push.
-2. Wait for **green Woodpecker CI** on that exact commit.
+2. Wait for **green Woodpecker CI and the green `panel-image` GitHub check** on that exact commit.
 3. Build both curated bundles: `sh scripts/package.sh` and `sh scripts/package.sh --profile linux`.
 4. Deploy and validate the enduser bundle **on the production NAS before tagging** — walk
    [Release Zip › Verify](release-packaging.md#6-verify) as the acceptance gate.
@@ -295,6 +311,14 @@ docker compose --env-file .env.example config --quiet
 
 # release packaging safeguard (hermetic; builds the dev, enduser + linux bundles in temp repos, needs git)
 python3 scripts/ci/package_check.py
+
+# the release-bundle gate: the REAL packager on the REAL tree, leak-gate included
+# (needs a clean checkout; artifacts land in the gitignored dist/)
+sh scripts/package.sh --profile enduser
+sh scripts/package.sh --profile linux
+
+# the panel-image gate's local equivalent (the GitHub check runs exactly this)
+docker build -f app/Dockerfile app/
 
 # the twelve fake-Docker/PATH-stub TDD suites CI runs, plus the
 # release-validation helper's self-test (no NAS mutation)

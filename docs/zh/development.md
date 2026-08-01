@@ -83,7 +83,8 @@ scripts/
     panel_e2e_check.py        # CI：真实 uvicorn 面板对回环上的步内伪控制器
     lib/assert.sh             # sh 测试套件共享的断言
 app/                          # 网关面板：FastAPI 服务核心（store/reconciler/api/tests）
-.woodpecker.yml               # CI：12 个阻断式步骤（见下方 CI 表格）
+.woodpecker.yml               # CI：15 个阻断式步骤（见下方 CI 表格）
+.github/workflows/panel-image.yml  # CI：panel-image 镜像构建检查（GitHub Actions；见 CI 一节）
 docs/                         # 手册（EN）+ docs/zh 中文镜像 + docs/*.txt 最终用户指南
 ```
 
@@ -164,12 +165,23 @@ EXIT 陷阱不会回收它（`CF_KEEP_CANDIDATE`）。
 | `cli-contract` | `python scripts/ci/cli_contract_check.py` —— 将已提交的 `help.sh`/`cli.md`（中英）/`CLI.txt`（中英）与从 `scripts/cli/spec.yaml` 全新重新生成的版本逐字节比对，并断言 spec 的退出码与 `common.sh` 一致、其动词集合与 `gateway.sh` 的分发一致、且 `gateway.sh --help` 逐字输出 spec 文本 |
 | `compose-policy` | `python scripts/ci/compose_policy_check.py` —— 断言 **fail-closed** 的镜像引用：compose 中每个 `image:` 都严格是 `${VAR}`/`${VAR:?msg}`（无默认值、无硬编码引用），且 `.env.example` 定义了这些镜像变量并携带 `REGISTRY_MODE=acr`（ACR 为默认；`docker` 上游是显式可选项，并非被禁止）；同时冻结**容器名契约**——每个服务都必须固定 `container_name:`，核心一对严格为 `mihomo`/`mihomo-ui`，且 `scripts/lib/compose.sh` 的默认值与之一致（改名属于破坏运维契约的变更） |
 | `package-check` | `python scripts/ci/package_check.py` —— 在临时仓库中构建开发、最终用户与 **linux 三种**发布包，证明**任何密钥都不会被打包**（植入的 `.env`/订阅/`config.yaml` 不出现在压缩包的文件名*和*字节中）、校验和正确、最终用户包剔除了开发者/`.md`/CI 文件（含两个通用 Linux 入口）、附带安装器与 `.txt` 指南、不含任何身份字符串，且其防泄漏门对注入的泄漏会以失败告终（fail-closed）；linux 包在 enduser 集合之上附带 Pi 与通用 Linux 移植，身份门禁保持 fail-closed，容许其运行时所需的上游托管域名，并接受 `--profile pi` 作为带警告的已弃用别名（构建完全相同的 `-linux` 产物） |
+| `release-bundle` | `sh scripts/package.sh --profile enduser` 然后 `--profile linux` —— 用**真实的**打包器构建**真实的**代码树：两个精选发布包（含防泄漏门）必须在每次推送时都能从 HEAD 构建成功。上面的 `package-check` 证明的是打包器的守卫*会触发*（在临时夹具仓库中）；本步骤证明的是今天的代码树确实*能通过*这些守卫——两者互补。缺失的正是后一半：#74 的身份字符串泄漏因此一直存活到 v1.9.0 发布日，使第一个标签指向了一棵无法打包的代码树 |
 | `privacy-check` | 扫描被跟踪文件和可达 blob，拒绝私有运维标识、凭据、私钥和意外跟踪的运行时文件（+ 该守卫的自测） |
 | `dsm-shell-tests` | 十二个在 BusyBox `sh` 下、使用伪 Docker/Compose/服务 CLI 的测试套件：`dsm_installer_check`、`lifecycle_check`、`auto_update_check`、`cloudflared_check`、`generic_update_check`、`gateway_cli_check`、`seed_provider_check`、`proxy_groups_check`（doctor 对生成的国家分组的零节点守卫——含 `default-empty` 状态：`Exit Country` 正在骑乘的国家分组归零）、`full_proxy_check`（doctor 对按设备全代理网段的守卫——开关/渲染双向一致性、`/connections` 代理链扫描（含局域网目标豁免与 UDP/QUIC 直通标记）、以及 proxy_groups 未知状态短路夹具）、`mihomo_entrypoint_check`（入口点先渲染到临时文件再 `mihomo -t` 守门：通过才切换、保留上一份好配置并写入脱敏拒绝标记）、`pi_installer_check`（Raspberry Pi 移植的共享接缝）、`linux_installer_check`（通用 Linux 入口：install-linux.sh 的 source 检查、i18n 增量覆盖层（含目录级无 Pi 品牌扫描）、lite_ctl 输出改写并保留退出码、菜单到 pi 引擎的分发，以及 macvlan 可用性守卫——虚拟化/云主机检测、警告 + 显式确认、拒绝则转入精简模式、在部署前清理（确认先于任何拆除）与 create_network 两处收口——通用流程上的 `EXPECTED_ARCH` 自动锁定、和只写用户 `.env` 的 docker 默认镜像源向导（含堵住快速路径绕过））——外加 `validate_release.sh --self-test`，即 NAS 端发布验证助手的测量函数单元检查 |
 | `shellcheck` | 先对仓库中**每一个** `*.sh` 运行 `sh -n` 语法检查，再对 23 个目标运行 `shellcheck -x`：`install.sh`、`install-pi.sh`、`install-linux.sh`、`gateway.sh`、`auto_update.sh`、`pi/auto_update_lite.sh`、`pi/lite_ctl.sh`、`install_scheduler.sh`、`setup_network.sh`、`render_config.sh`、`mihomo_entrypoint.sh`、`package.sh`、`doctor.sh`、`state_diff.sh`、`seed_provider.sh`、`bootstrap.sh`、`lib/container.sh`、`lib/targets.sh`、`lib/geodata.sh`、`lib/panel.sh`、`linux/i18n_linux.sh`、`linux/preflight_linux.sh`、`validate_release.sh`（被 source 的库在上下文中一并检查） |
+| `ui-build` | `npm --prefix app/ui ci` + `npm run lint`，然后 `python3 scripts/ci/ui_build_check.py --build` —— 前端工具链（#78）：用 `npm ci` 使 lockfile 具有权威性，随后是**构建产物**门：A6 发布标记（`data-i18n="app_title"`）在打包器处理后仍存活于注释之外，且打包产物中每个外部 URL 都在文档化的惰性白名单内——外加该门自身的正/负自测（`ui_build_check_test.py`） |
+| `ui-e2e` | `npx playwright test` —— 真实面板在 uvicorn 下对 API e2e 使用的同一个 FakeController（`scripts/ci/ui_e2e_server.py`）；浏览器来自钉定版本的 `mcr.microsoft.com/playwright` 镜像而非每次运行时从 CDN 下载，因此浏览器构建绝不会与 Playwright 版本漂移 |
 | `app-lint` | `ruff check app` —— 面板应用的 lint（ruff 版本钉在 `app/requirements-dev.txt`，配置经 `app/ruff.toml` 限定作用域） |
 | `app-unit` | `python -m pytest app/tests -q` —— 封闭式面板单元测试套件（伪控制器客户端 + 临时目录；校验类、store/迁移/备份、reconciler 正常/告警路径、鉴权矩阵、审计只追加）——随后运行 `python scripts/ci/panel_contract_check.py`，即已提交的契约门：`app/openapi.json` **以及**生成的 `docs/panel-api.md` 逐字节一致性（用 `--write` 同时重新生成两者；/v1 命令面只增不破——破坏性变更 = 新版本前缀 + 所有者显式确认） |
 | `app-e2e` | `python scripts/ci/panel_e2e_check.py` —— 真实 uvicorn 下的应用对回环上的步内伪 mihomo 控制器 + webhook 接收器（无守护进程）：启动重同步、bearer 鉴权门、写入→刷新→计数一致性、告警失败路径（标记 + `{title,body}` webhook + `parity=failed`）、经 `/v1/apply` 恢复 |
+
+有一项检查运行在 Woodpecker **之外**：**`panel-image` GitHub Actions 工作流**
+（`.github/workflows/panel-image.yml`）在每次推送时运行 `docker build -f app/Dockerfile app/`——
+只构建、即弃，不登录镜像仓库、不推送。它放在 GitHub Actions 上是因为 Woodpecker 仓库处于
+非受信状态（不能挂载 socket、不能运行特权步骤），且 CI 步骤容器刻意保持为无守护进程的普通
+镜像；姊妹仓库的 Panel Build 工作流已经证明 GitHub Actions 能在发布时构建这个 Dockerfile。
+镜像的发布仍然只属于姊妹工作流。**打标签前的门槛是两个面都变绿**：Woodpecker 的 15 个步骤
+*加上* `panel-image` 检查，都在发布提交上通过。
 
 ## CLI 契约（生成的文件）
 
@@ -204,7 +216,9 @@ sh scripts/package.sh --version 1.2.12         # 覆盖 VERSION 文件
 - 仅含源码：不打包容器镜像。镜像通过 `docker-china-sync` 的 ACR 镜像到达 NAS
   （见[与 docker-china-sync 的关系](#与-docker-china-sync-的关系)）。
 - 安全保障：若有密钥路径被 git 跟踪，`package.sh` 会拒绝构建；CI 的 `package-check`
-  （`scripts/ci/package_check.py`）在每次推送时证明压缩包不含任何密钥。
+  （`scripts/ci/package_check.py`）在每次推送时证明压缩包不含任何密钥；CI 的
+  `release-bundle` 在每次推送时用真实代码树构建两个精选发布包，因此一棵无法打包的代码树
+  （v1.9.0 事故：被跟踪文件中含禁止的身份字符串）会让推送失败，而不是让发布失败。
 - 默认（最终用户）配置会通过 `package.sh` 中的 `ENDUSER_EXCLUDES` 路径规格剔除开发者/CI
   文件（README.md、AGENTS.md、`docs/*.md`、`docs/zh`、`scripts/ci`、`scripts/cli`、Pi 与通用
   Linux 移植等），并附带 `.txt` 指南 + `install.sh`；一个 `leak_scan` 身份门会在暂存树中 grep
@@ -219,7 +233,7 @@ sh scripts/package.sh --version 1.2.12         # 覆盖 VERSION 文件
 真实缺陷）：
 
 1. 提交到 `master` 并推送。
-2. 等待该提交上的 Woodpecker CI **全部变绿**。
+2. 等待该提交上的 **Woodpecker CI 与 `panel-image` GitHub 检查全部变绿**。
 3. 构建两个精选发布包：`sh scripts/package.sh` 与 `sh scripts/package.sh --profile linux`。
 4. **打标签之前**先把最终用户包部署到生产 NAS 并完成验证——以
    [离线发布包 › 验证](release-packaging.md#6-验证)作为验收门。
@@ -286,6 +300,14 @@ docker compose --env-file .env.example config --quiet
 
 # 发布打包安全保障（封闭环境；在临时仓库中构建 dev、enduser、linux 三种包，需要 git）
 python3 scripts/ci/package_check.py
+
+# release-bundle 门：用真实的打包器构建真实的代码树，含防泄漏门
+#（需要干净的工作区；产物输出到被 gitignore 的 dist/）
+sh scripts/package.sh --profile enduser
+sh scripts/package.sh --profile linux
+
+# panel-image 门的本地等价物（GitHub 检查运行的正是这条命令）
+docker build -f app/Dockerfile app/
 
 # CI 运行的十二个伪 Docker/PATH 桩 TDD 测试套件，外加发布验证助手的
 # 自测（不修改 NAS）
