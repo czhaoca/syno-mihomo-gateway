@@ -55,7 +55,7 @@ PROFILE=enduser
 # would trip the leak-gate below). The leak-gate is the belt-and-suspenders
 # that fails the build if any identifying string survives anyway. ('.' = include
 # everything tracked, then subtract.) No entry contains a space.
-ENDUSER_EXCLUDES=". :(exclude)app :(exclude)README.md :(exclude)AGENTS.md :(exclude)CLAUDE.md :(exclude).woodpecker.yml :(exclude).gitignore :(exclude)docs/*.md :(exclude)docs/zh :(exclude)scripts/ci :(exclude)scripts/cli :(exclude)scripts/package.sh :(exclude)install-pi.sh :(exclude)scripts/pi :(exclude)docs/INSTALL-LINUX.txt :(exclude)docs/INSTALL-LINUX.zh.txt :(exclude)install-linux.sh :(exclude)scripts/linux"
+ENDUSER_EXCLUDES=". :(exclude)app :(exclude)README.md :(exclude)AGENTS.md :(exclude)CLAUDE.md :(exclude).woodpecker.yml :(exclude).github :(exclude).gitignore :(exclude)docs/*.md :(exclude)docs/zh :(exclude)scripts/ci :(exclude)scripts/cli :(exclude)scripts/package.sh :(exclude)install-pi.sh :(exclude)scripts/pi :(exclude)docs/INSTALL-LINUX.txt :(exclude)docs/INSTALL-LINUX.zh.txt :(exclude)install-linux.sh :(exclude)scripts/linux"
 
 # The linux bundle is the enduser set PLUS the generic-Linux port (both entry
 # points and their script trees): derived, not copied, so the two pathspecs can

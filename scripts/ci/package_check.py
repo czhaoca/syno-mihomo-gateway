@@ -118,6 +118,8 @@ ENDUSER_MUST_EXCLUDE = [
     PREFIX + "AGENTS.md",
     PREFIX + "CLAUDE.md",
     PREFIX + ".woodpecker.yml",
+    PREFIX + ".github/workflows/panel-image.yml",
+    PREFIX + ".github/workflows/decoy2.yml",
     PREFIX + ".gitignore",
     PREFIX + "docs/installation.md",
     PREFIX + "docs/zh/installation.md",
@@ -434,6 +436,14 @@ def build_enduser_fixture(root: Path):
     (root / "AGENTS.md").write_text("Registered in Nimbus. Repo git@github.com:czhaoca/x.git\n")
     (root / "CLAUDE.md").write_text("Registered in Nimbus registry.\n")
     (root / ".woodpecker.yml").write_text("steps:\n  test:\n    image: alpine\n")
+    # The panel-image GitHub check (#81): a real workflow file necessarily
+    # names forge hostnames, so ':(exclude).github' must prune the whole dir
+    # or the enduser leak-gate fails on the repo's own CI config.
+    (root / ".github" / "workflows").mkdir(parents=True)
+    (root / ".github" / "workflows" / "panel-image.yml").write_text(
+        "# builds on github actions\non: push\n")
+    (root / ".github" / "workflows" / "decoy2.yml").write_text(
+        "# second fixture file so a narrowed exclude cannot slip past\non: push\n")
     (root / "docs" / "installation.md").write_text("git clone https://github.com/czhaoca/x.git\n")
     (root / "docs" / "zh" / "installation.md").write_text("clone https://github.com/czhaoca/x\n")
     # Deliberately identity-FREE subdirectory .md decoys: only the recursive

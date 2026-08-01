@@ -1,0 +1,38 @@
+# panel-image - the push-time build gate for app/Dockerfile (#81, DEC-A).
+#
+# WHY THIS LIVES IN GITHUB ACTIONS AND NOT .woodpecker.yml: the Woodpecker
+# repo is untrusted on the server (no volume mounts, no privileged steps), and
+# the repo's own CI convention keeps step containers plain daemonless images -
+# so a docker build cannot run there. The sibling Panel Build workflow already
+# proves GitHub Actions builds this exact Dockerfile at release time; this
+# workflow moves that same real build to push time, so a Dockerfile-wiring
+# break (a COPY path, a stage ref, a base tag, the UI build leg) fails the
+# push instead of the release.
+#
+# BUILD AND DISCARD, on purpose: no registry login, no push, no secret of any
+# kind. Publishing stays exclusively the sibling Panel Build workflow's job.
+#
+# No paths: filter, also on purpose - the ship flow gates tagging on this
+# check being GREEN on the release commit, and a check that sometimes does
+# not run makes "green" ambiguous exactly when it matters. The build is a
+# couple of minutes on a public repo's free runners; always-on is cheap.
+
+name: panel-image
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The exact command a maintainer runs locally (docs/development.md) and
+      # the ticket's verification command - plain docker build, not a
+      # build-push action, so nothing here could ever acquire push
+      # credentials.
+      - name: Build the panel image (never pushed)
+        run: docker build -f app/Dockerfile app/

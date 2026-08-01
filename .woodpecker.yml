@@ -61,6 +61,22 @@ steps:
       - apt-get update -qq && apt-get install -y -qq --no-install-recommends git >/dev/null
       - python scripts/ci/package_check.py
 
+  - name: release-bundle
+    image: python:3.12-slim
+    commands:
+      # The REAL packager on the REAL tree (#81). package-check above proves the
+      # packager's GUARDS fire - but only inside a throwaway fixture repo, so it
+      # structurally cannot see a real forbidden string in THIS tree. That gap is
+      # how the #74 identity leak survived to release day and made the first
+      # v1.9.0 tag point at an unpackageable tree. This step closes it: both
+      # curated bundles must build from today's HEAD, leak-gate included, on
+      # every push - not on release day. (The panel IMAGE has its own push
+      # gate: the panel-image GitHub check - the Woodpecker repo is untrusted,
+      # so a docker build cannot run here; steps stay plain daemonless images.)
+      - apt-get update -qq && apt-get install -y -qq --no-install-recommends git >/dev/null
+      - sh scripts/package.sh --profile enduser
+      - sh scripts/package.sh --profile linux
+
   - name: privacy-check
     image: python:3.12-slim
     commands:
