@@ -134,23 +134,20 @@ can overwrite a name a human typed.
 
 ### Which name you see
 
-A device that carries a policy can hold **two** independent names: the alias
-above, and the older policy-scoped `name` on the `devices` row itself. The
-store defines no precedence between them on purpose, so that the rule is
-applied once — in the interface — instead of guessed at per call site.
+A name has exactly **one home**. A single host (`/32`) is named by its alias
+— the identity-layer name: it survives the device's policy being removed,
+and yours outranks every importer. A range cannot carry an alias (an alias
+is keyed on a single host), so its policy-scoped `name` on the `devices` row
+is the only name it can have.
 
-- **The alias wins**, wherever it can exist. It is the identity-layer name:
-  it survives the device's policy being removed, and yours outranks every
-  importer.
-- **A range keeps its `name`.** An alias is keyed on a single host, so a CIDR
-  wider than one address cannot carry one at all; there its `name` is simply
-  its name.
 - **Rename writes whichever layer the address can carry** — one control, no
   choice to make.
-- **A displaced policy label is still shown**, labelled as such, with a
-  **Retire label** action beside it. Hiding a stored name would be the only
-  dishonest way to do this; retiring is explicit and confirmed, never a side
-  effect of renaming, and the old text stays recoverable from the audit trail.
+- **Upgrading does not change any name you see.** Older versions could hold
+  a second, policy-scoped label on a host; the upgrade migration moves a
+  label that had no alias into the identity layer as your own edit, and
+  retires one an alias had already displaced into the audit trail
+  (`rename 'old' -> ''`), where the text stays recoverable. The name each
+  device displays is identical before and after.
 
 TLS certificates are **verified by default**. A UniFi console ships a
 self-signed certificate, so the first sync against one fails on purpose;
