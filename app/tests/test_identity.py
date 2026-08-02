@@ -350,22 +350,42 @@ def _normalized(sql: str) -> str:
 
 
 def test_no_later_migration_touches_the_shipped_tables():
-    """A structural guard, not a behavioural one: the epic forbids touching
-    the shipped table, and only reading the migration list can prove no
-    later migration does."""
+    """A structural guard, not a behavioural one. Its original form froze
+    the shipped tables outright - the sidecar exists because the #63-#74
+    epic forbade touching `devices` at all. #82's v5 is the one sanctioned
+    exception (owner-decided): a DATA migration that moves /32 policy
+    labels into the sidecar, with every move recorded in `audit`. What
+    stays absolute for every migration is the DDL ban (no rebuild, no
+    rename - the 12-step dance is structurally impossible under the
+    in-transaction foreign_keys pragma) and DELETE (a forward-only
+    migration may move data, never destroy it); the shipped history
+    (v2-v4) additionally stays data-frozen exactly as before."""
     for version, sql in MIGRATIONS[1:]:
         norm = _normalized(sql)
         for shipped in ("DEVICES", "AUDIT"):
             for verb in ("ALTER TABLE", "DROP TABLE", "CREATE TABLE",
-                         "DELETE FROM", "UPDATE", "INSERT INTO",
                          "DROP INDEX", "CREATE TRIGGER"):
                 assert f"{verb} {shipped}" not in norm, (
                     f"migration {version} runs `{verb}` against the shipped "
                     f"{shipped.lower()} table")
-        # a rebuild usually hides behind a rename
-        assert "RENAME" not in norm, (
-            f"migration {version} renames a table - the 12-step rebuild this "
-            f"epic forbids starts exactly there")
+            # != 5, not <= 4: the fence must RESUME for v6+ - a future
+            # data-mutating migration needs its own sanction, not a free
+            # ride on this one's.
+            if version != 5:
+                for verb in ("DELETE FROM", "UPDATE", "INSERT INTO"):
+                    assert f"{verb} {shipped}" not in norm, (
+                        f"migration {version} runs `{verb}` against the "
+                        f"shipped {shipped.lower()} table")
+        assert "DELETE FROM" not in norm, (
+            f"migration {version} deletes rows - forward-only migrations "
+            f"move data, never destroy it")
+        # a rebuild usually hides behind a rename. Match the DDL forms, not
+        # the bare word: v5 legitimately writes the audit ACTION literal
+        # 'rename' into its retirement rows.
+        for ddl in ("RENAME TO", "RENAME COLUMN"):
+            assert ddl not in norm, (
+                f"migration {version} runs `{ddl}` - the 12-step rebuild "
+                f"this epic forbids starts exactly there")
 
 
 def test_sidecar_write_is_rolled_back_on_failure(conn, monkeypatch):

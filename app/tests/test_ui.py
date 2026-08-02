@@ -351,8 +351,8 @@ def test_the_naming_rule_is_applied_in_exactly_one_place():
         hit = re.search(r"\bdev(?:ice)?\.name\b", body)
         assert not hit, (
             f"{path.name} reads a device's `name` directly ({hit.group(0)}) - "
-            f"go through displayName()/displacedName(), so the precedence rule "
-            f"has exactly one definition")
+            f"go through displayName(), so the precedence rule has exactly "
+            f"one definition")
 
 
 def test_the_rename_control_writes_the_layer_the_address_can_carry():
@@ -387,23 +387,35 @@ def test_the_add_path_names_a_host_through_the_same_layer_as_rename():
         "say so rather than look like a success")
 
 
-def test_the_displaced_policy_label_is_shown_and_removable():
-    """The alias winning must never mean the other stored name disappears from
-    view: hiding it is the only version of this rule that would be a lie. And
-    a label the interface shows but no control can remove is text the operator
-    is stuck with, so the exit is explicit - never a side effect of a rename,
-    which would destroy a second field the operator never mentioned."""
+def test_the_displaced_label_affordance_is_gone_with_its_cause():
+    """#80 shipped a displaced-label row + retire control whose only job was
+    to explain that a host carried two names. Migration v5 removed the
+    condition (a /32 policy label is dead storage now - db.py v5), so UI
+    that explains it would be describing a state the shipped system can no
+    longer produce. The affordance must be GONE, not merely unreachable:
+    dead branches in the view are where the next regression hides.
+
+    What must remain is the discipline that keeps the state unreachable:
+    neither write path may put a name into a host's policy row, and a
+    rename must not clear the label as a side effect."""
     devices = _read(SRC / "views" / "DevicesView.jsx")
-    assert 'data-testid="device-legacy-name"' in devices, (
-        "a displaced policy label must stay visible")
-    retire = devices.split("const retireLabel = async")[1].split("\n  };")[0]
-    assert "window.confirm" in retire, "retiring a label must be confirmed"
-    assert re.search(r'\{\s*name:\s*""\s*\}', retire), (
-        "retiring writes the shipped PATCH with an empty name, so the old text "
-        "stays recoverable from the audit trail")
+    for relic in ("device-legacy-name", "device-legacy-retire",
+                  "retireLabel", "displacedName"):
+        assert relic not in devices, (
+            f"{relic!r} outlived the two-name state it existed to explain")
+    for path in sorted(SRC.rglob("*.js*")):
+        assert "displacedName" not in _read(path), (
+            f"{path.name}: displacedName survives - its condition is "
+            f"unproducible after migration v5, so it is dead code")
     rename = devices.split("const rename = async")[1].split("\n  };")[0]
     assert 'name: ""' not in rename, (
         "renaming must not clear the policy label as a side effect")
+    # The add path is the invariant's other write: a typed host's name goes
+    # to the identity layer AFTER the create, never into the policy row.
+    add = devices.split("const addDevice = async")[1].split("\n  };")[0]
+    assert re.search(r"host\s*\?\s*\{\s*address,\s*mode", add), (
+        "adding a typed host must post WITHOUT a name - the policy label is "
+        "dead storage for a /32 since migration v5")
 
 
 def test_audit_pages_through_the_server_offset():

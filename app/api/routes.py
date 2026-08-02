@@ -319,18 +319,17 @@ def _with_aliases(conn, rows: list) -> list:
     alias of an address it contains would put one device's name on a whole
     subnet.
 
-    A policied device can therefore carry TWO human names: the shipped
-    `devices.name` (policy-scoped, PATCHable, audited as `rename`) and this
-    `alias` (identity-scoped, survives the policy being removed). They are
-    both returned and neither is derived from the other, and no precedence
-    rule lives here on purpose.
+    Since #82 a name has exactly one home. A HOST's name is this `alias`
+    (identity-scoped, survives the policy being removed); migration v5
+    emptied every /32's `devices.name` and the panel never writes one
+    again. A RANGE cannot carry an alias (identity keys on a /32), so its
+    `name` stays in the policy row - the only home it can have.
 
-    #80 settled it IN THE INTERFACE, which is the only place it can be
-    applied consistently rather than guessed at per call site: the alias
-    wins wherever it can exist, a range keeps its `name` (identity keys on
-    a /32, so a wider CIDR cannot carry an alias at all), and a displaced
-    `name` stays visible with its own retire action. This function keeps
-    returning both, unchanged - the store still states no preference.
+    Both fields still ride the payload unchanged: /v1 is additive-only, so
+    `name` stays PATCHable everywhere and a raw-API writer can put text
+    into a host's policy row - that field is dead storage the interface
+    ignores in favour of the alias (`displayName`, the one place the
+    precedence rule lives, #80 DEC-C narrowed by #82).
     """
     aliases = identity.resolve(conn)
     for row in rows:

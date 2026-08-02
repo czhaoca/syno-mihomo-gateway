@@ -401,8 +401,11 @@ def test_a_refused_write_is_not_audited(conn):
 def test_settings_is_migration_four_appended_not_edited(conn):
     versions = [v for v, _ in MIGRATIONS]
     assert versions == sorted(set(versions)), "migration versions must be unique and ordered"
-    assert versions[-1] == 4, "the settings table is migration 4"
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 4
+    # Appended-not-edited means slot 4 IS the settings table, forever - the
+    # tail moving past it (v5, #82) is exactly what appending looks like.
+    assert MIGRATIONS[3][0] == 4 and "CREATE TABLE settings" in MIGRATIONS[3][1], (
+        "the settings table is migration 4, byte-where-it-was")
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == len(MIGRATIONS)
 
 
 def test_the_migration_leaves_every_shipped_table_untouched(conn):

@@ -519,14 +519,16 @@ test.describe("the settings page round-trips", () => {
 });
 
 test.describe("the naming rule is applied once", () => {
-  test("an alias displaces the policy label, and says that it did", async ({
-    page,
-  }) => {
-    /* DEC-C. A device can carry two independent human names and the store
-       defines no precedence between them, deliberately, so the interface
-       decides once. The alias wins - but the displaced name must stay VISIBLE:
-       dropping a stored name from the UI is the only version of this rule that
-       would be a lie. */
+  test("a host shows its alias alone, even when the dead label rides along",
+    async ({ page }) => {
+    /* DEC-C, narrowed by #82. Migration v5 emptied every host's policy
+       label and the panel never writes one again - but the additive-only
+       API keeps the field, so a raw-API writer can still put text there.
+       The interface must treat it as what it now is - dead storage - and
+       render the alias with no displaced-label affordance: the explanatory
+       row was removed WITH the state it explained, and resurrecting it
+       for API-manufactured rows would advertise a name the system does
+       not use. */
     await page.route("**/v1/devices", (route) => {
       if (route.request().method() !== "GET") return route.continue();
       return route.fulfill({
@@ -545,9 +547,9 @@ test.describe("the naming rule is applied once", () => {
     await expect(page.locator('[data-testid="device-name"]'))
       .toHaveText("living-room-tv");
     await expect(page.locator('[data-testid="device-legacy-name"]'))
-      .toContainText("old-policy-label");
+      .toHaveCount(0);
     await expect(page.locator('[data-testid="device-legacy-retire"]'))
-      .toBeVisible();
+      .toHaveCount(0);
   });
 
   /** One device, and every write captured instead of executed. The write
@@ -618,24 +620,6 @@ test.describe("the naming rule is applied once", () => {
         `a range cannot carry an alias, got: ${writes}`).toBe(false);
     });
 
-  test("retiring a policy label asks first, and a refusal writes nothing",
-    async ({ page }) => {
-      // Destroying the second name must be a deliberate answer to a question,
-      // never a side effect. A guard that is skipped writes on refusal, which
-      // is precisely what this catches.
-      const writes = [];
-      await routeOneDevice(page, HOST, writes);
-      await open(page, "devices");
-
-      const asked = [];
-      page.on("dialog", (d) => { asked.push(d.message()); d.dismiss(); });
-      await page.locator('[data-testid="device-legacy-retire"]').click();
-      await page.waitForTimeout(400);
-      expect(asked.length, "retiring a stored name must be confirmed")
-        .toBeGreaterThan(0);
-      expect(writes, "a refused confirm must write nothing").toEqual([]);
-    });
-
   test("a history read that fails says so instead of drawing an empty chart",
     async ({ page }) => {
       // An empty sparkline and one that could not be read are pixel-identical
@@ -660,9 +644,9 @@ test.describe("the naming rule is applied once", () => {
     page,
   }) => {
     // The other direction: an alias is structurally impossible for a range
-    // (identity keys on a /32), so its `name` is not displaced by anything and
-    // there is nothing to retire. A UI that annotated it anyway would be
-    // reporting a divergence that cannot exist.
+    // (identity keys on a /32), so `devices.name` is the ONLY home a range's
+    // name can have - migration v5 left it alone, and this row must keep
+    // rendering it with no legacy-label annotation.
     await page.route("**/v1/devices", (route) => {
       if (route.request().method() !== "GET") return route.continue();
       return route.fulfill({

@@ -28,18 +28,20 @@ export function inBand(address, band) {
   });
 }
 
-/* ---- the naming rule (#80 DEC-C) ------------------------------------ */
+/* ---- the naming rule (#80 DEC-C, narrowed by #82) ------------------- */
 
-/* A device can carry TWO independent human names, and until now no
-   precedence rule existed anywhere - deliberately, so that it could be
-   applied ONCE in the interface rather than guessed at per call site.
+/* A name has exactly one home. A HOST's name is its identity alias
+   (`identity.host_key` keys on the /32; an operator's own edit outranks
+   every importer). A RANGE cannot carry an alias at all, so its name
+   lives in the policy row - the only home it can have. Migration v5
+   emptied every host's `devices.name` and nothing in this interface
+   writes one again, so the two-name state #80 had to explain is gone.
 
-   `alias` is the identity-layer name: it survives the policy being removed
-   and an operator's own edit outranks every importer. `devices.name` lives
-   inside the policy row and is destroyed with it. So the alias wins - but
-   only where it can exist at all. `identity.host_key` refuses anything
-   wider than a /32, so a RANGE can never carry one and its `name` is
-   simply its name, exactly as before. */
+   `displayName` still reads `device.name` second, deliberately: for a
+   range that IS the name, and for a host the field is dead storage the
+   additive-only API may still hold - showing it when no alias exists
+   beats showing "unnamed" while a name sits in the row. The precedence
+   is applied HERE, once, and nowhere else. */
 
 export function isHost(cidr) {
   return String(cidr).endsWith("/32");
@@ -51,13 +53,4 @@ export function hostIp(cidr) {
 
 export function displayName(device, unnamed) {
   return device.alias || device.name || unnamed;
-}
-
-/* The `devices.name` of a host row that the alias has displaced. Shown, never
-   hidden: dropping a stored name from the interface is the only version of
-   this rule that would be a lie. Empty for a range (its name is not
-   displaced by anything) and empty when the two agree. */
-export function displacedName(device) {
-  if (!isHost(device.cidr) || !device.alias) return "";
-  return device.name && device.name !== device.alias ? device.name : "";
 }

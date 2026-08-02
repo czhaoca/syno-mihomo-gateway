@@ -134,6 +134,59 @@ MIGRATIONS = [
         updated_at TEXT NOT NULL
     );
     """),
+    # v5 - a name has exactly one home (#82). Until now a /32 could carry
+    # BOTH a policy label (devices.name) and an identity alias, and the UI
+    # shipped an affordance whose only job was to explain the discrepancy.
+    # After this migration a host's name lives in device_identity ONLY;
+    # devices.name stays as the one possible home for a RANGE (identity
+    # keys on a /32, so a wider CIDR cannot carry an alias at all). The
+    # column is NOT dropped: that needs SQLite's 12-step rebuild, which
+    # cannot run here (PRAGMA foreign_keys is ON and pragmas cannot be
+    # toggled mid-transaction) - the same collision that produced the
+    # sidecar in the first place (v2 above).
+    #
+    # DISPLAY-INVARIANT by construction (owner decision, #82): the only
+    # surviving-name rule is the one the interface already applies - the
+    # alias wins wherever one exists. So a label with no identity row MOVES
+    # (it becomes a hand-edit alias: only the panel's own form ever wrote
+    # devices.name, so hand provenance is honest), a label an alias had
+    # displaced is RETIRED into the audit trail in the exact convention the
+    # UI's retire control used (`rename 'old' -> ''`, recoverable), an
+    # equal pair clears silently (nothing is lost; the importer's `source`
+    # is deliberately NOT upgraded, so the next vendor sync still owns its
+    # row), and no device shows a different name after the upgrade. #74
+    # DEC-A is untouched: it governs writes WITHIN the identity layer.
+    #
+    # Audit rows are written FIRST (they quote the pre-state), inside the
+    # same transaction. details strings are built with SQLite's quote(),
+    # which matches Python's repr for quote-free names and diverges only
+    # on embedded apostrophes ('it''s' vs "it's") - informational text,
+    # not a parsed format. The clear stamps updated_at because it is a
+    # real mutation; untouched rows (nameless hosts, every range) keep
+    # their stamps byte-identical.
+    (5, """
+    INSERT INTO audit (ts, action, cidr, mode, requester, note, details)
+    SELECT strftime('%Y-%m-%dT%H:%M:%SZ','now'), 'alias', d.cidr, '',
+           'migration', '',
+           quote('') || ' -> ' || quote(d.name) || ' [hand-edit]'
+      FROM devices d
+     WHERE d.cidr LIKE '%/32' AND d.name != ''
+       AND NOT EXISTS (SELECT 1 FROM device_identity i WHERE i.cidr = d.cidr);
+    INSERT INTO audit (ts, action, cidr, mode, requester, note, details)
+    SELECT strftime('%Y-%m-%dT%H:%M:%SZ','now'), 'rename', d.cidr, d.mode,
+           'migration', '',
+           quote(d.name) || ' -> ' || quote('')
+      FROM devices d JOIN device_identity i ON i.cidr = d.cidr
+     WHERE d.cidr LIKE '%/32' AND d.name != '' AND i.alias != d.name;
+    INSERT INTO device_identity (cidr, alias, source, updated_at)
+    SELECT d.cidr, d.name, 'hand-edit', strftime('%Y-%m-%dT%H:%M:%SZ','now')
+      FROM devices d
+     WHERE d.cidr LIKE '%/32' AND d.name != ''
+       AND NOT EXISTS (SELECT 1 FROM device_identity i WHERE i.cidr = d.cidr);
+    UPDATE devices SET name = '',
+           updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+     WHERE cidr LIKE '%/32' AND name != '';
+    """),
 ]
 
 

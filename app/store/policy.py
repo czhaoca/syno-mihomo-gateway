@@ -5,6 +5,12 @@ SQLite is the single source of truth. Every mutation validates first
 API layer follows up with a VACUUM INTO backup. One mode per IP is schema
 law (UNIQUE cidr); cross-mode overlap is refused here so a device can
 never be simultaneously forced-direct and forced-tunneled by two ranges.
+
+`name` semantics since #82 (migration v5, db.py): a RANGE's name lives
+here and nowhere else; a /32's name lives in the identity sidecar and its
+`devices.name` is dead storage. This layer keeps accepting `name` for any
+row - /v1 is additive-only, so the shipped write paths stay byte-identical
+- but the panel only ever sends it for a range.
 """
 
 import os

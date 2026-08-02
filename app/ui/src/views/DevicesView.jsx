@@ -11,7 +11,7 @@ import {
   badgeFor, forget, markApplying, markDrift, noteApplyResult,
 } from "../applystate.js";
 import { SelectInput, Sparkline, TextInput } from "../controls.jsx";
-import { displacedName, displayName, hostIp, inBand, isHost } from "../devices.js";
+import { displayName, hostIp, inBand, isHost } from "../devices.js";
 
 // `label` carries the i18n key as a literal on purpose: a key assembled at
 // the call site (`t(`mode_${mode.replace("-", "_")}`)`) is invisible to the
@@ -98,20 +98,6 @@ export default function DevicesView({ t, notify, tick, health, refreshHealth }) 
     const result = isHost(dev.cidr)
       ? await api("PUT", `/v1/identity/${hostIp(dev.cidr)}`, { alias: next })
       : await api("PATCH", `/v1/devices/${dev.id}`, { name: next });
-    if (result.status !== 200 && result.status !== 403) complain(result);
-    await refresh();
-  };
-
-  /* The exit for a policy label the alias has displaced. Without it the old
-     name is text the interface shows and no control can remove.
-
-     Explicit and confirmed, never a side effect of renaming: the operator
-     asked to name a device, not to destroy a second field. The write is
-     audited as `rename 'old' -> ''`, so the text stays recoverable from
-     history. */
-  const retireLabel = async (dev) => {
-    if (!window.confirm(t("retire_label_confirm"))) return;
-    const result = await api("PATCH", `/v1/devices/${dev.id}`, { name: "" });
     if (result.status !== 200 && result.status !== 403) complain(result);
     await refresh();
   };
@@ -222,7 +208,6 @@ export default function DevicesView({ t, notify, tick, health, refreshHealth }) 
       <Stack spacing={1} data-testid="device-list">
         {devices.map((dev) => {
           const state = badgeFor(dev.cidr, parity);
-          const displaced = displacedName(dev);
           return (
             <Card key={dev.cidr} data-testid={`device-${dev.cidr}`}
                   variant="outlined" sx={{ p: 1.2 }}>
@@ -242,21 +227,6 @@ export default function DevicesView({ t, notify, tick, health, refreshHealth }) 
                 <Chip size="small" color={BADGE_COLOR[state]} variant="outlined"
                       label={t(`state_${state}`)} />
               </Stack>
-
-              {displaced ? (
-                <Stack direction="row" spacing={1} alignItems="center"
-                       sx={{ mt: 0.5 }} flexWrap="wrap" useFlexGap>
-                  <Typography variant="caption" color="text.secondary"
-                              data-testid="device-legacy-name">
-                    {`${t("legacy_policy_label")}: ${displaced}`}
-                  </Typography>
-                  <Button data-testid="device-legacy-retire" size="small"
-                          onClick={() => retireLabel(dev)}
-                          sx={{ minHeight: 32, py: 0 }}>
-                    {t("retire_label")}
-                  </Button>
-                </Stack>
-              ) : null}
 
               <Stack direction="row" spacing={0.6} sx={{ mt: 0.8 }} flexWrap="wrap"
                      useFlexGap>
