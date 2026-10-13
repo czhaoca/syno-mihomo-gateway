@@ -61,9 +61,17 @@ TUN silently dead after a reboot (doctor: "TUN gateway is not ready")
            container.
   Fix:     sudo docker restart mihomo
            then verify: docker exec mihomo ls /sys/class/net/  must list
-           mihomo-tun, and doctor.sh must report HEALTHY. Prevention: put
-           the Boot-up task that runs scripts/setup_network.sh EARLIEST in
-           the DSM boot order.
+           mihomo-tun, and doctor.sh must report HEALTHY.
+  Prevention (built into the boot task): scripts/setup_network.sh creates
+           /dev/net/tun as its FIRST step, before it waits for Container
+           Manager, and at the end verifies the running mihomo actually
+           has its TUN dataplane - a mihomo whose controller answers but
+           whose mihomo-tun is missing is restarted ONCE and re-checked.
+           If it is still not ready the task exits 2, so tick "send run
+           details only when the script terminates abnormally" on the
+           Boot-up task and keep it enabled and EARLIEST in the DSM boot
+           order. Tunables: BOOT_HEALTH_RETRIES (12) x HEALTH_INTERVAL (s)
+           to wait for the controller, TUN_SETTLE_GRACE (10 s).
 
 --------------------------------------------------------------------------
 The mihomo IP is already taken / deploy failed on a conflicting IP

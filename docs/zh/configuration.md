@@ -277,6 +277,7 @@ dry-run 标志、updated/unchanged/failed/rolled-back 计数与名称——由 `
 | `PULL_RETRIES` / `PULL_RETRY_DELAY` | `3` / `10` | `docker pull` 的重试次数/重试间隔（秒）。 |
 | `DOCKER_READY_TIMEOUT` / `DOCKER_READY_INTERVAL` | `120` / `5` | DSM 计划/开机任务等待 Container Manager 的总时长与重试间隔（秒）。 |
 | `HEALTH_RETRIES` / `HEALTH_INTERVAL` | `6` / `10` | mihomo 健康检查门控的尝试次数/间隔（秒）。 |
+| `BOOT_HEALTH_RETRIES` / `TUN_SETTLE_GRACE` | `12` / `10` | 开机任务的 TUN 判定：重启后等待控制器的 `HEALTH_INTERVAL` 个数，以及 `mihomo-tun` 接口允许晚于控制器出现的秒数，超过后容器会被重启一次（见[故障排查](troubleshooting.md#重启后-tun-静默失效启动顺序竞态)）。 |
 | `HEALTH_MAX_RESTARTS` | `3` | 通用目标的崩溃循环阈值：刚更新的容器重启达到该次数后，健康门（提前）判定失败。 |
 | `LOCK_DIR` | `/tmp/syno-mihomo-update.lock` | 互斥锁目录。 |
 | `TPROXY_NETWORK` | `tproxy_network` | 预检阶段检查的 macvlan 网络名称。 |

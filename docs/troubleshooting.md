@@ -106,9 +106,20 @@ already-running container keeps its empty bind — TUN stays down until the cont
 
 **Fix:** `sudo docker restart mihomo` (the bind is re-evaluated at start; verify with
 `docker exec mihomo ls /sys/class/net/` — `mihomo-tun` must be listed, then re-run
-`sudo sh scripts/doctor.sh`). To prevent it, keep the Boot-up task for `setup_network.sh`
-**earliest** in the boot order; it creates `/dev/net/tun` before Container Manager brings
-containers up.
+`sudo sh scripts/doctor.sh`).
+
+**Prevention (built into the boot task):** `setup_network.sh` creates `/dev/net/tun` as its
+**first** step, *before* it waits for Container Manager — the node needs nothing from Docker,
+and waiting first is exactly what lost the race (the task sat polling for Docker while
+dockerd's autostart brought mihomo up without the node). As a second line, its final
+"stack is up" step verifies the dataplane: a mihomo whose controller answers but whose
+`mihomo-tun` is missing is restarted **once** and re-verified. If the dataplane is still not
+ready, the task exits `2`, so the Boot-up task's *Send run details only when the script
+terminates abnormally* mail reports the outage instead of a green dashboard hiding it; a controller that never
+answers also exits `2` but is **not** restarted (that is a crash-loop, not this race). Keep
+that Boot-up task **enabled** and **earliest** in the boot order. Tunables:
+`BOOT_HEALTH_RETRIES` (default `12`, × `HEALTH_INTERVAL` seconds to wait for the controller
+at boot) and `TUN_SETTLE_GRACE` (default `10` seconds the interface may lag the controller).
 
 ## Network exists but with different settings
 

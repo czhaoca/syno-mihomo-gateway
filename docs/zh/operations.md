@@ -99,7 +99,9 @@ sh scripts/install_scheduler.sh
    ```
    cd '/volume1/docker/syno-mihomo-gateway' && exec /bin/sh '/volume1/docker/syno-mihomo-gateway/scripts/setup_network.sh'
    ```
-   开机辅助脚本会等待 Container Manager/Docker 就绪后再处理 macvlan。
+   开机辅助脚本会**先**创建 `/dev/net/tun`，再等待 Container Manager/Docker 就绪后处理
+   macvlan，最后校验运行中的 mihomo 确实拥有 TUN 数据通路（若 dockerd 的自启动赢了竞态则重启
+   一次；仍未就绪时以退出码 `2` 结束——所以这个任务也请勾选“脚本异常终止时发送运行详情”）。
 
 计划本身持久化在 `.env` 中——用 `sudo sh scripts/gateway.sh cron --time HH:MM --yes`
 （`--time` 必须带冒号）或 `cron --schedule 'EXPR' --yes` 设置。作为任务计划程序的无界面

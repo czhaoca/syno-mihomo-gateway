@@ -292,6 +292,7 @@ These have sensible defaults in `scripts/lib/common.sh` (`TPROXY_NETWORK` in
 | `PULL_RETRIES` / `PULL_RETRY_DELAY` | `3` / `10` | `docker pull` retry count / delay (s). |
 | `DOCKER_READY_TIMEOUT` / `DOCKER_READY_INTERVAL` | `120` / `5` | How long a DSM scheduled/boot task waits for Container Manager and how often it retries (s). |
 | `HEALTH_RETRIES` / `HEALTH_INTERVAL` | `6` / `10` | mihomo health-gate attempts / interval (s). |
+| `BOOT_HEALTH_RETRIES` / `TUN_SETTLE_GRACE` | `12` / `10` | Boot task's TUN verdict: how many `HEALTH_INTERVAL`s to wait for the controller after a reboot, and how many seconds the `mihomo-tun` interface may lag it before the container is restarted once (see [troubleshooting](troubleshooting.md#tun-silently-dead-after-a-reboot-boot-order-race)). |
 | `HEALTH_MAX_RESTARTS` | `3` | Generic-target crash-loop threshold: the health gate fails (early) once a freshly updated container has restarted this many times. |
 | `LOCK_DIR` | `/tmp/syno-mihomo-update.lock` | Mutex lock directory. |
 | `TPROXY_NETWORK` | `tproxy_network` | Macvlan network name the preflight checks. |

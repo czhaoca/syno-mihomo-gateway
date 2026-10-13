@@ -53,6 +53,13 @@ export REPO_ROOT GATEWAY_DATA_DIR ENV_FILE CONFIG_STATE_DIR SUBSCRIPTION_FILE
 : "${HEALTH_RETRIES:=6}"
 : "${HEALTH_INTERVAL:=10}"
 : "${HEALTH_MAX_RESTARTS:=3}"
+# Boot-task TUN verdict (setup_network.sh step 4 / mihomo_tun_self_heal): a
+# cold boot is slower than a deploy, so the controller gets its own retry
+# budget (x HEALTH_INTERVAL seconds); the interface may lag the controller
+# by at most TUN_SETTLE_GRACE seconds before a missing one counts as the
+# lost /dev/net/tun race.
+: "${BOOT_HEALTH_RETRIES:=12}"
+: "${TUN_SETTLE_GRACE:=10}"
 : "${TUN_DEVICE:=mihomo-tun}"
 # Transparent-gateway TUN is ON by default (stack: system keeps the controller
 # reachable - see scripts/render_config.sh and docs/troubleshooting.md). Set

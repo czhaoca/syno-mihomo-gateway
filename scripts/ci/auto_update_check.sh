@@ -293,9 +293,12 @@ printf '%s\n' '#!/bin/sh' \
   '    case "$*" in' \
   '      *"command -v wget"*) exit 0 ;;' \
   '      *"wget -q"*) exit "${MOCK_CONTROLLER_RC:-0}" ;;' \
-  '      *"/sys/class/net/"*) exit "${MOCK_TUN_RC:-0}" ;;' \
+  '      *"/sys/class/net/"*)' \
+  '        if [ -n "${MOCK_RESTART_MARK:-}" ] && [ -f "$MOCK_RESTART_MARK" ]; then exit "${MOCK_TUN_RC_AFTER:-0}"; fi' \
+  '        exit "${MOCK_TUN_RC:-0}" ;;' \
   '      *"/proc/sys/net/ipv4/ip_forward"*) echo "${MOCK_FORWARD:-1}"; exit 0 ;;' \
   '    esac ;;' \
+  '  restart) [ -n "${MOCK_RESTART_MARK:-}" ] && : > "$MOCK_RESTART_MARK"; exit "${MOCK_RESTART_RC:-0}" ;;' \
   '  run) exit "${MOCK_IPTABLES_RC:-0}" ;;' \
   '  tag) exit "${MOCK_TAG_RC:-0}" ;;' \
   'esac' \
@@ -454,6 +457,65 @@ MOCK_TUN_RC=1; export MOCK_TUN_RC
 expect_failure "missing in-container TUN fails health gate with TUN on" health_gate
 MOCK_TUN_RC=0; export MOCK_TUN_RC
 TUN_ENABLE=false; export TUN_ENABLE
+
+# Boot self-heal (the 2026-10-14 reboot outage): a mihomo that dockerd
+# autostarted before the boot task created /dev/net/tun runs with an empty
+# device bind - controller answers, TUN interface missing, every LAN client
+# silently off the gateway. The verdict waits for the controller, then
+# restarts ONCE and re-verifies; a controller that never answers is NOT the
+# race and must never be restarted blindly (it would mask a crash-loop).
+MOCK_RESTART_MARK="$TMP/restarted"; export MOCK_RESTART_MARK
+BOOT_HEALTH_RETRIES=2 TUN_SETTLE_GRACE=1
+heal_restarts() { grep -c '^restart mihomo$' "$MOCK_DOCKER_CALLS"; }
+heal_reset() { rm -f "$MOCK_RESTART_MARK"; : > "$MOCK_DOCKER_CALLS"; }
+
+TUN_ENABLE=false; export TUN_ENABLE
+heal_reset; MOCK_TUN_RC=1; export MOCK_TUN_RC
+expect_success "self-heal is a no-op with TUN off" mihomo_tun_self_heal
+[ "$(heal_restarts)" = 0 ] && ok || fail "self-heal restarted mihomo with TUN off"
+
+TUN_ENABLE=true; export TUN_ENABLE
+heal_reset; MOCK_TUN_RC=0; export MOCK_TUN_RC
+expect_success "self-heal leaves a ready TUN gateway alone" mihomo_tun_self_heal
+[ "$(heal_restarts)" = 0 ] && ok || fail "self-heal restarted a healthy mihomo"
+
+heal_reset; MOCK_TUN_RC=1 MOCK_TUN_RC_AFTER=0; export MOCK_TUN_RC MOCK_TUN_RC_AFTER
+expect_success "self-heal restarts a mihomo that lost the /dev/net/tun race" mihomo_tun_self_heal
+[ "$(heal_restarts)" = 1 ] && ok || fail "self-heal must restart exactly once (got $(heal_restarts))"
+
+heal_reset; MOCK_TUN_RC=1 MOCK_TUN_RC_AFTER=1; export MOCK_TUN_RC MOCK_TUN_RC_AFTER
+expect_failure "self-heal reports a TUN still missing after the restart" mihomo_tun_self_heal
+[ "$(heal_restarts)" = 1 ] && ok || fail "self-heal must not restart more than once (got $(heal_restarts))"
+
+heal_reset; MOCK_TUN_RC=1 MOCK_RESTART_RC=1; export MOCK_TUN_RC MOCK_RESTART_RC
+expect_failure "self-heal reports a failed docker restart" mihomo_tun_self_heal
+[ "$(heal_restarts)" = 1 ] && ok || fail "self-heal must attempt the restart once even when docker refuses (got $(heal_restarts))"
+MOCK_RESTART_RC=0; export MOCK_RESTART_RC
+
+heal_reset; MOCK_TUN_RC=1 MOCK_CONTROLLER_RC=1; export MOCK_TUN_RC MOCK_CONTROLLER_RC
+expect_failure "self-heal fails when the controller never answers" mihomo_tun_self_heal
+[ "$(heal_restarts)" = 0 ] && ok || fail "self-heal must not restart a mihomo whose controller never answered"
+MOCK_CONTROLLER_RC=0; export MOCK_CONTROLLER_RC
+
+heal_reset; MOCK_RUNNING=false; export MOCK_RUNNING
+_rc=0; mihomo_tun_self_heal || _rc=$?
+[ "$_rc" = 2 ] && ok || fail "self-heal on a stopped mihomo must report rc 2 (got $_rc)"
+MOCK_RUNNING=true; export MOCK_RUNNING
+heal_reset; MOCK_TUN_RC=0; export MOCK_TUN_RC
+unset MOCK_TUN_RC_AFTER MOCK_RESTART_MARK
+TUN_ENABLE=false; export TUN_ENABLE
+
+# The boot task's ORDER is the prevention: the TUN node must exist BEFORE the
+# task blocks on Container Manager (dockerd's autostart races it), and the
+# stack completion must run the self-heal and alert (rc 2) when it fails.
+_sn="$ROOT/scripts/setup_network.sh"
+_ln_tun="$(grep -n '^ensure_tun_device' "$_sn" | head -n1 | cut -d: -f1)"
+_ln_wait="$(grep -n '^wait_for_docker_ready' "$_sn" | head -n1 | cut -d: -f1)"
+[ -n "$_ln_tun" ] && [ -n "$_ln_wait" ] && [ "$_ln_tun" -lt "$_ln_wait" ] && ok \
+  || fail "setup_network.sh must create /dev/net/tun BEFORE waiting for Docker (tun@${_ln_tun:-?} wait@${_ln_wait:-?})"
+grep -q 'mihomo_tun_self_heal' "$_sn" && ok || fail "setup_network.sh does not run the boot TUN self-heal"
+grep -A8 'if mihomo_tun_self_heal' "$_sn" | grep -q 'exit "\$EXIT_PARTIAL"' && ok \
+  || fail "setup_network.sh self-heal failure must exit partial (DSM error mail) right after the self-heal arm"
 
 # Rollback success path validates old images, re-tags both, and recreates from
 # local cache without an implicit registry pull.

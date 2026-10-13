@@ -13,7 +13,8 @@
 # CI-shellchecked scripts/lib/network.sh. Needs root (mknod/chmod, docker network).
 #
 # Exit: 0 ok (incl. "stack not deployed here" skips) |
-#       2 network ok but the deployed stack did not start (DSM's
+#       2 network ok but the deployed stack did not start, or is running
+#         WITHOUT its TUN dataplane after one self-heal restart (DSM's
 #         send-run-details-on-error mail fires - that is the point) |
 #       3 config/preflight error.
 
@@ -37,13 +38,19 @@ echo "========================================"
 echo " Mihomo Gateway - network self-heal"
 echo "========================================"
 
+# 1. TUN device (mihomo needs it; baked into compose too, but self-heal here).
+#    BEFORE the Docker wait, on purpose: the node needs nothing from Docker,
+#    while dockerd's autostart (restart: always) races this task on every
+#    boot. Waiting first meant the node appeared AFTER mihomo had already
+#    started with an empty device bind - controller green, no TUN dataplane,
+#    every LAN client silently off the gateway (the 2026-10-14 reboot
+#    outage). This ordering prevents the race; step 4 repairs a lost one.
+echo "[1/4] TUN device (/dev/net/tun)..."
+ensure_tun_device || exit "$EXIT_CONFIG"
+
 # DSM boot-up tasks can run before Container Manager is ready. Wait for both the
 # Docker CLI/Compose plugin and daemon rather than racing network creation.
 wait_for_docker_ready || exit "$EXIT_CONFIG"
-
-# 1. TUN device (mihomo needs it; baked into compose too, but self-heal here).
-echo "[1/4] TUN device (/dev/net/tun)..."
-ensure_tun_device || exit "$EXIT_CONFIG"
 
 # 2. Macvlan parent: prefer the interface the installer saved in .env
 #    (PARENT_INTERFACE), else auto-detect the one that routes to ROUTER_IP.
@@ -82,9 +89,17 @@ echo "[4/4] Ensuring the gateway stack is up..."
 compose_ensure_up
 case "$?" in
   0)
-    echo "========================================"
-    echo "Ready. The gateway stack is up."
-    exit "$EXIT_OK" ;;
+    # Running is not routing: a mihomo that dockerd autostarted before step 1
+    # created /dev/net/tun runs with an empty device bind and no TUN
+    # dataplane. Verify, restart it once if that is the state, and alert
+    # (rc 2 -> the DSM error mail) when the dataplane is still not ready.
+    if mihomo_tun_self_heal; then
+      echo "========================================"
+      echo "Ready. The gateway stack is up."
+      exit "$EXIT_OK"
+    fi
+    log_error "the gateway stack is running but its TUN dataplane is not ready - check: docker logs mihomo"
+    exit "$EXIT_PARTIAL" ;;
   2)
     echo "      stack not deployed here (or deliberately stopped) - skipping."
     echo "========================================"

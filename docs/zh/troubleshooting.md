@@ -97,8 +97,17 @@ TUN 会一直失效，直到容器重启。
 
 **修复：** `sudo docker restart mihomo`（设备绑定在启动时重新求值；用
 `docker exec mihomo ls /sys/class/net/` 验证——必须能看到 `mihomo-tun`，然后重跑
-`sudo sh scripts/doctor.sh`）。预防方法：把运行 `setup_network.sh` 的**开机**任务排在
-启动顺序**最前**，让 `/dev/net/tun` 在 Container Manager 拉起容器之前就绪。
+`sudo sh scripts/doctor.sh`）。
+
+**预防（已内置于开机任务）：** `setup_network.sh` 把创建 `/dev/net/tun` 放在**第一步**，
+在等待 Container Manager **之前**执行——创建设备节点不依赖 Docker，而先等待恰恰是输掉竞态的
+原因（任务一直在轮询 Docker，dockerd 的自启动却已在没有节点的情况下拉起了 mihomo）。第二道
+防线是最后的“确保栈已启动”步骤会校验数据通路：控制器有响应但 `mihomo-tun` 缺失的 mihomo
+会被重启**一次**并重新校验。若数据通路仍未就绪，任务以退出码 `2` 结束，让开机任务的
+“脚本异常终止时发送运行详情”邮件报告这次故障，而不是被绿色的仪表盘掩盖；控制器始终无响应
+同样返回 `2`，但**不会**重启（那是崩溃循环，不是这个竞态）。请保持该开机任务**启用**并排在
+启动顺序**最前**。可调参数：`BOOT_HEALTH_RETRIES`（默认 `12`，乘以 `HEALTH_INTERVAL` 秒即
+开机时等待控制器的时长）和 `TUN_SETTLE_GRACE`（默认 `10` 秒，接口允许晚于控制器出现的时间）。
 
 ## 网络已存在但设置不同
 

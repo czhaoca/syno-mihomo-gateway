@@ -154,6 +154,75 @@ mihomo_gateway_probe() {
   return 0
 }
 
+# mihomo_tun_settled - the boot-time TUN verdict. Wait for the controller to
+# answer (the process is up and past its config render), then give the TUN
+# dataplane a short grace to appear: mihomo brings the interface up in the
+# same instant as the API, so a controller that answers WITHOUT it is not
+# "still starting" - its /dev/net/tun bind captured nothing.
+# rc 0 = TUN gateway ready; 1 = controller answers but the dataplane is
+# missing (the boot-order race signature - restartable); 3 = the controller
+# never answered within BOOT_HEALTH_RETRIES x HEALTH_INTERVAL (unhealthy, but
+# NOT the race: a blind restart would only mask a crash-loop); 4 = no probe
+# tool in the image (no verdict possible).
+mihomo_tun_settled() {
+  _ts_try=0
+  while :; do
+    mihomo_controller_probe
+    case "$?" in
+      0) break ;;
+      2) return 4 ;;
+    esac
+    _ts_try=$((_ts_try+1))
+    [ "$_ts_try" -lt "${BOOT_HEALTH_RETRIES:-12}" ] || return 3
+    sleep "$HEALTH_INTERVAL"
+  done
+  _ts_tun="${TUN_DEVICE:-mihomo-tun}"
+  _ts_elapsed=0
+  until "$DOCKER_BIN" exec "$MIHOMO_CONTAINER" sh -c \
+      'test -d "/sys/class/net/$1"' sh "$_ts_tun" 2>/dev/null; do
+    [ "$_ts_elapsed" -lt "${TUN_SETTLE_GRACE:-10}" ] || break
+    sleep 1
+    _ts_elapsed=$((_ts_elapsed+1))
+  done
+  mihomo_gateway_probe && return 0
+  return 1
+}
+
+# mihomo_tun_self_heal - boot-time repair of the lost device race. dockerd's
+# autostart (restart: always) can bring mihomo up BEFORE the boot task has
+# created /dev/net/tun; the container then runs with an EMPTY device bind:
+# controller green, provider green, dashboard green - and no TUN dataplane,
+# so every LAN client silently loses the gateway until the container
+# restarts (only a restart re-evaluates the bind). Called after
+# compose_ensure_up rc 0, with the host node already guaranteed by step 1.
+# TUN_ENABLE=false has no TUN dataplane: no-op. rc 0 = ready (already, or
+# after ONE restart); 1 = still not ready (the caller alerts); 2 = container
+# not running (nothing to heal).
+mihomo_tun_self_heal() {
+  [ "${TUN_ENABLE:-true}" = true ] || return 0
+  [ "$("$DOCKER_BIN" inspect -f '{{.State.Running}}' "$MIHOMO_CONTAINER" 2>/dev/null)" = true ] || return 2
+  mihomo_tun_settled
+  case "$?" in
+    0) return 0 ;;
+    1) ;;
+    3) log_error "self-heal: $MIHOMO_CONTAINER controller never answered - not the TUN race, not restarting blindly; check: docker logs $MIHOMO_CONTAINER"
+       return 1 ;;
+    *) log_warn "self-heal: no probe tool in the mihomo image - cannot verify the TUN dataplane"
+       return 0 ;;
+  esac
+  log_warn "self-heal: $MIHOMO_CONTAINER answers but has no TUN dataplane ('${TUN_DEVICE:-mihomo-tun}' missing or forwarding off: it started before /dev/net/tun existed) - restarting it so the device bind is re-evaluated"
+  if ! "$DOCKER_BIN" restart "$MIHOMO_CONTAINER" >>"$LOG_FILE" 2>&1; then
+    log_error "self-heal: docker restart $MIHOMO_CONTAINER failed"
+    return 1
+  fi
+  if mihomo_tun_settled; then
+    log_info "self-heal: TUN gateway ready after restart"
+    return 0
+  fi
+  log_error "self-heal: TUN gateway still not ready after restart - check: docker logs $MIHOMO_CONTAINER"
+  return 1
+}
+
 # health_gate -> 0 healthy, 1 unhealthy. Checks mihomo is running, NOT crash-looping,
 # and (when possible) that its controller answers. metacubexd is checked but only warned on.
 health_gate() {

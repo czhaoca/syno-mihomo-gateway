@@ -104,7 +104,11 @@ Create two tasks in **Control Panel → Task Scheduler** (User = **root**):
    ```
    cd '/volume1/docker/syno-mihomo-gateway' && exec /bin/sh '/volume1/docker/syno-mihomo-gateway/scripts/setup_network.sh'
    ```
-   The boot helper waits for Container Manager/Docker before touching the macvlan.
+   The boot helper creates `/dev/net/tun` **first**, then waits for Container Manager/Docker
+   before touching the macvlan, and finally verifies the running mihomo actually has its TUN
+   dataplane (restarting it once if dockerd's autostart won the race — exit `2` if it is
+   still not ready, so tick *Send run details only when the script terminates abnormally* for
+   this task too).
 
 The schedule itself is persisted in `.env` — set it with
 `sudo sh scripts/gateway.sh cron --time HH:MM --yes` (`--time` requires the colon) or

@@ -54,8 +54,14 @@ docker 或 docker compose 提示 "command not found"
         到的是空的设备绑定。事后补建宿主机节点无法修复已在运行的容器。
   解决：sudo docker restart mihomo
         然后验证：docker exec mihomo ls /sys/class/net/ 必须能看到
-        mihomo-tun，且 doctor.sh 报告 HEALTHY。预防：把运行
-        scripts/setup_network.sh 的开机任务排在 DSM 启动顺序的最前面。
+        mihomo-tun，且 doctor.sh 报告 HEALTHY。
+  预防（已内置于开机任务）：scripts/setup_network.sh 把创建 /dev/net/tun
+        放在第一步、在等待 Container Manager 之前执行，并在最后校验运行中的
+        mihomo 确实拥有 TUN 数据通路——控制器有响应但 mihomo-tun 缺失的
+        mihomo 会被重启一次并重新校验。若仍未就绪，任务以退出码 2 结束，
+        所以请为该开机任务勾选“脚本异常终止时发送运行详情”，并保持其启用、
+        排在 DSM 启动顺序的最前面。可调参数：BOOT_HEALTH_RETRIES（12）×
+        HEALTH_INTERVAL 秒为等待控制器的时长，TUN_SETTLE_GRACE（10 秒）。
 
 --------------------------------------------------------------------------
 mihomo 的 IP 已被占用 / 部署因 IP 冲突失败
