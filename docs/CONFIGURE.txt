@@ -296,6 +296,12 @@ Automatic updates
       Seconds a scheduled or boot task waits for Container Manager, and the
       retry interval. Defaults: 120 / 5.
 
+  BOOT_HEALTH_RETRIES / TUN_SETTLE_GRACE
+      Boot-up task TUN verdict after a reboot: how many HEALTH_INTERVALs to
+      wait for the mihomo controller, and how many seconds the mihomo-tun
+      interface may lag it before the container is restarted once.
+      Defaults: 12 / 10.
+
   EXPECTED_ARCH
       The expected CPU architecture: amd64, arm64, or arm (32-bit, e.g. an
       armv7 Raspberry Pi). Set this to match your machine to catch

@@ -140,6 +140,21 @@ validate_update_switch() {
   return 0
 }
 
+# validate_boot_config - the knobs the boot path reads: the readiness poll
+# (registry.sh) and the TUN settle budget (compose.sh). A non-integer value
+# would misjudge the dataplane or spin the wait, so refuse it by name.
+# Deliberately NOT the full updater list: the Boot-up task must never start
+# failing over a nightly-update setting. validate_update_config calls this,
+# so the shared five cannot drift (#84).
+validate_boot_config() {
+  _config_uint DOCKER_READY_TIMEOUT "${DOCKER_READY_TIMEOUT:-}" 0 || return 1
+  _config_uint DOCKER_READY_INTERVAL "${DOCKER_READY_INTERVAL:-}" 1 || return 1
+  _config_uint HEALTH_INTERVAL "${HEALTH_INTERVAL:-}" 0 || return 1
+  _config_uint BOOT_HEALTH_RETRIES "${BOOT_HEALTH_RETRIES:-}" 1 || return 1
+  _config_uint TUN_SETTLE_GRACE "${TUN_SETTLE_GRACE:-}" 0 || return 1
+  return 0
+}
+
 validate_update_config() {
   validate_update_switch || return 1
   case "${TUN_AUTO_REDIRECT:-}" in true|false) : ;; *)
@@ -147,10 +162,8 @@ validate_update_config() {
   esac
   _config_uint PULL_RETRIES "${PULL_RETRIES:-}" 1 || return 1
   _config_uint PULL_RETRY_DELAY "${PULL_RETRY_DELAY:-}" 0 || return 1
-  _config_uint DOCKER_READY_TIMEOUT "${DOCKER_READY_TIMEOUT:-}" 0 || return 1
-  _config_uint DOCKER_READY_INTERVAL "${DOCKER_READY_INTERVAL:-}" 1 || return 1
+  validate_boot_config || return 1
   _config_uint HEALTH_RETRIES "${HEALTH_RETRIES:-}" 1 || return 1
-  _config_uint HEALTH_INTERVAL "${HEALTH_INTERVAL:-}" 0 || return 1
   _config_uint HEALTH_MAX_RESTARTS "${HEALTH_MAX_RESTARTS:-}" 1 || return 1
   _config_uint CF_HEALTH_TIMEOUT "${CF_HEALTH_TIMEOUT:-}" 1 || return 1
   _config_ipv4_list CF_DNS "${CF_DNS:-}" || return 1

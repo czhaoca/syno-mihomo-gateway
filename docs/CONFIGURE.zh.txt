@@ -244,6 +244,10 @@ DNS 设置
   DOCKER_READY_TIMEOUT / DOCKER_READY_INTERVAL
       计划或开机任务等待 Container Manager 的秒数和重试间隔。默认 120 / 5。
 
+  BOOT_HEALTH_RETRIES / TUN_SETTLE_GRACE
+      开机任务重启后的 TUN 判定：等待 mihomo 控制器的 HEALTH_INTERVAL 个数，以及
+      mihomo-tun 接口允许晚于控制器出现的秒数，超过后容器会被重启一次。默认 12 / 10。
+
   EXPECTED_ARCH
       期望的 CPU 架构：amd64、arm64 或 arm（32 位，例如 armv7 树莓派）。
       设为与你的机器一致，以便尽早发现架构不匹配；install-linux.sh 与

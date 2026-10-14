@@ -33,6 +33,12 @@ ensure_persistent_state || {
   exit "$EXIT_CONFIG"
 }
 load_env   # FATAL (exit 3) if .env is missing; exports ROUTER_IP, SUBNET_CIDR, ...
+# The five knobs the boot path reads (readiness poll + TUN settle budget): a
+# non-integer value would misjudge the dataplane (compose.sh) or spin the
+# wait (registry.sh) - refuse it here, naming the knob, before any device or
+# network action. Boot-only list on purpose: a nightly-update setting must
+# never fail the Boot-up task (#84).
+validate_boot_config || exit "$EXIT_CONFIG"
 
 echo "========================================"
 echo " Mihomo Gateway - network self-heal"

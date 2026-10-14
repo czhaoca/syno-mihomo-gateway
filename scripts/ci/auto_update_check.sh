@@ -406,6 +406,26 @@ LOG_MAX_BYTES=1024
 UPDATE_IMAGES="$MIHOMO_IMAGE $METACUBEXD_IMAGE"
 TUN_AUTO_REDIRECT=false
 expect_success "valid updater configuration accepted" validate_update_config
+# Boot-knob validation (#84): the boot task validates only ITS five knobs (a
+# nightly-update setting must never fail the Boot-up task); the shared list is
+# wired into validate_update_config so the two cannot drift.
+BOOT_HEALTH_RETRIES=12; TUN_SETTLE_GRACE=10
+expect_success "boot knobs: v1.10.1 defaults accepted" validate_boot_config
+BOOT_HEALTH_RETRIES=abc
+expect_failure "boot knobs: non-integer BOOT_HEALTH_RETRIES rejected" validate_boot_config
+_vb_out="$( (LOG_FILE=/dev/null; validate_boot_config) 2>&1 )" || :
+assert_contains "boot knobs: the error names the knob" "$_vb_out" 'BOOT_HEALTH_RETRIES'
+expect_failure "update config: a bad boot knob fails the shared list too" validate_update_config
+BOOT_HEALTH_RETRIES=0
+expect_failure "boot knobs: BOOT_HEALTH_RETRIES=0 rejected (at least one probe)" validate_boot_config
+BOOT_HEALTH_RETRIES=12; TUN_SETTLE_GRACE=0
+expect_success "boot knobs: TUN_SETTLE_GRACE=0 allowed (no grace)" validate_boot_config
+TUN_SETTLE_GRACE=1s
+expect_failure "boot knobs: non-integer TUN_SETTLE_GRACE rejected" validate_boot_config
+TUN_SETTLE_GRACE=10; DOCKER_READY_INTERVAL=0
+expect_failure "boot knobs: DOCKER_READY_INTERVAL=0 rejected" validate_boot_config
+DOCKER_READY_INTERVAL=5
+expect_success "boot knobs: restored defaults accepted" validate_boot_config
 TUN_AUTO_REDIRECT=False
 expect_failure "TUN auto-redirect boolean is strict" validate_update_config
 TUN_AUTO_REDIRECT=false
@@ -572,6 +592,9 @@ _ln_tun="$(grep -n '^ensure_tun_device' "$_sn" | head -n1 | cut -d: -f1)"
 _ln_wait="$(grep -n '^wait_for_docker_ready' "$_sn" | head -n1 | cut -d: -f1)"
 [ -n "$_ln_tun" ] && [ -n "$_ln_wait" ] && [ "$_ln_tun" -lt "$_ln_wait" ] && ok \
   || fail "setup_network.sh must create /dev/net/tun BEFORE waiting for Docker (tun@${_ln_tun:-?} wait@${_ln_wait:-?})"
+_ln_val="$(grep -n '^validate_boot_config' "$_sn" | head -n1 | cut -d: -f1)"
+[ -n "$_ln_val" ] && [ -n "$_ln_tun" ] && [ "$_ln_val" -lt "$_ln_tun" ] && ok \
+  || fail "setup_network.sh must validate its knobs BEFORE touching /dev/net/tun (validate@${_ln_val:-?} tun@${_ln_tun:-?})"
 grep -q 'mihomo_tun_self_heal' "$_sn" && ok || fail "setup_network.sh does not run the boot TUN self-heal"
 grep -A8 'if mihomo_tun_self_heal' "$_sn" | grep -q 'exit "\$EXIT_PARTIAL"' && ok \
   || fail "setup_network.sh self-heal failure must exit partial (DSM error mail) right after the self-heal arm"
