@@ -437,6 +437,15 @@ _lines="$(wc -l < "$TMP/out" | tr -d ' ')"
 grep -q '"verb":"doctor"' "$TMP/out" || fail "doctor --json missing verb field"
 grep -q '"checks":\[' "$TMP/out" || fail "doctor --json missing checks[]"
 
+# --- doctor.sh usage (#87): a wrong flag names the JSON surface, so rc 3 is
+# never mistaken for a broken check ----------------------------------------------
+_drc=0
+FAKE_UID=0 PATH="$STUB:$PATH" sh "$ROOT/scripts/doctor.sh" --json </dev/null >"$TMP/dout" 2>"$TMP/derr" || _drc=$?
+[ "$_drc" -eq 3 ] && ok || fail "doctor.sh --json must exit 3 (got $_drc)"
+grep -q 'scripts/gateway.sh doctor --json' "$TMP/derr" && ok \
+  || fail "doctor.sh usage must point at scripts/gateway.sh doctor --json"
+[ ! -s "$TMP/dout" ] && ok || fail "doctor.sh usage error must print nothing on stdout"
+
 # --- doctor subscription parity: human doctor.sh mirrors --json's check ----------
 # subscription.txt was seeded above -> both modes report it as stored, no WARN.
 grep -q '"name":"subscription","value":"ok"' "$TMP/out" \

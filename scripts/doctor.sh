@@ -31,7 +31,8 @@ export NO_LOG_INIT
 case "${1:-}" in
   '') : ;;
   --egress) CHECK_EGRESS=1 ;;
-  *) echo "Usage: sh scripts/doctor.sh [--egress]" >&2; exit "$EXIT_CONFIG" ;;
+  *) echo "Usage: sh scripts/doctor.sh [--egress]   (machine-readable: sh scripts/gateway.sh doctor --json)" >&2
+     exit "$EXIT_CONFIG" ;;
 esac
 
 # The checks themselves live in lib/checks.sh (#30) - one table, two
