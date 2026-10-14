@@ -351,6 +351,8 @@ sh scripts/ci/panel_e2e_local.sh          # needs docker + internet, ~2-3 min
 两个不同的备用源 IP、依据 `/connections` 判定的按模式策略翻转、跨一次
 mihomo 重启的持久性，以及清理——它的纯解析函数与其他每一个测量辅助
 函数一样，由 `--self-test` 覆盖。
+被中断的运行（Ctrl-C）会先恢复暂存的缓存和原始 `.env` 再重建容器，且
+记录转录的 `tee` 不会被终端信号杀掉，清理过程的输出能完整写入日志。
 
 ## 如何扩展
 

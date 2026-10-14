@@ -363,6 +363,9 @@ reach, per-mode policy flips judged from `/connections` with two distinct
 spare source IPs, persistence across a mihomo restart, and cleanup — its
 pure parsers are covered by `--self-test` like every other measurement
 helper.
+An interrupted run (Ctrl-C) restores the parked caches and the original `.env`
+before recreating, and the transcript `tee` survives the terminal's signal so the
+cleanup lines reach the log.
 
 ## How to extend
 

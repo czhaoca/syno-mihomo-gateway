@@ -899,6 +899,21 @@ All Nodes' ]; then st_ok; else st_bad "urltest_groups got: $(printf '%s' "$_name
   mkdir -p "$TMP/stage0"
   if [ -z "$(pick_bundle "$TMP/stage0")" ]; then st_ok; else st_bad "pick_bundle: an empty stage must yield nothing"; fi
 
+  # 10) on_abort (#86) unparks both caches BEFORE restore_env, and the
+  #     transcript tee is immune to the terminal's INT. Static: the signal
+  #     path cannot be driven hermetically.
+  _oa="$(sed -n '/^on_abort() {/,/^}/p' "$0")"
+  # shellcheck disable=SC2016 # the literal source text is the pattern
+  _oa_cache="$(printf '%s\n' "$_oa" | grep -n 'unpark "$GATEWAY_DATA_DIR/config/cache.db"' | head -n1 | cut -d: -f1)"
+  # shellcheck disable=SC2016 # same
+  _oa_prox="$(printf '%s\n' "$_oa" | grep -n 'unpark "$GATEWAY_DATA_DIR/config/proxies"' | head -n1 | cut -d: -f1)"
+  _oa_rest="$(printf '%s\n' "$_oa" | grep -n '^  restore_env' | head -n1 | cut -d: -f1)"
+  if [ -n "$_oa_cache" ] && [ -n "$_oa_prox" ] && [ -n "$_oa_rest" ] \
+     && [ "$_oa_cache" -lt "$_oa_rest" ] && [ "$_oa_prox" -lt "$_oa_rest" ]; then st_ok
+  else st_bad "on_abort must unpark cache.db and proxies before restore_env (cache@${_oa_cache:-?} proxies@${_oa_prox:-?} restore@${_oa_rest:-?})"; fi
+  if grep -q "trap '' INT TERM HUP; exec tee \"\$LOG\"" "$0"; then st_ok
+  else st_bad "the transcript tee must ignore INT TERM HUP (exec tee inside a trap '' subshell)"; fi
+
   # DEC-C (#56): the keep-split-horizon decision is automatic - explicit
   # flags always win; a valid-pair original reverts (validation never
   # mutates a valid production .env); a pair-less/empty/missing original
@@ -1170,7 +1185,7 @@ time="2026-07-26T10:00:02.000000000Z" level=info msg="[TCP] 192.0.2.9:41236 --> 
 
   echo "validate_release self-test: $_stp passed, $_stf failed"
   [ "$_stf" -eq 0 ] || exit 1
-  echo "OK: measurement helpers (policy/knob/psn/split-core rule anchoring incl. bootstrap-pin + comment-prose immunity, provider-node counting + real-member egress gate, filtered-group discovery + %XX name encoding + COMPATIBLE/REJECT placeholder exclusion, full-proxy band connection parsing + CIDR membership, quoted-.env parsing, .env.example key coverage, scrubbed child env, doctor rc gate, summary accumulator, cache unpark, staged-bundle pick (numeric version, enduser-only), keep-split-horizon auto-decision, LAN-probe chain classification + probe-IP derivation incl. ARP-taken refusal, flow rulePayload + tunnel-escape detection, mihomo routing-log evidence (real logfmt: quoted success line, failed-dial form, node-less group refusal, source anchoring), panel probe parsers: /health + policy-set field extraction, device-doc mode lookup, dyn rule-provider counts, full-tunnel chain arm, UI marker pin)"
+  echo "OK: measurement helpers (policy/knob/psn/split-core rule anchoring incl. bootstrap-pin + comment-prose immunity, provider-node counting + real-member egress gate, filtered-group discovery + %XX name encoding + COMPATIBLE/REJECT placeholder exclusion, full-proxy band connection parsing + CIDR membership, quoted-.env parsing, .env.example key coverage, scrubbed child env, doctor rc gate, summary accumulator, cache unpark, staged-bundle pick (numeric version, enduser-only), abort-path cache restore + INT-immune tee (static), keep-split-horizon auto-decision, LAN-probe chain classification + probe-IP derivation incl. ARP-taken refusal, flow rulePayload + tunnel-escape detection, mihomo routing-log evidence (real logfmt: quoted success line, failed-dial form, node-less group refusal, source anchoring), panel probe parsers: /health + policy-set field extraction, device-doc mode lookup, dyn rule-provider counts, full-tunnel chain arm, UI marker pin)"
   exit 0
 }
 [ "$SELF_TEST" = 1 ] && self_test
@@ -1546,9 +1561,22 @@ a2_migration_abort_restore() {
 }
 # shellcheck disable=SC2329 # invoked via the trap below
 on_abort() {
+  # The terminal's INT also reached the transcript tee (the pipeline at the
+  # end keeps it alive; belt-and-braces here): a write into a dead pipe must
+  # fail, not kill this cleanup half-way through (#86).
+  trap '' PIPE
   echo "INTERRUPTED - restoring original .env"
   a2_migration_abort_restore
   fp_probe_teardown; lan_probe_teardown; panel_probe_teardown; panel_policy_cleanup
+  # Block B parks the owner's caches (cache.db = the dashboard-selected node,
+  # proxies = the provider list). An abort between the park and B's own
+  # unpark must put them back BEFORE the recreate below, for the reason B
+  # gives: the recreate starts from the restored files. No-op when nothing
+  # is parked (#86).
+  if [ -n "${GATEWAY_DATA_DIR:-}" ]; then
+    unpark "$GATEWAY_DATA_DIR/config/cache.db"
+    unpark "$GATEWAY_DATA_DIR/config/proxies"
+  fi
   restore_env
   # recreate parses compose: impossible (and pure noise) on a pre-panel .env
   # that the restore above may have just brought back. --a6-only never
@@ -2365,9 +2393,12 @@ fi
 }
 
 # portable transcript (no bash process substitution): pipe main to tee and
-# recover the real exit code from the sidecar file.
+# recover the real exit code from the sidecar file. The subshell makes tee
+# immune to the terminal's INT/TERM/HUP so it keeps draining until main
+# closes the pipe (the end of on_abort): the cleanup lines reach the terminal
+# AND the log, and nothing is orphaned - tee exits on EOF (#86).
 rm -f "$LOG" "$STAGE/.v138rc"
-main "$@" 2>&1 | tee "$LOG"
+main "$@" 2>&1 | ( trap '' INT TERM HUP; exec tee "$LOG" )
 chmod 644 "$LOG" 2>/dev/null || true
 RC=$(cat "$STAGE/.v138rc" 2>/dev/null || echo 1)
 rm -f "$STAGE/.v138rc"
