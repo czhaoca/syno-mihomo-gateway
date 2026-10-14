@@ -182,6 +182,9 @@ sudo sh ./install.sh
 - [ ] 分阶段验证器（`sudo sh scripts/validate_release.sh`）通过——它的 A4.5 门会从控制器
       实时发现 url-test 分组，任何生成的国家分组（某条 `COUNTRY_GROUPS`）匹配不到任何
       机场节点时**判定发布失败**。
+- [ ] 暂存目录里只放一个终端用户发布包——A0 按版本号选取**最新**的
+      `syno-mihomo-gateway-<x.y.z>.tar.gz`（绝不会选 `-linux-` 包），其余暂存的包会列在
+      汇总的 WARN 区块里；请把它们归档。
 
 ## 更新离线安装
 

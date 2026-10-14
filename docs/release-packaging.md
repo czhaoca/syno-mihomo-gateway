@@ -196,6 +196,9 @@ bundle):
 - [ ] The staged validator (`sudo sh scripts/validate_release.sh`) passes — its A4.5 gate
       discovers the url-test groups live from the controller and **fails the release** if any
       generated country group (a `COUNTRY_GROUPS` entry) matches zero provider nodes.
+- [ ] Exactly one enduser bundle is staged — A0 validates the **newest**
+      `syno-mihomo-gateway-<x.y.z>.tar.gz` by version (never a `-linux-` bundle) and lists any
+      other staged bundle in the summary's WARN block; archive the rest.
 
 ## Updating an offline install
 

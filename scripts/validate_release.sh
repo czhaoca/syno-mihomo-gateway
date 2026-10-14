@@ -658,6 +658,21 @@ unpark() {
   mv "$1.v138park" "$1"
 }
 
+# bundle_candidates DIR - the ENDUSER bundles in DIR (never the -linux- port)
+# as "x.y.z path" lines, sorted by version numerically per field. A plain
+# `sort` is lexicographic ('1.9.0' beats '1.10.1') and the broader glob let
+# a staged linux bundle win - both bit on release days (#85).
+bundle_candidates() {
+  find "$1" -maxdepth 1 -name 'syno-mihomo-gateway-[0-9]*.tar.gz' 2>/dev/null \
+    | while IFS= read -r _bc_p; do
+        _bc_v="${_bc_p##*/syno-mihomo-gateway-}"; _bc_v="${_bc_v%.tar.gz}"
+        printf '%s %s\n' "$_bc_v" "$_bc_p"
+      done | sort -t. -k1,1n -k2,2n -k3,3n
+}
+# pick_bundle DIR - the path of the highest-versioned enduser bundle, or
+# nothing when none is staged.
+pick_bundle() { bundle_candidates "$1" | tail -n1 | cut -d' ' -f2-; }
+
 # ---- self-test (CI: unprivileged, no docker) ---------------------------------
 
 self_test() {
@@ -866,6 +881,23 @@ All Nodes' ]; then st_ok; else st_bad "urltest_groups got: $(printf '%s' "$_name
   printf 'live' > "$TMP/plain"
   unpark "$TMP/plain"
   if [ "$(cat "$TMP/plain")" = live ]; then st_ok; else st_bad "unpark(no park) touched the live file"; fi
+
+  # 9) pick_bundle (#85): the highest x.y.z among ENDUSER bundles, numeric
+  #    per field - never the lexicographic winner, never the -linux- port
+  mkdir -p "$TMP/stage"
+  for _b in 1.9.0 1.10.0 1.10.1 linux-1.10.2; do : > "$TMP/stage/syno-mihomo-gateway-$_b.tar.gz"; done
+  if [ "$(pick_bundle "$TMP/stage")" = "$TMP/stage/syno-mihomo-gateway-1.10.1.tar.gz" ]; then st_ok
+  else st_bad "pick_bundle chose '$(pick_bundle "$TMP/stage")', want 1.10.1"; fi
+  : > "$TMP/stage/syno-mihomo-gateway-2.0.0.tar.gz"; : > "$TMP/stage/syno-mihomo-gateway-1.99.99.tar.gz"
+  case "$(pick_bundle "$TMP/stage")" in
+    *-2.0.0.tar.gz) st_ok ;;
+    *) st_bad "pick_bundle: 2.0.0 must beat 1.99.99 (chose '$(pick_bundle "$TMP/stage")')" ;;
+  esac
+  mkdir -p "$TMP/stage1"; : > "$TMP/stage1/syno-mihomo-gateway-1.4.0.tar.gz"
+  if [ "$(pick_bundle "$TMP/stage1")" = "$TMP/stage1/syno-mihomo-gateway-1.4.0.tar.gz" ]; then st_ok
+  else st_bad "pick_bundle: a lone bundle must be picked as-is"; fi
+  mkdir -p "$TMP/stage0"
+  if [ -z "$(pick_bundle "$TMP/stage0")" ]; then st_ok; else st_bad "pick_bundle: an empty stage must yield nothing"; fi
 
   # DEC-C (#56): the keep-split-horizon decision is automatic - explicit
   # flags always win; a valid-pair original reverts (validation never
@@ -1138,7 +1170,7 @@ time="2026-07-26T10:00:02.000000000Z" level=info msg="[TCP] 192.0.2.9:41236 --> 
 
   echo "validate_release self-test: $_stp passed, $_stf failed"
   [ "$_stf" -eq 0 ] || exit 1
-  echo "OK: measurement helpers (policy/knob/psn/split-core rule anchoring incl. bootstrap-pin + comment-prose immunity, provider-node counting + real-member egress gate, filtered-group discovery + %XX name encoding + COMPATIBLE/REJECT placeholder exclusion, full-proxy band connection parsing + CIDR membership, quoted-.env parsing, .env.example key coverage, scrubbed child env, doctor rc gate, summary accumulator, cache unpark, keep-split-horizon auto-decision, LAN-probe chain classification + probe-IP derivation incl. ARP-taken refusal, flow rulePayload + tunnel-escape detection, mihomo routing-log evidence (real logfmt: quoted success line, failed-dial form, node-less group refusal, source anchoring), panel probe parsers: /health + policy-set field extraction, device-doc mode lookup, dyn rule-provider counts, full-tunnel chain arm, UI marker pin)"
+  echo "OK: measurement helpers (policy/knob/psn/split-core rule anchoring incl. bootstrap-pin + comment-prose immunity, provider-node counting + real-member egress gate, filtered-group discovery + %XX name encoding + COMPATIBLE/REJECT placeholder exclusion, full-proxy band connection parsing + CIDR membership, quoted-.env parsing, .env.example key coverage, scrubbed child env, doctor rc gate, summary accumulator, cache unpark, staged-bundle pick (numeric version, enduser-only), keep-split-horizon auto-decision, LAN-probe chain classification + probe-IP derivation incl. ARP-taken refusal, flow rulePayload + tunnel-escape detection, mihomo routing-log evidence (real logfmt: quoted success line, failed-dial form, node-less group refusal, source anchoring), panel probe parsers: /health + policy-set field extraction, device-doc mode lookup, dyn rule-provider counts, full-tunnel chain arm, UI marker pin)"
   exit 0
 }
 [ "$SELF_TEST" = 1 ] && self_test
@@ -1152,7 +1184,15 @@ main() {
 PASS=""; FAIL=""
 
 say "A0: staged bundle"
-TARBALL=$(find "$STAGE" -maxdepth 1 -name 'syno-mihomo-gateway-*.tar.gz' 2>/dev/null | sort | tail -n1)
+TARBALL=$(pick_bundle "$STAGE")
+_a0_extra=$(find "$STAGE" -maxdepth 1 -name 'syno-mihomo-gateway-*.tar.gz' 2>/dev/null \
+              | { if [ -n "$TARBALL" ]; then grep -v -x -F "$TARBALL"; else cat; fi; } \
+              | sed 's|.*/||' | sort | tr '\n' ' ')
+if [ -n "$_a0_extra" ] && [ -n "$TARBALL" ]; then
+  warn "A0: other bundles staged too (${_a0_extra% }) - validating the newest enduser bundle $(basename "$TARBALL"); archive the rest"
+elif [ -n "$_a0_extra" ]; then
+  warn "A0: no enduser bundle staged, only (${_a0_extra% }) - a -linux- bundle is never validated here; validating the installed tree"
+fi
 if [ "$NO_EXTRACT" = 1 ] || [ -z "$TARBALL" ]; then
   echo "no extract (flag or no staged bundle) - validating the installed tree"
 else
