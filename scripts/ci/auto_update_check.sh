@@ -333,6 +333,65 @@ else
   ok
 fi
 
+# --- quiet readiness polling (#83): the REAL probes against a docker whose
+# 'info' answers only from the Nth call. A healthy Container Manager startup
+# must leave NO ERROR line and exactly one docker= INFO line, after readiness;
+# a timeout names the cause exactly once; a 0s interval is refused up front.
+mkdir -p "$TMP/waitbin"
+printf '%s\n' '#!/bin/sh' \
+  'case "$1" in' \
+  '  compose) exit 0 ;;' \
+  '  info) _n=$(cat "$MOCK_INFO_COUNTER" 2>/dev/null || echo 0); _n=$((_n + 1))' \
+  '        echo "$_n" > "$MOCK_INFO_COUNTER"' \
+  '        [ "$_n" -ge "${MOCK_INFO_READY_AT:-1}" ] && exit 0; exit 1 ;;' \
+  'esac' \
+  'exit 0' > "$TMP/waitbin/docker"
+chmod +x "$TMP/waitbin/docker"
+MOCK_INFO_COUNTER="$TMP/info.count"; export MOCK_INFO_COUNTER
+_wr_log="$TMP/wait-ok.log"; rm -f "$MOCK_INFO_COUNTER"
+if ( PATH="$TMP/waitbin:$PATH"; LOG_FILE="$_wr_log"; MOCK_INFO_READY_AT=3; export MOCK_INFO_READY_AT
+     sleep() { :; }
+     wait_for_docker_ready 10 1 ) >/dev/null 2>&1; then
+  ok
+else
+  fail "quiet readiness wait: must succeed once the daemon answers"
+fi
+_wr_out="$(cat "$_wr_log" 2>/dev/null)"
+assert_not_contains "quiet readiness wait: no ERROR line during a healthy startup" "$_wr_out" '[ERROR]'
+_wr_n="$(grep -c 'docker=' "$_wr_log")"
+[ "$_wr_n" -eq 1 ] && ok || fail "quiet readiness wait: exactly one docker= INFO line (got $_wr_n)"
+_wr_n="$(grep -c 'waiting for' "$_wr_log")"
+[ "$_wr_n" -eq 2 ] && ok || fail "quiet readiness wait: one WARN per failed poll (got $_wr_n, want 2)"
+case "$(tail -n 1 "$_wr_log")" in
+  *'docker='*'ready after 2s'*) ok ;;
+  *) fail "quiet readiness wait: the INFO line must come last, after readiness" ;;
+esac
+
+_wr_log="$TMP/wait-timeout.log"; rm -f "$MOCK_INFO_COUNTER"
+if ( PATH="$TMP/waitbin:$PATH"; LOG_FILE="$_wr_log"; MOCK_INFO_READY_AT=99; export MOCK_INFO_READY_AT
+     sleep() { :; }
+     wait_for_docker_ready 2 1 ) >/dev/null 2>&1; then
+  fail "readiness timeout must propagate when the daemon never answers"
+else
+  ok
+fi
+_wr_n="$(grep -c 'Docker daemon is unavailable' "$_wr_log")"
+[ "$_wr_n" -eq 1 ] && ok || fail "readiness timeout: the daemon diagnostic appears exactly once (got $_wr_n)"
+_wr_n="$(grep -c 'did not become ready' "$_wr_log")"
+[ "$_wr_n" -eq 1 ] && ok || fail "readiness timeout: one verdict line (got $_wr_n)"
+_wr_n="$(grep -c '\[ERROR\]' "$_wr_log")"
+[ "$_wr_n" -eq 2 ] && ok || fail "readiness timeout: exactly two ERROR lines, diagnostic + verdict (got $_wr_n)"
+
+_wr_log="$TMP/wait-zero.log"
+if ( LOG_FILE="$_wr_log"; wait_for_docker_ready 5 0 ) >/dev/null 2>&1; then
+  fail "a 0s readiness interval must be rejected (it never advances the clock)"
+else
+  ok
+fi
+_wr_out="$(cat "$_wr_log" 2>/dev/null)"
+assert_contains "0s readiness interval: names the knob" "$_wr_out" 'DOCKER_READY_INTERVAL must be >= 1'
+assert_not_contains "0s readiness interval: never polls" "$_wr_out" 'waiting for'
+
 UPDATE_ENABLED=true
 PULL_RETRIES=3
 PULL_RETRY_DELAY=0

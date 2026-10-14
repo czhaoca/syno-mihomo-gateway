@@ -3,14 +3,23 @@
 # image pull + change detection. Requires common.sh sourced first.
 # Sets globals: DOCKER_BIN, COMPOSE_CMD.
 
+# detect_compose [quiet] - resolve DOCKER_BIN + COMPOSE_CMD (the v2 plugin
+# first, a standalone docker-compose as the fallback). 'quiet' suppresses the
+# log lines: the readiness poll (#83) calls this every interval, and a binary
+# that is still missing while Container Manager starts is the expected
+# state, not an error worth a line per poll.
 detect_compose() {
+  _dc_quiet="${1:-}"
   DOCKER_BIN="$(command -v docker 2>/dev/null)"
   if [ -z "$DOCKER_BIN" ]; then
     for _c in /usr/local/bin/docker /usr/bin/docker; do
       [ -x "$_c" ] && DOCKER_BIN="$_c" && break
     done
   fi
-  [ -n "$DOCKER_BIN" ] || { log_error "docker binary not found in PATH"; return 1; }
+  if [ -z "$DOCKER_BIN" ]; then
+    [ "$_dc_quiet" = quiet ] || log_error "docker binary not found in PATH"
+    return 1
+  fi
 
   if "$DOCKER_BIN" compose version >/dev/null 2>&1; then
     COMPOSE_CMD="$DOCKER_BIN compose"
@@ -19,19 +28,21 @@ detect_compose() {
   elif [ -x /usr/local/bin/docker-compose ]; then
     COMPOSE_CMD="/usr/local/bin/docker-compose"
   else
-    log_error "neither 'docker compose' (v2) nor 'docker-compose' (v1) is available"
+    [ "$_dc_quiet" = quiet ] || log_error "neither 'docker compose' (v2) nor 'docker-compose' (v1) is available"
     return 1
   fi
-  log_info "docker=$DOCKER_BIN  compose=[$COMPOSE_CMD]"
+  [ "$_dc_quiet" = quiet ] || log_info "docker=$DOCKER_BIN  compose=[$COMPOSE_CMD]"
   # Explicit success: log() pipes through tee, so an unwritable log file must
   # not turn this healthy predicate into a bogus "Docker not ready" abort.
   return 0
 }
 
+# docker_daemon_ready [quiet] - does the daemon answer? 'quiet' as above.
 docker_daemon_ready() {
   if "$DOCKER_BIN" info >/dev/null 2>&1; then
     return 0
   fi
+  [ "${1:-}" = quiet ] && return 1
   # Platform-conditional phrasing (#50): unset PLATFORM_LABEL = the DSM
   # wording byte-for-byte (same rule at every case site in this file).
   case "${PLATFORM_LABEL:-dsm}" in
@@ -41,15 +52,30 @@ docker_daemon_ready() {
   return 1
 }
 
+# wait_for_docker_ready [TIMEOUT [INTERVAL]] - block until the CLI, a compose
+# flavor and the daemon all answer. Polls QUIETLY: one 'waiting' WARN per
+# interval is the only trace a healthy startup leaves. On timeout, one loud
+# probe pass names the cause with the platform wording, then the verdict.
+# The compose flavor is latched by the poll that saw the daemon up - with
+# the CLI fully installed - not by an earlier poll where the v2 plugin was
+# still absent and the standalone binary won (#83).
 wait_for_docker_ready() {
   _wr_timeout="${1:-${DOCKER_READY_TIMEOUT:-120}}"
   _wr_interval="${2:-${DOCKER_READY_INTERVAL:-5}}"
   case "$_wr_timeout:$_wr_interval" in
-    *[!0-9:]*|:*) log_error "invalid Docker readiness timeout/interval"; return 1 ;;
+    *[!0-9:]*|:*|*:) log_error "invalid Docker readiness timeout/interval"; return 1 ;;
   esac
+  # A 0 interval never advances the clock: with Docker absent the loop would
+  # spin forever. The updater's _config_uint floor is 1, but the boot task
+  # and the CLI reach this loop without it - enforce the floor here too.
+  if [ "$_wr_interval" -lt 1 ]; then
+    log_error "invalid Docker readiness timeout/interval (DOCKER_READY_INTERVAL must be >= 1)"
+    return 1
+  fi
   _wr_elapsed=0
   while :; do
-    if detect_compose && docker_daemon_ready; then
+    if detect_compose quiet && docker_daemon_ready quiet; then
+      log_info "docker=${DOCKER_BIN:-}  compose=[${COMPOSE_CMD:-}] (ready after ${_wr_elapsed}s)"
       return 0
     fi
     [ "$_wr_elapsed" -ge "$_wr_timeout" ] && break
@@ -60,6 +86,7 @@ wait_for_docker_ready() {
     sleep "$_wr_interval"
     _wr_elapsed=$((_wr_elapsed + _wr_interval))
   done
+  detect_compose && docker_daemon_ready
   log_error "Docker did not become ready within ${_wr_timeout}s"
   return 1
 }
