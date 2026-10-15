@@ -68,6 +68,7 @@ scripts/
     compose_policy_check.py   # CI: fail-closed image refs + REGISTRY_MODE=acr default
     package_check.py          # CI: builds the dev, enduser + linux bundles in throwaway repos, proves no secret ships
     privacy_check.py          # tracked-content/history privacy gate (+ privacy_check_test.py)
+    woodpecker_pin_check.py   # CI: every .woodpecker.yml step image is name:tag@sha256:<digest>, one digest per tag (+ woodpecker_pin_check_test.py)
     auto_update_check.sh      # fake-Docker TDD suite for scheduler/update/rollback paths
     cloudflared_check.sh      # fake-Docker TDD suite for blue-green behavior
     generic_update_check.sh   # fake-Docker suite for the generic capture/replay engine
@@ -84,7 +85,7 @@ scripts/
     panel_e2e_check.py        # CI: real uvicorn panel vs an in-step fake controller on loopback
     lib/assert.sh             # shared assertions for the sh suites
 app/                          # the gateway panel: FastAPI service core (store/reconciler/api/tests)
-.woodpecker.yml               # CI: 15 blocking steps (see the CI table below)
+.woodpecker.yml               # CI: 16 blocking steps (see the CI table below)
 .github/workflows/panel-image.yml  # CI: the panel-image build check (GitHub Actions; see the CI section)
 docs/                         # manual (EN) + docs/zh mirrors (中文) + docs/*.txt enduser guides
 ```
@@ -167,6 +168,7 @@ Runs on push/PR to `main` and `master`:
 |---|---|
 | `validate-compose` | Compose **v2** (`apk add docker-cli-compose`, then `docker compose --env-file .env.example config --quiet`) — the frozen v1 `docker/compose` image cannot parse the fail-closed `${VAR:?}` image refs |
 | `validate-yaml` | `yaml.safe_load(docker-compose.yml)` |
+| `ci-pins` | `python scripts/ci/woodpecker_pin_check.py` + its `_test.py` — every step image in `.woodpecker.yml` (this step's own included) must be `name:tag@sha256:<digest>`: a floating tag is whatever the registry serves today, so a registry-side move could flip a commit's result with no diff here; the tag stays beside the digest for humans, the gate parses the YAML only (no network, no docker) and ships positive + negative controls; refresh procedure below |
 | `render-config` | `python scripts/ci/render_check.py` — runs the **real** renderer against a fixture URL with a `Name=` prefix + `&` params and asserts the URL round-trips exactly; also enforces the no-hardcoded-DNS rule |
 | `cli-contract` | `python scripts/ci/cli_contract_check.py` — byte-diffs the committed `help.sh`/`cli.md` (en+zh)/`CLI.txt` (en+zh) against a fresh regeneration from `scripts/cli/spec.yaml`, and asserts the spec's exit codes match `common.sh`, its verb set matches `gateway.sh`'s dispatch, and `gateway.sh --help` serves the spec text verbatim |
 | `compose-policy` | `python scripts/ci/compose_policy_check.py` — asserts **fail-closed** image refs: every compose `image:` is exactly `${VAR}`/`${VAR:?msg}` (no defaults, no hardcoded refs) and `.env.example` defines the image vars and ships `REGISTRY_MODE=acr` (ACR default; `docker` upstream is an explicit opt-in, not forbidden); also freezes the **container-name contract** — every service pins `container_name:`, the core pair is exactly `mihomo`/`mihomo-ui`, and `scripts/lib/compose.sh`'s defaults mirror them (a rename is a breaking operator-contract change) |
@@ -187,8 +189,28 @@ build-and-discard, no registry login, no push. It lives on GitHub Actions becaus
 repo is untrusted (no socket mounts, no privileged steps) and CI step containers deliberately stay
 plain daemonless images; the sibling Panel Build workflow already proves GitHub Actions builds this
 exact Dockerfile at release time. Publishing stays exclusively the sibling's job. **The pre-tag
-gate is BOTH surfaces green on the release commit**: Woodpecker's 15 steps *and* the `panel-image`
+gate is BOTH surfaces green on the release commit**: Woodpecker's 16 steps *and* the `panel-image`
 check.
+
+### Refreshing CI image digests
+
+Every step image in `.woodpecker.yml` is pinned as `name:tag@sha256:<digest>` and the `ci-pins`
+step refuses anything else. The tag is for humans; the digest is what CI actually runs, so the
+build that was tested is the build that is reproducible. Nothing refreshes the pins for you
+(Woodpecker has no Dependabot, and no Renovate is wired to this repo): bump them **on demand** —
+a base-image CVE, a toolchain feature a step needs, or a deliberate shellcheck upgrade — never on
+a calendar nobody enforces.
+
+```bash
+# the multi-arch manifest-list digest (what the engine pulls on any architecture)
+docker buildx imagetools inspect python:3.12-slim --format '{{.Manifest.Digest}}'
+```
+
+Then rewrite every `image:` line that names that tag (repeats share one digest), run the local
+checks against the **new** pins — the shellcheck and sh-suite mirrors below read the pinned refs
+straight from `.woodpecker.yml`; the python gates run on your host interpreter, so a python-image
+bump is proven by CI itself — and treat the bump as a deliberate diff: new findings a newer
+shellcheck or toolchain surfaces are fixed in the same change, never silenced.
 
 ## The CLI contract (generated files)
 
@@ -289,6 +311,11 @@ python3 -m venv /tmp/v && /tmp/v/bin/pip install -q pyyaml
 /tmp/v/bin/python scripts/ci/render_check.py
 /tmp/v/bin/python scripts/ci/cli_contract_check.py   # --write regenerates the artifacts
 
+# CI image pins: every step image in .woodpecker.yml must be name:tag@sha256:<digest>
+# (the gate's own positive/negative controls ride along)
+/tmp/v/bin/python scripts/ci/woodpecker_pin_check.py
+/tmp/v/bin/python scripts/ci/woodpecker_pin_check_test.py
+
 # the panel app: lint, unit suite + OpenAPI contract gate, hermetic e2e
 # (own venv - the app pins its deps in app/requirements*.txt)
 python3 -m venv /tmp/vp && /tmp/vp/bin/pip install -q -r app/requirements.txt -r app/requirements-dev.txt
@@ -297,8 +324,10 @@ python3 -m venv /tmp/vp && /tmp/vp/bin/pip install -q -r app/requirements.txt -r
 /tmp/vp/bin/python scripts/ci/panel_contract_check.py   # --write regenerates app/openapi.json
 /tmp/vp/bin/python scripts/ci/panel_e2e_check.py
 
-# shellcheck (via Docker, same 23 targets as CI)
-docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck-alpine:stable \
+# shellcheck (via Docker, same 23 targets AND the same digest-pinned image as CI -
+# read straight from .woodpecker.yml so this mirror can never drift from the pin)
+SC=$(sed -n 's/^ *image: *\(koalaman\/shellcheck-alpine[^ ]*\).*/\1/p' .woodpecker.yml | head -n1)
+docker run --rm -v "$PWD:/mnt" -w /mnt "$SC" \
   shellcheck -x install.sh install-pi.sh install-linux.sh scripts/gateway.sh scripts/auto_update.sh \
   scripts/pi/auto_update_lite.sh scripts/pi/lite_ctl.sh \
   scripts/install_scheduler.sh scripts/setup_network.sh scripts/render_config.sh \
@@ -321,7 +350,11 @@ sh scripts/package.sh --profile linux
 docker build -f app/Dockerfile app/
 
 # the twelve fake-Docker/PATH-stub TDD suites CI runs, plus the
-# release-validation helper's self-test (no NAS mutation)
+# release-validation helper's self-test (no NAS mutation). macOS /bin/sh
+# continues past `set -u` errors and can report a FALSE green, so to run a
+# suite on CI's exact shell use the digest-pinned alpine read from .woodpecker.yml:
+#   AL=$(sed -n 's/^ *image: *\(alpine:[^ ]*\).*/\1/p' .woodpecker.yml | head -n1)
+#   docker run --rm --network none -v "$PWD":/w -w /w "$AL" sh scripts/ci/<suite>.sh
 sh scripts/ci/dsm_installer_check.sh
 sh scripts/ci/lifecycle_check.sh
 sh scripts/ci/auto_update_check.sh

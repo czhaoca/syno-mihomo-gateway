@@ -1,11 +1,20 @@
 # Syno Mihomo Gateway CI
+#
+# Every step image below is pinned by DIGEST, with its tag kept beside it for
+# humans (name:tag@sha256:...). A floating tag is whatever the registry serves
+# today, so a registry-side move could flip a commit's result with no diff
+# here; the digest makes "the build that was tested" the build that runs. The
+# ci-pins step refuses anything else. To bump one, resolve the multi-arch
+# manifest-list digest and rewrite every line naming that tag:
+#   docker buildx imagetools inspect <name:tag> --format '{{.Manifest.Digest}}'
+# See docs/development.md, "Refreshing CI image digests".
 when:
   event: [push, pull_request]
   branch: [main, master]
 
 steps:
   - name: validate-compose
-    image: alpine:3.22
+    image: alpine:3.22@sha256:5291449c3df73caf6ed85e649dec1b9e818b39a5d8c871e97afc13e9cd5e8fa8
     commands:
       # Needs compose v2 (what DSM Container Manager and local dev run): the
       # deprecated docker/compose image is frozen at v1, which cannot parse the
@@ -14,14 +23,27 @@ steps:
       - docker compose --env-file .env.example config --quiet
 
   - name: validate-yaml
-    image: python:3.12-slim
+    image: python:3.12-slim@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1
     commands:
       - pip install --quiet pyyaml
       - python -c "import yaml; yaml.safe_load(open('docker-compose.yml'))"
       - echo "YAML validation passed"
 
+  - name: ci-pins
+    image: python:3.12-slim@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1
+    commands:
+      # Every step image in this file - this one included - must be pinned by
+      # digest with its tag beside it (see the header). The gate parses the
+      # YAML only (no network, no docker: step containers stay daemonless) and
+      # its positive + negative controls ride along, the privacy_check_test.py
+      # idiom - a gate that only ever sees a healthy file cannot show what it
+      # would reject.
+      - pip install --quiet pyyaml
+      - python scripts/ci/woodpecker_pin_check.py
+      - python scripts/ci/woodpecker_pin_check_test.py
+
   - name: render-config
-    image: python:3.12-slim
+    image: python:3.12-slim@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1
     commands:
       # Renders config.template.yaml with .env.example, validates structure, and
       # enforces the CLAUDE.md "no hardcoded DNS/network address" rule.
@@ -29,7 +51,7 @@ steps:
       - python scripts/ci/render_check.py
 
   - name: cli-contract
-    image: python:3.12-slim
+    image: python:3.12-slim@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1
     commands:
       # The CLI contract: scripts/cli/spec.yaml is the source of truth; the
       # committed help.sh/cli.md(en+zh)/CLI.txt(en+zh) must regenerate
@@ -39,7 +61,7 @@ steps:
       - python scripts/ci/cli_contract_check.py
 
   - name: compose-policy
-    image: python:3.12-slim
+    image: python:3.12-slim@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1
     commands:
       # Image-ref policy: every compose image is a fail-closed env ref (never a
       # hardcoded ref or default fallback), and .env.example ships REGISTRY_MODE=acr
@@ -49,7 +71,7 @@ steps:
       - python scripts/ci/compose_policy_check.py
 
   - name: package-check
-    image: python:3.12-slim
+    image: python:3.12-slim@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1
     commands:
       # Hermetic safeguard test: builds the dev, enduser, and linux release bundles in
       # throwaway repos and proves none can ship a secret (.env / subscription /
@@ -62,7 +84,7 @@ steps:
       - python scripts/ci/package_check.py
 
   - name: release-bundle
-    image: python:3.12-slim
+    image: python:3.12-slim@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1
     commands:
       # The REAL packager on the REAL tree (#81). package-check above proves the
       # packager's GUARDS fire - but only inside a throwaway fixture repo, so it
@@ -78,7 +100,7 @@ steps:
       - sh scripts/package.sh --profile linux
 
   - name: privacy-check
-    image: python:3.12-slim
+    image: python:3.12-slim@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1
     commands:
       # Public project/GitHub and Shenzhen ACR references are allowed. Private
       # operational identifiers, credentials, and tracked runtime files are not.
@@ -87,7 +109,7 @@ steps:
       - python scripts/ci/privacy_check_test.py
 
   - name: dsm-shell-tests
-    image: alpine:3.22
+    image: alpine:3.22@sha256:5291449c3df73caf6ed85e649dec1b9e818b39a5d8c871e97afc13e9cd5e8fa8
     commands:
       - sh scripts/ci/dsm_installer_check.sh
       - sh scripts/ci/lifecycle_check.sh
@@ -104,7 +126,7 @@ steps:
       - sh scripts/validate_release.sh --self-test
 
   - name: shellcheck
-    image: koalaman/shellcheck-alpine:stable
+    image: koalaman/shellcheck-alpine:stable@sha256:c82fe42504fbc9fc68f15d36638e5ee2324ebb8b94e96a3c4e395bf361c49183
     commands:
       # First parse-check every shell script, then lint the entry points with -x so the
       # sourced modules are analyzed in context: install.sh pulls in scripts/installer/*.sh
@@ -114,7 +136,7 @@ steps:
       - shellcheck -x install.sh install-pi.sh install-linux.sh scripts/gateway.sh scripts/auto_update.sh scripts/pi/auto_update_lite.sh scripts/pi/lite_ctl.sh scripts/install_scheduler.sh scripts/setup_network.sh scripts/render_config.sh scripts/mihomo_entrypoint.sh scripts/package.sh scripts/doctor.sh scripts/state_diff.sh scripts/seed_provider.sh bootstrap.sh scripts/lib/container.sh scripts/lib/targets.sh scripts/lib/geodata.sh scripts/lib/panel.sh scripts/linux/i18n_linux.sh scripts/linux/preflight_linux.sh scripts/validate_release.sh
 
   - name: ui-build
-    image: node:22-slim
+    image: node:22-slim@sha256:c3de60bf2f9dd0ac6370e6117950ff62d6e339527e7472301c9c78a017978392
     commands:
       # The frontend toolchain (#78). `npm ci` so the lockfile is
       # authoritative - a CI build resolving different versions than the one
@@ -136,8 +158,9 @@ steps:
     # Browsers come from the IMAGE, never a per-run CDN download: a gate
     # that fetches ~100MB of Chromium on every push is one network blip
     # away from a red build that means nothing. The tag pins the browser
-    # build alongside the Playwright version, so the two can never drift.
-    image: mcr.microsoft.com/playwright:v1.62.1-noble
+    # build alongside the Playwright version, and the digest pins those
+    # bytes (see the header), so none of the three can drift.
+    image: mcr.microsoft.com/playwright:v1.62.1-noble@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e
     commands:
       # The app under test is the REAL panel driven by uvicorn against the
       # same FakeController the API e2e uses (scripts/ci/ui_e2e_server.py).
@@ -148,7 +171,7 @@ steps:
       - cd app/ui && PANEL_E2E_PYTHON=/tmp/panelvenv/bin/python npx playwright test
 
   - name: app-lint
-    image: python:3.12-slim
+    image: python:3.12-slim@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1
     commands:
       # Panel app lint (ruff pinned in app/requirements-dev.txt; config
       # scoped via app/ruff.toml).
@@ -156,7 +179,7 @@ steps:
       - ruff check app
 
   - name: app-unit
-    image: python:3.12-slim
+    image: python:3.12-slim@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1
     commands:
       # NOTE this step runs AFTER ui-build and shares its workspace, so
       # app/ui/dist exists here and the served-build assertions in
@@ -172,7 +195,7 @@ steps:
       - python scripts/ci/panel_contract_check.py
 
   - name: app-e2e
-    image: python:3.12-slim
+    image: python:3.12-slim@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1
     commands:
       # Real uvicorn app against an in-step fake mihomo controller +
       # webhook sink on loopback - daemonless (CI step containers stay

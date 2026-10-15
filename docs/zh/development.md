@@ -67,6 +67,7 @@ scripts/
     compose_policy_check.py   # CI：fail-closed 镜像引用 + REGISTRY_MODE=acr 默认值
     package_check.py          # CI：在临时仓库中构建 dev、enduser、linux 三种发布包，证明不打包任何密钥
     privacy_check.py          # 被跟踪内容/历史隐私守卫（+ privacy_check_test.py）
+    woodpecker_pin_check.py   # CI：.woodpecker.yml 中每个步骤镜像都是 name:tag@sha256:<digest>，每个标签只对应一个 digest（+ woodpecker_pin_check_test.py）
     auto_update_check.sh      # 使用伪 Docker 的计划/更新/回滚 TDD 测试
     cloudflared_check.sh      # 使用伪 Docker 的蓝绿行为 TDD 测试
     generic_update_check.sh   # 使用伪 Docker 的通用捕获/重放引擎测试
@@ -83,7 +84,7 @@ scripts/
     panel_e2e_check.py        # CI：真实 uvicorn 面板对回环上的步内伪控制器
     lib/assert.sh             # sh 测试套件共享的断言
 app/                          # 网关面板：FastAPI 服务核心（store/reconciler/api/tests）
-.woodpecker.yml               # CI：15 个阻断式步骤（见下方 CI 表格）
+.woodpecker.yml               # CI：16 个阻断式步骤（见下方 CI 表格）
 .github/workflows/panel-image.yml  # CI：panel-image 镜像构建检查（GitHub Actions；见 CI 一节）
 docs/                         # 手册（EN）+ docs/zh 中文镜像 + docs/*.txt 最终用户指南
 ```
@@ -161,6 +162,7 @@ EXIT 陷阱不会回收它（`CF_KEEP_CANDIDATE`）。
 |---|---|
 | `validate-compose` | Compose **v2**（`apk add docker-cli-compose`，然后 `docker compose --env-file .env.example config --quiet`）—— 冻结的 v1 `docker/compose` 镜像无法解析 fail-closed 的 `${VAR:?}` 镜像引用 |
 | `validate-yaml` | `yaml.safe_load(docker-compose.yml)` |
+| `ci-pins` | `python scripts/ci/woodpecker_pin_check.py` + 其 `_test.py` —— `.woodpecker.yml` 中的每个步骤镜像（含本步骤自身）必须是 `name:tag@sha256:<digest>`：浮动标签等于“镜像仓库今天提供的任何东西”，仓库侧的标签移动可能在本仓库没有任何改动的情况下翻转一次提交的结果；digest 旁边保留标签供人阅读，该门只解析 YAML（不联网、不用 docker），并自带正/反向对照测试；刷新步骤见下文 |
 | `render-config` | `python scripts/ci/render_check.py` —— 针对一个带 `Name=` 前缀及 `&` 参数的夹具 URL 运行**真实的**渲染器，并断言该 URL 能精确地往返还原；同时强制执行“不硬编码 DNS”规则 |
 | `cli-contract` | `python scripts/ci/cli_contract_check.py` —— 将已提交的 `help.sh`/`cli.md`（中英）/`CLI.txt`（中英）与从 `scripts/cli/spec.yaml` 全新重新生成的版本逐字节比对，并断言 spec 的退出码与 `common.sh` 一致、其动词集合与 `gateway.sh` 的分发一致、且 `gateway.sh --help` 逐字输出 spec 文本 |
 | `compose-policy` | `python scripts/ci/compose_policy_check.py` —— 断言 **fail-closed** 的镜像引用：compose 中每个 `image:` 都严格是 `${VAR}`/`${VAR:?msg}`（无默认值、无硬编码引用），且 `.env.example` 定义了这些镜像变量并携带 `REGISTRY_MODE=acr`（ACR 为默认；`docker` 上游是显式可选项，并非被禁止）；同时冻结**容器名契约**——每个服务都必须固定 `container_name:`，核心一对严格为 `mihomo`/`mihomo-ui`，且 `scripts/lib/compose.sh` 的默认值与之一致（改名属于破坏运维契约的变更） |
@@ -180,8 +182,26 @@ EXIT 陷阱不会回收它（`CF_KEEP_CANDIDATE`）。
 只构建、即弃，不登录镜像仓库、不推送。它放在 GitHub Actions 上是因为 Woodpecker 仓库处于
 非受信状态（不能挂载 socket、不能运行特权步骤），且 CI 步骤容器刻意保持为无守护进程的普通
 镜像；姊妹仓库的 Panel Build 工作流已经证明 GitHub Actions 能在发布时构建这个 Dockerfile。
-镜像的发布仍然只属于姊妹工作流。**打标签前的门槛是两个面都变绿**：Woodpecker 的 15 个步骤
+镜像的发布仍然只属于姊妹工作流。**打标签前的门槛是两个面都变绿**：Woodpecker 的 16 个步骤
 *加上* `panel-image` 检查，都在发布提交上通过。
+
+### 刷新 CI 镜像 digest
+
+`.woodpecker.yml` 中的每个步骤镜像都以 `name:tag@sha256:<digest>` 的形式钉死，`ci-pins` 步骤拒绝其他
+任何形式。标签是给人看的；digest 才是 CI 真正运行的内容，因此“被测试过的那个构建”就是可复现的那个
+构建。没有任何东西会替你刷新这些 pin（Woodpecker 没有 Dependabot，本仓库也没有接入 Renovate）：
+**按需**升级——基础镜像有 CVE、某个步骤需要新的工具链特性、或是有意升级 shellcheck——而不是按一个
+无人执行的日历。
+
+```bash
+# 多架构 manifest list 的 digest（引擎在任何架构上拉取的就是它）
+docker buildx imagetools inspect python:3.12-slim --format '{{.Manifest.Digest}}'
+```
+
+然后改写每一条使用该标签的 `image:` 行（重复出现的共用同一个 digest），用**新的** pin 跑一遍本地检查
+——下方的 shellcheck 与 sh 测试套件的本地等价物直接从 `.woodpecker.yml` 读取钉死的镜像引用；python
+门在你本机的解释器上运行，因此 python 镜像的升级由 CI 本身来证明——并把这次升级当作一次有意的改动：
+更新的 shellcheck 或工具链暴露出的新问题要在同一变更中修掉，绝不压制。
 
 ## CLI 契约（生成的文件）
 
@@ -278,6 +298,11 @@ python3 -m venv /tmp/v && /tmp/v/bin/pip install -q pyyaml
 /tmp/v/bin/python scripts/ci/render_check.py
 /tmp/v/bin/python scripts/ci/cli_contract_check.py   # --write 重新生成这些产物
 
+# CI 镜像 pin：.woodpecker.yml 中的每个步骤镜像都必须是 name:tag@sha256:<digest>
+#（该门自带的正/反向对照测试一并运行）
+/tmp/v/bin/python scripts/ci/woodpecker_pin_check.py
+/tmp/v/bin/python scripts/ci/woodpecker_pin_check_test.py
+
 # 面板应用：lint、单元测试 + OpenAPI 契约门、封闭式 e2e
 #（独立 venv——应用依赖钉在 app/requirements*.txt）
 python3 -m venv /tmp/vp && /tmp/vp/bin/pip install -q -r app/requirements.txt -r app/requirements-dev.txt
@@ -286,8 +311,10 @@ python3 -m venv /tmp/vp && /tmp/vp/bin/pip install -q -r app/requirements.txt -r
 /tmp/vp/bin/python scripts/ci/panel_contract_check.py   # --write 重新生成 app/openapi.json
 /tmp/vp/bin/python scripts/ci/panel_e2e_check.py
 
-# shellcheck（经 Docker，与 CI 相同的 23 个目标）
-docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck-alpine:stable \
+# shellcheck（经 Docker，与 CI 相同的 23 个目标，并且是与 CI 相同的、按 digest 钉死的镜像——
+# 直接从 .woodpecker.yml 读取，因此这条本地等价物永远不会偏离 pin）
+SC=$(sed -n 's/^ *image: *\(koalaman\/shellcheck-alpine[^ ]*\).*/\1/p' .woodpecker.yml | head -n1)
+docker run --rm -v "$PWD:/mnt" -w /mnt "$SC" \
   shellcheck -x install.sh install-pi.sh install-linux.sh scripts/gateway.sh scripts/auto_update.sh \
   scripts/pi/auto_update_lite.sh scripts/pi/lite_ctl.sh \
   scripts/install_scheduler.sh scripts/setup_network.sh scripts/render_config.sh \
@@ -310,7 +337,11 @@ sh scripts/package.sh --profile linux
 docker build -f app/Dockerfile app/
 
 # CI 运行的十二个伪 Docker/PATH 桩 TDD 测试套件，外加发布验证助手的
-# 自测（不修改 NAS）
+# 自测（不修改 NAS）。macOS 的 /bin/sh 在 `set -u` 报错后会继续执行，可能给出
+# 假阳性的通过；要在与 CI 完全相同的 shell 上运行某个套件，请使用从 .woodpecker.yml
+# 读取的、按 digest 钉死的 alpine 镜像：
+#   AL=$(sed -n 's/^ *image: *\(alpine:[^ ]*\).*/\1/p' .woodpecker.yml | head -n1)
+#   docker run --rm --network none -v "$PWD":/w -w /w "$AL" sh scripts/ci/<suite>.sh
 sh scripts/ci/dsm_installer_check.sh
 sh scripts/ci/lifecycle_check.sh
 sh scripts/ci/auto_update_check.sh
