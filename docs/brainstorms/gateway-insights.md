@@ -303,10 +303,46 @@ Still open — recorded so they are not silently assumed:
 
 ## Measured baseline (filled by issue 1)
 
-_Pending the read-only measurement of the production NAS. Record: coverage share
-(hostname vs ip_only, window), `stats_db_bytes`, `/connections` length at a quiet and a
-busy moment, mihomo `/version`, presence of `dstGeoIP`/`dstIPASN`, `PANEL_STATS_DOMAINS`
-state, and `collector_poll_ms` once slice (b) exposes it._
+Measured 2026-10-15 (UTC) on the production gateway with `scripts/insights_baseline.sh`
+(#90), owner-granted, read-only. Two samples 27 minutes apart; the second was taken while
+the owner loaded the LAN.
+
+| Key | Quiet (22:55Z) | Busy (23:22Z) |
+|---|---|---|
+| `panel_collector` / `panel_day_framing` | ok / ok | ok / ok |
+| `stats_db_bytes` | 8712192 | 8712192 |
+| `coverage_hostname_share` (bytes, 7 d) | 46.709883 | 46.750753 |
+| `coverage_ip_only_share` (bytes, 7 d) | 53.290117 | 53.249247 |
+| `coverage_total_bytes` (7 d) | 180238177445 | 180676536403 |
+| `coverage_window_days` / `coverage_truncated` | 7.0 / false | 7.0 / false |
+| `domains_enabled` | false | false |
+| `mihomo_version` | v1.19.32 | v1.19.32 |
+| `connections_len` | 420 | 573 |
+| `connections_inner` | 0 | 0 |
+| `connections_host_share` (connections) | 81.2 | 78.9 |
+| `geo_fields` / `geo_populated_share` | absent / 0.0 | absent / 0.0 |
+| `mihomo_memory_bytes` | 143716352 | 143716352 |
+
+What the numbers decide:
+
+- **Attribution ceiling is under half the bytes.** Only ~46.7 % of the last 7 days' bytes
+  carry a hostname, while ~80 % of open connections do — the heavy flows are
+  disproportionately IP-only. The dictionary (#97) can label at most that share; the
+  "unattributed" segment will be the single largest class and the UI must say so. Whether
+  sniffing is enabled on this deployment, and which flows dominate the IP-only bytes, is
+  the first question #97 should answer before freezing DEC-X-3.
+- **No geo fields on v1.19.32** (DEC-X-1): `dstGeoIP`/`dstIPASN` are absent from
+  `/connections`. The country dimension (#95) stores "unknown" until a build exposes them
+  or the panel derives country itself; #95 keeps feature-detection either way.
+- **Connection load is modest**: 420 quiet / 573 busy open flows. An O(1)-per-poll flush
+  (#94) at a 2 s cadence is well inside the panel's budget at this size; DEC-X-4 still
+  waits for the measured `collector_poll_ms` (#96 exposes it).
+- **Storage is nowhere near the cap**: 8.7 MB for the shipped tiers, against 512 MB — the
+  star-schema sizing in this brief (≈ 170 MB for four long-term dimensions) has room.
+- **Domains opt-in is off**, so no hostname-class rows exist today; app-level categories
+  (DEC-5) only accrue for owners who opt in.
+- `mihomo_memory_bytes` and `stats_db_bytes` were identical across both samples; the
+  memory figure is whatever mihomo's `/connections` reports and is not a sampled RSS.
 
 ## Verification gate
 
