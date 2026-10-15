@@ -232,6 +232,16 @@ case "${1:-}" in
 esac
 EOF
   chmod +x "$_t/bin/docker"
+  # DSM mounts /tmp noexec, so a stub under mktemp -d cannot run there: probe
+  # it once and fall back to a dot-dir under the current directory (removed
+  # with the rest)
+  _stub="$_t/bin/docker"
+  if ! "$_stub" inspect probe >/dev/null 2>&1; then
+    _x="$(mktemp -d "$(pwd)/.insights-selftest.XXXXXX")"
+    trap 'rm -rf "$_t" "$_x"' EXIT INT TERM
+    mv "$_t/bin" "$_x/bin"
+    _stub="$_x/bin/docker"
+  fi
 
   cat > "$_t/full.txt" <<'EOF'
 measured_at=2026-10-15T12:00:00Z
@@ -261,11 +271,11 @@ EOF
 
   # st_run [ENV=VAL ...] - the live path with the stub docker as DOCKER_BIN
   # (an absolute path: the script's own PATH prelude must not find a real
-  # docker first)
+  # docker first; the stub lives wherever it can execute, see above)
   st_run() {
     RC=0
     : > "$_t/calls.txt"; : > "$_t/stdin.txt"
-    env DOCKER_BIN="$_t/bin/docker" FAKE_CALLS="$_t/calls.txt" FAKE_STDIN="$_t/stdin.txt" "$@" \
+    env DOCKER_BIN="$_stub" FAKE_CALLS="$_t/calls.txt" FAKE_STDIN="$_t/stdin.txt" "$@" \
       sh "$0" > "$_t/out.txt" 2> "$_t/err.txt" || RC=$?
   }
 
