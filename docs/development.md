@@ -28,6 +28,7 @@ scripts/
   auto_update.sh              # the DSM auto-update orchestrator (entry point)
   doctor.sh                   # read-only diagnostics (also backs `gateway.sh doctor`)
   state_diff.sh               # snapshot/compare a container's replayable spec around an update
+  insights_baseline.sh        # read-only Gateway Insights baseline probe (coverage share, db size, /connections, mihomo version) via docker exec into the panel; --self-test
   install_scheduler.sh        # prints DSM Task Scheduler / crontab settings
   package.sh                  # build-host: builds the offline release zips (docs/release-packaging.md)
   cli/
@@ -81,6 +82,7 @@ scripts/
     full_proxy_check.sh       # hermetic suite for the doctor's per-device full-proxy band guard
     pi_installer_check.sh     # fake-Docker suite for the Raspberry Pi port's shared seams
     linux_installer_check.sh  # fake-Docker suite for the generic-Linux entry + overlay
+    insights_baseline_check.sh # driver for the baseline probe's self-test: stubbed docker-exec, key contract, mutant control (python fixture layer runs wherever python3 exists)
     panel_contract_check.py   # CI: app/openapi.json byte-diff vs a fresh export (--write regenerates)
     panel_e2e_check.py        # CI: real uvicorn panel vs an in-step fake controller on loopback
     lib/assert.sh             # shared assertions for the sh suites
@@ -175,12 +177,12 @@ Runs on push/PR to `main` and `master`:
 | `package-check` | `python scripts/ci/package_check.py` — builds the dev, enduser, **and linux** bundles in throwaway repos and proves **no secret can ship** (planted `.env`/subscription/`config.yaml` absent from the archives' names *and* bytes), checksums verify, the enduser bundle prunes developer/`.md`/CI files (including both generic-Linux entries), ships the installer + `.txt` guides, contains no identity string, and its leak-gate fails closed on an injected leak; the linux bundle ships the Pi + generic-Linux ports on top of the enduser set, keeps the identity gate fail-closed, tolerates the upstream forge URLs its runtime needs, and accepts `--profile pi` as a warned deprecated alias building the identical `-linux` artifacts |
 | `release-bundle` | `sh scripts/package.sh --profile enduser` then `--profile linux` — the **real** packager on the **real** tree: both curated bundles must build from HEAD, leak-gate included, on every push. `package-check` above proves the packager's guards *fire* (in a throwaway fixture); this step proves today's tree actually *passes* them — the two are complementary, and the second half is what was missing when the #74 identity leak survived to v1.9.0's release day and made the first tag unpackageable |
 | `privacy-check` | Scans tracked files and reachable blobs for private operational identifiers, credentials, private keys, and accidentally tracked runtime files (+ the gate's self-test) |
-| `dsm-shell-tests` | Twelve BusyBox `sh` suites with fake Docker/Compose/service CLIs: `dsm_installer_check`, `lifecycle_check`, `auto_update_check`, `cloudflared_check`, `generic_update_check`, `gateway_cli_check`, `seed_provider_check`, `proxy_groups_check` (the doctor's zero-node guard for the generated country groups — incl. the `default-empty` state, the country `Exit Country` is riding gone empty), `full_proxy_check` (the doctor's per-device full-proxy band guard — knob/render parity both directions, the `/connections` chain scan incl. the LAN-destination exemption and the UDP/QUIC fallthrough flag, plus the proxy_groups unknown short-circuit fixture), `mihomo_entrypoint_check` (the entrypoint's render-to-temp + `mihomo -t` gate: swap on green, last-good fallback + scrubbed rejection marker), `pi_installer_check` (the Raspberry Pi port's shared seams), `linux_installer_check` (the generic-Linux entry: install-linux.sh sourcing, the i18n delta overlay incl. the catalog no-Pi-branding sweep, the lite_ctl output rebranding with exit-code preservation, the menu dispatch into the pi engine, plus the macvlan-viability guard — virt/cloud detection, warn + explicit ack, decline steers to lite, choke points at both the pre-deployment cleanup (ack before any teardown) and create_network — the `EXPECTED_ARCH` auto-pin on the generic flow, and the docker-default registry wizard writing only the user `.env`, incl. closing the express fast-path bypass) — plus `validate_release.sh --self-test`, the unit checks of the on-NAS release-validation helper's measurement functions |
-| `shellcheck` | `sh -n` parse-checks **every** `*.sh` in the repo, then `shellcheck -x` on 23 targets: `install.sh`, `install-pi.sh`, `install-linux.sh`, `gateway.sh`, `auto_update.sh`, `pi/auto_update_lite.sh`, `pi/lite_ctl.sh`, `install_scheduler.sh`, `setup_network.sh`, `render_config.sh`, `mihomo_entrypoint.sh`, `package.sh`, `doctor.sh`, `state_diff.sh`, `seed_provider.sh`, `bootstrap.sh`, `lib/container.sh`, `lib/targets.sh`, `lib/geodata.sh`, `lib/panel.sh`, `linux/i18n_linux.sh`, `linux/preflight_linux.sh`, `validate_release.sh` (sourced libs followed in-context) |
+| `dsm-shell-tests` | Thirteen BusyBox `sh` suites with fake Docker/Compose/service CLIs: `dsm_installer_check`, `lifecycle_check`, `auto_update_check`, `cloudflared_check`, `generic_update_check`, `gateway_cli_check`, `seed_provider_check`, `proxy_groups_check` (the doctor's zero-node guard for the generated country groups — incl. the `default-empty` state, the country `Exit Country` is riding gone empty), `full_proxy_check` (the doctor's per-device full-proxy band guard — knob/render parity both directions, the `/connections` chain scan incl. the LAN-destination exemption and the UDP/QUIC fallthrough flag, plus the proxy_groups unknown short-circuit fixture), `mihomo_entrypoint_check` (the entrypoint's render-to-temp + `mihomo -t` gate: swap on green, last-good fallback + scrubbed rejection marker), `pi_installer_check` (the Raspberry Pi port's shared seams), `linux_installer_check` (the generic-Linux entry: install-linux.sh sourcing, the i18n delta overlay incl. the catalog no-Pi-branding sweep, the lite_ctl output rebranding with exit-code preservation, the menu dispatch into the pi engine, plus the macvlan-viability guard — virt/cloud detection, warn + explicit ack, decline steers to lite, choke points at both the pre-deployment cleanup (ack before any teardown) and create_network — the `EXPECTED_ARCH` auto-pin on the generic flow, and the docker-default registry wizard writing only the user `.env`, incl. closing the express fast-path bypass), `insights_baseline_check` (the read-only Gateway Insights baseline probe: stubbed docker-exec record contract — positive, missing-key, probe-failed, empty-output and container-down controls — a mutant that must turn the self-test red, and the no-exception-text guard; the in-container program's fixture layer runs wherever `python3` exists and prints an explicit SKIP in alpine) — plus `validate_release.sh --self-test`, the unit checks of the on-NAS release-validation helper's measurement functions |
+| `shellcheck` | `sh -n` parse-checks **every** `*.sh` in the repo, then `shellcheck -x` on 24 targets: `install.sh`, `install-pi.sh`, `install-linux.sh`, `gateway.sh`, `auto_update.sh`, `pi/auto_update_lite.sh`, `pi/lite_ctl.sh`, `install_scheduler.sh`, `setup_network.sh`, `render_config.sh`, `mihomo_entrypoint.sh`, `package.sh`, `doctor.sh`, `state_diff.sh`, `seed_provider.sh`, `bootstrap.sh`, `lib/container.sh`, `lib/targets.sh`, `lib/geodata.sh`, `lib/panel.sh`, `linux/i18n_linux.sh`, `linux/preflight_linux.sh`, `validate_release.sh`, `insights_baseline.sh` (sourced libs followed in-context) |
 | `ui-build` | `npm --prefix app/ui ci` + `npm run lint`, then `python3 scripts/ci/ui_build_check.py --build` — the frontend toolchain (#78): `npm ci` so the lockfile is authoritative, then the **built-artifact** gate: the A6 release marker (`data-i18n="app_title"`) survived the bundler outside any comment, and every external URL in the bundle is in the documented inert allowlist — plus the gate's own positive/negative self-test (`ui_build_check_test.py`) |
 | `ui-e2e` | `npx playwright test` — the REAL panel under uvicorn against the same FakeController the API e2e uses (`scripts/ci/ui_e2e_server.py`); browsers come from the pinned `mcr.microsoft.com/playwright` image, never a per-run CDN download, so the browser build can never drift from the Playwright version |
 | `app-lint` | `ruff check app` — the panel app lint (ruff pinned in `app/requirements-dev.txt`, config scoped via `app/ruff.toml`) |
-| `app-unit` | `python -m pytest app/tests -q` — the hermetic panel unit suite (fake controller client + tmp trees; validation classes, store/migrations/backups, reconciler happy/loud paths, auth matrix, audit append-only) — then `python scripts/ci/panel_contract_check.py`, the committed contract gate: `app/openapi.json` AND the generated `docs/panel-api.md` byte-identity (regenerate both with `--write`; the /v1 surface is additive-only — breaking = new version prefix + explicit owner acknowledgment) |
+| `app-unit` | `python -m pytest app/tests -q` — the hermetic panel unit suite (fake controller client + tmp trees; validation classes, store/migrations/backups, reconciler happy/loud paths, auth matrix, audit append-only) — then `python scripts/ci/panel_contract_check.py`, the committed contract gate: `app/openapi.json` AND the generated `docs/panel-api.md` byte-identity (regenerate both with `--write`; the /v1 surface is additive-only — breaking = new version prefix + explicit owner acknowledgment) — then `sh scripts/insights_baseline.sh --self-test`: the baseline probe's self-test in a python image, where its in-container program runs against the canned fixtures (alpine's `dsm-shell-tests` covers the sh layer and SKIPs this one) |
 | `app-e2e` | `python scripts/ci/panel_e2e_check.py` — the REAL app under uvicorn against an in-step fake mihomo controller + webhook sink on loopback (daemonless): startup re-sync, bearer-gated mutations, write→refresh→count-parity, the loud failure path (marker + `{title,body}` webhook + `parity=failed`), recovery via `/v1/apply` |
 
 One check runs **outside** Woodpecker: the **`panel-image` GitHub Actions workflow**
@@ -323,8 +325,9 @@ python3 -m venv /tmp/vp && /tmp/vp/bin/pip install -q -r app/requirements.txt -r
 /tmp/vp/bin/python -m pytest app/tests -q
 /tmp/vp/bin/python scripts/ci/panel_contract_check.py   # --write regenerates app/openapi.json
 /tmp/vp/bin/python scripts/ci/panel_e2e_check.py
+sh scripts/insights_baseline.sh --self-test   # the probe's python fixture layer runs wherever python3 is on PATH
 
-# shellcheck (via Docker, same 23 targets AND the same digest-pinned image as CI -
+# shellcheck (via Docker, same 24 targets AND the same digest-pinned image as CI -
 # read straight from .woodpecker.yml so this mirror can never drift from the pin)
 SC=$(sed -n 's/^ *image: *\(koalaman\/shellcheck-alpine[^ ]*\).*/\1/p' .woodpecker.yml | head -n1)
 docker run --rm -v "$PWD:/mnt" -w /mnt "$SC" \
@@ -333,7 +336,7 @@ docker run --rm -v "$PWD:/mnt" -w /mnt "$SC" \
   scripts/install_scheduler.sh scripts/setup_network.sh scripts/render_config.sh \
   scripts/mihomo_entrypoint.sh scripts/package.sh scripts/doctor.sh scripts/state_diff.sh \
   scripts/seed_provider.sh bootstrap.sh scripts/lib/container.sh scripts/lib/targets.sh scripts/lib/geodata.sh scripts/lib/panel.sh \
-  scripts/linux/i18n_linux.sh scripts/linux/preflight_linux.sh scripts/validate_release.sh
+  scripts/linux/i18n_linux.sh scripts/linux/preflight_linux.sh scripts/validate_release.sh scripts/insights_baseline.sh
 
 # compose renders (non-destructive, same as CI - never touches your real .env)
 docker compose --env-file .env.example config --quiet
@@ -349,7 +352,7 @@ sh scripts/package.sh --profile linux
 # the panel-image gate's local equivalent (the GitHub check runs exactly this)
 docker build -f app/Dockerfile app/
 
-# the twelve fake-Docker/PATH-stub TDD suites CI runs, plus the
+# the thirteen fake-Docker/PATH-stub TDD suites CI runs, plus the
 # release-validation helper's self-test (no NAS mutation). macOS /bin/sh
 # continues past `set -u` errors and can report a FALSE green, so to run a
 # suite on CI's exact shell use the digest-pinned alpine read from .woodpecker.yml:
@@ -367,6 +370,7 @@ sh scripts/ci/full_proxy_check.sh
 sh scripts/ci/mihomo_entrypoint_check.sh
 sh scripts/ci/pi_installer_check.sh
 sh scripts/ci/linux_installer_check.sh
+sh scripts/ci/insights_baseline_check.sh
 sh scripts/validate_release.sh --self-test
 
 # privacy gate + its self-test

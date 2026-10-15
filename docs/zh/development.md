@@ -27,6 +27,7 @@ scripts/
   auto_update.sh              # DSM 自动更新编排器（入口）
   doctor.sh                   # 只读诊断（也支撑 `gateway.sh doctor`）
   state_diff.sh               # 在更新前后快照/比对容器的可重放规格
+  insights_baseline.sh        # 只读的 Gateway Insights 基线探测（归因覆盖率、数据库大小、/connections 数、mihomo 版本），经 docker exec 进入面板容器；支持 --self-test
   install_scheduler.sh        # 打印 DSM 任务计划 / crontab 设置
   package.sh                  # 构建主机：构建离线发布压缩包（docs/release-packaging.md）
   cli/
@@ -80,6 +81,7 @@ scripts/
     full_proxy_check.sh       # doctor 每设备全代理网段守卫的封闭式测试
     pi_installer_check.sh     # 使用伪 Docker 的树莓派移植共享接缝测试
     linux_installer_check.sh  # 使用伪 Docker 的通用 Linux 入口 + 覆盖层测试
+    insights_baseline_check.sh # 基线探测自测的驱动：桩 docker-exec、键契约、变异体控制（python 夹具层在有 python3 的环境运行）
     panel_contract_check.py   # CI：app/openapi.json 与全新导出逐字节比对（--write 重新生成）
     panel_e2e_check.py        # CI：真实 uvicorn 面板对回环上的步内伪控制器
     lib/assert.sh             # sh 测试套件共享的断言
@@ -169,12 +171,12 @@ EXIT 陷阱不会回收它（`CF_KEEP_CANDIDATE`）。
 | `package-check` | `python scripts/ci/package_check.py` —— 在临时仓库中构建开发、最终用户与 **linux 三种**发布包，证明**任何密钥都不会被打包**（植入的 `.env`/订阅/`config.yaml` 不出现在压缩包的文件名*和*字节中）、校验和正确、最终用户包剔除了开发者/`.md`/CI 文件（含两个通用 Linux 入口）、附带安装器与 `.txt` 指南、不含任何身份字符串，且其防泄漏门对注入的泄漏会以失败告终（fail-closed）；linux 包在 enduser 集合之上附带 Pi 与通用 Linux 移植，身份门禁保持 fail-closed，容许其运行时所需的上游托管域名，并接受 `--profile pi` 作为带警告的已弃用别名（构建完全相同的 `-linux` 产物） |
 | `release-bundle` | `sh scripts/package.sh --profile enduser` 然后 `--profile linux` —— 用**真实的**打包器构建**真实的**代码树：两个精选发布包（含防泄漏门）必须在每次推送时都能从 HEAD 构建成功。上面的 `package-check` 证明的是打包器的守卫*会触发*（在临时夹具仓库中）；本步骤证明的是今天的代码树确实*能通过*这些守卫——两者互补。缺失的正是后一半：#74 的身份字符串泄漏因此一直存活到 v1.9.0 发布日，使第一个标签指向了一棵无法打包的代码树 |
 | `privacy-check` | 扫描被跟踪文件和可达 blob，拒绝私有运维标识、凭据、私钥和意外跟踪的运行时文件（+ 该守卫的自测） |
-| `dsm-shell-tests` | 十二个在 BusyBox `sh` 下、使用伪 Docker/Compose/服务 CLI 的测试套件：`dsm_installer_check`、`lifecycle_check`、`auto_update_check`、`cloudflared_check`、`generic_update_check`、`gateway_cli_check`、`seed_provider_check`、`proxy_groups_check`（doctor 对生成的国家分组的零节点守卫——含 `default-empty` 状态：`Exit Country` 正在骑乘的国家分组归零）、`full_proxy_check`（doctor 对按设备全代理网段的守卫——开关/渲染双向一致性、`/connections` 代理链扫描（含局域网目标豁免与 UDP/QUIC 直通标记）、以及 proxy_groups 未知状态短路夹具）、`mihomo_entrypoint_check`（入口点先渲染到临时文件再 `mihomo -t` 守门：通过才切换、保留上一份好配置并写入脱敏拒绝标记）、`pi_installer_check`（Raspberry Pi 移植的共享接缝）、`linux_installer_check`（通用 Linux 入口：install-linux.sh 的 source 检查、i18n 增量覆盖层（含目录级无 Pi 品牌扫描）、lite_ctl 输出改写并保留退出码、菜单到 pi 引擎的分发，以及 macvlan 可用性守卫——虚拟化/云主机检测、警告 + 显式确认、拒绝则转入精简模式、在部署前清理（确认先于任何拆除）与 create_network 两处收口——通用流程上的 `EXPECTED_ARCH` 自动锁定、和只写用户 `.env` 的 docker 默认镜像源向导（含堵住快速路径绕过））——外加 `validate_release.sh --self-test`，即 NAS 端发布验证助手的测量函数单元检查 |
-| `shellcheck` | 先对仓库中**每一个** `*.sh` 运行 `sh -n` 语法检查，再对 23 个目标运行 `shellcheck -x`：`install.sh`、`install-pi.sh`、`install-linux.sh`、`gateway.sh`、`auto_update.sh`、`pi/auto_update_lite.sh`、`pi/lite_ctl.sh`、`install_scheduler.sh`、`setup_network.sh`、`render_config.sh`、`mihomo_entrypoint.sh`、`package.sh`、`doctor.sh`、`state_diff.sh`、`seed_provider.sh`、`bootstrap.sh`、`lib/container.sh`、`lib/targets.sh`、`lib/geodata.sh`、`lib/panel.sh`、`linux/i18n_linux.sh`、`linux/preflight_linux.sh`、`validate_release.sh`（被 source 的库在上下文中一并检查） |
+| `dsm-shell-tests` | 十三个在 BusyBox `sh` 下、使用伪 Docker/Compose/服务 CLI 的测试套件：`dsm_installer_check`、`lifecycle_check`、`auto_update_check`、`cloudflared_check`、`generic_update_check`、`gateway_cli_check`、`seed_provider_check`、`proxy_groups_check`（doctor 对生成的国家分组的零节点守卫——含 `default-empty` 状态：`Exit Country` 正在骑乘的国家分组归零）、`full_proxy_check`（doctor 对按设备全代理网段的守卫——开关/渲染双向一致性、`/connections` 代理链扫描（含局域网目标豁免与 UDP/QUIC 直通标记）、以及 proxy_groups 未知状态短路夹具）、`mihomo_entrypoint_check`（入口点先渲染到临时文件再 `mihomo -t` 守门：通过才切换、保留上一份好配置并写入脱敏拒绝标记）、`pi_installer_check`（Raspberry Pi 移植的共享接缝）、`linux_installer_check`（通用 Linux 入口：install-linux.sh 的 source 检查、i18n 增量覆盖层（含目录级无 Pi 品牌扫描）、lite_ctl 输出改写并保留退出码、菜单到 pi 引擎的分发，以及 macvlan 可用性守卫——虚拟化/云主机检测、警告 + 显式确认、拒绝则转入精简模式、在部署前清理（确认先于任何拆除）与 create_network 两处收口——通用流程上的 `EXPECTED_ARCH` 自动锁定、和只写用户 `.env` 的 docker 默认镜像源向导（含堵住快速路径绕过））、`insights_baseline_check`（只读的 Gateway Insights 基线探测：桩 docker-exec 的记录契约——正向、缺键、探测失败、空输出与容器停止五个控制——一个必须让自测变红的变异体，以及“不打印异常文本”守卫；容器内程序的夹具层在有 `python3` 的环境运行，在 alpine 下显式打印 SKIP）——外加 `validate_release.sh --self-test`，即 NAS 端发布验证助手的测量函数单元检查 |
+| `shellcheck` | 先对仓库中**每一个** `*.sh` 运行 `sh -n` 语法检查，再对 24 个目标运行 `shellcheck -x`：`install.sh`、`install-pi.sh`、`install-linux.sh`、`gateway.sh`、`auto_update.sh`、`pi/auto_update_lite.sh`、`pi/lite_ctl.sh`、`install_scheduler.sh`、`setup_network.sh`、`render_config.sh`、`mihomo_entrypoint.sh`、`package.sh`、`doctor.sh`、`state_diff.sh`、`seed_provider.sh`、`bootstrap.sh`、`lib/container.sh`、`lib/targets.sh`、`lib/geodata.sh`、`lib/panel.sh`、`linux/i18n_linux.sh`、`linux/preflight_linux.sh`、`validate_release.sh`、`insights_baseline.sh`（被 source 的库在上下文中一并检查） |
 | `ui-build` | `npm --prefix app/ui ci` + `npm run lint`，然后 `python3 scripts/ci/ui_build_check.py --build` —— 前端工具链（#78）：用 `npm ci` 使 lockfile 具有权威性，随后是**构建产物**门：A6 发布标记（`data-i18n="app_title"`）在打包器处理后仍存活于注释之外，且打包产物中每个外部 URL 都在文档化的惰性白名单内——外加该门自身的正/负自测（`ui_build_check_test.py`） |
 | `ui-e2e` | `npx playwright test` —— 真实面板在 uvicorn 下对 API e2e 使用的同一个 FakeController（`scripts/ci/ui_e2e_server.py`）；浏览器来自钉定版本的 `mcr.microsoft.com/playwright` 镜像而非每次运行时从 CDN 下载，因此浏览器构建绝不会与 Playwright 版本漂移 |
 | `app-lint` | `ruff check app` —— 面板应用的 lint（ruff 版本钉在 `app/requirements-dev.txt`，配置经 `app/ruff.toml` 限定作用域） |
-| `app-unit` | `python -m pytest app/tests -q` —— 封闭式面板单元测试套件（伪控制器客户端 + 临时目录；校验类、store/迁移/备份、reconciler 正常/告警路径、鉴权矩阵、审计只追加）——随后运行 `python scripts/ci/panel_contract_check.py`，即已提交的契约门：`app/openapi.json` **以及**生成的 `docs/panel-api.md` 逐字节一致性（用 `--write` 同时重新生成两者；/v1 命令面只增不破——破坏性变更 = 新版本前缀 + 所有者显式确认） |
+| `app-unit` | `python -m pytest app/tests -q` —— 封闭式面板单元测试套件（伪控制器客户端 + 临时目录；校验类、store/迁移/备份、reconciler 正常/告警路径、鉴权矩阵、审计只追加）——随后运行 `python scripts/ci/panel_contract_check.py`，即已提交的契约门：`app/openapi.json` **以及**生成的 `docs/panel-api.md` 逐字节一致性（用 `--write` 同时重新生成两者；/v1 命令面只增不破——破坏性变更 = 新版本前缀 + 所有者显式确认）——随后运行 `sh scripts/insights_baseline.sh --self-test`：基线探测的自测在 python 镜像中运行，其容器内程序在此对着固定夹具执行（alpine 的 `dsm-shell-tests` 覆盖 sh 层并对该层打印 SKIP） |
 | `app-e2e` | `python scripts/ci/panel_e2e_check.py` —— 真实 uvicorn 下的应用对回环上的步内伪 mihomo 控制器 + webhook 接收器（无守护进程）：启动重同步、bearer 鉴权门、写入→刷新→计数一致性、告警失败路径（标记 + `{title,body}` webhook + `parity=failed`）、经 `/v1/apply` 恢复 |
 
 有一项检查运行在 Woodpecker **之外**：**`panel-image` GitHub Actions 工作流**
@@ -310,8 +312,9 @@ python3 -m venv /tmp/vp && /tmp/vp/bin/pip install -q -r app/requirements.txt -r
 /tmp/vp/bin/python -m pytest app/tests -q
 /tmp/vp/bin/python scripts/ci/panel_contract_check.py   # --write 重新生成 app/openapi.json
 /tmp/vp/bin/python scripts/ci/panel_e2e_check.py
+sh scripts/insights_baseline.sh --self-test   # 探测的 python 夹具层在 PATH 上有 python3 的任何环境运行
 
-# shellcheck（经 Docker，与 CI 相同的 23 个目标，并且是与 CI 相同的、按 digest 钉死的镜像——
+# shellcheck（经 Docker，与 CI 相同的 24 个目标，并且是与 CI 相同的、按 digest 钉死的镜像——
 # 直接从 .woodpecker.yml 读取，因此这条本地等价物永远不会偏离 pin）
 SC=$(sed -n 's/^ *image: *\(koalaman\/shellcheck-alpine[^ ]*\).*/\1/p' .woodpecker.yml | head -n1)
 docker run --rm -v "$PWD:/mnt" -w /mnt "$SC" \
@@ -320,7 +323,7 @@ docker run --rm -v "$PWD:/mnt" -w /mnt "$SC" \
   scripts/install_scheduler.sh scripts/setup_network.sh scripts/render_config.sh \
   scripts/mihomo_entrypoint.sh scripts/package.sh scripts/doctor.sh scripts/state_diff.sh \
   scripts/seed_provider.sh bootstrap.sh scripts/lib/container.sh scripts/lib/targets.sh scripts/lib/geodata.sh scripts/lib/panel.sh \
-  scripts/linux/i18n_linux.sh scripts/linux/preflight_linux.sh scripts/validate_release.sh
+  scripts/linux/i18n_linux.sh scripts/linux/preflight_linux.sh scripts/validate_release.sh scripts/insights_baseline.sh
 
 # compose 渲染（非破坏性，与 CI 相同——绝不触碰你的真实 .env）
 docker compose --env-file .env.example config --quiet
@@ -336,7 +339,7 @@ sh scripts/package.sh --profile linux
 # panel-image 门的本地等价物（GitHub 检查运行的正是这条命令）
 docker build -f app/Dockerfile app/
 
-# CI 运行的十二个伪 Docker/PATH 桩 TDD 测试套件，外加发布验证助手的
+# CI 运行的十三个伪 Docker/PATH 桩 TDD 测试套件，外加发布验证助手的
 # 自测（不修改 NAS）。macOS 的 /bin/sh 在 `set -u` 报错后会继续执行，可能给出
 # 假阳性的通过；要在与 CI 完全相同的 shell 上运行某个套件，请使用从 .woodpecker.yml
 # 读取的、按 digest 钉死的 alpine 镜像：
@@ -354,6 +357,7 @@ sh scripts/ci/full_proxy_check.sh
 sh scripts/ci/mihomo_entrypoint_check.sh
 sh scripts/ci/pi_installer_check.sh
 sh scripts/ci/linux_installer_check.sh
+sh scripts/ci/insights_baseline_check.sh
 sh scripts/validate_release.sh --self-test
 
 # 隐私守卫 + 其自测

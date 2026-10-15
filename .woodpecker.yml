@@ -123,6 +123,7 @@ steps:
       - sh scripts/ci/mihomo_entrypoint_check.sh
       - sh scripts/ci/pi_installer_check.sh
       - sh scripts/ci/linux_installer_check.sh
+      - sh scripts/ci/insights_baseline_check.sh
       - sh scripts/validate_release.sh --self-test
 
   - name: shellcheck
@@ -133,7 +134,7 @@ steps:
       # + scripts/lib/*.sh; auto_update.sh + setup_network.sh pull in their libs.
       # setup_network.sh is now POSIX /bin/sh (no more bash exception).
       - 'for f in $(find . -path ./.git -prune -o -name "*.sh" -print); do sh -n "$f" || exit 1; done'
-      - shellcheck -x install.sh install-pi.sh install-linux.sh scripts/gateway.sh scripts/auto_update.sh scripts/pi/auto_update_lite.sh scripts/pi/lite_ctl.sh scripts/install_scheduler.sh scripts/setup_network.sh scripts/render_config.sh scripts/mihomo_entrypoint.sh scripts/package.sh scripts/doctor.sh scripts/state_diff.sh scripts/seed_provider.sh bootstrap.sh scripts/lib/container.sh scripts/lib/targets.sh scripts/lib/geodata.sh scripts/lib/panel.sh scripts/linux/i18n_linux.sh scripts/linux/preflight_linux.sh scripts/validate_release.sh
+      - shellcheck -x install.sh install-pi.sh install-linux.sh scripts/gateway.sh scripts/auto_update.sh scripts/pi/auto_update_lite.sh scripts/pi/lite_ctl.sh scripts/install_scheduler.sh scripts/setup_network.sh scripts/render_config.sh scripts/mihomo_entrypoint.sh scripts/package.sh scripts/doctor.sh scripts/state_diff.sh scripts/seed_provider.sh bootstrap.sh scripts/lib/container.sh scripts/lib/targets.sh scripts/lib/geodata.sh scripts/lib/panel.sh scripts/linux/i18n_linux.sh scripts/linux/preflight_linux.sh scripts/validate_release.sh scripts/insights_baseline.sh
 
   - name: ui-build
     image: node:22-slim@sha256:c3de60bf2f9dd0ac6370e6117950ff62d6e339527e7472301c9c78a017978392
@@ -193,6 +194,10 @@ steps:
       - pip install --quiet -r app/requirements.txt -r app/requirements-dev.txt
       - python -m pytest app/tests -q
       - python scripts/ci/panel_contract_check.py
+      # the baseline probe's self-test: this image has python3, so its
+      # in-container program runs against the canned fixtures here (the
+      # alpine dsm-shell-tests step covers the sh layer and SKIPs this one)
+      - sh scripts/insights_baseline.sh --self-test
 
   - name: app-e2e
     image: python:3.12-slim@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1
