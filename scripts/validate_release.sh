@@ -648,6 +648,29 @@ bad() { echo "FAIL: $*"; FAIL="$FAIL$US$*"; }
 warn() { echo "WARN: $*"; WARN="$WARN$US$*"; }
 say() { echo; echo "=== $* ==="; }
 
+# print_summary - the SUMMARY block of the transcript: every PASS entry, the
+# WARN entries when there are any, and the FAIL entries when there are any.
+# A green run says "(no failures)" instead of leaving a bare "FAIL:" header
+# dangling three lines above the verdict (#89) - so `grep -c '^FAIL:'` on a
+# green transcript stays 0 while the block is still there (a truncated
+# transcript still reads as truncated). The per-check line grammar (ok/bad/
+# warn above), the VALIDATION: verdict lines and the .v138rc marker are
+# main's and never change here. Pure (reads the accumulators only) so the
+# self-test drives it.
+print_summary() {
+  say "SUMMARY"
+  echo "PASS:"; printf '%s\n' "$PASS" | tr "$US" '\n' | sed '/^$/d;s/^/  + /'
+  if [ -n "$WARN" ]; then
+    echo "WARN (recorded, never gating):"
+    printf '%s\n' "$WARN" | tr "$US" '\n' | sed '/^$/d;s/^/  ! /'
+  fi
+  if [ -n "$FAIL" ]; then
+    echo "FAIL:"; printf '%s\n' "$FAIL" | tr "$US" '\n' | sed '/^$/d;s/^/  - /'
+  else
+    echo "(no failures)"
+  fi
+}
+
 # unpark PATH - put PATH back from PATH.v138park (file or directory),
 # replacing whatever the cold run rebuilt; no-op without a park. Run 3
 # dropped the park on pass, which reset the Routing Mode selector to the group
@@ -913,6 +936,36 @@ All Nodes' ]; then st_ok; else st_bad "urltest_groups got: $(printf '%s' "$_name
   else st_bad "on_abort must unpark cache.db and proxies before restore_env (cache@${_oa_cache:-?} proxies@${_oa_prox:-?} restore@${_oa_rest:-?})"; fi
   if grep -q "trap '' INT TERM HUP; exec tee \"\$LOG\"" "$0"; then st_ok
   else st_bad "the transcript tee must ignore INT TERM HUP (exec tee inside a trap '' subshell)"; fi
+
+  # 11) summary renderer (#89): a green run says "(no failures)" instead of
+  #     leaving a bare FAIL: header dangling above the verdict; a red run
+  #     renders the FAIL block exactly as before; and a '|' entry still
+  #     renders as ONE line end to end (case 7's guard, through the renderer).
+  PASS=""; FAIL=""; WARN=""
+  ok "doctor rc 0 (0 healthy | 2 degraded)" >/dev/null
+  ok "second entry" >/dev/null
+  _sum="$(print_summary 2>/dev/null)"
+  if printf '%s\n' "$_sum" | grep -q '^PASS:$'; then st_ok; else st_bad "green summary lacks the PASS: header"; fi
+  if printf '%s\n' "$_sum" | grep -q '^FAIL:'; then st_bad "green summary still prints a FAIL: header"; else st_ok; fi
+  _nf=$(printf '%s\n' "$_sum" | grep -c '^(no failures)$')
+  if [ "$_nf" = 1 ]; then st_ok; else st_bad "green summary printed $_nf '(no failures)' line(s), want 1"; fi
+  if printf '%s\n' "$_sum" | grep -q '^  + doctor rc 0 (0 healthy | 2 degraded)$'; then st_ok
+  else st_bad "a '|' PASS entry did not render as one line through print_summary"; fi
+  if printf '%s\n' "$_sum" | grep -q '^WARN'; then st_bad "green summary printed a WARN header with WARN empty"; else st_ok; fi
+  warn "w" >/dev/null
+  _sum="$(print_summary 2>/dev/null)"
+  if printf '%s\n' "$_sum" | grep -q '^WARN (recorded, never gating):$' \
+     && printf '%s\n' "$_sum" | grep -q '^  ! w$'; then st_ok
+  else st_bad "a recorded WARN did not render its header + entry (still green, still '(no failures)')"; fi
+  if [ "$(printf '%s\n' "$_sum" | grep -c '^(no failures)$')" = 1 ]; then st_ok
+  else st_bad "a WARN-only run must still say (no failures) exactly once"; fi
+  bad "x" >/dev/null
+  _sum="$(print_summary 2>/dev/null)"
+  if printf '%s\n' "$_sum" | grep -q '^PASS:$'; then st_ok; else st_bad "red summary lacks the PASS: header"; fi
+  if printf '%s\n' "$_sum" | grep -q '^FAIL:$'; then st_ok; else st_bad "red summary lacks the FAIL: header"; fi
+  if printf '%s\n' "$_sum" | grep -q '^  - x$'; then st_ok; else st_bad "red summary lacks the '  - x' entry"; fi
+  if printf '%s\n' "$_sum" | grep -q '(no failures)'; then st_bad "red summary still says (no failures)"; else st_ok; fi
+  PASS=""; FAIL=""; WARN=""
 
   # DEC-C (#56): the keep-split-horizon decision is automatic - explicit
   # flags always win; a valid-pair original reverts (validation never
@@ -1185,7 +1238,7 @@ time="2026-07-26T10:00:02.000000000Z" level=info msg="[TCP] 192.0.2.9:41236 --> 
 
   echo "validate_release self-test: $_stp passed, $_stf failed"
   [ "$_stf" -eq 0 ] || exit 1
-  echo "OK: measurement helpers (policy/knob/psn/split-core rule anchoring incl. bootstrap-pin + comment-prose immunity, provider-node counting + real-member egress gate, filtered-group discovery + %XX name encoding + COMPATIBLE/REJECT placeholder exclusion, full-proxy band connection parsing + CIDR membership, quoted-.env parsing, .env.example key coverage, scrubbed child env, doctor rc gate, summary accumulator, cache unpark, staged-bundle pick (numeric version, enduser-only), abort-path cache restore + INT-immune tee (static), keep-split-horizon auto-decision, LAN-probe chain classification + probe-IP derivation incl. ARP-taken refusal, flow rulePayload + tunnel-escape detection, mihomo routing-log evidence (real logfmt: quoted success line, failed-dial form, node-less group refusal, source anchoring), panel probe parsers: /health + policy-set field extraction, device-doc mode lookup, dyn rule-provider counts, full-tunnel chain arm, UI marker pin)"
+  echo "OK: measurement helpers (policy/knob/psn/split-core rule anchoring incl. bootstrap-pin + comment-prose immunity, provider-node counting + real-member egress gate, filtered-group discovery + %XX name encoding + COMPATIBLE/REJECT placeholder exclusion, full-proxy band connection parsing + CIDR membership, quoted-.env parsing, .env.example key coverage, scrubbed child env, doctor rc gate, summary accumulator, summary renderer (green = (no failures), red = FAIL block), cache unpark, staged-bundle pick (numeric version, enduser-only), abort-path cache restore + INT-immune tee (static), keep-split-horizon auto-decision, LAN-probe chain classification + probe-IP derivation incl. ARP-taken refusal, flow rulePayload + tunnel-escape detection, mihomo routing-log evidence (real logfmt: quoted success line, failed-dial form, node-less group refusal, source anchoring), panel probe parsers: /health + policy-set field extraction, device-doc mode lookup, dyn rule-provider counts, full-tunnel chain arm, UI marker pin)"
   exit 0
 }
 [ "$SELF_TEST" = 1 ] && self_test
@@ -2365,13 +2418,7 @@ say "final doctor"
 run_scrubbed sh "$REL/scripts/doctor.sh"; RC=$?
 if doctor_rc_ok "$RC"; then ok "final doctor rc $RC (0 healthy | 2 degraded)"; else bad "final doctor rc $RC (crash or broken)"; fi
 
-say "SUMMARY"
-echo "PASS:"; printf '%s\n' "$PASS" | tr "$US" '\n' | sed '/^$/d;s/^/  + /'
-if [ -n "$WARN" ]; then
-  echo "WARN (recorded, never gating):"
-  printf '%s\n' "$WARN" | tr "$US" '\n' | sed '/^$/d;s/^/  ! /'
-fi
-echo "FAIL:"; printf '%s\n' "$FAIL" | tr "$US" '\n' | sed '/^$/d;s/^/  - /'
+print_summary
 echo
 echo "log: $LOG"
 if [ -z "$FAIL" ]; then
