@@ -349,11 +349,17 @@ test.describe("stats is the landing view", () => {
       }
       await open(page);
       await page.locator('[data-testid="stats-range"]').selectOption("30d");
-      await page.waitForLoadState("networkidle");
-      const last = asked.slice(-2);
-      expect(last.length, "devices and timeline must both be read").toBe(2);
-      for (const url of last) {
-        expect(url, `the read must name the preset: ${url}`).toMatch(/[?&]range=30d(&|$)/);
+      // Order-independent: the landing (7d) reads and the 30d reads can be
+      // intercepted interleaved on a slow runner, so wait until BOTH 30d
+      // reads have been seen instead of trusting the last two requests.
+      await expect.poll(() => ["devices", "timeline"].every((path) =>
+        asked.some((url) => url.includes(`/v1/stats/${path}?`)
+          && /[?&]range=30d(&|$)/.test(url))),
+        { message: "devices and timeline must both be read for 30d" })
+        .toBe(true);
+      for (const url of asked) {
+        expect(url, `every stats read must name a preset: ${url}`)
+          .toMatch(/[?&]range=(48h|7d|30d|daily)(&|$)/);
         expect(url, `the client must not compute the window: ${url}`)
           .not.toMatch(/[?&](tier|since)=/);
       }
