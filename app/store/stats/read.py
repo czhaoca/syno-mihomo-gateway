@@ -6,6 +6,13 @@ from app.store.stats.schema import DIMENSIONS, MINUTE_TABLE
 _TIER_TABLES = {"minute": MINUTE_TABLE, "hour": "stats_hour",
                 "day": "stats_day"}
 
+# The byte reads list a group only when it moved bytes (#98 DEC-E). Since
+# #94 a tier row is also written for a connection that only appeared, so its
+# `conns` fact survives; before #94 no such row existed, and these reads
+# never listed a zero-byte group. The filter keeps their answers exactly as
+# they were, while the stored rows keep their facts.
+MOVED = "HAVING SUM(up) + SUM(down) > 0"
+
 
 def dimension_tables(dim: str) -> dict:
     """{tier: table} for one long-term dimension (#95) - hour and day only:
@@ -55,13 +62,14 @@ def read_grouped(conn, tier: str, group_col: str, since: str = "",
     clause = f"WHERE {' AND '.join(where)}" if where else ""
     rows = conn.execute(
         f"SELECT {group_col}, SUM(up) AS up, SUM(down) AS down "
-        f"FROM {table} {clause} GROUP BY {group_col} "
+        f"FROM {table} {clause} GROUP BY {group_col} {MOVED} "
         f"ORDER BY {group_col}", params).fetchall()
     return [dict(r) for r in rows]
 
 
 def day_framings(conn, since: str = "", until: str = "") -> list:
-    """Every (bucket_tz, day_boundary) present in a day-tier window.
+    """Every (bucket_tz, day_boundary) under a day row that moved bytes in
+    a day-tier window (a zero-byte row, MOVED, reports no boundary).
 
     `read_grouped` deliberately keeps summing ACROSS framings: each hour
     bucket is rolled exactly once, so the total is exact - no double count,
@@ -73,14 +81,16 @@ def day_framings(conn, since: str = "", until: str = "") -> list:
     So the framings travel alongside the totals, and a caller seeing more
     than one knows the boundary moved inside the range it asked about.
     """
-    where, params = [], []
+    # a framing is listed only under a row that moved bytes, like the rows
+    # themselves (MOVED): a zero-byte day must not report a boundary
+    where, params = ["up + down > 0"], []
     if since:
         where.append("bucket >= ?")
         params.append(since)
     if until:
         where.append("bucket <= ?")
         params.append(until)
-    clause = f"WHERE {' AND '.join(where)}" if where else ""
+    clause = f"WHERE {' AND '.join(where)}"
     rows = conn.execute(
         f"SELECT DISTINCT bucket_tz, day_boundary FROM stats_day {clause} "
         f"ORDER BY bucket_tz, day_boundary", params).fetchall()
@@ -111,12 +121,13 @@ def read_timeline(conn, tier: str, device: str = "", since: str = "",
         rows = conn.execute(
             f"SELECT bucket, bucket_tz, day_boundary, SUM(up) AS up, "
             f"SUM(down) AS down FROM {table} {clause} "
-            f"GROUP BY bucket, bucket_tz, day_boundary "
+            f"GROUP BY bucket, bucket_tz, day_boundary {MOVED} "
             f"ORDER BY bucket, bucket_tz, day_boundary", params).fetchall()
         return [dict(r) for r in rows]
     rows = conn.execute(
         f"SELECT bucket, SUM(up) AS up, SUM(down) AS down FROM {table} "
-        f"{clause} GROUP BY bucket ORDER BY bucket", params).fetchall()
+        f"{clause} GROUP BY bucket {MOVED} ORDER BY bucket",
+        params).fetchall()
     return [dict(r) for r in rows]
 
 

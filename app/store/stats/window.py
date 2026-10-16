@@ -5,7 +5,7 @@ from bisect import bisect_left
 from datetime import UTC, datetime, timedelta
 
 from app.store import dayframe
-from app.store.stats.read import _TIER_TABLES, dimension_tables
+from app.store.stats.read import _TIER_TABLES, MOVED, dimension_tables
 
 # --- window-complete reads (#91, re-planned by #95) ----------------------------
 #
@@ -138,7 +138,7 @@ def read_window_grouped(conn, resolution: str, group_col: str, since,
                            f"{group_col} AS g, up, down")
     rows = conn.execute(
         f"SELECT g AS {group_col}, SUM(up) AS up, SUM(down) AS down "
-        f"FROM ({union}) GROUP BY g ORDER BY g", params).fetchall()
+        f"FROM ({union}) GROUP BY g {MOVED} ORDER BY g", params).fetchall()
     return [dict(r) for r in rows]
 
 
@@ -179,7 +179,7 @@ def read_window_timeline(conn, resolution: str, device: str, since,
         union, params = _union(plan, "bucket, up, down", device)
         rows = conn.execute(
             f"SELECT bucket, SUM(up) AS up, SUM(down) AS down "
-            f"FROM ({union}) GROUP BY bucket ORDER BY bucket",
+            f"FROM ({union}) GROUP BY bucket {MOVED} ORDER BY bucket",
             params).fetchall()
         return [dict(r) for r in rows]
     days = {}
@@ -200,22 +200,28 @@ def read_window_timeline(conn, resolution: str, device: str, since,
         acc = days.setdefault(key, [0, 0])
         acc[0] += r["up"]
         acc[1] += r["down"]
+    # a day is listed only when it moved bytes (MOVED), judged after the
+    # merge: half a day rolled and half not is one day
     return [{"bucket": b, "bucket_tz": tz, "day_boundary": cut,
              "up": up, "down": down}
-            for (b, tz, cut), (up, down) in sorted(days.items())]
+            for (b, tz, cut), (up, down) in sorted(days.items())
+            if up + down > 0]
 
 
 def window_framings(conn, since, frame) -> list:
     """The framings a day-resolution window is made of: every stamp stored
     in the day tier inside it, plus the CURRENT frame when any not-yet-rolled
-    hour falls inside it (those are keyed under it). Same shape and order as
+    hour falls inside it (those are keyed under it) - counting only rows
+    that moved bytes, like the rows themselves (MOVED). Same shape and order as
     `day_framings`; more than one means the day boundary moved inside the
     window."""
     frame = _usable(frame)
     plan = _window_plan(conn, "day", since, frame)
     found = set()
     for table, bound in plan:
-        clause, params = (" WHERE bucket >= ?", [bound]) if bound else ("", [])
+        # only rows that moved bytes carry a framing, as in the rows (MOVED)
+        clause, params = ((" WHERE up + down > 0 AND bucket >= ?", [bound])
+                          if bound else (" WHERE up + down > 0", []))
         if table == "stats_day":
             found.update(
                 (r[0], r[1]) for r in conn.execute(

@@ -231,6 +231,9 @@ does not know:
   start while the collector runs, prunes them.
 - Its size cap trims only its own tables.
 - The dimensions get no entries for the time it ran.
+- It lists a device, group or timeline bucket whose only activity was a
+  connection that moved no bytes yet, at 0 / 0. v1.11 keeps such rows for
+  their connection count and leaves them out of every byte read.
 
 Before downgrading by hand, purge the seven-day tables with `POST
 /v1/stats/purge` and `{"tables": ["stats_sniff", "stats_asn", "stats_port"]}`
