@@ -1,8 +1,9 @@
-"""The /connections poll collector (DEC-C: 10s GET polling).
+"""The /connections poll collector (GET polling; 2 s by default since #94).
 
-POLL_INTERVAL_DEFAULT_S is the single tunable constant the DEC mandates —
-`PANEL_STATS_POLL_S` overrides it at deploy time and `0` disables the
-loop entirely (unit tests drive poll_once() directly with fake clocks).
+POLL_INTERVAL_DEFAULT_S mirrors `config.STATS_POLL_DEFAULT_S`, the one place
+the default lives - `PANEL_STATS_POLL_S` overrides it at deploy time and `0`
+disables the loop entirely (unit tests drive poll_once() directly with fake
+clocks).
 Every failure path DEGRADES (status.last_error + a skipped flush), never
 crashes — the #64 degraded-knob discipline; downtime becomes honest gap
 rows at the store layer, never interpolation.
@@ -16,7 +17,7 @@ from app import config
 from app.store import dayframe
 from app.store import stats as stats_store
 
-POLL_INTERVAL_DEFAULT_S = 10  # DEC-C: the one place the cadence lives
+POLL_INTERVAL_DEFAULT_S = config.STATS_POLL_DEFAULT_S
 GAP_FACTOR = 3  # a hole wider than 3x the effective cadence is a gap
 MAINTENANCE_EVERY_S = 60  # rollup + cap enforcement cadence
 
@@ -68,9 +69,11 @@ class Collector:
                   lock=None) -> None:
         """One poll -> one transactional flush. The network fetch runs
         OUTSIDE the (optional) lock — a slow controller (urlopen bounded
-        at 10s) must never stall the stats API, which shares the lock only
-        for the short db flush. _strict re-raises (test hook proving flush
-        atomicity); the default degrades."""
+        at 10s) must never hold the writer lock, which the maintenance pass
+        and the purge also take. (Since #93 the stats API reads through its
+        own read-only connections and never waits on this lock.) _strict
+        re-raises (test hook proving flush atomicity); the default
+        degrades."""
         now = now or _now_str()
         try:
             raw = self.client.connections()
@@ -78,7 +81,8 @@ class Collector:
                 stats_store.flush_poll(
                     self.conn, raw, now,
                     domains_enabled=config.stats_domains(),
-                    gap_threshold_s=GAP_FACTOR * effective_interval_s())
+                    gap_threshold_s=GAP_FACTOR * effective_interval_s(),
+                    interval_s=effective_interval_s())
             self.status["last_poll_ts"] = now
             self.status["last_error"] = None
         except Exception as exc:
@@ -112,7 +116,8 @@ class Collector:
 
 class CollectorLoop:
     """The background thread: poll every interval, maintain every minute.
-    All stats-db access serializes through LOCK (shared with the API)."""
+    Every stats-db WRITE serializes through LOCK - the flush, the
+    maintenance pass and the purge route. Reads do not take it (#93)."""
 
     def __init__(self, collector: Collector, lock, interval_s: int):
         # NOTE: `lock` stays unannotated - threading.RLock is a factory
@@ -137,8 +142,8 @@ class CollectorLoop:
     def _run(self) -> None:
         # first poll immediately so /health goes fresh without waiting a
         # full interval, then tick until stopped. The poll's network fetch
-        # happens outside the lock (see poll_once); only the db work
-        # (flush + maintenance) contends with the stats API.
+        # happens outside the lock (see poll_once); only the db writes
+        # (flush + maintenance) hold it, alongside the purge route.
         while True:
             self.collector.poll_once(lock=self.lock)
             self._since_maintenance += self.interval_s

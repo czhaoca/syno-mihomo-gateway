@@ -41,13 +41,21 @@ def rollup(conn, now: str, *, day) -> None:
         days=DOMAIN_RETENTION_DAYS)).strftime("%Y-%m-%dT%H")
     conn.execute("BEGIN IMMEDIATE")
     try:
+        # Counts sum and peaks keep the largest (#94): a tier row's facts
+        # describe every minute folded into it.
         conn.execute(
-            "INSERT INTO stats_hour (bucket, device, chain, up, down) "
-            "SELECT substr(bucket, 1, 13), device, chain, "
-            "SUM(up), SUM(down) FROM stats_minute WHERE bucket < ? "
+            "INSERT INTO stats_hour (bucket, device, chain, up, down, samples, "
+            "conns, peak_up, peak_down) "
+            "SELECT substr(bucket, 1, 13), device, chain, SUM(up), SUM(down), "
+            "SUM(samples), SUM(conns), MAX(peak_up), MAX(peak_down) "
+            "FROM stats_minute WHERE bucket < ? "
             "GROUP BY substr(bucket, 1, 13), device, chain "
             "ON CONFLICT(bucket, device, chain) DO UPDATE SET "
-            "up = up + excluded.up, down = down + excluded.down",
+            "up = up + excluded.up, down = down + excluded.down, "
+            "samples = samples + excluded.samples, "
+            "conns = conns + excluded.conns, "
+            "peak_up = max(peak_up, excluded.peak_up), "
+            "peak_down = max(peak_down, excluded.peak_down)",
             (minute_cut,))
         conn.execute("DELETE FROM stats_minute WHERE bucket < ?",
                      (minute_cut,))
@@ -61,12 +69,17 @@ def rollup(conn, now: str, *, day) -> None:
                 (hour_cut,)).fetchall():
             conn.execute(
                 "INSERT INTO stats_day (bucket, device, chain, up, down, "
-                "bucket_tz, day_boundary) "
-                "SELECT ?, device, chain, SUM(up), SUM(down), ?, ? "
+                "samples, conns, peak_up, peak_down, bucket_tz, day_boundary) "
+                "SELECT ?, device, chain, SUM(up), SUM(down), SUM(samples), "
+                "SUM(conns), MAX(peak_up), MAX(peak_down), ?, ? "
                 "FROM stats_hour WHERE bucket = ? GROUP BY device, chain "
                 "ON CONFLICT(bucket, device, chain, bucket_tz, day_boundary) "
                 "DO UPDATE SET up = up + excluded.up, "
-                "down = down + excluded.down",
+                "down = down + excluded.down, "
+                "samples = samples + excluded.samples, "
+                "conns = conns + excluded.conns, "
+                "peak_up = max(peak_up, excluded.peak_up), "
+                "peak_down = max(peak_down, excluded.peak_down)",
                 (dayframe.day_key(hour_bucket, frame), frame.tz, frame.cut,
                  hour_bucket))
         conn.execute("DELETE FROM stats_hour WHERE bucket < ?", (hour_cut,))

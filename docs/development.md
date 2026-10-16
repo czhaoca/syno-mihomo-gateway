@@ -85,6 +85,7 @@ scripts/
     insights_baseline_check.sh # driver for the baseline probe's self-test: stubbed docker-exec, key contract, mutant control (python fixture layer runs wherever python3 exists)
     panel_contract_check.py   # CI: app/openapi.json byte-diff vs a fresh export (--write regenerates)
     panel_e2e_check.py        # CI: real uvicorn panel vs an in-step fake controller on loopback
+    panel_bench.py            # LOCAL ONLY: per-poll cost of the stats flush (ms + WAL bytes); CI runs a loose 10x-headroom guard instead (app/tests/test_perf_guard.py)
     lib/assert.sh             # shared assertions for the sh suites
 app/                          # the gateway panel: FastAPI service core (store/reconciler/api/tests)
 .woodpecker.yml               # CI: 16 blocking steps (see the CI table below)
@@ -340,6 +341,7 @@ python3 scripts/ci/ui_build_check.py --build
 /tmp/vp/bin/python scripts/ci/panel_contract_check.py   # --write regenerates app/openapi.json
 /tmp/vp/bin/python scripts/ci/panel_e2e_check.py
 sh scripts/insights_baseline.sh --self-test   # the probe's python fixture layer runs wherever python3 is on PATH
+/tmp/vp/bin/python scripts/ci/panel_bench.py --conns 3000 --snapshots 30   # optional, local only: exact flush cost (not a CI step)
 
 # shellcheck (via Docker, same 24 targets AND the same digest-pinned image as CI -
 # read straight from .woodpecker.yml so this mirror can never drift from the pin)

@@ -2,7 +2,7 @@
 regardless of any knob), honest gap rows on collector downtime, and the
 /health collector verdicts."""
 
-from app.collector.core import Collector
+from app.collector.core import POLL_INTERVAL_DEFAULT_S, Collector
 from app.store import dayframe
 from app.store.stats import open_stats_db, rollup
 from app.tests.conftest import conn_fixture
@@ -89,10 +89,12 @@ def test_gap_survives_restart(panel_env, fake_client):
 
 
 def test_no_gap_at_normal_cadence(panel_env, fake_client):
+    # "normal" = one default interval apart (2 s since #94); the gap
+    # threshold stays GAP_FACTOR x that interval
     conn = _stats_conn(panel_env)
     col = Collector(client=fake_client, conn=conn)
     col.poll_once(now="2026-07-23T10:00:00Z")
-    col.poll_once(now="2026-07-23T10:00:10Z")
+    col.poll_once(now=f"2026-07-23T10:00:{POLL_INTERVAL_DEFAULT_S:02d}Z")
     assert conn.execute("SELECT * FROM stats_gap").fetchall() == []
     conn.close()
 

@@ -132,6 +132,27 @@ STATS_MIGRATIONS = [
         PRIMARY KEY (bucket, device, klass, rule, rule_payload, sniff_host)
     );
     """),
+    # v4 - per-bucket facts (#94): how many polls fed a row, how many
+    # connections were first seen in it, and its largest single-poll delta.
+    # ADD COLUMN only, every column NOT NULL DEFAULT 0, so the shipped
+    # five-column INSERT idiom keeps working, every shipped number stays put,
+    # and an older image (which never selects them) rolls back safely over a
+    # v4 store. A pre-v4 row reads 0 here, meaning "not measured" - never a
+    # real zero peak.
+    (4, """
+    ALTER TABLE stats_minute ADD COLUMN samples INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE stats_minute ADD COLUMN conns INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE stats_minute ADD COLUMN peak_up INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE stats_minute ADD COLUMN peak_down INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE stats_hour ADD COLUMN samples INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE stats_hour ADD COLUMN conns INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE stats_hour ADD COLUMN peak_up INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE stats_hour ADD COLUMN peak_down INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE stats_day ADD COLUMN samples INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE stats_day ADD COLUMN conns INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE stats_day ADD COLUMN peak_up INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE stats_day ADD COLUMN peak_down INTEGER NOT NULL DEFAULT 0;
+    """),
 ]
 
 

@@ -134,7 +134,7 @@ def test_a_populated_v180_database_migrates_with_every_number_intact(tmp_path,
     before_day = [tuple(r) for r in old.execute(
         "SELECT bucket, device, chain, up, down FROM stats_day ORDER BY bucket")]
     before_hour = [tuple(r) for r in old.execute(
-        "SELECT * FROM stats_hour ORDER BY bucket")]
+        "SELECT bucket, device, chain, up, down FROM stats_hour ORDER BY bucket")]
     old.commit()
     old.close()
 
@@ -150,9 +150,11 @@ def test_a_populated_v180_database_migrates_with_every_number_intact(tmp_path,
         stamps = {(r[0], r[1]) for r in new.execute(
             "SELECT bucket_tz, day_boundary FROM stats_day")}
         assert stamps == {("UTC", "00:00")}
-        # the untouched tier is untouched
+        # the untouched tier keeps every shipped number (later additive
+        # migrations may add columns beside them - v4's facts read 0)
         assert [tuple(r) for r in new.execute(
-            "SELECT * FROM stats_hour ORDER BY bucket")] == before_hour
+            "SELECT bucket, device, chain, up, down FROM stats_hour "
+            "ORDER BY bucket")] == before_hour
         # auto_vacuum must survive the rebuild or enforce_cap's
         # incremental_vacuum silently stops reclaiming pages
         assert new.execute("PRAGMA auto_vacuum").fetchone()[0] == 2

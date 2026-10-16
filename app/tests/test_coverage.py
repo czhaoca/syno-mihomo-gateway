@@ -294,9 +294,12 @@ def test_the_token_gated_purge_clears_coverage_too(sconn, client, panel_env):
 
 
 def test_coverage_is_stats_migration_three(sconn):
+    # the coverage table is migration 3; later migrations (v4: the #94
+    # per-bucket facts) stack on top without renumbering it
     versions = [v for v, _ in STATS_MIGRATIONS]
-    assert versions == [1, 2, 3], versions
-    assert sconn.execute("PRAGMA user_version").fetchone()[0] == 3
+    assert versions[:3] == [1, 2, 3], versions
+    assert "CREATE TABLE stats_coverage" in STATS_MIGRATIONS[2][1]
+    assert sconn.execute("PRAGMA user_version").fetchone()[0] == versions[-1]
 
 
 def test_the_migration_leaves_every_shipped_stats_table_untouched(sconn):

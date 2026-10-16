@@ -86,9 +86,20 @@ def stats_db_path() -> Path:
     return state_dir() / "stats.db"
 
 
+# The collector's cadence (#94, DEC-A): 2 s, chosen by the epic's rule
+# "2 s unless a poll costs more than 500 ms at the production connection
+# count". The number it rests on is an ESTIMATE - a local Apple-silicon
+# bench of the PRE-#94 flush (3.3 ms per poll at 573 connections, the
+# measured busy count; the batched flush measures 1.8 ms there) scaled by
+# an assumed 6-8x for the NAS's Celeron J4125 - until the
+# collector's own poll timing (#96) is read on the NAS, which may move this
+# back to 5 s before release. The one place the default lives.
+STATS_POLL_DEFAULT_S = 2
+
+
 def stats_poll_s() -> int:
     """0 disables the collector loop (tests drive poll_once directly)."""
-    return _int_env("PANEL_STATS_POLL_S", 10)
+    return _int_env("PANEL_STATS_POLL_S", STATS_POLL_DEFAULT_S)
 
 
 def stats_minute_hours() -> int:

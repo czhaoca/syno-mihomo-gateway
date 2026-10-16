@@ -84,6 +84,7 @@ scripts/
     insights_baseline_check.sh # 基线探测自测的驱动：桩 docker-exec、键契约、变异体控制（python 夹具层在有 python3 的环境运行）
     panel_contract_check.py   # CI：app/openapi.json 与全新导出逐字节比对（--write 重新生成）
     panel_e2e_check.py        # CI：真实 uvicorn 面板对回环上的步内伪控制器
+    panel_bench.py            # 仅限本地：统计刷写的单次轮询开销（毫秒 + WAL 字节）；CI 运行的是留有 10 倍余量的宽松守卫（app/tests/test_perf_guard.py）
     lib/assert.sh             # sh 测试套件共享的断言
 app/                          # 网关面板：FastAPI 服务核心（store/reconciler/api/tests）
 .woodpecker.yml               # CI：16 个阻断式步骤（见下方 CI 表格）
@@ -326,6 +327,7 @@ python3 scripts/ci/ui_build_check.py --build
 /tmp/vp/bin/python scripts/ci/panel_contract_check.py   # --write 重新生成 app/openapi.json
 /tmp/vp/bin/python scripts/ci/panel_e2e_check.py
 sh scripts/insights_baseline.sh --self-test   # 探测的 python 夹具层在 PATH 上有 python3 的任何环境运行
+/tmp/vp/bin/python scripts/ci/panel_bench.py --conns 3000 --snapshots 30   # 可选，仅限本地：精确的刷写开销（不是 CI 步骤）
 
 # shellcheck（经 Docker，与 CI 相同的 24 个目标，并且是与 CI 相同的、按 digest 钉死的镜像——
 # 直接从 .woodpecker.yml 读取，因此这条本地等价物永远不会偏离 pin）
