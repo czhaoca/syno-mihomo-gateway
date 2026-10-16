@@ -269,13 +269,13 @@ JSON POST）。通知会在失败时**以及**有变化的成功时触发；设�
   | `{"tables": ["stats_domain", "stats_sniff"]}` | 仅所列的表（表名见下文）。 |
   | `{"before": "2026-07-01"}` | 时间桶起点早于该 UTC 时刻的行（`YYYY-MM-DD`、`YYYY-MM-DDTHH` 或 `YYYY-MM-DDTHH:MM`）。跨越该时刻的时间桶也会被清除。天的行按其本地日期比较。一个本地日的真实起点是该日期加上日界、再减去时区的 UTC 偏移量，因此天的行与该时刻最多可相差这么多。 |
 
-  表名：`stats_minute_v5`（分钟层级）、`stats_hour`、`stats_day`、`stats_exit_hour`、`stats_exit_day`、`stats_rule_hour`、`stats_rule_day`、`stats_category_hour`、`stats_category_day`、`stats_country_hour`、`stats_country_day`、`stats_domain`、`stats_sniff`、`stats_asn`、`stats_port`、`stats_coverage`、`stats_gap`、`stats_self`（采集器自身的指标），以及 `stats_minute`（只有 v1.11 之前的面板会写入；见面板说明）。
+  表名：`stats_minute_v5`（分钟层级）、`stats_hour`、`stats_day`、`stats_exit_hour`、`stats_exit_day`、`stats_rule_hour`、`stats_rule_day`、`stats_category_hour`、`stats_category_day`、`stats_country_hour`、`stats_country_day`、`stats_domain`、`stats_sniff`、`stats_asn`、`stats_port`、`stats_app`（应用级类别 id）、`stats_coverage`、`stats_gap`、`stats_self`（采集器自身的指标），以及 `stats_minute`（只有 v1.11 之前的面板会写入；见面板说明）。
 
   响应中的 `rows` 给出每张表删除的行数。策略审计会连同范围一起记录每次清除。未知的键或表名会被拒绝（422），此时不会清除任何数据。清除会保留采集器的计数基线，因此之后正在进行的连接不会被重复计数。只清除某一个层级，会让不同粒度的视图在该层级重新累积之前互相对不上：48 小时视图读分钟层级，7 天和 30 天视图读小时层级。
 
 - **留存**是自动的：分钟行在 `PANEL_STATS_MINUTE_HOURS` 后过期；小时在 `PANEL_STATS_HOUR_DAYS` 后汇总为本地日；天在 `PANEL_STATS_DAY_DAYS` 后过期；7 天类数据强制保留 7 天。硬性的 `PANEL_STATS_CAP_MB` 上限会最先裁剪最旧的数据，无论它在哪张表里（采集器停摆期间留下如实的空缺行）。策略快照按 `PANEL_BACKUP_KEEP` 自行轮换。不需要 cron。
 
-- **手动把面板降级到 v1.11 之前的版本之前**，先清除 7 天类的表（`{"tables": ["stats_sniff", "stats_asn", "stats_port"]}`）。旧版镜像在 7 天、30 天和按天视图中把每个字节只计一次，它的 48 小时视图一开始是空的；它无法裁剪或清除它不认识的表（见[面板说明](panel.md#数据留存与备份)）。
+- **手动降级面板之前**，先清除旧版镜像不认识的 7 天类的表：降到 v1.11 之前时用 `{"tables": ["stats_sniff", "stats_asn", "stats_port", "stats_app"]}`；从 v1.12 降到 v1.11 时用 `{"tables": ["stats_app"]}`。旧版镜像在 7 天、30 天和按天视图中把每个字节只计一次，它的 48 小时视图一开始是空的；它无法裁剪或清除它不认识的表（见[面板说明](panel.md#数据留存与备份)）。
 
 - **留意**：`doctor.sh`——`companion_health`（停止或降级 ⇒ 告警）与
   `policy_parity`（面板与 mihomo 出现漂移 ⇒ **错误，退出码 3**；见

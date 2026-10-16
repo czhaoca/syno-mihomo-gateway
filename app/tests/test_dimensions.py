@@ -12,8 +12,9 @@ Every poll now writes, beside the minute tier:
     `stats_domain`).
 Each long-term dimension partitions the device tier's bytes exactly: every
 byte lands under exactly one value, and a value nobody could determine is
-written as such ("unknown" country, "" = not yet attributed category) -
-never dropped, so a dimension total always equals the device total.
+written as such ("unknown" country; "unknown" category when the dictionary
+has no answer, "" when no dictionary ran - #97) - never dropped, so a
+dimension total always equals the device total.
 
 All frames are synthesised (TEST-NET, example.com, RFC 5398 ASNs).
 """
@@ -22,7 +23,7 @@ import pytest
 from app.store import dayframe
 from app.store import stats as stats_store
 from app.store.stats import flush_poll, open_stats_db, rollup
-from app.tests.conftest import geo_conn
+from app.tests.conftest import example_dictionary, geo_conn
 
 NOW = "2026-10-15T12:00:00Z"
 A, B = "192.0.2.20", "192.0.2.21"
@@ -36,9 +37,13 @@ def sconn(panel_env):
     conn.close()
 
 
-def push(conn, frames, now=NOW, domains=False, interval=2):
+DICT = example_dictionary()
+
+
+def push(conn, frames, now=NOW, domains=False, interval=2, dictionary=DICT):
     flush_poll(conn, frames, now, domains_enabled=domains,
-               gap_threshold_s=3 * interval, interval_s=interval)
+               gap_threshold_s=3 * interval, interval_s=interval,
+               dictionary=dictionary)
 
 
 def values(conn, table):
@@ -128,14 +133,76 @@ def test_the_geo_field_is_probed_on_every_snapshot(sconn):
                                                    (A, "SG"): (2, 2)}
 
 
-def test_the_category_is_unattributed_until_the_dictionary_lands(sconn):
-    # DEC-B (panel-confirmed): the slot stays empty until Sequence 80, and
-    # every byte is written under "" so category totals equal the device tier
+def test_the_category_is_the_coarse_id_of_the_hostname(sconn):
+    push(sconn, [geo_conn("c1", A, 10, 100, host="video.example.com"),
+                 geo_conn("c2", A, 1, 2, host="edge.example.com"),
+                 geo_conn("c3", B, 3, 4, sniff="cdn.example.org")])
+    assert values(sconn, "stats_category_hour") == {
+        (A, "video"): (10, 100), (A, "platform"): (1, 2), (B, "cdn"): (3, 4)}
+
+
+def test_a_flow_the_dictionary_cannot_name_is_unattributed(sconn):
+    # #97 DEC-E: "unknown" - looked, no answer - for an IP-only flow and for
+    # an unknown hostname alike; "" stays reserved for "no dictionary ran"
+    push(sconn, [geo_conn("c1", A, 10, 100),
+                 geo_conn("c2", B, 1, 2, host="unlisted.example.net")])
+    assert values(sconn, "stats_category_hour") == {(A, "unknown"): (10, 100),
+                                                    (B, "unknown"): (1, 2)}
+
+
+def test_a_routing_match_alone_never_classifies(sconn):
+    # panel-ui-v2 DEC-C: a GeoSite payload names a routing list, not an app
     push(sconn, [geo_conn("c1", A, 10, 100, rule="GeoSite",
-                          payload="category-example"),
-                 geo_conn("c2", B, 1, 2, host="video.example.com")])
-    assert values(sconn, "stats_category_hour") == {(A, ""): (10, 100),
-                                                    (B, ""): (1, 2)}
+                          payload="example-video")])
+    assert values(sconn, "stats_category_hour") == {(A, "unknown"): (10, 100)}
+
+
+def test_the_sniffed_name_classifies_when_the_host_does_not(sconn):
+    push(sconn, [geo_conn("c1", A, 10, 100, host="unlisted.example.net",
+                          sniff="video.example.com")])
+    assert values(sconn, "stats_category_hour") == {(A, "video"): (10, 100)}
+
+
+def test_without_a_dictionary_every_byte_is_no_dictionary(sconn):
+    # what an older image writes too: the "before the dictionary" segment
+    push(sconn, [geo_conn("c1", A, 10, 100, host="video.example.com")],
+         dictionary=None)
+    assert values(sconn, "stats_category_hour") == {(A, ""): (10, 100)}
+
+
+def test_the_shipped_dictionary_is_the_default(sconn, monkeypatch):
+    from app.store import categories
+    monkeypatch.setattr(categories, "_ACTIVE", {"dictionary": DICT,
+                                                "error": None})
+    flush_poll(sconn, [geo_conn("c1", A, 10, 100, host="video.example.com")],
+               NOW, domains_enabled=False, gap_threshold_s=6, interval_s=2)
+    assert values(sconn, "stats_category_hour") == {(A, "video"): (10, 100)}
+
+
+def test_an_unloadable_dictionary_counts_without_one(sconn, monkeypatch):
+    from app.store import categories
+    monkeypatch.setattr(categories, "_ACTIVE", {"dictionary": None,
+                                                "error": "broken"})
+    flush_poll(sconn, [geo_conn("c1", A, 10, 100, host="video.example.com")],
+               NOW, domains_enabled=True, gap_threshold_s=6, interval_s=2)
+    assert values(sconn, "stats_category_hour") == {(A, ""): (10, 100)}
+    assert values(sconn, "stats_app") == {}
+
+
+def test_app_ids_ride_only_the_gated_seven_day_table(sconn):
+    frames = [geo_conn("c1", A, 10, 100, host="video.example.com"),
+              geo_conn("c2", A, 1, 2, host="unlisted.example.net")]
+    push(sconn, frames)
+    assert values(sconn, "stats_app") == {}
+    moved = [dict(f, upload=f["upload"] * 2, download=f["download"] * 2)
+             for f in frames]
+    push(sconn, moved, now="2026-10-15T12:00:02Z", domains=True)
+    # only the classified flow, and only its delta since the gate opened
+    assert values(sconn, "stats_app") == {(A, "example-video"): (10, 100)}
+    long_term = {r["value"] for r in sconn.execute(
+        "SELECT value FROM stats_category_hour UNION "
+        "SELECT value FROM stats_category_day")}
+    assert "example-video" not in long_term
 
 
 def test_every_long_term_dimension_partitions_the_device_bytes(sconn):
@@ -270,7 +337,7 @@ def test_every_dimension_rolls_into_local_days(sconn, monkeypatch):
         sconn.execute("DELETE FROM conn_baseline")
     rollup(sconn, "2026-10-15T00:00:00Z", day=shanghai)
     for dim, value in (("exit", "JP01"), ("rule", "Match"),
-                       ("category", ""), ("country", "US")):
+                       ("category", "unknown"), ("country", "US")):
         rows = [tuple(r) for r in sconn.execute(
             f"SELECT bucket, device, value, up, down, bucket_tz, day_boundary "
             f"FROM stats_{dim}_day ORDER BY bucket")]

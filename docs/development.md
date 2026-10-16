@@ -84,6 +84,8 @@ scripts/
     linux_installer_check.sh  # fake-Docker suite for the generic-Linux entry + overlay
     insights_baseline_check.sh # driver for the baseline probe's self-test: stubbed docker-exec, key contract, mutant control (python fixture layer runs wherever python3 exists)
     panel_contract_check.py   # CI: app/openapi.json byte-diff vs a fresh export (--write regenerates)
+    categories_check.py       # CI: the category dictionary files vs categories_regen.py, its bounds and totality - offline (+ categories_check_test.py controls)
+    categories_regen.py       # DEV TIME ONLY: rebuilds app/store/categories/ from the pinned upstream geosite source (fetches it, or --source <tarball>)
     panel_e2e_check.py        # CI: real uvicorn panel vs an in-step fake controller on loopback
     panel_bench.py            # LOCAL ONLY: per-poll cost of the stats flush (ms + WAL bytes); CI runs a loose 10x-headroom guard instead (app/tests/test_perf_guard.py)
     lib/assert.sh             # shared assertions for the sh suites
@@ -183,7 +185,7 @@ Runs on push/PR to `main` and `master`:
 | `ui-build` | `npm --prefix app/ui ci` + `npm run lint`, then `python3 scripts/ci/ui_build_check.py --build` — the frontend toolchain (#78): `npm ci` so the lockfile is authoritative, then the **built-artifact** gate: the A6 release marker (`data-i18n="app_title"`) survived the bundler outside any comment, and every external URL in the bundle is in the documented inert allowlist — plus the gate's own positive/negative self-test (`ui_build_check_test.py`) |
 | `ui-e2e` | `npx playwright test` — the REAL panel under uvicorn against the same FakeController the API e2e uses (`scripts/ci/ui_e2e_server.py`); browsers come from the pinned `mcr.microsoft.com/playwright` image, never a per-run CDN download, so the browser build can never drift from the Playwright version |
 | `app-lint` | `ruff check app` — the panel app lint (ruff pinned in `app/requirements-dev.txt`, config scoped via `app/ruff.toml`) |
-| `app-unit` | `python -m pytest app/tests -q` — the hermetic panel unit suite (fake controller client + tmp trees; validation classes, store/migrations/backups, reconciler happy/loud paths, auth matrix, audit append-only) — then `python scripts/ci/panel_contract_check.py`, the committed contract gate: `app/openapi.json` AND the generated `docs/panel-api.md` byte-identity (regenerate both with `--write`; the /v1 surface is additive-only — breaking = new version prefix + explicit owner acknowledgment) — then `sh scripts/insights_baseline.sh --self-test`: the baseline probe's self-test in a python image, where its in-container program runs against the canned fixtures (alpine's `dsm-shell-tests` covers the sh layer and SKIPs this one) |
+| `app-unit` | `python -m pytest app/tests -q` — the hermetic panel unit suite (fake controller client + tmp trees; validation classes, store/migrations/backups, reconciler happy/loud paths, auth matrix, audit append-only) — then `python scripts/ci/panel_contract_check.py`, the committed contract gate: `app/openapi.json` AND the generated `docs/panel-api.md` byte-identity (regenerate both with `--write`; the /v1 surface is additive-only — breaking = new version prefix + explicit owner acknowledgment) — then `python scripts/ci/categories_check.py` and its controls `categories_check_test.py`: the category dictionary gate (#97), offline — `coarse.json` byte-identical to the regen script's curated table, `suffixes.json` in the committed serialization with its recorded digests, the pinned upstream ref and licence, ≤ 150 ids / 15000 rules / 400 KiB, every id curated with a coarse id — then `sh scripts/insights_baseline.sh --self-test`: the baseline probe's self-test in a python image, where its in-container program runs against the canned fixtures (alpine's `dsm-shell-tests` covers the sh layer and SKIPs this one) |
 | `app-e2e` | `python scripts/ci/panel_e2e_check.py` — the REAL app under uvicorn against an in-step fake mihomo controller + webhook sink on loopback (daemonless): startup re-sync, bearer-gated mutations, write→refresh→count-parity, the loud failure path (marker + `{title,body}` webhook + `parity=failed`), recovery via `/v1/apply` |
 
 One check runs **outside** Woodpecker: the **`panel-image` GitHub Actions workflow**
@@ -339,6 +341,8 @@ python3 scripts/ci/ui_build_check.py --build
 /tmp/vp/bin/ruff check app
 /tmp/vp/bin/python -m pytest app/tests -q
 /tmp/vp/bin/python scripts/ci/panel_contract_check.py   # --write regenerates app/openapi.json
+/tmp/vp/bin/python scripts/ci/categories_check.py        # the dictionary files vs the regen script (offline)
+/tmp/vp/bin/python scripts/ci/categories_check_test.py   # ...and the gate's negative controls
 /tmp/vp/bin/python scripts/ci/panel_e2e_check.py
 sh scripts/insights_baseline.sh --self-test   # the probe's python fixture layer runs wherever python3 is on PATH
 /tmp/vp/bin/python scripts/ci/panel_bench.py --conns 3000 --snapshots 30   # optional, local only: exact flush cost (not a CI step)

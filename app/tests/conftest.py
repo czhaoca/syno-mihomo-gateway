@@ -139,6 +139,22 @@ def geo_conn(cid: str, source: str, up: int, down: int, *,
             "chains": list(chains), "rule": rule, "rulePayload": payload}
 
 
+def example_dictionary():
+    """A synthesised category dictionary (#97) over example.* names only:
+    an app with a suffix and an exact name, a CDN, and the vendor that owns
+    the rest of example.com (the DEC-X-2 vendor-level label)."""
+    from app.store.categories import Dictionary
+    return Dictionary(
+        ("video", "cdn", "platform"),
+        {"example-video": "video", "example-cdn": "cdn",
+         "example-vendor": "platform"},
+        {"example-video": {"domain": ["video.example.com"],
+                           "full": ["clip.example.net"]},
+         "example-cdn": {"domain": ["cdn.example.org"], "full": []},
+         "example-vendor": {"domain": ["example.com"], "full": []}},
+        version="test")
+
+
 @pytest.fixture()
 def fake_client(panel_env):
     return FakeMihomoClient(panel_env["providers"])

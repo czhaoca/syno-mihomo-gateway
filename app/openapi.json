@@ -230,6 +230,7 @@
                     "stats_sniff",
                     "stats_asn",
                     "stats_port",
+                    "stats_app",
                     "stats_self"
                   ],
                   "type": "string"
@@ -857,7 +858,7 @@
     },
     "/v1/stats/coverage": {
       "get": {
-        "description": "What share of traffic could be attributed to an app at all (#77).\n\nDEC-6 makes this the deliverable: the per-app feature exists to enable\nBLOCKING, and blocking on bad attribution takes out the wrong app on a\ngateway carrying all LAN traffic. So the number comes first, and it is\nmeasured rather than assumed.\n\nA flow counts as attributable only when it carried a hostname (DEC-B).\nRouting signals never promote one - `rule`/`rulePayload` name a\nrouting category, not an application, and the release gate already\nrefuses to read `GeoSite/cn` as proof of anything. `rules` breaks the\nunattributable remainder down by the rule that routed it, which is\nwhat distinguishes a deliberate exclusion from a real gap.\n\nNo hostname is stored to produce this: the counters are hostname-free\nby construction, so the report needs none of the privacy surface the\nopt-in domain table carries.",
+        "description": "What share of traffic could be attributed to an app at all (#77).\n\nDEC-6 makes this the deliverable: the per-app feature exists to enable\nBLOCKING, and blocking on bad attribution takes out the wrong app on a\ngateway carrying all LAN traffic. So the number comes first, and it is\nmeasured rather than assumed.\n\nA flow counts as attributable only when it carried a hostname (DEC-B).\nRouting signals never promote one - `rule`/`rulePayload` name a\nrouting category, not an application, and the release gate already\nrefuses to read `GeoSite/cn` as proof of anything. `rules` breaks the\nunattributable remainder down by the rule that routed it, which is\nwhat distinguishes a deliberate exclusion from a real gap.\n\nNo hostname is stored to produce this: the counters are hostname-free\nby construction, so the report needs none of the privacy surface the\nopt-in domain table carries.\n\n`dictionary` (#97) is a second partition of the same window: what the\ncategory dictionary named - `app` (its app-level id kept, only with\nPANEL_STATS_DOMAINS on), `coarse` (only the coarse category kept),\n`unattributed` (no answer: no hostname, or one it does not know) and\n`no_dictionary` (counted before v1.12, or by an older image). Each\npartition sums to 100 on its own; `dictionary.total` is the bytes the\ncategory dimension still holds per hour in the window, from\n`dictionary.oldest_bucket` on.",
         "operationId": "stats_coverage_v1_stats_coverage_get",
         "parameters": [
           {

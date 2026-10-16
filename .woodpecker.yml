@@ -194,6 +194,11 @@ steps:
       - pip install --quiet -r app/requirements.txt -r app/requirements-dev.txt
       - python -m pytest app/tests -q
       - python scripts/ci/panel_contract_check.py
+      # the category dictionary (#97): the committed data files against the
+      # regen script and its size bounds, offline (CI never fetches the
+      # upstream geosite source), plus the gate's own negative controls
+      - python scripts/ci/categories_check.py
+      - python scripts/ci/categories_check_test.py
       # the baseline probe's self-test: this image has python3, so its
       # in-container program runs against the canned fixtures here (the
       # alpine dsm-shell-tests step covers the sh layer and SKIPs this one)

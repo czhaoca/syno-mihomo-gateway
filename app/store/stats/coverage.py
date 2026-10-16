@@ -1,10 +1,20 @@
-"""Attribution coverage (#77): what share of bytes carried a hostname."""
+"""Attribution coverage (#77): what share of bytes carried a hostname, and
+(#97) what share the category dictionary could name."""
 
+from app.store import categories
 from app.store.stats.schema import (
+    APP_TABLE,
     COVERAGE_CLASSES,
+    DICTIONARY_CLASSES,
     DOMAIN_RETENTION_DAYS,
     KLASS_IP_ONLY,
+    NO_DICTIONARY,
+    UNATTRIBUTED,
 )
+
+
+def _share(part: int, total: int) -> float:
+    return round(100.0 * part / total, 6) if total else 0.0
 
 
 def read_coverage(conn, since: str = "", until: str = "") -> list:
@@ -72,7 +82,96 @@ def coverage_rules(conn, since: str = "", until: str = "") -> list:
     return [dict(r) for r in rows]
 
 
-def coverage_report(conn, since: str = "", until: str = "") -> dict:
+def dictionary_report(conn, start: str, until: str = "",
+                      app_ids_kept: bool | None = None) -> dict:
+    """What the category dictionary named, over the coverage window (#97,
+    DEC-D): the buckets from START - the coverage window's first bucket, ""
+    when the coverage table holds none - up to UNTIL, so this partition and
+    the hostname/ip_only one cover the same hours. The category dimension
+    keeps 90 days and `stats_app` seven; reading either beyond the window
+    would file app bytes that aged out of `stats_app` under `coarse`.
+
+    Every byte falls in exactly one class, and every class is listed even
+    at zero:
+      app            classified, and its app-level id is kept (stats_app,
+                     only with PANEL_STATS_DOMAINS on)
+      coarse         classified, and only its coarse category is kept
+      unattributed   the dictionary had no answer: no hostname, or one it
+                     does not know
+      no_dictionary  counted without a dictionary: before v1.12, or by an
+                     older image after a rollback
+    `total` is this partition's own, over the hours the category dimension
+    still holds at HOUR resolution: a window reaching back before v1.11 (no
+    category dimension yet), or past PANEL_STATS_HOUR_DAYS when that is
+    under seven days (older hours are in the day tier, which a UTC hour
+    window cannot be cut from), holds coverage bytes it never saw.
+    `oldest_bucket` is the first hour it counted.
+
+    `app` is matched per hour and device: in each, the app bytes kept can
+    be at most the classified bytes of that hour and device. Without that,
+    app ids kept in one hour could pass for classified bytes of another -
+    after a purge of one table, or when the two tables hold different hours.
+    APP_IDS_KEPT says whether app ids are being kept NOW: a zero `app`
+    share then reads as "not kept", not as "none seen", while ids kept
+    before the gate was switched off still count until their seven days
+    are up."""
+    sums = {klass: [0, 0] for klass in DICTIONARY_CLASSES}
+    oldest = ""
+    if start:
+        where, params = ["bucket >= ?"], [start]
+        if until:
+            where.append("bucket <= ?")
+            params.append(until)
+        clause = " AND ".join(where)
+        row = conn.execute(
+            f"""WITH cat AS (
+                SELECT bucket, device,
+                    SUM(CASE WHEN value = ? THEN up ELSE 0 END) AS nd_up,
+                    SUM(CASE WHEN value = ? THEN down ELSE 0 END) AS nd_down,
+                    SUM(CASE WHEN value = ? THEN up ELSE 0 END) AS un_up,
+                    SUM(CASE WHEN value = ? THEN down ELSE 0 END) AS un_down,
+                    SUM(CASE WHEN value NOT IN (?, ?) THEN up ELSE 0 END)
+                        AS cl_up,
+                    SUM(CASE WHEN value NOT IN (?, ?) THEN down ELSE 0 END)
+                        AS cl_down
+                FROM stats_category_hour WHERE {clause}
+                GROUP BY bucket, device),
+            app AS (
+                SELECT bucket, device, SUM(up) AS up, SUM(down) AS down
+                FROM {APP_TABLE} WHERE {clause} GROUP BY bucket, device)
+            SELECT MIN(cat.bucket) AS oldest,
+                COALESCE(SUM(nd_up), 0), COALESCE(SUM(nd_down), 0),
+                COALESCE(SUM(un_up), 0), COALESCE(SUM(un_down), 0),
+                COALESCE(SUM(cl_up), 0), COALESCE(SUM(cl_down), 0),
+                COALESCE(SUM(MIN(cl_up, COALESCE(app.up, 0))), 0),
+                COALESCE(SUM(MIN(cl_down, COALESCE(app.down, 0))), 0)
+            FROM cat LEFT JOIN app USING (bucket, device)""",
+            [NO_DICTIONARY, NO_DICTIONARY, UNATTRIBUTED, UNATTRIBUTED,
+             NO_DICTIONARY, UNATTRIBUTED, NO_DICTIONARY, UNATTRIBUTED,
+             *params, *params]).fetchone()
+        oldest = row[0] or ""
+        nd_up, nd_down, un_up, un_down, cl_up, cl_down, app_up, app_down = (
+            row[1:])
+        sums = {"app": [app_up, app_down],
+                "coarse": [cl_up - app_up, cl_down - app_down],
+                "unattributed": [un_up, un_down],
+                "no_dictionary": [nd_up, nd_down]}
+    total_up = sum(v[0] for v in sums.values())
+    total_down = sum(v[1] for v in sums.values())
+    total = total_up + total_down
+    dictionary = categories.active()
+    return {"version": dictionary.version if dictionary else None,
+            "error": categories.load_error(),
+            "app_ids_kept": app_ids_kept,
+            "oldest_bucket": oldest,
+            "total": {"up": total_up, "down": total_down},
+            "classes": [{"klass": klass, "up": up, "down": down,
+                         "share": _share(up + down, total)}
+                        for klass, (up, down) in sums.items()]}
+
+
+def coverage_report(conn, since: str = "", until: str = "",
+                    app_ids_kept: bool | None = None) -> dict:
     """The measurement DEC-6 asks for: what share of bytes is attributable.
 
     EVERY known class is listed even at zero, so a consumer never has to
@@ -90,9 +189,8 @@ def coverage_report(conn, since: str = "", until: str = "") -> dict:
     classes = []
     for klass in COVERAGE_CLASSES:
         row = counted.get(klass) or {"up": 0, "down": 0}
-        share = round(100.0 * (row["up"] + row["down"]) / total, 6) if total else 0.0
         classes.append({"klass": klass, "up": row["up"], "down": row["down"],
-                        "share": share})
+                        "share": _share(row["up"] + row["down"], total)})
     # Attribution lives ONLY here, under the forced 7-day cap - the 90/730
     # day byte tiers carry no klass or rule column at all. So a caller
     # asking for 30 days gets a percentage computed over at most 7, and
@@ -102,6 +200,11 @@ def coverage_report(conn, since: str = "", until: str = "") -> dict:
     return {"total": {"up": total_up, "down": total_down},
             "classes": classes,
             "rules": coverage_rules(conn, since, until),
+            # the dictionary's own partition (#97 DEC-D), beside `classes`
+            # rather than in it: `classes` sums to 100 on its own
+            "dictionary": dictionary_report(
+                conn, max(since, oldest) if oldest else "", until,
+                app_ids_kept),
             "window": {
                 "requested_since": since,
                 "requested_until": until,

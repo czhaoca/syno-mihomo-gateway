@@ -26,8 +26,12 @@ from app.store.stats import (
     open_stats_db,
     rollup,
 )
+from app.tests.conftest import example_dictionary
 
 _UTC = dayframe.utc_frame()
+# every fleet hostname is an example.com name, which this dictionary files
+# under its vendor - so with the gate on the app table is written too
+DICT = example_dictionary()
 A, B = "192.0.2.20", "192.0.2.21"
 
 
@@ -40,7 +44,8 @@ def frame_conn(cid, src, up, down, chain="Routing Mode", host=""):
 
 def poll(conn, frames, now, interval=2, domains=False):
     flush_poll(conn, frames, now, domains_enabled=domains,
-               gap_threshold_s=3 * interval, interval_s=interval)
+               gap_threshold_s=3 * interval, interval_s=interval,
+               dictionary=DICT)
 
 
 @pytest.fixture()
@@ -76,7 +81,8 @@ def counted(conn, fn):
 # The ceiling is the fixed statements of a poll (BEGIN, the stamp and the
 # baseline reads, the baseline write and reap, the stamps, COMMIT) plus ONE
 # per table written - minute, hour, the long-term dimensions, coverage, and
-# with the gate on the domain and seven-day class tables (#95). It must
+# with the gate on the domain and seven-day class tables (#95, and the app
+# table since #97). It must
 # never depend on how many connections are open.
 _FIXED = 7
 _TABLES_GATE_OFF = 2 + len(DIMENSIONS) + 1

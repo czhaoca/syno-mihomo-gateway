@@ -206,8 +206,8 @@ What `stats.db` keeps (since v1.11):
 | Bytes per device and policy group, per minute | 48 h | A finer copy of the newest hours. |
 | The same, per hour | 90 d | Written at every poll, so it is always complete. |
 | The same, per local day | 730 d | Hours older than 90 d roll into days. |
-| Bytes per device by exit node, rule type, category, destination country | 90 d of hours + 730 d of days | Recorded from v1.11 on. For that traffic each adds up to the device total; a window that reaches back before the upgrade (or into a time an older panel ran) holds device bytes the dimensions never saw. Country reads `unknown` while the running mihomo build does not report it; category stays empty (not yet attributed) until a category dictionary ships. |
-| Bytes per device by hostname, sniffed name, destination ASN, destination port | 7 d, forced | Only with `PANEL_STATS_DOMAINS` on. No knob extends it. |
+| Bytes per device by exit node, rule type, category, destination country | 90 d of hours + 730 d of days | Recorded from v1.11 on. For that traffic each adds up to the device total; a window that reaches back before the upgrade (or into a time an older panel ran) holds device bytes the dimensions never saw. Country reads `unknown` while the running mihomo build does not report it. Category is the coarse category of the flow's hostname from v1.12 on ([categories](#categories)); bytes counted before v1.12 have an empty category. |
+| Bytes per device by hostname, sniffed name, destination ASN, destination port, app (geosite id) | 7 d, forced | Only with `PANEL_STATS_DOMAINS` on. No knob extends it. The app ids are recorded from v1.12 on. |
 | Attribution coverage (which share carried a hostname, by rule) | 7 d, forced | A rule's payload is stored only for GeoSite, GeoIP, RuleSet, Match and SrcIPCIDR rules. Every other type (the Domain rules, which can name your subscription's own server) is stored blank. Rows written before v1.11 keep their payload until they age out or are purged. |
 
 mihomo's own traffic (subscription pulls, health checks) is counted under the
@@ -224,21 +224,83 @@ view reads only its own minute rows, so it starts empty and fills as it
 collects. Whatever the older image collects is folded back in when v1.11
 starts again. What the older image cannot do is look after the tables it
 does not know:
-- It never prunes or purges the v1.11 tables (the minute tier, the dimension
-  tables, and the seven-day `stats_sniff`, `stats_asn` and `stats_port`).
+- It never prunes or purges the tables it does not know: from v1.11 the
+  minute tier, the dimension tables, and the seven-day `stats_sniff`,
+  `stats_asn` and `stats_port`; from v1.12 the seven-day `stats_app` too.
   With `PANEL_STATS_DOMAINS` on, those seven-day rows outlive seven days
-  until v1.11 returns. Its first maintenance pass, about a minute after
-  start while the collector runs, prunes them.
+  until the newer panel returns. Its first maintenance pass, about a minute
+  after start while the collector runs, prunes them.
 - Its size cap trims only its own tables.
-- The dimensions get no entries for the time it ran.
-- It lists a device, group or timeline bucket whose only activity was a
-  connection that moved no bytes yet, at 0 / 0. v1.11 keeps such rows for
-  their connection count and leaves them out of every byte read.
+- The dimensions get no entries for the time a pre-v1.11 panel ran. A v1.11
+  panel over a v1.12 store records them, but with an empty category: those
+  bytes read as counted without a dictionary (`no_dictionary`), never as
+  unattributed.
+- A pre-v1.11 panel lists a device, group or timeline bucket whose only
+  activity was a connection that moved no bytes yet, at 0 / 0. From v1.11
+  such rows are kept for their connection count and left out of every byte
+  read.
 
-Before downgrading by hand, purge the seven-day tables with `POST
-/v1/stats/purge` and `{"tables": ["stats_sniff", "stats_asn", "stats_port"]}`
-(see [operations](operations.md)). An automatic rollback cannot do this for
-you, so those rows stay until v1.11 is back.
+Before downgrading by hand, purge the seven-day tables the older image does
+not know with `POST /v1/stats/purge`: below v1.11, `{"tables":
+["stats_sniff", "stats_asn", "stats_port", "stats_app"]}`; from v1.12 to
+v1.11, `{"tables": ["stats_app"]}` (see [operations](operations.md)). An
+automatic rollback cannot do this for you, so those rows stay until the newer
+panel is back.
+
+## Categories
+
+From v1.12 the panel files each flow under a category, using its hostname.
+The dictionary has two levels:
+
+- **App**: a geosite id, the name mihomo itself uses in a `GEOSITE,<id>`
+  rule (`netflix`, `bilibili`, ...). It is kept only in the seven-day class,
+  so only with `PANEL_STATS_DOMAINS` on: which apps a device used, kept for
+  months, says as much as its hostnames would.
+- **Coarse**: one of 20 categories, kept long-term in the category
+  dimension: video, music, social, messaging, gaming, shopping, news,
+  search, ai, developer, cloud, cdn, storage, productivity, finance,
+  education, travel, ads, system, platform. `platform` marks an umbrella
+  vendor's shared services (accounts, APIs, static content) that no single
+  product owns.
+
+The honesty rules:
+
+- Only a hostname classifies a flow: the host mihomo reports, or else the
+  name its sniffer recovered. A routing rule never does. A `GEOSITE` or
+  `GEOIP` match says how a flow was routed, not which app it belongs to.
+- A name two apps share, such as a common CDN edge, is labelled by its
+  vendor, never by a guessed app. When no vendor owns it either, it stays
+  unattributed.
+- A flow the dictionary has no answer for (no hostname, or one it does not
+  know) gets the category `unknown`: unattributed. A large share of bytes
+  can carry no hostname at all (on the gateway measured while this was
+  built, over half), so this is often the largest class. It is a permanent
+  part of the picture and is never folded into a named category.
+- Bytes counted before v1.12, or by an older panel after a rollback, have an
+  empty category. They were never classified, and they are reported that
+  way (`no_dictionary`), not as unattributed.
+
+`GET /v1/stats/coverage` reports two measurements over its window (up to
+seven days). `classes` says whether a flow could be classified at all
+(`hostname` / `ip_only`). `dictionary` says what the dictionary named:
+`app` (classified, app id kept), `coarse` (classified, only the coarse
+category kept), `unattributed` and `no_dictionary`. Each list adds up to
+100 % on its own. `dictionary` counts the hours the category dimension
+still holds per hour, from `dictionary.oldest_bucket` on (with
+`PANEL_STATS_HOUR_DAYS` under 7, older hours are already rolled into days).
+`dictionary.app_ids_kept` says whether app ids are being kept now; ids kept
+before the switch was turned off still count until their seven days are up.
+`dictionary.version` names the dictionary the panel runs.
+
+The dictionary is built from the geosite lists of
+[v2fly/domain-list-community](https://github.com/v2fly/domain-list-community)
+(MIT licence) at a pinned commit, for the 150 ids the panel curates. Apps
+outside them stay unattributed. It ships inside the panel image, and the
+panel never downloads it. To change it, edit the curated table or the pinned
+commit in `scripts/ci/categories_regen.py`, then run `python3
+scripts/ci/categories_regen.py --write`. That fetches the pinned source, or
+takes `--source <tarball>`. CI's `categories_check.py` refuses a hand-edited
+file; see [development](development.md).
 
 ## Security
 

@@ -83,6 +83,8 @@ scripts/
     linux_installer_check.sh  # 使用伪 Docker 的通用 Linux 入口 + 覆盖层测试
     insights_baseline_check.sh # 基线探测自测的驱动：桩 docker-exec、键契约、变异体控制（python 夹具层在有 python3 的环境运行）
     panel_contract_check.py   # CI：app/openapi.json 与全新导出逐字节比对（--write 重新生成）
+    categories_check.py       # CI：分类词典文件与 categories_regen.py 比对，并检查上限与完整性——离线运行（另有 categories_check_test.py 反向对照）
+    categories_regen.py       # 仅开发时使用：从锁定的上游 geosite 源重建 app/store/categories/（联网获取，或用 --source <tarball>）
     panel_e2e_check.py        # CI：真实 uvicorn 面板对回环上的步内伪控制器
     panel_bench.py            # 仅限本地：统计刷写的单次轮询开销（毫秒 + WAL 字节）；CI 运行的是留有 10 倍余量的宽松守卫（app/tests/test_perf_guard.py）
     lib/assert.sh             # sh 测试套件共享的断言
@@ -177,7 +179,7 @@ EXIT 陷阱不会回收它（`CF_KEEP_CANDIDATE`）。
 | `ui-build` | `npm --prefix app/ui ci` + `npm run lint`，然后 `python3 scripts/ci/ui_build_check.py --build` —— 前端工具链（#78）：用 `npm ci` 使 lockfile 具有权威性，随后是**构建产物**门：A6 发布标记（`data-i18n="app_title"`）在打包器处理后仍存活于注释之外，且打包产物中每个外部 URL 都在文档化的惰性白名单内——外加该门自身的正/负自测（`ui_build_check_test.py`） |
 | `ui-e2e` | `npx playwright test` —— 真实面板在 uvicorn 下对 API e2e 使用的同一个 FakeController（`scripts/ci/ui_e2e_server.py`）；浏览器来自钉定版本的 `mcr.microsoft.com/playwright` 镜像而非每次运行时从 CDN 下载，因此浏览器构建绝不会与 Playwright 版本漂移 |
 | `app-lint` | `ruff check app` —— 面板应用的 lint（ruff 版本钉在 `app/requirements-dev.txt`，配置经 `app/ruff.toml` 限定作用域） |
-| `app-unit` | `python -m pytest app/tests -q` —— 封闭式面板单元测试套件（伪控制器客户端 + 临时目录；校验类、store/迁移/备份、reconciler 正常/告警路径、鉴权矩阵、审计只追加）——随后运行 `python scripts/ci/panel_contract_check.py`，即已提交的契约门：`app/openapi.json` **以及**生成的 `docs/panel-api.md` 逐字节一致性（用 `--write` 同时重新生成两者；/v1 命令面只增不破——破坏性变更 = 新版本前缀 + 所有者显式确认）——随后运行 `sh scripts/insights_baseline.sh --self-test`：基线探测的自测在 python 镜像中运行，其容器内程序在此对着固定夹具执行（alpine 的 `dsm-shell-tests` 覆盖 sh 层并对该层打印 SKIP） |
+| `app-unit` | `python -m pytest app/tests -q` —— 封闭式面板单元测试套件（伪控制器客户端 + 临时目录；校验类、store/迁移/备份、reconciler 正常/告警路径、鉴权矩阵、审计只追加）——随后运行 `python scripts/ci/panel_contract_check.py`，即已提交的契约门：`app/openapi.json` **以及**生成的 `docs/panel-api.md` 逐字节一致性（用 `--write` 同时重新生成两者；/v1 命令面只增不破——破坏性变更 = 新版本前缀 + 所有者显式确认）——随后运行 `python scripts/ci/categories_check.py` 及其对照 `categories_check_test.py`：分类词典门（#97），离线运行——`coarse.json` 与生成脚本内的人工整理表逐字节一致，`suffixes.json` 采用提交时的序列化格式且与其记录的摘要、锁定的上游提交与许可证一致，≤ 150 个 id / 15000 条规则 / 400 KiB，每个 id 都在整理表中并有粗分类——随后运行 `sh scripts/insights_baseline.sh --self-test`：基线探测的自测在 python 镜像中运行，其容器内程序在此对着固定夹具执行（alpine 的 `dsm-shell-tests` 覆盖 sh 层并对该层打印 SKIP） |
 | `app-e2e` | `python scripts/ci/panel_e2e_check.py` —— 真实 uvicorn 下的应用对回环上的步内伪 mihomo 控制器 + webhook 接收器（无守护进程）：启动重同步、bearer 鉴权门、写入→刷新→计数一致性、告警失败路径（标记 + `{title,body}` webhook + `parity=failed`）、经 `/v1/apply` 恢复 |
 
 有一项检查运行在 Woodpecker **之外**：**`panel-image` GitHub Actions 工作流**
@@ -325,6 +327,8 @@ python3 scripts/ci/ui_build_check.py --build
 /tmp/vp/bin/ruff check app
 /tmp/vp/bin/python -m pytest app/tests -q
 /tmp/vp/bin/python scripts/ci/panel_contract_check.py   # --write 重新生成 app/openapi.json
+/tmp/vp/bin/python scripts/ci/categories_check.py        # 词典文件与生成脚本比对（离线）
+/tmp/vp/bin/python scripts/ci/categories_check_test.py   # ……以及该门的反向对照
 /tmp/vp/bin/python scripts/ci/panel_e2e_check.py
 sh scripts/insights_baseline.sh --self-test   # 探测的 python 夹具层在 PATH 上有 python3 的任何环境运行
 /tmp/vp/bin/python scripts/ci/panel_bench.py --conns 3000 --snapshots 30   # 可选，仅限本地：精确的刷写开销（不是 CI 步骤）

@@ -21,7 +21,12 @@ auto_update.sh counts-header honesty style).
 # here does NOT reach calls made between the submodules - they bind each
 # other's names directly - so patch the submodule that makes the call.
 
-from app.store.stats.coverage import coverage_report, coverage_rules, read_coverage
+from app.store.stats.coverage import (
+    coverage_report,
+    coverage_rules,
+    dictionary_report,
+    read_coverage,
+)
 from app.store.stats.ingest import PAYLOAD_RULES, flush_poll
 from app.store.stats.maintain import _CAP_TIERS, enforce_cap, purge_stats, rollup
 from app.store.stats.read import (
@@ -35,8 +40,10 @@ from app.store.stats.read import (
     read_timeline,
 )
 from app.store.stats.schema import (
+    APP_TABLE,
     CLASS_TABLES,
     COVERAGE_CLASSES,
+    DICTIONARY_CLASSES,
     DIMENSION_TABLES,
     DIMENSIONS,
     DOMAIN_RETENTION_DAYS,
@@ -44,6 +51,7 @@ from app.store.stats.schema import (
     KLASS_HOSTNAME,
     KLASS_IP_ONLY,
     MINUTE_TABLE,
+    NO_DICTIONARY,
     PURGE_TABLES,
     SELF_TABLE,
     STATS_MIGRATIONS,
@@ -68,8 +76,10 @@ from app.store.stats.window import (
 )
 
 __all__ = [
+    "APP_TABLE",
     "CLASS_TABLES",
     "COVERAGE_CLASSES",
+    "DICTIONARY_CLASSES",
     "DIMENSIONS",
     "DIMENSION_TABLES",
     "DOMAIN_RETENTION_DAYS",
@@ -77,6 +87,7 @@ __all__ = [
     "KLASS_HOSTNAME",
     "KLASS_IP_ONLY",
     "MINUTE_TABLE",
+    "NO_DICTIONARY",
     "PAYLOAD_RULES",
     "PURGE_TABLES",
     "RANGE_SPECS",
@@ -92,6 +103,7 @@ __all__ = [
     "coverage_report",
     "coverage_rules",
     "day_framings",
+    "dictionary_report",
     "dimension_tables",
     "enforce_cap",
     "flush_poll",

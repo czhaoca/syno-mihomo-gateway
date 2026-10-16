@@ -284,7 +284,7 @@ kept, default 5; policy only — `stats.db` is derived history and gets no autom
   | `{"tables": ["stats_domain", "stats_sniff"]}` | Only the named tables (listed below). |
   | `{"before": "2026-07-01"}` | Rows whose bucket starts before that UTC moment (`YYYY-MM-DD`, `YYYY-MM-DDTHH` or `YYYY-MM-DDTHH:MM`). A bucket that straddles it goes too. Day rows are compared by their local date. A local day really starts at that date plus the day boundary, minus the zone's UTC offset, so a day row can sit that far on the other side of the moment. |
 
-  The table names: `stats_minute_v5` (minute tier), `stats_hour`, `stats_day`, `stats_exit_hour`, `stats_exit_day`, `stats_rule_hour`, `stats_rule_day`, `stats_category_hour`, `stats_category_day`, `stats_country_hour`, `stats_country_day`, `stats_domain`, `stats_sniff`, `stats_asn`, `stats_port`, `stats_coverage`, `stats_gap`, `stats_self` (the collector's own gauges), and `stats_minute` (written only by a pre-v1.11 panel; see the panel guide).
+  The table names: `stats_minute_v5` (minute tier), `stats_hour`, `stats_day`, `stats_exit_hour`, `stats_exit_day`, `stats_rule_hour`, `stats_rule_day`, `stats_category_hour`, `stats_category_day`, `stats_country_hour`, `stats_country_day`, `stats_domain`, `stats_sniff`, `stats_asn`, `stats_port`, `stats_app` (the app-level category ids), `stats_coverage`, `stats_gap`, `stats_self` (the collector's own gauges), and `stats_minute` (written only by a pre-v1.11 panel; see the panel guide).
 
   The reply counts the rows each table lost (`rows`). The policy audit records each purge
   with its scope. An unknown key or table name is refused (422) and nothing is cleared.
@@ -299,8 +299,9 @@ kept, default 5; policy only — `stats.db` is derived history and gets no autom
   oldest data first, whichever table holds it (honest gap rows for collector downtime).
   The policy snapshots rotate themselves to `PANEL_BACKUP_KEEP`. No cron needed.
 
-- **Before downgrading the panel below v1.11 by hand**, purge the seven-day tables
-  (`{"tables": ["stats_sniff", "stats_asn", "stats_port"]}`). An older image counts every
+- **Before downgrading the panel by hand**, purge the seven-day tables the older image does
+  not know: below v1.11, `{"tables": ["stats_sniff", "stats_asn", "stats_port", "stats_app"]}`;
+  from v1.12 to v1.11, `{"tables": ["stats_app"]}`. An older image counts every
   byte once in its 7-day, 30-day and daily views, and its 48-hour view starts empty. It
   cannot prune or purge the tables it does not know (see
   [the panel guide](panel.md#data-retention-backups)).

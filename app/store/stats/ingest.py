@@ -5,18 +5,24 @@ collector's write path."""
 import json
 from contextlib import suppress
 
+from app.store import categories
 from app.store.stats.schema import (
+    APP_TABLE,
     CLASS_TABLES,
     DIMENSIONS,
     GATEWAY_DEVICE,
     KLASS_HOSTNAME,
     KLASS_IP_ONLY,
     MINUTE_TABLE,
+    NO_DICTIONARY,
     UNATTRIBUTED,
     UNKNOWN,
     _parse_ts,
     meta_get,
 )
+
+# flush_poll's default: the dictionary the panel ships (categories.active)
+SHIPPED = object()
 
 # The rule types whose payload names a routing CATEGORY (brief DEC-4): a
 # geosite or geoip list, a rule-set, the final match, a LAN source range.
@@ -116,6 +122,17 @@ def _country(meta: dict) -> str:
     return code or UNKNOWN
 
 
+def _category(dictionary, host: str, sniff: str):
+    """(coarse category, app id or None) of one flow (#97). Only a hostname
+    classifies - `host`, else the sniffed name (#77: for classifying, the
+    two count alike). A rule or GeoIP match never does (DEC-C)."""
+    if dictionary is None:
+        return NO_DICTIONARY, None
+    hit = (dictionary.classify(host) if host else None) or (
+        dictionary.classify(sniff) if sniff and sniff != host else None)
+    return (hit[1], hit[0]) if hit else (UNATTRIBUTED, None)
+
+
 def _device(meta: dict) -> str:
     """The LAN source; mihomo's own traffic (`type: Inner` - provider pulls,
     health checks) has none and belongs to the gateway, not to `unknown`."""
@@ -125,7 +142,8 @@ def _device(meta: dict) -> str:
 
 
 def flush_poll(conn, raw_conns: list, now: str, *, domains_enabled: bool,
-               gap_threshold_s: int, interval_s: int | None = None) -> None:
+               gap_threshold_s: int, interval_s: int | None = None,
+               dictionary=SHIPPED) -> None:
     """One poll's delta flush - a single transaction covering the minute
     and hour upserts, the dimension upserts, the (hourly) coverage and
     seven-day class upserts, the baseline update, the closed-connection
@@ -136,8 +154,15 @@ def flush_poll(conn, raw_conns: list, now: str, *, domains_enabled: bool,
     rows. Each long-term dimension (exit node, rule type, category, country)
     gets one row per device and value that MOVED bytes - a new connection
     with no bytes yet adds to the tier's `conns` but writes no dimension
-    row. The seven-day class (hostname, sniffHost, ASN, port) is written
-    only with DOMAINS_ENABLED.
+    row. The seven-day class (hostname, sniffHost, ASN, port, app id) is
+    written only with DOMAINS_ENABLED.
+
+    DICTIONARY classifies each flow's hostname (#97): its coarse category
+    goes to the long-term category dimension, its app-level id only to the
+    seven-day `stats_app`, and a flow it has no answer for - no hostname, or
+    an unknown one - is UNATTRIBUTED. Without a dictionary (None, or the
+    shipped one failing to load) every byte is NO_DICTIONARY, which is what
+    an older image writes too.
 
     The work is done in Python and written with a bounded number of
     statements (#94): the baseline set is read ONCE, each table is written
@@ -169,6 +194,8 @@ def flush_poll(conn, raw_conns: list, now: str, *, domains_enabled: bool,
     """
     minute_bucket = now[:16]
     hour_bucket = now[:13]
+    if dictionary is SHIPPED:
+        dictionary = categories.active()
     conn.execute("BEGIN IMMEDIATE")
     try:
         last = meta_get(conn, "last_poll_ts")
@@ -229,7 +256,8 @@ def flush_poll(conn, raw_conns: list, now: str, *, domains_enabled: bool,
                 exit_node = str(chains[0]) if chains else "DIRECT"
                 _add(dims["exit"], (device, exit_node), d_up, d_down)
                 _add(dims["rule"], (device, rule), d_up, d_down)
-                _add(dims["category"], (device, UNATTRIBUTED), d_up, d_down)
+                category, app = _category(dictionary, host, sniff)
+                _add(dims["category"], (device, category), d_up, d_down)
                 _add(dims["country"], (device, _country(meta)), d_up, d_down)
                 if domains_enabled:
                     if host:
@@ -242,6 +270,9 @@ def flush_poll(conn, raw_conns: list, now: str, *, domains_enabled: bool,
                     port = str(meta.get("destinationPort") or "") or UNKNOWN
                     _add(klass_rows["stats_port"], (device, port), d_up,
                          d_down)
+                    if app is not None:
+                        _add(klass_rows[APP_TABLE], (device, app), d_up,
+                             d_down)
             if new or (up, down) != prev:
                 moved.append([cid, up, down])
         if rows:

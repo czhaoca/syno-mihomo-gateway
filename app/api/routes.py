@@ -89,7 +89,7 @@ PurgeTable = Literal[
     "stats_exit_hour", "stats_exit_day", "stats_rule_hour", "stats_rule_day",
     "stats_category_hour", "stats_category_day", "stats_country_hour",
     "stats_country_day", "stats_sniff", "stats_asn", "stats_port",
-    "stats_self"]
+    "stats_app", "stats_self"]
 
 
 class StatsPurge(BaseModel):
@@ -442,9 +442,19 @@ def stats_coverage(request: Request, since: str = "", until: str = "") -> dict:
     No hostname is stored to produce this: the counters are hostname-free
     by construction, so the report needs none of the privacy surface the
     opt-in domain table carries.
+
+    `dictionary` (#97) is a second partition of the same window: what the
+    category dictionary named - `app` (its app-level id kept, only with
+    PANEL_STATS_DOMAINS on), `coarse` (only the coarse category kept),
+    `unattributed` (no answer: no hostname, or one it does not know) and
+    `no_dictionary` (counted before v1.12, or by an older image). Each
+    partition sums to 100 on its own; `dictionary.total` is the bytes the
+    category dimension still holds per hour in the window, from
+    `dictionary.oldest_bucket` on.
     """
     with _stats_reader(request) as conn:
-        return stats_store.coverage_report(conn, since, until)
+        return stats_store.coverage_report(
+            conn, since, until, app_ids_kept=config.stats_domains())
 
 
 @router.get("/v1/stats/self")

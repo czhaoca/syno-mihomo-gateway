@@ -39,9 +39,10 @@ MINUTE_TABLE = "stats_minute_v5"
 # The long-term dimensions (#95, brief DEC-4), one table per dimension on
 # the hour and the day tier, keyed (bucket, device, value), bytes only
 # (DEC-D). The policy GROUP is not among them: it is the tier tables' own
-# `chain` column. `category` is written under UNATTRIBUTED until the
-# dictionary (Sequence 80) classifies - every byte has a row, so a
-# category total always equals the device total (DEC-B rider).
+# `chain` column. `category` holds a coarse category id from the dictionary
+# (#97), UNATTRIBUTED when it has no answer, or NO_DICTIONARY for bytes
+# counted without one - every byte has exactly one row, so a category total
+# always equals the device total (DEC-B rider).
 DIMENSIONS = ("exit", "rule", "category", "country")
 DIMENSION_TABLES = tuple(f"stats_{dim}_{tier}" for dim in DIMENSIONS
                          for tier in ("hour", "day"))
@@ -50,7 +51,12 @@ DIMENSION_TABLES = tuple(f"stats_{dim}_{tier}" for dim in DIMENSIONS
 # destination port. Written only behind the opt-in PANEL_STATS_DOMAINS gate
 # and pruned at the FORCED DOMAIN_RETENTION_DAYS - an ASN or a port names an
 # app almost as well as a hostname does. Hour-keyed, like stats_domain.
-CLASS_TABLES = ("stats_sniff", "stats_asn", "stats_port")
+# The app-level category id (#97, DEC-5: an app identity per device is as
+# sensitive as a hostname) joined them in v7; the v5 migration keeps its own
+# list, because a migration's SQL never changes once shipped.
+_V5_CLASS_TABLES = ("stats_sniff", "stats_asn", "stats_port")
+APP_TABLE = "stats_app"
+CLASS_TABLES = (*_V5_CLASS_TABLES, APP_TABLE)
 
 # The collector's own gauges (#96): one row per maintenance pass, minute
 # keyed, no device, under the forced DOMAIN_RETENTION_DAYS like the other
@@ -60,8 +66,17 @@ SELF_TABLE = "stats_self"
 # The value written when a field is absent from the snapshot (DEC-A: the
 # geo fields are feature-detected per snapshot) - a row, never a drop.
 UNKNOWN = "unknown"
-# The category value until the dictionary lands.
-UNATTRIBUTED = ""
+# The category of a byte the dictionary had no answer for: no hostname, or
+# one it does not know (#97 DEC-E) - the permanent, honest class.
+UNATTRIBUTED = UNKNOWN
+# The category of a byte counted WITHOUT a dictionary: everything before
+# v1.12, and whatever an older image writes after a rollback. Distinct from
+# UNATTRIBUTED so "before the dictionary" stays readable as such.
+NO_DICTIONARY = ""
+# The dictionary's attribution classes in /v1/stats/coverage (#97 DEC-D): a
+# byte is classified with its app id kept (the 7-day opt-in class), with only
+# its coarse id kept, not classified, or counted with no dictionary at all.
+DICTIONARY_CLASSES = ("app", "coarse", "unattributed", "no_dictionary")
 # The device mihomo's own traffic (`metadata.type == "Inner"`: provider
 # pulls, health checks) is attributed to - it has no LAN source.
 GATEWAY_DEVICE = "gateway"
@@ -88,7 +103,8 @@ def _value_table(name: str, *, day: bool = False) -> str:
 
 
 _INDEXED = ("stats_minute", MINUTE_TABLE, "stats_hour", "stats_day",
-            "stats_domain", "stats_coverage", *DIMENSION_TABLES, *CLASS_TABLES)
+            "stats_domain", "stats_coverage", *DIMENSION_TABLES,
+            *_V5_CLASS_TABLES)
 
 # The fold of the legacy minute table (see MINUTE_TABLE): its rows are bytes
 # no hour holds yet, so they are added to their hours (into an hour a
@@ -266,7 +282,7 @@ STATS_MIGRATIONS = [
         "PRIMARY KEY (bucket, device, chain));",
         *(_value_table(f"stats_{dim}_hour") for dim in DIMENSIONS),
         *(_value_table(f"stats_{dim}_day", day=True) for dim in DIMENSIONS),
-        *(_value_table(name) for name in CLASS_TABLES),
+        *(_value_table(name) for name in _V5_CLASS_TABLES),
         *(f"CREATE INDEX {name}_device ON {name} (device, bucket);"
           for name in _INDEXED),
         *(f"{stmt};" for stmt in _FOLD_LEGACY_MINUTES)])),
@@ -278,6 +294,12 @@ STATS_MIGRATIONS = [
         lag_s INTEGER, db_bytes INTEGER, mihomo_mem_mb INTEGER
     );
     """),
+    # v7 - the app-level category ids (#97): one more seven-day class table,
+    # behind the same gate. CREATE only, so an older image opens a v7 store
+    # unchanged (it cannot prune or purge this table: docs/panel.md).
+    (7, "\n".join([
+        _value_table(APP_TABLE),
+        f"CREATE INDEX {APP_TABLE}_device ON {APP_TABLE} (device, bucket);"])),
 ]
 
 
