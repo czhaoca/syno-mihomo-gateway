@@ -49,9 +49,10 @@ def check_source(raw: str) -> str:
 def host_key(raw: str) -> str:
     """The canonical /32 for RAW, or ValidationError.
 
-    Rejects everything that is not a single host - including the literal
-    `"unknown"` that `stats.py` substitutes when mihomo reports no source
-    IP, which must never become an aliasable pseudo-device.
+    Rejects everything that is not a single host - including the literals
+    `"unknown"` and `"gateway"` (mihomo's own traffic, since #95) that the
+    stats tables substitute when mihomo reports no source IP, which must
+    never become aliasable pseudo-devices.
     """
     canonical = canonicalize(raw)
     if not canonical.endswith("/32"):

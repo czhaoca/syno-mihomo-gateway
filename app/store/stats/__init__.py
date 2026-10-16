@@ -22,32 +22,43 @@ auto_update.sh counts-header honesty style).
 # other's names directly - so patch the submodule that makes the call.
 
 from app.store.stats.coverage import coverage_report, coverage_rules, read_coverage
-from app.store.stats.ingest import flush_poll
+from app.store.stats.ingest import PAYLOAD_RULES, flush_poll
 from app.store.stats.maintain import _CAP_TIERS, enforce_cap, purge_stats, rollup
 from app.store.stats.read import (
     _TIER_TABLES,
     day_framings,
+    dimension_tables,
+    read_dimension,
     read_domains,
     read_gaps,
     read_grouped,
     read_timeline,
 )
 from app.store.stats.schema import (
+    CLASS_TABLES,
     COVERAGE_CLASSES,
+    DIMENSION_TABLES,
+    DIMENSIONS,
     DOMAIN_RETENTION_DAYS,
+    GATEWAY_DEVICE,
     KLASS_HOSTNAME,
     KLASS_IP_ONLY,
+    MINUTE_TABLE,
     PURGE_TABLES,
     STATS_MIGRATIONS,
+    UNATTRIBUTED,
+    UNKNOWN,
     _db_bytes,
     _fmt_ts,
     _parse_ts,
+    fold_legacy_minutes,
     meta_get,
     open_stats_db,
 )
 from app.store.stats.window import (
     RANGE_SPECS,
     range_window,
+    read_window_dimension,
     read_window_grouped,
     read_window_timeline,
     window_framings,
@@ -55,13 +66,21 @@ from app.store.stats.window import (
 )
 
 __all__ = [
+    "CLASS_TABLES",
     "COVERAGE_CLASSES",
+    "DIMENSIONS",
+    "DIMENSION_TABLES",
     "DOMAIN_RETENTION_DAYS",
+    "GATEWAY_DEVICE",
     "KLASS_HOSTNAME",
     "KLASS_IP_ONLY",
+    "MINUTE_TABLE",
+    "PAYLOAD_RULES",
     "PURGE_TABLES",
     "RANGE_SPECS",
     "STATS_MIGRATIONS",
+    "UNATTRIBUTED",
+    "UNKNOWN",
     "_CAP_TIERS",
     "_TIER_TABLES",
     "_db_bytes",
@@ -70,17 +89,21 @@ __all__ = [
     "coverage_report",
     "coverage_rules",
     "day_framings",
+    "dimension_tables",
     "enforce_cap",
     "flush_poll",
+    "fold_legacy_minutes",
     "meta_get",
     "open_stats_db",
     "purge_stats",
     "range_window",
     "read_coverage",
+    "read_dimension",
     "read_domains",
     "read_gaps",
     "read_grouped",
     "read_timeline",
+    "read_window_dimension",
     "read_window_grouped",
     "read_window_timeline",
     "rollup",

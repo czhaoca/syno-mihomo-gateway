@@ -178,6 +178,75 @@
         "title": "SettingsUpdate",
         "type": "object"
       },
+      "StatsPurge": {
+        "additionalProperties": false,
+        "properties": {
+          "before": {
+            "anyOf": [
+              {
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}(T\\d{2}(:\\d{2})?)?$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Only rows whose bucket STARTS before this UTC moment (`YYYY-MM-DD`, `YYYY-MM-DDTHH` or `YYYY-MM-DDTHH:MM`): a bucket straddling it goes too, so nothing older survives. A day row is compared by its date",
+            "title": "Before"
+          },
+          "device": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Only this device's rows. The gap history has no device and is kept",
+            "title": "Device"
+          },
+          "tables": {
+            "anyOf": [
+              {
+                "items": {
+                  "enum": [
+                    "stats_minute",
+                    "stats_minute_v5",
+                    "stats_hour",
+                    "stats_day",
+                    "stats_domain",
+                    "stats_coverage",
+                    "stats_gap",
+                    "stats_exit_hour",
+                    "stats_exit_day",
+                    "stats_rule_hour",
+                    "stats_rule_day",
+                    "stats_category_hour",
+                    "stats_category_day",
+                    "stats_country_hour",
+                    "stats_country_day",
+                    "stats_sniff",
+                    "stats_asn",
+                    "stats_port"
+                  ],
+                  "type": "string"
+                },
+                "minItems": 1,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Only these tables",
+            "title": "Tables"
+          }
+        },
+        "title": "StatsPurge",
+        "type": "object"
+      },
       "ValidationError": {
         "properties": {
           "ctx": {
@@ -734,7 +803,7 @@
             }
           },
           {
-            "description": "A window preset: `48h` (minute resolution), `7d` and `30d` (hour resolution), `daily` (local-day resolution, everything held). The server computes the window from its own clock and reads it WINDOW-COMPLETE: the resolution's tier plus every finer tier, which hold the newer rows not yet rolled up - so a 7-day total includes the newest 48 hours. Coarser tiers are not read, so a window ends at the resolution tier's retention: with the shipped retention every preset is whole, and an explicit `tier` finer than the window (e.g. `range=7d&tier=minute`) reaches back only as far as that tier holds. An explicit `tier` overrides the resolution only. Mutually exclusive with `since`/`until`, even empty ones (422). Without `range`, a read covers the single `tier` table exactly as before.",
+            "description": "A window preset: `48h` (minute resolution), `7d` and `30d` (hour resolution), `daily` (local-day resolution, everything held). The server computes the window from its own clock and reads it WINDOW-COMPLETE. The hour tier is written at every poll, so a minute or hour read takes its own tier alone, and a day read takes the day tier plus the hour tier, which holds the days not rolled up yet - so a 7-day total includes the newest 48 hours and `daily` includes today. A window ends at the resolution tier's retention: with the shipped retention every preset is whole, and an explicit `tier` finer than the window (e.g. `range=7d&tier=minute`) reaches back only as far as that tier holds. An explicit `tier` overrides the resolution only. Mutually exclusive with `since`/`until`, even empty ones (422). Without `range`, a read covers the single `tier` table (since v1.11 the hour table also holds the newest 48 hours).",
             "in": "query",
             "name": "range",
             "required": false,
@@ -753,7 +822,7 @@
                   "type": "null"
                 }
               ],
-              "description": "A window preset: `48h` (minute resolution), `7d` and `30d` (hour resolution), `daily` (local-day resolution, everything held). The server computes the window from its own clock and reads it WINDOW-COMPLETE: the resolution's tier plus every finer tier, which hold the newer rows not yet rolled up - so a 7-day total includes the newest 48 hours. Coarser tiers are not read, so a window ends at the resolution tier's retention: with the shipped retention every preset is whole, and an explicit `tier` finer than the window (e.g. `range=7d&tier=minute`) reaches back only as far as that tier holds. An explicit `tier` overrides the resolution only. Mutually exclusive with `since`/`until`, even empty ones (422). Without `range`, a read covers the single `tier` table exactly as before.",
+              "description": "A window preset: `48h` (minute resolution), `7d` and `30d` (hour resolution), `daily` (local-day resolution, everything held). The server computes the window from its own clock and reads it WINDOW-COMPLETE. The hour tier is written at every poll, so a minute or hour read takes its own tier alone, and a day read takes the day tier plus the hour tier, which holds the days not rolled up yet - so a 7-day total includes the newest 48 hours and `daily` includes today. A window ends at the resolution tier's retention: with the shipped retention every preset is whole, and an explicit `tier` finer than the window (e.g. `range=7d&tier=minute`) reaches back only as far as that tier holds. An explicit `tier` overrides the resolution only. Mutually exclusive with `since`/`until`, even empty ones (422). Without `range`, a read covers the single `tier` table (since v1.11 the hour table also holds the newest 48 hours).",
               "title": "Range"
             }
           }
@@ -879,7 +948,7 @@
             }
           },
           {
-            "description": "A window preset: `48h` (minute resolution), `7d` and `30d` (hour resolution), `daily` (local-day resolution, everything held). The server computes the window from its own clock and reads it WINDOW-COMPLETE: the resolution's tier plus every finer tier, which hold the newer rows not yet rolled up - so a 7-day total includes the newest 48 hours. Coarser tiers are not read, so a window ends at the resolution tier's retention: with the shipped retention every preset is whole, and an explicit `tier` finer than the window (e.g. `range=7d&tier=minute`) reaches back only as far as that tier holds. An explicit `tier` overrides the resolution only. Mutually exclusive with `since`/`until`, even empty ones (422). Without `range`, a read covers the single `tier` table exactly as before.",
+            "description": "A window preset: `48h` (minute resolution), `7d` and `30d` (hour resolution), `daily` (local-day resolution, everything held). The server computes the window from its own clock and reads it WINDOW-COMPLETE. The hour tier is written at every poll, so a minute or hour read takes its own tier alone, and a day read takes the day tier plus the hour tier, which holds the days not rolled up yet - so a 7-day total includes the newest 48 hours and `daily` includes today. A window ends at the resolution tier's retention: with the shipped retention every preset is whole, and an explicit `tier` finer than the window (e.g. `range=7d&tier=minute`) reaches back only as far as that tier holds. An explicit `tier` overrides the resolution only. Mutually exclusive with `since`/`until`, even empty ones (422). Without `range`, a read covers the single `tier` table (since v1.11 the hour table also holds the newest 48 hours).",
             "in": "query",
             "name": "range",
             "required": false,
@@ -898,7 +967,7 @@
                   "type": "null"
                 }
               ],
-              "description": "A window preset: `48h` (minute resolution), `7d` and `30d` (hour resolution), `daily` (local-day resolution, everything held). The server computes the window from its own clock and reads it WINDOW-COMPLETE: the resolution's tier plus every finer tier, which hold the newer rows not yet rolled up - so a 7-day total includes the newest 48 hours. Coarser tiers are not read, so a window ends at the resolution tier's retention: with the shipped retention every preset is whole, and an explicit `tier` finer than the window (e.g. `range=7d&tier=minute`) reaches back only as far as that tier holds. An explicit `tier` overrides the resolution only. Mutually exclusive with `since`/`until`, even empty ones (422). Without `range`, a read covers the single `tier` table exactly as before.",
+              "description": "A window preset: `48h` (minute resolution), `7d` and `30d` (hour resolution), `daily` (local-day resolution, everything held). The server computes the window from its own clock and reads it WINDOW-COMPLETE. The hour tier is written at every poll, so a minute or hour read takes its own tier alone, and a day read takes the day tier plus the hour tier, which holds the days not rolled up yet - so a 7-day total includes the newest 48 hours and `daily` includes today. A window ends at the resolution tier's retention: with the shipped retention every preset is whole, and an explicit `tier` finer than the window (e.g. `range=7d&tier=minute`) reaches back only as far as that tier holds. An explicit `tier` overrides the resolution only. Mutually exclusive with `since`/`until`, even empty ones (422). Without `range`, a read covers the single `tier` table (since v1.11 the hour table also holds the newest 48 hours).",
               "title": "Range"
             }
           }
@@ -1026,8 +1095,25 @@
     },
     "/v1/stats/purge": {
       "post": {
-        "description": "Clears every visible stats surface (tiers, domains, gap history)\nbut preserves conn_baseline + the poll stamp - dropping baselines\nwould make still-open connections re-contribute their pre-purge\ncumulative. The POLICY audit lives in policy.db and is untouched -\nit records this purge like any other mutation.",
+        "description": "Clears every visible stats surface (tiers, dimensions, the seven-day\ntables, gap history) but preserves conn_baseline + the poll stamp -\ndropping baselines would make still-open connections re-contribute\ntheir pre-purge cumulative. An optional body narrows it to one\n`device`, some `tables`, rows `before` a moment, or any combination;\nno body (or `{}`) clears everything, as it always has. `rows` counts\nwhat each table lost. The POLICY audit lives in policy.db and is\nuntouched - it records this purge, with its scope, like any other\nmutation.",
         "operationId": "stats_purge_v1_stats_purge_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/StatsPurge"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Scope"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "content": {
@@ -1040,6 +1126,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
         "summary": "Stats Purge"
@@ -1096,7 +1192,7 @@
             }
           },
           {
-            "description": "A window preset: `48h` (minute resolution), `7d` and `30d` (hour resolution), `daily` (local-day resolution, everything held). The server computes the window from its own clock and reads it WINDOW-COMPLETE: the resolution's tier plus every finer tier, which hold the newer rows not yet rolled up - so a 7-day total includes the newest 48 hours. Coarser tiers are not read, so a window ends at the resolution tier's retention: with the shipped retention every preset is whole, and an explicit `tier` finer than the window (e.g. `range=7d&tier=minute`) reaches back only as far as that tier holds. An explicit `tier` overrides the resolution only. Mutually exclusive with `since`/`until`, even empty ones (422). Without `range`, a read covers the single `tier` table exactly as before.",
+            "description": "A window preset: `48h` (minute resolution), `7d` and `30d` (hour resolution), `daily` (local-day resolution, everything held). The server computes the window from its own clock and reads it WINDOW-COMPLETE. The hour tier is written at every poll, so a minute or hour read takes its own tier alone, and a day read takes the day tier plus the hour tier, which holds the days not rolled up yet - so a 7-day total includes the newest 48 hours and `daily` includes today. A window ends at the resolution tier's retention: with the shipped retention every preset is whole, and an explicit `tier` finer than the window (e.g. `range=7d&tier=minute`) reaches back only as far as that tier holds. An explicit `tier` overrides the resolution only. Mutually exclusive with `since`/`until`, even empty ones (422). Without `range`, a read covers the single `tier` table (since v1.11 the hour table also holds the newest 48 hours).",
             "in": "query",
             "name": "range",
             "required": false,
@@ -1115,7 +1211,7 @@
                   "type": "null"
                 }
               ],
-              "description": "A window preset: `48h` (minute resolution), `7d` and `30d` (hour resolution), `daily` (local-day resolution, everything held). The server computes the window from its own clock and reads it WINDOW-COMPLETE: the resolution's tier plus every finer tier, which hold the newer rows not yet rolled up - so a 7-day total includes the newest 48 hours. Coarser tiers are not read, so a window ends at the resolution tier's retention: with the shipped retention every preset is whole, and an explicit `tier` finer than the window (e.g. `range=7d&tier=minute`) reaches back only as far as that tier holds. An explicit `tier` overrides the resolution only. Mutually exclusive with `since`/`until`, even empty ones (422). Without `range`, a read covers the single `tier` table exactly as before.",
+              "description": "A window preset: `48h` (minute resolution), `7d` and `30d` (hour resolution), `daily` (local-day resolution, everything held). The server computes the window from its own clock and reads it WINDOW-COMPLETE. The hour tier is written at every poll, so a minute or hour read takes its own tier alone, and a day read takes the day tier plus the hour tier, which holds the days not rolled up yet - so a 7-day total includes the newest 48 hours and `daily` includes today. A window ends at the resolution tier's retention: with the shipped retention every preset is whole, and an explicit `tier` finer than the window (e.g. `range=7d&tier=minute`) reaches back only as far as that tier holds. An explicit `tier` overrides the resolution only. Mutually exclusive with `since`/`until`, even empty ones (422). Without `range`, a read covers the single `tier` table (since v1.11 the hour table also holds the newest 48 hours).",
               "title": "Range"
             }
           }

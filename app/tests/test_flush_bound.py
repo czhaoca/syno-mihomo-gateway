@@ -18,7 +18,14 @@ The series below is synthesised (TEST-NET addresses, example.com only).
 
 import pytest
 from app.store import dayframe
-from app.store.stats import flush_poll, meta_get, open_stats_db, rollup
+from app.store.stats import (
+    CLASS_TABLES,
+    DIMENSIONS,
+    flush_poll,
+    meta_get,
+    open_stats_db,
+    rollup,
+)
 
 _UTC = dayframe.utc_frame()
 A, B = "192.0.2.20", "192.0.2.21"
@@ -31,8 +38,8 @@ def frame_conn(cid, src, up, down, chain="Routing Mode", host=""):
             "chains": ["JP 01", chain], "rule": "Match", "rulePayload": ""}
 
 
-def poll(conn, frames, now, interval=2):
-    flush_poll(conn, frames, now, domains_enabled=False,
+def poll(conn, frames, now, interval=2, domains=False):
+    flush_poll(conn, frames, now, domains_enabled=domains,
                gap_threshold_s=3 * interval, interval_s=interval)
 
 
@@ -44,8 +51,14 @@ def sconn(panel_env):
 
 
 def fleet(n, step):
-    return [frame_conn(f"c{i}", f"192.0.2.{i % 50}", 100 * step + i,
-                       1000 * step + i) for i in range(n)]
+    """N connections whose counters all moved at STEP, each carrying a
+    hostname and a sniffed name, so with the gate on every table is written."""
+    frames = [frame_conn(f"c{i}", f"192.0.2.{i % 50}", 100 * step + i,
+                         1000 * step + i, host=f"h{i % 7}.example.com")
+              for i in range(n)]
+    for f in frames:
+        f["metadata"]["sniffHost"] = f["metadata"]["host"]
+    return frames
 
 
 def counted(conn, fn):
@@ -60,25 +73,42 @@ def counted(conn, fn):
 
 # --- the flush is bounded ---------------------------------------------------
 
-def test_statement_count_does_not_grow_with_the_connection_count(panel_env):
+# The ceiling is the fixed statements of a poll (BEGIN, the stamp and the
+# baseline reads, the baseline write and reap, the stamps, COMMIT) plus ONE
+# per table written - minute, hour, the long-term dimensions, coverage, and
+# with the gate on the domain and seven-day class tables (#95). It must
+# never depend on how many connections are open.
+_FIXED = 7
+_TABLES_GATE_OFF = 2 + len(DIMENSIONS) + 1
+_TABLES_GATE_ON = _TABLES_GATE_OFF + 1 + len(CLASS_TABLES)
+
+
+@pytest.mark.parametrize("domains, ceiling", [
+    (False, _FIXED + _TABLES_GATE_OFF), (True, _FIXED + _TABLES_GATE_ON)])
+def test_statement_count_does_not_grow_with_the_connection_count(
+        panel_env, domains, ceiling):
     small = open_stats_db(panel_env["data"] / "state" / "small.db")
     big = open_stats_db(panel_env["data"] / "state" / "big.db")
     try:
         first_small = counted(small, lambda: poll(small, fleet(10, 1),
-                                                  "2026-10-15T12:00:00Z"))
+                                                  "2026-10-15T12:00:00Z",
+                                                  domains=domains))
         first_big = counted(big, lambda: poll(big, fleet(1000, 1),
-                                              "2026-10-15T12:00:00Z"))
+                                              "2026-10-15T12:00:00Z",
+                                              domains=domains))
         # steady state: every counter moved, a few connections closed
         next_small = counted(small, lambda: poll(small, fleet(8, 2),
-                                                 "2026-10-15T12:00:02Z"))
+                                                 "2026-10-15T12:00:02Z",
+                                                 domains=domains))
         next_big = counted(big, lambda: poll(big, fleet(990, 2),
-                                             "2026-10-15T12:00:02Z"))
+                                             "2026-10-15T12:00:02Z",
+                                             domains=domains))
     finally:
         small.close()
         big.close()
     assert first_big <= first_small + 2, (first_small, first_big)
     assert next_big <= next_small + 2, (next_small, next_big)
-    assert next_big <= 15, next_big
+    assert next_big <= ceiling, (next_big, ceiling)
 
 
 def test_an_idle_connection_costs_no_write(sconn):
@@ -99,7 +129,7 @@ def test_a_closed_connection_is_reaped(sconn):
 def test_a_restart_still_never_double_counts(sconn):
     poll(sconn, [frame_conn("c1", A, 100, 1000)], "2026-10-15T12:00:00Z")
     poll(sconn, [frame_conn("c1", A, 100, 1000)], "2026-10-15T12:00:02Z")
-    row = sconn.execute("SELECT up, down FROM stats_minute").fetchone()
+    row = sconn.execute("SELECT up, down FROM stats_minute_v5").fetchone()
     assert (row["up"], row["down"]) == (100, 1000)
 
 
@@ -107,7 +137,7 @@ def test_a_restart_still_never_double_counts(sconn):
 
 def minute(conn, device=A, chain="Routing Mode"):
     return conn.execute(
-        "SELECT up, down, samples, conns, peak_up, peak_down FROM stats_minute "
+        "SELECT up, down, samples, conns, peak_up, peak_down FROM stats_minute_v5 "
         "WHERE device = ? AND chain = ? ORDER BY bucket", (device, chain)).fetchall()
 
 
@@ -222,7 +252,7 @@ def test_the_first_poll_after_a_hole_records_bytes_but_no_peak(sconn):
     poll(sconn, [frame_conn("c1", A, 6, 6)], "2026-10-15T12:00:02Z")   # +5, normal
     poll(sconn, [frame_conn("c1", A, 1806, 1806)], "2026-10-15T12:00:44Z")  # 42 s hole
     rows = sconn.execute(
-        "SELECT bucket, up, peak_up FROM stats_minute ORDER BY bucket").fetchall()
+        "SELECT bucket, up, peak_up FROM stats_minute_v5 ORDER BY bucket").fetchall()
     assert [tuple(r) for r in rows] == [("2026-10-15T12:00", 1806, 5)]
     assert sconn.execute("SELECT COUNT(*) FROM stats_gap").fetchone()[0] == 1
     # and the next normal poll measures again
@@ -266,7 +296,7 @@ def test_a_clock_stepped_backwards_writes_no_peak(sconn):
     # nothing says they took one interval
     poll(sconn, [frame_conn("c1", A, 10 ** 9, 10 ** 9)], "2026-10-15T11:00:00Z")
     rows = {r["bucket"]: (r["up"], r["peak_up"]) for r in sconn.execute(
-        "SELECT bucket, up, peak_up FROM stats_minute")}
+        "SELECT bucket, up, peak_up FROM stats_minute_v5")}
     assert rows["2026-10-15T11:00"] == (10 ** 9 - 1, 0)
 
 
@@ -288,7 +318,7 @@ def test_non_ascii_names_round_trip_through_the_batched_upserts(sconn,
     rc["rulePayload"] = "geosite:\u4e2d\u6587"
     flush_poll(sconn, [rc], "2026-10-15T12:00:00Z", domains_enabled=True,
                gap_threshold_s=6, interval_s=2)
-    assert sconn.execute("SELECT chain FROM stats_minute").fetchone()[0] == chain
+    assert sconn.execute("SELECT chain FROM stats_minute_v5").fetchone()[0] == chain
     assert sconn.execute("SELECT domain FROM stats_domain").fetchone()[0] == host
     assert sconn.execute(
         "SELECT rule_payload FROM stats_coverage").fetchone()[0] == "geosite:中文"

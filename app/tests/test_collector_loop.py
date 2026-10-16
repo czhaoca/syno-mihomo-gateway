@@ -21,13 +21,13 @@ def stats_conn(panel_env):
 
 def test_maintain_runs_rollup_and_cap(panel_env, stats_conn, fake_client):
     col = Collector(client=fake_client, conn=stats_conn)
-    stats_conn.execute(
-        "INSERT INTO stats_minute (bucket, device, chain, up, down) "
-        "VALUES ('2026-07-20T09:01', '192.0.2.20', 'Routing Mode', 3, 30)")
+    fake_client.conns = [conn_fixture("c1", "192.0.2.20", 3, 30)]
+    col.poll_once(now="2026-07-20T09:01:00Z")
     col.maintain(now="2026-07-23T10:00:00Z")
-    assert stats_conn.execute("SELECT * FROM stats_minute").fetchall() == []
-    hours = stats_conn.execute("SELECT bucket FROM stats_hour").fetchall()
-    assert [r["bucket"] for r in hours] == ["2026-07-20T09"]
+    # the minute row expired; its hour, written at ingest (#95), stays
+    assert stats_conn.execute("SELECT * FROM stats_minute_v5").fetchall() == []
+    hours = stats_conn.execute("SELECT bucket, up FROM stats_hour").fetchall()
+    assert [(r["bucket"], r["up"]) for r in hours] == [("2026-07-20T09", 3)]
     assert col.status["last_error"] is None
 
 

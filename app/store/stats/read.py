@@ -1,9 +1,45 @@
-"""Single-tier reads (the `tier`-only API, unchanged since v1.8.0) and the
-domain and gap reads."""
+"""Single-tier reads (the `tier`-only API, unchanged since v1.8.0), the
+dimension, domain and gap reads."""
 
+from app.store.stats.schema import DIMENSIONS, MINUTE_TABLE
 
-_TIER_TABLES = {"minute": "stats_minute", "hour": "stats_hour",
+_TIER_TABLES = {"minute": MINUTE_TABLE, "hour": "stats_hour",
                 "day": "stats_day"}
+
+
+def dimension_tables(dim: str) -> dict:
+    """{tier: table} for one long-term dimension (#95) - hour and day only:
+    nothing new enters the minute tier (brief DEC-4)."""
+    if dim not in DIMENSIONS:
+        raise ValueError(f"unknown dimension {dim!r}")
+    return {"hour": f"stats_{dim}_hour", "day": f"stats_{dim}_day"}
+
+
+def read_dimension(conn, dim: str, tier: str, since: str = "",
+                   until: str = "", device: str = "") -> list:
+    """Per-value totals of one dimension's TIER table - the single-tier
+    counterpart of `read_window_dimension`. A day read sums across
+    framings, as `read_grouped` does. Rows: [{"value", "up", "down"}],
+    largest first."""
+    tables = dimension_tables(dim)
+    if tier not in tables:
+        raise ValueError(f"no {tier} tier for dimension {dim!r}")
+    where, params = [], []
+    if device:
+        where.append("device = ?")
+        params.append(device)
+    if since:
+        where.append("bucket >= ?")
+        params.append(since)
+    if until:
+        where.append("bucket <= ?")
+        params.append(until)
+    clause = f"WHERE {' AND '.join(where)}" if where else ""
+    rows = conn.execute(
+        f"SELECT value, SUM(up) AS up, SUM(down) AS down FROM {tables[tier]} "
+        f"{clause} GROUP BY value ORDER BY SUM(up) + SUM(down) DESC, value",
+        params).fetchall()
+    return [dict(r) for r in rows]
 
 
 def read_grouped(conn, tier: str, group_col: str, since: str = "",

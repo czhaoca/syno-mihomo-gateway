@@ -182,10 +182,10 @@ ref knobs live in the image table above). `PANEL_IP` + `PANEL_IMAGE` are compose
 | `PANEL_PORT` | | | The app's HTTP port (UI + API). | `8090` |
 | `PANEL_STATS_POLL_S` | | | Collector poll interval, seconds (default 2 since v1.11; `0` turns the collector off). Every stats row also records `samples` (polls in which that device/chain had activity), `conns` (connections first seen in the bucket) and `peak_up`/`peak_down` (the largest single-poll delta — usually one poll interval's worth, at most three when a poll runs late inside the gap threshold; the interval in force is recorded beside the data, so peaks from before a cadence change were measured at the old interval); a poll that follows a collection gap, a store's very first poll, and a poll after the clock stepped backwards add their bytes but no peak, since their delta does not describe one interval; rows from before v1.11 read 0 there, meaning "not measured". A larger interval lowers the panel's CPU and disk writes on the host; flows that open and close between two polls are not seen either way. | `2` |
 | `PANEL_STATS_MINUTE_HOURS` | | | Minute-tier retention, hours (default 48). | `48` |
-| `PANEL_STATS_HOUR_DAYS` | | | Hour-tier retention, days (default 90). | `90` |
-| `PANEL_STATS_DAY_DAYS` | | | Day-tier retention, days (default 730). | `730` |
-| `PANEL_STATS_CAP_MB` | | | Hard cap on `stats.db` (default 512); the oldest tier is trimmed first when it is hit. | `512` |
-| `PANEL_STATS_DOMAINS` | | | Opt-in per-device domain breakdown (`true`/`1`; off by default — domain rows always keep a forced 7-day retention). | `false` |
+| `PANEL_STATS_HOUR_DAYS` | | | Hour-tier retention, days (default 90). Covers the per-device hours and, since v1.11, the hour tables of every dimension (exit node, rule type, category, country). | `90` |
+| `PANEL_STATS_DAY_DAYS` | | | Day-tier retention, days (default 730). Covers the per-device days and every dimension's day table. | `730` |
+| `PANEL_STATS_CAP_MB` | | | Hard cap on `stats.db` (default 512). When it is hit, the oldest data goes first, whichever table holds it. On an exact tie the seven-day tables go first. | `512` |
+| `PANEL_STATS_DOMAINS` | | | Opt-in per-device breakdowns that can name an app: hostname, plus (since v1.11) sniffed name, destination ASN and destination port (`true`/`1`; off by default). These rows always keep a forced 7-day retention. | `false` |
 | `PANEL_BACKUP_KEEP` | | | Rotating `policy.db.bak-<timestamp>` snapshots kept **alongside `policy.db`** (taken on every policy mutation — the committed DB state, whether or not that apply reached mihomo; policy only — `stats.db` is derived history and is not auto-backed-up; default 5). | `5` |
 
 ### Device-alias sync (optional; read on the HOST only)

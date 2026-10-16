@@ -1,33 +1,72 @@
-"""One poll's delta flush into the minute tier (and the hour-keyed
-coverage and opt-in domain tables) - the collector's write path."""
+"""One poll's delta flush into the minute and hour tiers, the dimension
+tables, and the hour-keyed coverage and opt-in seven-day class tables - the
+collector's write path."""
 
 import json
 from contextlib import suppress
 
 from app.store.stats.schema import (
+    CLASS_TABLES,
+    DIMENSIONS,
+    GATEWAY_DEVICE,
     KLASS_HOSTNAME,
     KLASS_IP_ONLY,
+    MINUTE_TABLE,
+    UNATTRIBUTED,
+    UNKNOWN,
     _parse_ts,
     meta_get,
 )
+
+# The rule types whose payload names a routing CATEGORY (brief DEC-4): a
+# geosite or geoip list, a rule-set, the final match, a LAN source range.
+# Every other type's payload is blanked before it is stored - Domain,
+# DomainSuffix and DomainKeyword carry a hostname (the airport's own, from
+# the template's direct rule), and a type this list does not know, including
+# one a future mihomo adds, fails closed.
+PAYLOAD_RULES = frozenset({"GeoSite", "GeoIP", "RuleSet", "Match",
+                           "SrcIPCIDR"})
 
 # The upserts below take a whole poll's rows as ONE JSON array parameter
 # (`json_each`), so the number of SQL statements a poll issues does not grow
 # with the number of open connections (#94). `WHERE true` is SQLite's
 # required disambiguation for an upsert whose source is a SELECT.
 
-_MINUTE_UPSERT = (
-    "INSERT INTO stats_minute (bucket, device, chain, up, down, samples, "
-    "conns, peak_up, peak_down) "
-    "SELECT ?, json_extract(value, '$[0]'), json_extract(value, '$[1]'), "
-    "json_extract(value, '$[2]'), json_extract(value, '$[3]'), 1, "
-    "json_extract(value, '$[4]'), json_extract(value, '$[5]'), "
-    "json_extract(value, '$[6]') FROM json_each(?) WHERE true "
-    "ON CONFLICT(bucket, device, chain) DO UPDATE SET "
-    "up = up + excluded.up, down = down + excluded.down, "
-    "samples = samples + excluded.samples, conns = conns + excluded.conns, "
-    "peak_up = max(peak_up, excluded.peak_up), "
-    "peak_down = max(peak_down, excluded.peak_down)")
+def _tier_upsert(table: str) -> str:
+    return (
+        f"INSERT INTO {table} (bucket, device, chain, up, down, samples, "
+        "conns, peak_up, peak_down) "
+        "SELECT ?, json_extract(value, '$[0]'), json_extract(value, '$[1]'), "
+        "json_extract(value, '$[2]'), json_extract(value, '$[3]'), 1, "
+        "json_extract(value, '$[4]'), json_extract(value, '$[5]'), "
+        "json_extract(value, '$[6]') FROM json_each(?) WHERE true "
+        "ON CONFLICT(bucket, device, chain) DO UPDATE SET "
+        "up = up + excluded.up, down = down + excluded.down, "
+        "samples = samples + excluded.samples, conns = conns + excluded.conns, "
+        "peak_up = max(peak_up, excluded.peak_up), "
+        "peak_down = max(peak_down, excluded.peak_down)")
+
+
+def _value_upsert(table: str) -> str:
+    # json_each's own column is also called `value`; the alias keeps the
+    # two apart
+    return (
+        f"INSERT INTO {table} (bucket, device, value, up, down) "
+        "SELECT ?, json_extract(j.value, '$[0]'), "
+        "json_extract(j.value, '$[1]'), json_extract(j.value, '$[2]'), "
+        "json_extract(j.value, '$[3]') FROM json_each(?) AS j WHERE true "
+        "ON CONFLICT(bucket, device, value) DO UPDATE SET "
+        "up = up + excluded.up, down = down + excluded.down")
+
+
+# The minute tier and, since #95, the hour tier: one poll writes both with
+# the same facts, so the hour tier is complete at ingest. (The minute tier
+# is MINUTE_TABLE, not the shipped stats_minute - schema.py says why.)
+_MINUTE_UPSERT = _tier_upsert(MINUTE_TABLE)
+_HOUR_UPSERT = _tier_upsert("stats_hour")
+_DIMENSION_UPSERTS = {dim: _value_upsert(f"stats_{dim}_hour")
+                      for dim in DIMENSIONS}
+_CLASS_UPSERTS = {table: _value_upsert(table) for table in CLASS_TABLES}
 
 _COVERAGE_UPSERT = (
     "INSERT INTO stats_coverage (bucket, device, klass, rule, rule_payload, "
@@ -59,11 +98,46 @@ def _rows(table: dict) -> str:
     return json.dumps([[*key, *vals] for key, vals in table.items()])
 
 
+def _add(table: dict, key, up: int, down: int) -> None:
+    acc = table.setdefault(key, [0, 0])
+    acc[0] += up
+    acc[1] += down
+
+
+def _country(meta: dict) -> str:
+    """`metadata.dstGeoIP`, probed on EVERY snapshot (DEC-A): the image is
+    `:latest`, so the field can appear - or vanish - between two polls. A
+    list of codes on the builds that send it; the first names the country.
+    Upper-cased so one country keeps one spelling across mihomo versions."""
+    geo = meta.get("dstGeoIP")
+    if isinstance(geo, list):
+        geo = geo[0] if geo else ""
+    code = str(geo or "").strip().upper()
+    return code or UNKNOWN
+
+
+def _device(meta: dict) -> str:
+    """The LAN source; mihomo's own traffic (`type: Inner` - provider pulls,
+    health checks) has none and belongs to the gateway, not to `unknown`."""
+    if meta.get("type") == "Inner":
+        return GATEWAY_DEVICE
+    return str(meta.get("sourceIP") or "") or UNKNOWN
+
+
 def flush_poll(conn, raw_conns: list, now: str, *, domains_enabled: bool,
                gap_threshold_s: int, interval_s: int | None = None) -> None:
     """One poll's delta flush - a single transaction covering the minute
-    upserts, the (hourly) coverage and domain upserts, the baseline update,
-    the closed-connection reap, gap detection, and the poll stamps.
+    and hour upserts, the dimension upserts, the (hourly) coverage and
+    seven-day class upserts, the baseline update, the closed-connection
+    reap, gap detection, and the poll stamps.
+
+    Since #95 the HOUR tier is written here too, with exactly the minute
+    rows' facts, so it is complete at ingest and rollup only expires minute
+    rows. Each long-term dimension (exit node, rule type, category, country)
+    gets one row per device and value that MOVED bytes - a new connection
+    with no bytes yet adds to the tier's `conns` but writes no dimension
+    row. The seven-day class (hostname, sniffHost, ASN, port) is written
+    only with DOMAINS_ENABLED.
 
     The work is done in Python and written with a bounded number of
     statements (#94): the baseline set is read ONCE, each table is written
@@ -109,6 +183,8 @@ def flush_poll(conn, raw_conns: list, now: str, *, domains_enabled: bool,
         rows: dict = {}      # (device, chain) -> [up, down, conns]
         cover: dict = {}     # (device, klass, rule, payload, sniff) -> [up, down]
         domains: dict = {}   # (device, host) -> [up, down]
+        dims: dict = {dim: {} for dim in DIMENSIONS}  # (device, value) -> ...
+        klass_rows: dict = {table: {} for table in CLASS_TABLES}
         moved = []           # [conn_id, up, down] baselines to write
         seen = set()
         for rc in raw_conns:
@@ -119,7 +195,7 @@ def flush_poll(conn, raw_conns: list, now: str, *, domains_enabled: bool,
             up = int(rc.get("upload") or 0)
             down = int(rc.get("download") or 0)
             meta = rc.get("metadata") or {}
-            device = str(meta.get("sourceIP") or "") or "unknown"
+            device = _device(meta)
             chains = rc.get("chains") or []
             chain = str(chains[-1]) if chains else "DIRECT"
             host = str(meta.get("host") or "")
@@ -130,7 +206,8 @@ def flush_poll(conn, raw_conns: list, now: str, *, domains_enabled: bool,
             # hostnames already live (the opt-in domain table below).
             sniff = str(meta.get("sniffHost") or "")
             rule = str(rc.get("rule") or "")
-            payload = str(rc.get("rulePayload") or "")
+            payload = (str(rc.get("rulePayload") or "")
+                       if rule in PAYLOAD_RULES else "")
             prev = base.get(cid)
             # first sighting, or a counter reset (id reuse after a mihomo
             # restart): the full cumulative counts, and it is a new connection
@@ -148,13 +225,23 @@ def flush_poll(conn, raw_conns: list, now: str, *, domains_enabled: bool,
                 # and no privacy surface there
                 key = (device, klass, rule, payload,
                        sniff if domains_enabled else "")
-                cov = cover.setdefault(key, [0, 0])
-                cov[0] += d_up
-                cov[1] += d_down
-                if domains_enabled and host:
-                    dom = domains.setdefault((device, host), [0, 0])
-                    dom[0] += d_up
-                    dom[1] += d_down
+                _add(cover, key, d_up, d_down)
+                exit_node = str(chains[0]) if chains else "DIRECT"
+                _add(dims["exit"], (device, exit_node), d_up, d_down)
+                _add(dims["rule"], (device, rule), d_up, d_down)
+                _add(dims["category"], (device, UNATTRIBUTED), d_up, d_down)
+                _add(dims["country"], (device, _country(meta)), d_up, d_down)
+                if domains_enabled:
+                    if host:
+                        _add(domains, (device, host), d_up, d_down)
+                    if sniff:
+                        _add(klass_rows["stats_sniff"], (device, sniff),
+                             d_up, d_down)
+                    asn = str(meta.get("dstIPASN") or "").strip() or UNKNOWN
+                    _add(klass_rows["stats_asn"], (device, asn), d_up, d_down)
+                    port = str(meta.get("destinationPort") or "") or UNKNOWN
+                    _add(klass_rows["stats_port"], (device, port), d_up,
+                         d_down)
             if new or (up, down) != prev:
                 moved.append([cid, up, down])
         if rows:
@@ -163,10 +250,18 @@ def flush_poll(conn, raw_conns: list, now: str, *, domains_enabled: bool,
                  up if measured else 0, down if measured else 0]
                 for (device, chain), (up, down, conns) in rows.items()])
             conn.execute(_MINUTE_UPSERT, (minute_bucket, payload))
+            conn.execute(_HOUR_UPSERT, (hour_bucket, payload))
+        for dim, table in dims.items():
+            if table:
+                conn.execute(_DIMENSION_UPSERTS[dim],
+                             (hour_bucket, _rows(table)))
         if cover:
             conn.execute(_COVERAGE_UPSERT, (hour_bucket, _rows(cover)))
         if domains:
             conn.execute(_DOMAIN_UPSERT, (hour_bucket, _rows(domains)))
+        for name, table in klass_rows.items():
+            if table:
+                conn.execute(_CLASS_UPSERTS[name], (hour_bucket, _rows(table)))
         if moved:
             conn.execute(_BASELINE_UPSERT, (now, json.dumps(moved)))
         # reap baselines for closed connections (their growth since the

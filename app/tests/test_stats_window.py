@@ -1,22 +1,30 @@
 """Window-complete stats reads (#91): `range=` presets and `tier` as resolution.
 
-The bug this pins: rollup MOVES rows (minute -> hour -> day, deleting the
-source), and the shipped reads each touch ONE tier table. So a 7-day view
-read `tier=hour` and silently lost the newest 48 hours (still in minute),
-and "daily" read only the day tier, which holds nothing younger than 90
-days. A `range=` read unions the requested resolution's tier with every
-FINER tier, which hold the newer tail.
+The bug this pinned in v1.10.3: rollup MOVED rows (minute -> hour -> day,
+deleting the source), and the shipped reads each touched ONE tier table. So a
+7-day view read `tier=hour` and silently lost the newest 48 hours (still in
+minute), and "daily" read only the day tier, which holds nothing younger
+than 90 days.
+
+Since #95 the collector writes the hour tier at ingest, beside the minute
+tier, and rollup only expires minute rows - so the hour tier is complete on
+its own, and a `range=` read takes: the minute tier at minute resolution,
+the hour tier alone at hour resolution, the day tier plus the hour tier at
+day resolution. Seeds below write a minute row and its hour together, as
+the collector does.
 
 Two named invariants (docs/brainstorms/gateway-insights.md):
   I-1  any window total == the bytes whose resolution key falls in the
        window, whatever the rollup state - the read cannot tell a row that
        was rolled from one that was not;
-  I-2  rollup is lossless: the bytes summed over all tiers are the same
-       before and after any rollup, at any `now`.
+  I-2  rollup is lossless: the bytes the hour and day tiers hold together
+       are the same before and after any rollup, at any `now`, and the
+       minute tier never holds a byte its hour does not.
 
-Requests that carry only `tier` keep the single-table answer byte for byte
-(acceptance criterion) - the window-complete union is opt-in through
-`range`, which is what the panel UI now sends.
+Requests that carry only `tier` read the one table they always read; the
+minute and day answers are byte for byte what v1.10.2 gave, and `tier=hour`
+now also covers the newest 48 h (the hour table is complete) - the v1.11
+release notes say so.
 
 All addresses are TEST-NET (192.0.2.0/24); clocks are pinned.
 """
@@ -44,6 +52,11 @@ _UTC = dayframe.utc_frame()
 
 def put(conn, table, bucket, device=A, chain="Routing Mode", up=1, down=10,
         stamp=None):
+    """One row. A MINUTE row is written with its hour, as the collector
+    writes them (#95); an hour or day row alone stands for one rolled or
+    written earlier."""
+    if table == "stats_minute_v5":
+        put(conn, "stats_hour", bucket[:13], device, chain, up, down)
     if table == "stats_day":
         tz, cut = stamp or ("UTC", "00:00")
         conn.execute(
@@ -71,9 +84,9 @@ def seed_three_tiers(conn):
     """One device's history spread the way a live store holds it:
     minute rows inside the last 48 h, hour rows between 48 h and 90 d,
     day rows older than 90 d - plus a second device in the newest tail."""
-    put(conn, "stats_minute", "2026-10-15T11:58", up=1, down=10)
-    put(conn, "stats_minute", "2026-10-14T09:30", up=2, down=20)
-    put(conn, "stats_minute", "2026-10-15T11:59", device=B, up=5, down=50)
+    put(conn, "stats_minute_v5", "2026-10-15T11:58", up=1, down=10)
+    put(conn, "stats_minute_v5", "2026-10-14T09:30", up=2, down=20)
+    put(conn, "stats_minute_v5", "2026-10-15T11:59", device=B, up=5, down=50)
     put(conn, "stats_hour", "2026-10-12T08", up=100, down=1000)       # 3 d
     put(conn, "stats_hour", "2026-09-20T23", up=200, down=2000)       # 25 d
     put(conn, "stats_hour", "2026-08-01T00", up=400, down=4000)       # 75 d
@@ -93,15 +106,15 @@ def _rows(resp):
 
 # --- the regression: a 7-day window includes the newest 48 hours ----------------
 
-def test_7d_includes_the_newest_48h_that_tier_hour_drops(client, panel_env,
-                                                          sconn, pinned_clock):
+def test_7d_includes_the_newest_48h(client, panel_env, sconn, pinned_clock):
     seed_three_tiers(sconn)
-    # what the shipped UI asked for: tier=hour since 7 days ago
-    legacy = _rows(client.get("/v1/stats/devices",
-                              params={"tier": "hour", "since": "2026-10-08T12"}))
-    assert legacy == {A: (100, 1000)}, "the pre-fix read misses the 48 h tail"
     fixed = _rows(client.get("/v1/stats/devices", params={"range": "7d"}))
     assert fixed == {A: (103, 1030), B: (5, 50)}
+    # what the v1.10.2 UI asked for - tier=hour since 7 days ago - missed the
+    # 48 h tail; since #95 the hour table holds it, so the two agree
+    legacy = _rows(client.get("/v1/stats/devices",
+                              params={"tier": "hour", "since": "2026-10-08T12"}))
+    assert legacy == fixed
 
 
 def test_30d_spans_minute_and_hour_tiers(client, panel_env, sconn,
@@ -116,7 +129,7 @@ def test_48h_is_the_minute_tier(client, panel_env, sconn, pinned_clock):
     # a minute row OLDER than the window that has not been rolled yet (a
     # minute retention above 48 h keeps it there): only the window bound
     # keeps it out of the 48 h answer
-    put(sconn, "stats_minute", "2026-10-13T10:00", up=1000, down=1000)
+    put(sconn, "stats_minute_v5", "2026-10-13T10:00", up=1000, down=1000)
     got = _rows(client.get("/v1/stats/devices", params={"range": "48h"}))
     assert got == {A: (3, 30), B: (5, 50)}
     assert client.get("/v1/stats/devices",
@@ -145,7 +158,7 @@ def test_daily_includes_everything_with_the_frame_reported(client, panel_env,
 
 def test_chains_follow_the_same_window(client, panel_env, sconn, pinned_clock):
     seed_three_tiers(sconn)
-    put(sconn, "stats_minute", "2026-10-15T10:00", chain="Full-Tunnel Devices",
+    put(sconn, "stats_minute_v5", "2026-10-15T10:00", chain="Full-Tunnel Devices",
         up=9, down=90)
     rows = client.get("/v1/stats/chains", params={"range": "7d"}).json()["rows"]
     assert {r["chain"]: (r["up"], r["down"]) for r in rows} == {
@@ -155,7 +168,7 @@ def test_chains_follow_the_same_window(client, panel_env, sconn, pinned_clock):
 def test_timeline_7d_is_hourly_and_continuous(client, panel_env, sconn,
                                               pinned_clock):
     seed_three_tiers(sconn)
-    # a minute row in an hour that ALSO has a rolled hour row: one bucket
+    # more bytes in an hour the minute seed already wrote: one bucket
     put(sconn, "stats_hour", "2026-10-15T11", up=1000, down=1)
     rows = client.get("/v1/stats/timeline",
                       params={"range": "7d"}).json()["rows"]
@@ -273,7 +286,7 @@ def test_the_server_range_vocabulary_is_the_settings_list():
     assert tuple(stats_store.RANGE_SPECS) == settings_store.STATS_RANGES
 
 
-# --- tier-only reads are unchanged, byte for byte -------------------------------
+# --- tier-only reads read their one table -----------------------------------------
 
 def _wire(body) -> bytes:
     # the exact bytes FastAPI's JSONResponse renders (compact separators)
@@ -283,7 +296,8 @@ def _wire(body) -> bytes:
 
 @pytest.mark.parametrize("path, params, body", [
     ("/v1/stats/devices", {"tier": "hour"},
-     {"tier": "hour", "rows": [{"device": A, "up": 700, "down": 7000}]}),
+     {"tier": "hour", "rows": [{"device": A, "up": 703, "down": 7030},
+                               {"device": B, "up": 5, "down": 50}]}),
     ("/v1/stats/devices", {},
      {"tier": "minute", "rows": [{"device": A, "up": 3, "down": 30},
                                  {"device": B, "up": 5, "down": 50}]}),
@@ -291,15 +305,18 @@ def _wire(body) -> bytes:
      {"tier": "day", "rows": [{"device": A, "up": 7000, "down": 70000}],
       "framings": [{"bucket_tz": "UTC", "day_boundary": "00:00"}]}),
     ("/v1/stats/devices", {"tier": "hour", "since": "2026-10-08T12"},
-     {"tier": "hour", "rows": [{"device": A, "up": 100, "down": 1000}]}),
+     {"tier": "hour", "rows": [{"device": A, "up": 103, "down": 1030},
+                               {"device": B, "up": 5, "down": 50}]}),
     ("/v1/stats/chains", {"tier": "hour"},
-     {"tier": "hour", "rows": [{"chain": "Routing Mode", "up": 700,
-                                "down": 7000}]}),
+     {"tier": "hour", "rows": [{"chain": "Routing Mode", "up": 708,
+                                "down": 7080}]}),
     ("/v1/stats/timeline", {"tier": "hour"},
      {"tier": "hour", "device": "",
       "rows": [{"bucket": "2026-08-01T00", "up": 400, "down": 4000},
                {"bucket": "2026-09-20T23", "up": 200, "down": 2000},
-               {"bucket": "2026-10-12T08", "up": 100, "down": 1000}]}),
+               {"bucket": "2026-10-12T08", "up": 100, "down": 1000},
+               {"bucket": "2026-10-14T09", "up": 2, "down": 20},
+               {"bucket": "2026-10-15T11", "up": 6, "down": 60}]}),
     ("/v1/stats/timeline", {"tier": "day", "device": A},
      {"tier": "day", "device": A,
       "rows": [{"bucket": "2026-06-01", "bucket_tz": "UTC",
@@ -308,11 +325,12 @@ def _wire(body) -> bytes:
      {"tier": "minute", "device": "",
       "rows": [{"bucket": "2026-10-14T09:30", "up": 2, "down": 20}]}),
 ])
-def test_tier_only_reads_return_exactly_what_they_did_before(
+def test_tier_only_reads_read_their_one_table(
         client, panel_env, sconn, path, params, body):
     """Byte for byte: a request that does not send `range` reads the one
-    tier table it always read (literals checked against v1.10.2's output on
-    the same seed)."""
+    tier table it always read. The minute and day literals are v1.10.2's
+    output on the same seed; the hour ones gain the newest 48 h, which the
+    hour table holds since #95."""
     seed_three_tiers(sconn)
     r = client.get(path, params=params)
     assert r.status_code == 200
@@ -356,13 +374,23 @@ def _fresh(panel_env, name):
 def _load(conn, events, now=NOW):
     for back, device, up, down in events:
         ts = now - timedelta(minutes=back)
-        put(conn, "stats_minute", ts.strftime("%Y-%m-%dT%H:%M"),
+        put(conn, "stats_minute_v5", ts.strftime("%Y-%m-%dT%H:%M"),
             device=device, up=up, down=down)
 
 
 def _all_bytes(conn):
+    """The bytes held: the hour and day tiers, which are disjoint and
+    together hold every byte. The minute tier is a finer copy of the newest
+    hours (#95) - checked to stay inside them, never added."""
+    for hour, device, chain, minute_bytes, hour_bytes in conn.execute(
+            "SELECT m.h, m.device, m.chain, m.b, "
+            "COALESCE((SELECT up + down FROM stats_hour AS t WHERE "
+            "t.bucket = m.h AND t.device = m.device AND t.chain = m.chain), 0) "
+            "FROM (SELECT substr(bucket, 1, 13) AS h, device, chain, "
+            "SUM(up + down) AS b FROM stats_minute_v5 GROUP BY 1, 2, 3) AS m"):
+        assert minute_bytes <= hour_bytes, (hour, device, chain)
     total = 0
-    for table in ("stats_minute", "stats_hour", "stats_day"):
+    for table in ("stats_hour", "stats_day"):
         total += conn.execute(
             f"SELECT COALESCE(SUM(up + down), 0) FROM {table}").fetchone()[0]
     return total

@@ -1,35 +1,37 @@
-"""Window-complete reads (#91): a `range=` read unions the resolution's tier
-with every finer one. See the section comment below for why that is exact."""
+"""Window-complete reads (#91): a `range=` read covers its whole window at
+its resolution. See the section comment below for which tiers that takes."""
 
 from bisect import bisect_left
 from datetime import UTC, datetime, timedelta
 
 from app.store import dayframe
-from app.store.stats.read import _TIER_TABLES
+from app.store.stats.read import _TIER_TABLES, dimension_tables
 
-# --- window-complete reads (#91) ---------------------------------------------
+# --- window-complete reads (#91, re-planned by #95) ----------------------------
 #
-# Rollup MOVES rows: minute rows older than the minute window are summed into
-# hours and deleted, hours older than the hour window into local days and
-# deleted. So the three tiers are DISJOINT - every byte lives in exactly one
-# of them - and a read that touches one tier table sees only that tier's
-# slice of time. A `range=` read therefore unions the resolution's own tier
-# with every FINER tier, which hold the newer tail not rolled yet. Disjoint
-# tiers make the union exact: no byte can be counted twice (invariant I-1,
-# docs/brainstorms/gateway-insights.md).
+# Since #95 the collector writes every poll to the minute AND the hour tier,
+# so the hour tier is complete at ingest and the minute tier is a finer copy
+# of its newest 48 h. Hours older than the hour window are still MOVED into
+# local days (summed, then deleted), so the hour and day tiers are DISJOINT
+# while minute and hour OVERLAP. A window read therefore takes:
+#   minute resolution   the minute tier
+#   hour resolution     the hour tier alone - it already holds the newest
+#                       48 h; adding the minute tier would count them twice
+#   day resolution      the day tier plus the hour tier (the newer days not
+#                       rolled yet), never the minute tier
+# Every table in a plan holds bytes no other table in it holds, so the union
+# is exact (invariant I-1, docs/brainstorms/gateway-insights.md).
 #
-# Coarser tiers are never consulted: a window longer than the resolution
-# tier's retention ends at that tier's horizon, as a single-tier read always
-# has. The presets below are chosen so that never happens under the shipped
-# retention knobs (48 h minute / 90 d hour / 730 d day).
+# A window longer than the resolution tier's retention ends at that tier's
+# horizon, as a single-tier read always has. The presets below are chosen so
+# that never happens under the shipped retention knobs (48 h minute / 90 d
+# hour / 730 d day).
 
 # The panel's range vocabulary: settings.STATS_RANGES is the one list (the UI
 # selector and the stored default use it; a test pins these keys to it).
 # Each preset is (resolution, window in hours; None = everything held).
 RANGE_SPECS = {"48h": ("minute", 48), "7d": ("hour", 24 * 7),
                "30d": ("hour", 24 * 30), "daily": ("day", None)}
-
-_TIER_RANK = {"minute": 0, "hour": 1, "day": 2}
 
 # Sorts after every digit, so `key >= _NOTHING` matches no bucket at all.
 _NOTHING = "~"
@@ -66,9 +68,9 @@ def window_key(moment: datetime, resolution: str, frame) -> str:
     return dayframe.day_key(hour, _usable(frame))
 
 
-def _first_hour_of_day(conn, since_day: str, frame) -> str:
-    """The earliest UTC hour bucket, among those the hour and minute tiers
-    hold, whose LOCAL day is >= SINCE_DAY - or _NOTHING when none is.
+def _first_hour_of_day(conn, hour_table: str, since_day: str, frame) -> str:
+    """The earliest UTC hour bucket HOUR_TABLE holds whose LOCAL day is
+    >= SINCE_DAY - or _NOTHING when none is.
 
     SQLite cannot do timezone arithmetic, so the day boundary is found in
     Python, but only O(log n) hours are converted: the local day of an hour
@@ -83,66 +85,54 @@ def _first_hour_of_day(conn, since_day: str, frame) -> str:
     once a year, misplacing the window start by that hour on that day.
     """
     hours = [r[0] for r in conn.execute(
-        "SELECT DISTINCT hk FROM (SELECT bucket AS hk FROM stats_hour "
-        "UNION SELECT substr(bucket, 1, 13) FROM stats_minute) ORDER BY hk")]
+        f"SELECT DISTINCT bucket FROM {hour_table} ORDER BY bucket")]
     i = bisect_left(hours, since_day, key=lambda h: dayframe.day_key(h, frame))
     return hours[i] if i < len(hours) else _NOTHING
 
 
-def _window_plan(conn, resolution: str, since, frame) -> list:
-    """[(table, hour_or_finer_key_expr, lower_bound_or_None)] - the
-    resolution's tier plus every finer one, each with the lower bound it is
-    filtered on. Finer rows are compared at the RESOLUTION's granularity, so
-    the window starts on a resolution boundary in every tier alike and a
-    row's rollup state cannot move it in or out of the window.
+def _window_plan(conn, resolution: str, since, frame,
+                 tables=_TIER_TABLES) -> list:
+    """[(table, lower_bound_or_None)] - the tables a window read at
+    RESOLUTION takes (see the section comment), each with the lower bound it
+    is filtered on. TABLES maps a tier to its table: the device tiers by
+    default, or one dimension's hour and day tables.
 
     A bounded DAY window starts on a local day of the CURRENT framing. A
     stored day row stamped under a different framing is a whole day of that
     other framing and cannot be split, so it is kept or dropped by its date
     alone - the same approximation every multi-framing day read makes, and
-    the reason `framings` reports more than one stamp when it happens."""
-    plan = []
+    the reason `framings` reports more than one stamp when it happens. The
+    not-yet-rolled hours join it from the first hour of that local day."""
+    if resolution != "day":
+        bound = None if since is None else window_key(since, resolution, frame)
+        return [(tables[resolution], bound)]
     if since is None:
-        bounds = {"minute": None, "hour": None, "day": None}
-    elif resolution == "minute":
-        bounds = {"minute": window_key(since, "minute", frame)}
-    elif resolution == "hour":
-        key = window_key(since, "hour", frame)
-        bounds = {"minute": key, "hour": key}
-    else:
-        since_day = window_key(since, "day", frame)
-        first = _first_hour_of_day(conn, since_day, frame)
-        bounds = {"minute": first, "hour": first, "day": since_day}
-    for tier in ("day", "hour", "minute"):
-        if _TIER_RANK[tier] > _TIER_RANK[resolution]:
-            continue
-        # a minute row is compared at minute granularity only when minute IS
-        # the resolution; otherwise by the hour it falls in
-        expr = ("substr(bucket, 1, 13)"
-                if tier == "minute" and resolution != "minute" else "bucket")
-        plan.append((_TIER_TABLES[tier], expr, bounds.get(tier)))
-    return plan
+        return [(tables["day"], None), (tables["hour"], None)]
+    since_day = window_key(since, "day", frame)
+    return [(tables["day"], since_day),
+            (tables["hour"], _first_hour_of_day(conn, tables["hour"],
+                                                since_day, frame))]
 
 
 def _union(plan, columns: str, device: str = "") -> tuple[str, list]:
     selects, params = [], []
-    for table, expr, bound in plan:
+    for table, bound in plan:
         where = []
         if device:
             where.append("device = ?")
             params.append(device)
         if bound is not None:
-            where.append(f"{expr} >= ?")
+            where.append("bucket >= ?")
             params.append(bound)
         clause = f" WHERE {' AND '.join(where)}" if where else ""
-        selects.append(f"SELECT {columns.format(k=expr)} FROM {table}{clause}")
+        selects.append(f"SELECT {columns} FROM {table}{clause}")
     return " UNION ALL ".join(selects), params
 
 
 def read_window_grouped(conn, resolution: str, group_col: str, since,
                         frame) -> list:
-    """Per-GROUP_COL totals over a window, summed across every tier at or
-    finer than RESOLUTION. Same row shape as `read_grouped`."""
+    """Per-GROUP_COL totals over a window at RESOLUTION, summed across the
+    tables its plan takes. Same row shape as `read_grouped`."""
     frame = _usable(frame)
     union, params = _union(_window_plan(conn, resolution, since, frame),
                            f"{group_col} AS g, up, down")
@@ -152,10 +142,29 @@ def read_window_grouped(conn, resolution: str, group_col: str, since,
     return [dict(r) for r in rows]
 
 
+def read_window_dimension(conn, dim: str, resolution: str, since, frame,
+                          device: str = "") -> list:
+    """Per-value totals of one long-term dimension over a window (#95; the
+    breakdown reads of Sequence 90 ride this). A dimension has no minute
+    tier, so RESOLUTION is `hour` or `day`; the plan is the device tiers'
+    one. Rows: [{"value", "up", "down"}], largest first."""
+    tables = dimension_tables(dim)
+    if resolution not in tables:
+        raise ValueError(f"no {resolution} tier for dimension {dim!r}")
+    frame = _usable(frame)
+    union, params = _union(_window_plan(conn, resolution, since, frame,
+                                        tables), "value, up, down", device)
+    rows = conn.execute(
+        f"SELECT value, SUM(up) AS up, SUM(down) AS down FROM ({union}) "
+        f"GROUP BY value ORDER BY SUM(up) + SUM(down) DESC, value",
+        params).fetchall()
+    return [dict(r) for r in rows]
+
+
 def read_window_timeline(conn, resolution: str, device: str, since,
                          frame) -> list:
-    """Bucket rows at RESOLUTION over a window, every tier at or finer than
-    it included. Same row shapes as `read_timeline`.
+    """Bucket rows at RESOLUTION over a window, from the tables its plan
+    takes. Same row shapes as `read_timeline`.
 
     At day resolution the not-yet-rolled hours are keyed into local days
     under FRAME - the current framing, the same key and stamp rollup will
@@ -167,14 +176,14 @@ def read_window_timeline(conn, resolution: str, device: str, since,
     frame = _usable(frame)
     plan = _window_plan(conn, resolution, since, frame)
     if resolution != "day":
-        union, params = _union(plan, "{k} AS k, up, down", device)
+        union, params = _union(plan, "bucket, up, down", device)
         rows = conn.execute(
-            f"SELECT k AS bucket, SUM(up) AS up, SUM(down) AS down "
-            f"FROM ({union}) GROUP BY k ORDER BY k", params).fetchall()
+            f"SELECT bucket, SUM(up) AS up, SUM(down) AS down "
+            f"FROM ({union}) GROUP BY bucket ORDER BY bucket",
+            params).fetchall()
         return [dict(r) for r in rows]
     days = {}
-    day_plan = [p for p in plan if p[0] == "stats_day"]
-    finer = [p for p in plan if p[0] != "stats_day"]
+    day_plan, hour_plan = plan[:1], plan[1:]
     union, params = _union(day_plan,
                            "bucket, bucket_tz, day_boundary, up, down", device)
     for r in conn.execute(
@@ -183,11 +192,11 @@ def read_window_timeline(conn, resolution: str, device: str, since,
             f"GROUP BY bucket, bucket_tz, day_boundary", params):
         days[(r["bucket"], r["bucket_tz"], r["day_boundary"])] = [r["up"],
                                                                   r["down"]]
-    union, params = _union(finer, "{k} AS k, up, down", device)
+    union, params = _union(hour_plan, "bucket, up, down", device)
     for r in conn.execute(
-            f"SELECT k, SUM(up) AS up, SUM(down) AS down FROM ({union}) "
-            f"GROUP BY k", params):
-        key = (dayframe.day_key(r["k"], frame), frame.tz, frame.cut)
+            f"SELECT bucket, SUM(up) AS up, SUM(down) AS down FROM ({union}) "
+            f"GROUP BY bucket", params):
+        key = (dayframe.day_key(r["bucket"], frame), frame.tz, frame.cut)
         acc = days.setdefault(key, [0, 0])
         acc[0] += r["up"]
         acc[1] += r["down"]
@@ -205,8 +214,8 @@ def window_framings(conn, since, frame) -> list:
     frame = _usable(frame)
     plan = _window_plan(conn, "day", since, frame)
     found = set()
-    for table, expr, bound in plan:
-        clause, params = (f" WHERE {expr} >= ?", [bound]) if bound else ("", [])
+    for table, bound in plan:
+        clause, params = (" WHERE bucket >= ?", [bound]) if bound else ("", [])
         if table == "stats_day":
             found.update(
                 (r[0], r[1]) for r in conn.execute(

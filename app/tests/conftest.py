@@ -102,6 +102,29 @@ def conn_fixture(cid: str, source: str, up: int, down: int,
             "chains": ["JP01", "Japan Auto", "Exit Country", chain]}
 
 
+_ABSENT = object()
+
+
+def geo_conn(cid: str, source: str, up: int, down: int, *,
+             chains=("JP01", "Japan Auto", "Routing Mode"), rule="Match",
+             payload="", geo=_ABSENT, asn=_ABSENT, port="443", host="",
+             sniff="", kind="Tun") -> dict:
+    """A /connections entry carrying every field the star schema reads (#95).
+
+    GEO and ASN default to ABSENT - the key is missing, as on the mihomo
+    build measured in the brief's baseline - so a test opts in to the
+    fields a newer image adds. Synthesised only: TEST-NET addresses,
+    example.com names, documentation ASNs (RFC 5398)."""
+    meta = {"sourceIP": source, "host": host, "sniffHost": sniff,
+            "network": "tcp", "type": kind, "destinationPort": port}
+    if geo is not _ABSENT:
+        meta["dstGeoIP"] = geo
+    if asn is not _ABSENT:
+        meta["dstIPASN"] = asn
+    return {"id": cid, "upload": up, "download": down, "metadata": meta,
+            "chains": list(chains), "rule": rule, "rulePayload": payload}
+
+
 @pytest.fixture()
 def fake_client(panel_env):
     return FakeMihomoClient(panel_env["providers"])

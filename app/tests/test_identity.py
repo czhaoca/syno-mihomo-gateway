@@ -67,9 +67,11 @@ def test_removing_an_alias_leaves_no_row(conn):
 
 
 @pytest.mark.parametrize("bad", [
-    # stats.py substitutes this literal when mihomo reports no sourceIP;
-    # it must never become an aliasable pseudo-device
+    # the stats tables substitute these literals when mihomo reports no
+    # sourceIP (`gateway`: its own traffic, since #95); neither may become
+    # an aliasable pseudo-device
     "unknown",
+    "gateway",
     "",
     "192.0.2.0/28",       # a range has no single host to name
     "192.0.2.300",

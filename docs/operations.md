@@ -275,13 +275,35 @@ kept, default 5; policy only — `stats.db` is derived history and gets no autom
   The static `FULL_PROXY_SOURCES` band is untouched by a reset — it lives in `.env`.
 
 - **Purge statistics only** (policy stays): `POST /v1/stats/purge` with the bearer token —
-  see the [API reference](panel-api.md). Purging preserves the collector's accounting
-  baseline, so live connections are not double-counted afterwards.
+  see the [API reference](panel-api.md). With no body it clears every statistics table.
+  A JSON body narrows it, and the parts combine:
 
-- **Retention** is automatic: minute→hour→day rollups with the `PANEL_STATS_*` windows and a
-  hard `PANEL_STATS_CAP_MB` cap (oldest tier trimmed first, honest gap rows for collector
-  downtime), and the policy snapshots rotate themselves to `PANEL_BACKUP_KEEP`. No cron
-  needed.
+  | Body | Clears |
+  |---|---|
+  | `{"device": "<ip>"}` | That device's rows only. The gap history stays. |
+  | `{"tables": ["stats_domain", "stats_sniff"]}` | Only the named tables (listed below). |
+  | `{"before": "2026-07-01"}` | Rows whose bucket starts before that UTC moment (`YYYY-MM-DD`, `YYYY-MM-DDTHH` or `YYYY-MM-DDTHH:MM`). A bucket that straddles it goes too. Day rows are compared by their local date. A local day really starts at that date plus the day boundary, minus the zone's UTC offset, so a day row can sit that far on the other side of the moment. |
+
+  The table names: `stats_minute_v5` (minute tier), `stats_hour`, `stats_day`, `stats_exit_hour`, `stats_exit_day`, `stats_rule_hour`, `stats_rule_day`, `stats_category_hour`, `stats_category_day`, `stats_country_hour`, `stats_country_day`, `stats_domain`, `stats_sniff`, `stats_asn`, `stats_port`, `stats_coverage`, `stats_gap`, and `stats_minute` (written only by a pre-v1.11 panel; see the panel guide).
+
+  The reply counts the rows each table lost (`rows`). The policy audit records each purge
+  with its scope. An unknown key or table name is refused (422) and nothing is cleared.
+  Purging preserves the collector's accounting baseline, so live connections are not
+  double-counted afterwards. Clearing one tier alone makes views at different resolutions
+  disagree until it refills: the 48 h view reads the minute tier, while 7 d and 30 d read
+  the hour tier.
+
+- **Retention** is automatic: minute rows expire after `PANEL_STATS_MINUTE_HOURS`, hours roll
+  into local days after `PANEL_STATS_HOUR_DAYS`, days expire after `PANEL_STATS_DAY_DAYS`, the
+  seven-day tables are capped at 7 days, and the hard `PANEL_STATS_CAP_MB` cap trims the
+  oldest data first, whichever table holds it (honest gap rows for collector downtime).
+  The policy snapshots rotate themselves to `PANEL_BACKUP_KEEP`. No cron needed.
+
+- **Before downgrading the panel below v1.11 by hand**, purge the seven-day tables
+  (`{"tables": ["stats_sniff", "stats_asn", "stats_port"]}`). An older image counts every
+  byte once in its 7-day, 30-day and daily views, and its 48-hour view starts empty. It
+  cannot prune or purge the tables it does not know (see
+  [the panel guide](panel.md#data-retention-backups)).
 
 - **Watch it**: `doctor.sh` — `companion_health` (down/degraded ⇒ warn) and `policy_parity`
   (panel-vs-mihomo drift ⇒ **error exit 3**; see

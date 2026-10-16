@@ -21,8 +21,15 @@ def _v3_db(path):
     return conn
 
 
+def _v4(path):
+    # this file pins the v3 -> v4 step; v5 (#95) has its own test file
+    return open_db(path, migrations=STATS_MIGRATIONS[:4],
+                   pre_migrate=("PRAGMA auto_vacuum = INCREMENTAL",))
+
+
 def test_the_facts_are_stats_migration_four():
-    assert [v for v, _ in STATS_MIGRATIONS] == [1, 2, 3, 4]
+    assert [v for v, _ in STATS_MIGRATIONS][:4] == [1, 2, 3, 4]
+    assert "peak_down" in STATS_MIGRATIONS[3][1]
 
 
 def test_a_populated_v3_store_migrates_with_every_number_intact(tmp_path,
@@ -40,7 +47,7 @@ def test_a_populated_v3_store_migrates_with_every_number_intact(tmp_path,
         f"SELECT bucket, device, chain, up, down FROM {t}")] for t in TIERS}
     old.close()
 
-    new = open_stats_db(path)
+    new = _v4(path)
     try:
         assert new.execute("PRAGMA user_version").fetchone()[0] == 4
         for table in TIERS:
@@ -74,7 +81,7 @@ def test_the_shipped_five_column_insert_still_works_on_v4(tmp_path, panel_env):
 def test_an_older_image_opens_a_v4_store_without_migrating_back(tmp_path,
                                                                panel_env):
     path = tmp_path / "stats.db"
-    open_stats_db(path).close()  # v4
+    _v4(path).close()
     older = open_db(path, migrations=STATS_MIGRATIONS[:3],
                     pre_migrate=("PRAGMA auto_vacuum = INCREMENTAL",))
     try:

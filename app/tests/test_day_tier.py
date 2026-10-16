@@ -312,10 +312,13 @@ def test_minute_and_hour_stay_utc_whatever_the_day_framing(sconn):
     """DEC-4 is explicit: only the day tier is local-keyed. A change that
     localised the hour bucket would silently re-key the tier the API
     charts by default."""
-    sconn.execute(
-        "INSERT INTO stats_minute (bucket, device, chain, up, down) "
-        "VALUES ('2026-07-29T18:30', '192.0.2.20', 'X', 1, 10)")
-    # `now` is chosen so the minute row rolls (minute retention 48h) while
+    from app.tests.conftest import conn_fixture
+    stats_store.flush_poll(sconn, [conn_fixture("c1", "192.0.2.20", 1, 10)],
+                           "2026-07-29T18:30:00Z", domains_enabled=False,
+                           gap_threshold_s=30)
+    assert [r[0] for r in sconn.execute(
+        "SELECT bucket FROM stats_minute_v5")] == ["2026-07-29T18:30"]
+    # `now` is chosen so the minute row expires (minute retention 48h) while
     # the hour row is still inside its own 90-day window - otherwise the
     # hour is rolled onward and deleted, and the assertion tests nothing.
     stats_store.rollup(sconn, "2026-08-05T00:00:00Z", day=frame())

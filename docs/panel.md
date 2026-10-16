@@ -59,10 +59,11 @@ edit.
   you asked about.
 
   Every range covers its **whole window** (with the shipped retention
-  settings — see below). Collected traffic moves from
-  minute rows to hour rows to day rows as it ages, so the server reads the
-  range's own tier *plus* the finer ones that still hold the newest rows:
-  the 7- and 30-day totals include the last 48 hours, and the daily range
+  settings — see below). Since v1.11 every poll is written to the minute
+  *and* the hour rows, so the 48-hour range reads the minute rows and the
+  7- and 30-day ranges read the hour rows, which already include the last
+  48 hours. Hours older than 90 days roll up into day rows, so the daily
+  range reads the day rows *plus* the hour rows not rolled up yet, and so
   includes the last 90 days. Days the panel has not rolled up yet are keyed
   under the current timezone and day start — the stamp they will carry once
   rolled — so a window that spans a changed day boundary still shows the
@@ -189,14 +190,51 @@ there). The installer hands both mounts to that uid before `compose up`.
 ## Data, retention, backups
 
 `state/panel/` holds `policy.db` (device policy + audit log) and `stats.db`
-(traffic history: minute→hour→day rollups with a hard size cap, oldest tier
-trimmed first, honest gap rows when the collector was down). Every policy
+(traffic history, honest gap rows when the collector was down). Every policy
 mutation snapshots the committed `policy.db` to a rotating
 `policy.db.bak-<timestamp>` beside it (`PANEL_BACKUP_KEEP`, default 5);
 `stats.db` is derived history with no automatic backups. Retention knobs
 (`PANEL_STATS_*`) are documented in [configuration](configuration.md); the
 runbook for backup / restore / reset / purge is in
 [operations](operations.md).
+
+What `stats.db` keeps (since v1.11):
+
+| Data | Kept | Notes |
+|---|---|---|
+| Bytes per device and policy group, per minute | 48 h | A finer copy of the newest hours. |
+| The same, per hour | 90 d | Written at every poll, so it is always complete. |
+| The same, per local day | 730 d | Hours older than 90 d roll into days. |
+| Bytes per device by exit node, rule type, category, destination country | 90 d of hours + 730 d of days | Recorded from v1.11 on. For that traffic each adds up to the device total; a window that reaches back before the upgrade (or into a time an older panel ran) holds device bytes the dimensions never saw. Country reads `unknown` while the running mihomo build does not report it; category stays empty (not yet attributed) until a category dictionary ships. |
+| Bytes per device by hostname, sniffed name, destination ASN, destination port | 7 d, forced | Only with `PANEL_STATS_DOMAINS` on. No knob extends it. |
+| Attribution coverage (which share carried a hostname, by rule) | 7 d, forced | A rule's payload is stored only for GeoSite, GeoIP, RuleSet, Match and SrcIPCIDR rules. Every other type (the Domain rules, which can name your subscription's own server) is stored blank. Rows written before v1.11 keep their payload until they age out or are purged. |
+
+mihomo's own traffic (subscription pulls, health checks) is counted under the
+device `gateway`. When the hard size cap (`PANEL_STATS_CAP_MB`) is reached,
+the oldest data goes first, whichever table holds it. A seven-day row goes
+first only when it is exactly as old as a long-term one.
+
+**Running an older panel over a v1.11 store.** The panel can be downgraded
+by hand, or by the updater's automatic rollback after a failed health check.
+The older image opens the store and counts every byte once in its 7-day,
+30-day and daily views: v1.11 keeps its minute rows in a table of its own
+(`stats_minute_v5`), so nothing is counted twice. The older image's 48-hour
+view reads only its own minute rows, so it starts empty and fills as it
+collects. Whatever the older image collects is folded back in when v1.11
+starts again. What the older image cannot do is look after the tables it
+does not know:
+- It never prunes or purges the v1.11 tables (the minute tier, the dimension
+  tables, and the seven-day `stats_sniff`, `stats_asn` and `stats_port`).
+  With `PANEL_STATS_DOMAINS` on, those seven-day rows outlive seven days
+  until v1.11 returns. Its first maintenance pass, about a minute after
+  start while the collector runs, prunes them.
+- Its size cap trims only its own tables.
+- The dimensions get no entries for the time it ran.
+
+Before downgrading by hand, purge the seven-day tables with `POST
+/v1/stats/purge` and `{"tables": ["stats_sniff", "stats_asn", "stats_port"]}`
+(see [operations](operations.md)). An automatic rollback cannot do this for
+you, so those rows stay until v1.11 is back.
 
 ## Security
 

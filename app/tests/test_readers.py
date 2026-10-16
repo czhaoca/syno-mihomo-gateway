@@ -38,7 +38,7 @@ READS = [
 def seeded(panel_env):
     conn = open_stats_db(panel_env["data"] / "state" / "stats.db")
     conn.execute(
-        "INSERT INTO stats_minute (bucket, device, chain, up, down) "
+        "INSERT INTO stats_minute_v5 (bucket, device, chain, up, down) "
         "VALUES ('2026-10-15T11:58', '192.0.2.20', 'Routing Mode', 1, 10)")
     conn.close()
     return panel_env["data"] / "state" / "stats.db"
@@ -72,10 +72,10 @@ def test_a_reader_refuses_writes(seeded):
     reader = open_reader(seeded)
     try:
         assert reader.execute(
-            "SELECT COUNT(*) FROM stats_minute").fetchone()[0] == 1
+            "SELECT COUNT(*) FROM stats_minute_v5").fetchone()[0] == 1
         with pytest.raises(sqlite3.OperationalError):
             reader.execute(
-                "INSERT INTO stats_minute (bucket, device, chain, up, down) "
+                "INSERT INTO stats_minute_v5 (bucket, device, chain, up, down) "
                 "VALUES ('2026-10-15T11:59', '192.0.2.21', 'X', 1, 1)")
         with pytest.raises(sqlite3.OperationalError):
             reader.execute("CREATE TABLE intruder (x INTEGER)")
@@ -86,7 +86,7 @@ def test_a_reader_refuses_writes(seeded):
 def test_a_reader_rows_are_addressable_by_name(seeded):
     reader = open_reader(seeded)
     try:
-        row = reader.execute("SELECT device, up FROM stats_minute").fetchone()
+        row = reader.execute("SELECT device, up FROM stats_minute_v5").fetchone()
         assert row["device"] == "192.0.2.20" and row["up"] == 1
     finally:
         reader.close()
@@ -106,10 +106,10 @@ def test_a_reader_sees_writes_committed_after_it_opened(seeded):
     reader = open_reader(seeded)
     try:
         writer.execute(
-            "INSERT INTO stats_minute (bucket, device, chain, up, down) "
+            "INSERT INTO stats_minute_v5 (bucket, device, chain, up, down) "
             "VALUES ('2026-10-15T11:59', '192.0.2.21', 'X', 2, 2)")
         assert reader.execute(
-            "SELECT COUNT(*) FROM stats_minute").fetchone()[0] == 2
+            "SELECT COUNT(*) FROM stats_minute_v5").fetchone()[0] == 2
     finally:
         reader.close()
         writer.close()
@@ -135,15 +135,15 @@ def test_one_request_reads_one_snapshot(panel_env, seeded):
         state=SimpleNamespace(stats_conn=writer)))
     try:
         with routes._stats_reader(request) as conn:
-            first = conn.execute("SELECT COUNT(*) FROM stats_minute").fetchone()[0]
+            first = conn.execute("SELECT COUNT(*) FROM stats_minute_v5").fetchone()[0]
             writer.execute(
-                "INSERT INTO stats_minute (bucket, device, chain, up, down) "
+                "INSERT INTO stats_minute_v5 (bucket, device, chain, up, down) "
                 "VALUES ('2026-10-15T11:59', '192.0.2.21', 'X', 2, 2)")
-            again = conn.execute("SELECT COUNT(*) FROM stats_minute").fetchone()[0]
+            again = conn.execute("SELECT COUNT(*) FROM stats_minute_v5").fetchone()[0]
             assert again == first == 1
         with routes._stats_reader(request) as conn:
             assert conn.execute(
-                "SELECT COUNT(*) FROM stats_minute").fetchone()[0] == 2
+                "SELECT COUNT(*) FROM stats_minute_v5").fetchone()[0] == 2
     finally:
         writer.close()
 
@@ -156,6 +156,10 @@ def test_the_cap_does_not_prune_against_a_wal_a_reader_still_pins(panel_env):
     prune normally once the reader is gone."""
     path = panel_env["data"] / "state" / "stats.db"
     writer = open_stats_db(path)
+    # keep the rows IN the WAL: an automatic checkpoint at commit would
+    # backfill them, and a reader that then reads the db file alone pins no
+    # WAL at all - the situation under test would never arise
+    writer.execute("PRAGMA wal_autocheckpoint = 0")
     rows = [(f"2026-{1 + i % 12:02d}-{1 + i % 28:02d}", f"192.0.2.{i % 250}",
              f"chain-{i}", i, i) for i in range(30000)]
     writer.execute("BEGIN")

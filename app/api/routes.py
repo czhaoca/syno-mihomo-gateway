@@ -17,8 +17,8 @@ from contextlib import contextmanager, suppress
 from datetime import UTC, datetime
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app import config
 from app.api.auth import require_mutation_auth
@@ -79,6 +79,45 @@ class SettingsUpdate(BaseModel):
     note: str = Field(
         default="",
         description="Recorded on the audit entry for this change")
+
+
+# The tables a scoped purge may name - stats_store.PURGE_TABLES, spelled out
+# so the contract lists them (a test pins the two together).
+PurgeTable = Literal[
+    "stats_minute", "stats_minute_v5", "stats_hour", "stats_day",
+    "stats_domain", "stats_coverage", "stats_gap",
+    "stats_exit_hour", "stats_exit_day", "stats_rule_hour", "stats_rule_day",
+    "stats_category_hour", "stats_category_day", "stats_country_hour",
+    "stats_country_day", "stats_sniff", "stats_asn", "stats_port"]
+
+
+class StatsPurge(BaseModel):
+    # a destructive call: a misspelt key must be refused, not ignored into
+    # "purge everything"
+    model_config = ConfigDict(extra="forbid")
+
+    device: str | None = Field(
+        default=None, min_length=1,
+        description="Only this device's rows. The gap history has no device "
+                    "and is kept")
+    tables: list[PurgeTable] | None = Field(
+        default=None, min_length=1,
+        description="Only these tables")
+    before: str | None = Field(
+        default=None, pattern=r"^\d{4}-\d{2}-\d{2}(T\d{2}(:\d{2})?)?$",
+        description="Only rows whose bucket STARTS before this UTC moment "
+                    "(`YYYY-MM-DD`, `YYYY-MM-DDTHH` or `YYYY-MM-DDTHH:MM`): "
+                    "a bucket straddling it goes too, so nothing older "
+                    "survives. A day row is compared by its date")
+
+    @field_validator("before")
+    @classmethod
+    def _real_moment(cls, value):
+        # the pattern admits 2026-13-45; the calendar does not
+        if value is not None:
+            datetime.strptime(value, {10: "%Y-%m-%d", 13: "%Y-%m-%dT%H",
+                                      16: "%Y-%m-%dT%H:%M"}[len(value)])
+        return value
 
 
 class IdentityImport(BaseModel):
@@ -226,15 +265,17 @@ RangeParam = Annotated[StatsRange | None, Query(
         "A window preset: `48h` (minute resolution), `7d` and `30d` (hour "
         "resolution), `daily` (local-day resolution, everything held). The "
         "server computes the window from its own clock and reads it "
-        "WINDOW-COMPLETE: the resolution's tier plus every finer tier, which "
-        "hold the newer rows not yet rolled up - so a 7-day total includes "
-        "the newest 48 hours. Coarser tiers are not read, so a window ends at "
-        "the resolution tier's retention: with the shipped retention every "
-        "preset is whole, and an explicit `tier` finer than the window (e.g. "
-        "`range=7d&tier=minute`) reaches back only as far as that tier holds. "
-        "An explicit `tier` overrides the resolution only. Mutually exclusive "
-        "with `since`/`until`, even empty ones (422). Without `range`, a read "
-        "covers the single `tier` table exactly as before."))]
+        "WINDOW-COMPLETE. The hour tier is written at every poll, so a minute "
+        "or hour read takes its own tier alone, and a day read takes the day "
+        "tier plus the hour tier, which holds the days not rolled up yet - so "
+        "a 7-day total includes the newest 48 hours and `daily` includes "
+        "today. A window ends at the resolution tier's retention: with the "
+        "shipped retention every preset is whole, and an explicit `tier` "
+        "finer than the window (e.g. `range=7d&tier=minute`) reaches back "
+        "only as far as that tier holds. An explicit `tier` overrides the "
+        "resolution only. Mutually exclusive with `since`/`until`, even empty "
+        "ones (422). Without `range`, a read covers the single `tier` table "
+        "(since v1.11 the hour table also holds the newest 48 hours)."))]
 
 
 def _utcnow() -> datetime:
@@ -387,21 +428,32 @@ def stats_gaps(request: Request, limit: int = 100) -> dict:
 
 @router.post("/v1/stats/purge",
              dependencies=[Depends(require_mutation_auth)])
-def stats_purge(request: Request) -> dict:
-    """Clears every visible stats surface (tiers, domains, gap history)
-    but preserves conn_baseline + the poll stamp - dropping baselines
-    would make still-open connections re-contribute their pre-purge
-    cumulative. The POLICY audit lives in policy.db and is untouched -
-    it records this purge like any other mutation."""
+def stats_purge(request: Request,
+                scope: Annotated[StatsPurge | None, Body()] = None) -> dict:
+    """Clears every visible stats surface (tiers, dimensions, the seven-day
+    tables, gap history) but preserves conn_baseline + the poll stamp -
+    dropping baselines would make still-open connections re-contribute
+    their pre-purge cumulative. An optional body narrows it to one
+    `device`, some `tables`, rows `before` a moment, or any combination;
+    no body (or `{}`) clears everything, as it always has. `rows` counts
+    what each table lost. The POLICY audit lives in policy.db and is
+    untouched - it records this purge, with its scope, like any other
+    mutation."""
+    scope = scope or StatsPurge()
     with request.app.state.stats_lock:
         conn = _stats_conn(request)
-        stats_store.purge_stats(conn)
+        rows = stats_store.purge_stats(
+            conn, device=scope.device or "", tables=scope.tables,
+            before=scope.before or "")
+    details = " ".join(
+        f"{key}={','.join(val) if isinstance(val, list) else val}"
+        for key, val in sorted(scope.model_dump(exclude_none=True).items()))
     with request.app.state.mutex:
         pconn = getattr(request.app.state, "conn", None)
         if pconn is not None:
             append_audit(pconn, action="stats-purge",
-                         requester=_requester(request))
-    return {"purged": True}
+                         requester=_requester(request), details=details)
+    return {"purged": True, "rows": rows}
 
 
 def _band_entries() -> list:
