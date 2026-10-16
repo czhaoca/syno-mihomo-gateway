@@ -57,7 +57,10 @@ def _insert(conn, entry, key, device):
                      "VALUES (?, ?, 'test')", (key, key))
         return
     cols = {r["name"]: r for r in conn.execute(f"PRAGMA table_info({table})")}
-    names, vals = ["bucket", "device"], [key, device]
+    names, vals = ["bucket"], [key]
+    if "device" in cols:
+        names.append("device")
+        vals.append(device)
     for name, info in cols.items():
         if name in names or info["dflt_value"] is not None:
             continue

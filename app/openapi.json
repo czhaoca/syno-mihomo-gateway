@@ -229,7 +229,8 @@
                     "stats_country_day",
                     "stats_sniff",
                     "stats_asn",
-                    "stats_port"
+                    "stats_port",
+                    "stats_self"
                   ],
                   "type": "string"
                 },
@@ -1139,6 +1140,59 @@
           }
         },
         "summary": "Stats Purge"
+      }
+    },
+    "/v1/stats/self": {
+      "get": {
+        "description": "The collector's own gauges (#96), one row per maintenance pass\n(about a minute), kept 7 days: poll duration (ms, the mean of the last\n30 polls), connections in the last snapshot, failed polls since the\npanel started, seconds since the last good poll, stats.db bytes, and\nmihomo's in-use memory (MiB). `null` is \"not measured\", never 0.\n`since`/`until` compare against the minute keys (`YYYY-MM-DDTHH:MM`, UTC)\nas strings, like every stats read: `until=2026-10-16` ends BEFORE that\nday; `until=2026-10-16T23:59` includes it.",
+        "operationId": "stats_self_v1_stats_self_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "since",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Since",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "until",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Until",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Stats Self V1 Stats Self Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Stats Self"
       }
     },
     "/v1/stats/timeline": {

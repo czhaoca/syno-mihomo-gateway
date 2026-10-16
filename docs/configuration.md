@@ -185,6 +185,7 @@ ref knobs live in the image table above). `PANEL_IP` + `PANEL_IMAGE` are compose
 | `PANEL_STATS_HOUR_DAYS` | | | Hour-tier retention, days (default 90). Covers the per-device hours and, since v1.11, the hour tables of every dimension (exit node, rule type, category, country). | `90` |
 | `PANEL_STATS_DAY_DAYS` | | | Day-tier retention, days (default 730). Covers the per-device days and every dimension's day table. | `730` |
 | `PANEL_STATS_CAP_MB` | | | Hard cap on `stats.db` (default 512). When it is hit, the oldest data goes first, whichever table holds it. On an exact tie the seven-day tables go first. | `512` |
+| `PANEL_MIHOMO_MEM_WARN_MB` | | | The doctor's `companion_health` warns when the panel reports mihomo using more memory than this, in MB (default 512; `0` = never warn). Warn-only, so it never changes the doctor's exit class. The doctor reads it from `.env`; the panel does not use it. Raise it on a host where mihomo legitimately runs large. | `512` |
 | `PANEL_STATS_DOMAINS` | | | Opt-in per-device breakdowns that can name an app: hostname, plus (since v1.11) sniffed name, destination ASN and destination port (`true`/`1`; off by default). These rows always keep a forced 7-day retention. | `false` |
 | `PANEL_BACKUP_KEEP` | | | Rotating `policy.db.bak-<timestamp>` snapshots kept **alongside `policy.db`** (taken on every policy mutation — the committed DB state, whether or not that apply reached mihomo; policy only — `stats.db` is derived history and is not auto-backed-up; default 5). | `5` |
 

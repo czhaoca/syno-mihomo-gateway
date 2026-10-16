@@ -54,7 +54,9 @@ def _hour(conn, bucket, device, up, down, samples=0, conns=0, peak=0):
 
 
 def test_the_star_schema_is_stats_migration_five():
-    assert [v for v, _ in STATS_MIGRATIONS] == [1, 2, 3, 4, 5]
+    # later migrations (v6: #96's gauges) stack on top without renumbering
+    assert [v for v, _ in STATS_MIGRATIONS][:5] == [1, 2, 3, 4, 5]
+    assert "stats_minute_v5" in STATS_MIGRATIONS[4][1]
 
 
 def test_v5_creates_indexes_and_backfills_only():
@@ -92,7 +94,8 @@ def test_a_populated_v4_store_gains_a_complete_hour_tier(tmp_path, panel_env):
 
     new = open_stats_db(path)
     try:
-        assert new.execute("PRAGMA user_version").fetchone()[0] == 5
+        assert new.execute("PRAGMA user_version").fetchone()[0] == \
+            STATS_MIGRATIONS[-1][0]
         hours = {(r["bucket"], r["device"]): tuple(r)[3:] for r in new.execute(
             "SELECT bucket, device, chain, up, down, samples, conns, peak_up, "
             "peak_down FROM stats_hour")}
@@ -164,11 +167,12 @@ def test_every_stats_table_is_purged_and_capped(tmp_path, panel_env):
 def test_an_older_image_opens_a_v5_store_without_migrating_back(tmp_path,
                                                                panel_env):
     path = tmp_path / "stats.db"
-    open_stats_db(path).close()  # v5
+    open_stats_db(path).close()  # v5 and later
     older = open_db(path, migrations=STATS_MIGRATIONS[:4],
                     pre_migrate=("PRAGMA auto_vacuum = INCREMENTAL",))
     try:
-        assert older.execute("PRAGMA user_version").fetchone()[0] == 5
+        assert older.execute("PRAGMA user_version").fetchone()[0] == \
+            STATS_MIGRATIONS[-1][0]
         older.execute("INSERT INTO stats_minute (bucket, device, chain, up, "
                       "down) VALUES ('2026-10-15T12:00', ?, 'X', 3, 4)", (A,))
         assert older.execute("SELECT up FROM stats_minute").fetchone()[0] == 3

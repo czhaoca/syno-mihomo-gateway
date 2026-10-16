@@ -52,6 +52,11 @@ DIMENSION_TABLES = tuple(f"stats_{dim}_{tier}" for dim in DIMENSIONS
 # app almost as well as a hostname does. Hour-keyed, like stats_domain.
 CLASS_TABLES = ("stats_sniff", "stats_asn", "stats_port")
 
+# The collector's own gauges (#96): one row per maintenance pass, minute
+# keyed, no device, under the forced DOMAIN_RETENTION_DAYS like the other
+# seven-day tables.
+SELF_TABLE = "stats_self"
+
 # The value written when a field is absent from the snapshot (DEC-A: the
 # geo fields are feature-detected per snapshot) - a row, never a drop.
 UNKNOWN = "unknown"
@@ -66,7 +71,7 @@ GATEWAY_DEVICE = "gateway"
 # is that nothing does.
 PURGE_TABLES = ("stats_minute", MINUTE_TABLE, "stats_hour", "stats_day",
                 "stats_domain", "stats_coverage", "stats_gap",
-                *DIMENSION_TABLES, *CLASS_TABLES)
+                *DIMENSION_TABLES, *CLASS_TABLES, SELF_TABLE)
 
 
 def _value_table(name: str, *, day: bool = False) -> str:
@@ -265,6 +270,14 @@ STATS_MIGRATIONS = [
         *(f"CREATE INDEX {name}_device ON {name} (device, bucket);"
           for name in _INDEXED),
         *(f"{stmt};" for stmt in _FOLD_LEGACY_MINUTES)])),
+    # v6 - the collector's own gauges (#96). NULL is "not measured".
+    (6, f"""
+    CREATE TABLE {SELF_TABLE} (
+        bucket TEXT PRIMARY KEY,
+        poll_ms INTEGER, conns INTEGER, failed_polls INTEGER,
+        lag_s INTEGER, db_bytes INTEGER, mihomo_mem_mb INTEGER
+    );
+    """),
 ]
 
 

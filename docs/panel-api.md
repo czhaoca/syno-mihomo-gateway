@@ -106,6 +106,12 @@ Parameters: `limit`
 
 Stats Purge
 
+## `GET /v1/stats/self`
+
+Stats Self
+
+Parameters: `since`, `until`
+
 ## `GET /v1/stats/timeline`
 
 Stats Timeline

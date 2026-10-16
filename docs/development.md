@@ -415,7 +415,22 @@ A6 (REQUIRED): panel `/health` db_ok, the sibling-reach probe, LAN-client UI
 reach, per-mode policy flips judged from `/connections` with two distinct
 spare source IPs, persistence across a mihomo restart, and cleanup — its
 pure parsers are covered by `--self-test` like every other measurement
-helper.
+helper. From v1.11, phase **A6c (REQUIRED)** reads the panel's `/health`
+telemetry only, with no LAN probe:
+- `collector=ok`;
+- a mean poll of at most half the interval the panel reports;
+- a readable mihomo version;
+- `stats.db` below 90 % of the cap the panel reports.
+
+It also prints, for the release notes, the raw numbers, the collection gaps
+recorded since the run began, and the spread of the per-minute poll timings
+over the run, and warns (without gating) when a poll time crosses the 500 ms
+the #96 REQ-ADD allows for the 2 s default or the run recorded gaps; an
+unreadable gap or gauge history fails, since it is evidence that release
+decision needs. A collector the operator turned off skips its checks with a
+WARN, including the version check, since nothing then samples mihomo. A key
+a v1.11 panel must send fails. Its parser `vr_a6c_lines` has positive and
+negative controls in `--self-test`.
 An interrupted run (Ctrl-C) restores the parked caches and the original `.env`
 before recreating, and the transcript `tee` survives the terminal's signal so the
 cleanup lines reach the log.

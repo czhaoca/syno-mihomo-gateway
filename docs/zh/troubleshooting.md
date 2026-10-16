@@ -741,6 +741,17 @@ mutation`——并不致命：栈能部署、能路由，只是每一次面板�
 3. `sudo docker restart mihomo-panel` 会重新执行启动时的再同步，把
    `policy.db` 中完整的期望状态重新应用一遍。
 
+## 网关面板：`companion_health` 对采集器发出警告
+
+面板正常运行、策略可以编辑，但 doctor 报告 `companion_health: degraded`，详情中包含以下一项或多项。每一项都只是警告：路由不受影响，doctor 的退出码类别也不变。
+
+- **"stats collection is stale"**：面板最近没有完成对 mihomo `/connections` 的轮询。确认 mihomo 正在运行，且面板能访问其控制器（`sudo docker logs mihomo-panel`）。刚部署后 mihomo 启动期间出现几秒的滞后是正常的。
+- **"a stats poll takes N ms on average, more than half the Ns interval"**：轮询相对于轮询间隔太慢，很可能出现采集空洞。在 `.env` 中调大 `PANEL_STATS_POLL_S`（例如改为 5）并重新部署。
+- **"stats.db is at N% of its cap"**：到 100% 时面板会裁剪最旧的历史。调大 `PANEL_STATS_CAP_MB`、缩短留存（`PANEL_STATS_HOUR_DAYS`、`PANEL_STATS_DAY_DAYS`），或清除不需要的数据（见[运维](operations.md)）。
+- **"mihomo uses N MB, above PANEL_MIHOMO_MEM_WARN_MB"**：mihomo 的内存超过了你设定的阈值（默认 512）。如果这对你的主机是正常的，调高阈值或设为 0；否则检查是否有失控的订阅或连接数过多，并重启 mihomo。
+
+采集器自身的历史可以在面板的 `GET /v1/stats/self` 查看：每分钟一行，保留 7 天。
+
 ## 网关面板：每次修改都返回 403
 
 修改操作由 bearer 令牌把关。**每一次**修改都返回 403，说明要么

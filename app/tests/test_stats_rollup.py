@@ -131,7 +131,7 @@ def test_cap_noop_when_under(panel_env, stats_conn):
     # the point - it is what catches a table added without a place in the
     # cap (test_migration_v5 also checks it against the live schema).
     assert pruned == dict.fromkeys(
-        ["domain", "coverage", "sniff", "asn", "port", "minute",
+        ["domain", "coverage", "sniff", "asn", "port", "self", "minute",
          "legacy_minute", "hour", "day",
          "exit_hour", "exit_day", "rule_hour", "rule_day", "category_hour",
          "category_day", "country_hour", "country_day", "gap"], 0)

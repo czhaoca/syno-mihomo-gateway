@@ -13,8 +13,9 @@ restarted for a policy change.
 - CLI: `gateway.sh policy --list` / `--set <ip> --mode full-tunnel|full-direct|default`
   ([CLI reference](cli.md)).
 - HTTP API: [generated reference](panel-api.md) — additive-only `/v1` contract.
-- Doctor: `companion_health` (panel down/degraded ⇒ warn) and `policy_parity`
-  (panel state vs mihomo rules drift ⇒ **error, exit 3**).
+- Doctor: `companion_health` (panel down/degraded, a stale collector, a slow
+  poll, `stats.db` near its cap, or mihomo memory over a threshold ⇒ warn) and
+  `policy_parity` (panel state vs mihomo rules drift ⇒ **error, exit 3**).
 
 ## How a policy change flows
 
@@ -251,9 +252,34 @@ you, so those rows stay until v1.11 is back.
   cloudflared runs in token mode here, so its ingress mapping is invisible to
   any local file. Until that exists, this warning is the control.
 
+## Collector health
+
+`/health` (LAN-open, flat keys, numbers only, no error text) reports how the
+stats collector is doing. `null` means "not measured yet", never zero.
+
+| Key | Meaning |
+|---|---|
+| `collector` | `ok`, `stale` (no recent successful poll), `off` (`PANEL_STATS_POLL_S=0`) or `error` (stats store unavailable) |
+| `collector_lag_s` | Seconds since the last successful poll |
+| `collector_poll_ms` | Mean duration of the last 30 successful polls (fetch + store), ms |
+| `collector_conns` | Connections in the last snapshot |
+| `collector_failed_polls` | Polls that failed since the panel started |
+| `collector_interval_s` | The poll interval the panel is actually using (`0` = collector off) |
+| `stats_db_bytes` / `stats_cap_mb` | `stats.db` size, and the cap the panel is actually using (`0` = none) |
+| `stats_db_growth_mb_day` | How fast `stats.db` grew over the last day, MB/day (null until an hour of samples; negative after a purge) |
+| `mihomo_mem_mb` / `mihomo_version` | mihomo's in-use memory and running version, read once a minute |
+
+`collector_interval_s` and `stats_cap_mb` go beyond the seven telemetry keys
+the work order listed. They let the doctor and the release validator compare
+numbers the panel reports, instead of re-reading `.env` knobs that the panel
+may parse differently or that were edited without a redeploy.
+
+`GET /v1/stats/self` serves the same gauges as a timeline, one row a minute
+for seven days. Purge it like any other table (`stats_self`).
+
 ## When something is off
 
 [Troubleshooting](troubleshooting.md) covers the concrete cases: policy
 drift (`policy_parity` exit 3, the marker), 403 on every mutation, the
-fail-static recovery path, and why a full-direct device can still show a
-foreign-DNS asymmetry.
+fail-static recovery path, the collector warnings, and why a full-direct
+device can still show a foreign-DNS asymmetry.

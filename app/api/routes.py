@@ -88,7 +88,8 @@ PurgeTable = Literal[
     "stats_domain", "stats_coverage", "stats_gap",
     "stats_exit_hour", "stats_exit_day", "stats_rule_hour", "stats_rule_day",
     "stats_category_hour", "stats_category_day", "stats_country_hour",
-    "stats_country_day", "stats_sniff", "stats_asn", "stats_port"]
+    "stats_country_day", "stats_sniff", "stats_asn", "stats_port",
+    "stats_self"]
 
 
 class StatsPurge(BaseModel):
@@ -187,6 +188,7 @@ def health(request: Request) -> dict:
         # this port (DEC-12: node ops stay on the dashboard; no URL
         # literal may live in the static tree)
         "dashboard_port": config.dashboard_port(),
+        **_telemetry(request, last_poll),
         # The day tier's framing (#76). FLAT keys deliberately: the doctor
         # reads /health with a sed scalar extractor (checks.sh _ph_field),
         # which cannot see into a nested object. `day_framing` is
@@ -197,6 +199,31 @@ def health(request: Request) -> dict:
         # maintenance only runs once a minute: the symptom would erase
         # itself faster than it could appear.
         **_day_status(request),
+    }
+
+
+def _telemetry(request: Request, last_poll) -> dict:
+    """The collector's self-telemetry (#96) - FLAT keys, counts and numbers
+    only, never error text; None is "not measured yet", never 0.
+
+    `collector_interval_s` and `stats_cap_mb` are the values the app is
+    actually running with (DEC-C): the doctor and the release validator
+    judge "a poll slower than half its interval" and "90 % of the cap"
+    against these instead of re-parsing the knobs, which could drift from
+    the app's own defaults or describe an .env not yet redeployed."""
+    collector = getattr(request.app.state, "collector", None)
+    status = getattr(collector, "status", None) or {}
+    from app.collector.core import _lag_s, _now_str
+    return {
+        "collector_lag_s": _lag_s(last_poll, _now_str()),
+        "collector_poll_ms": status.get("poll_ms"),
+        "collector_conns": status.get("conns"),
+        "collector_failed_polls": status.get("failed_polls", 0),
+        "collector_interval_s": config.stats_poll_s(),
+        "stats_cap_mb": config.stats_cap_mb(),
+        "stats_db_growth_mb_day": status.get("db_growth_mb_day"),
+        "mihomo_mem_mb": status.get("mihomo_mem_mb"),
+        "mihomo_version": status.get("mihomo_version", ""),
     }
 
 
@@ -418,6 +445,21 @@ def stats_coverage(request: Request, since: str = "", until: str = "") -> dict:
     """
     with _stats_reader(request) as conn:
         return stats_store.coverage_report(conn, since, until)
+
+
+@router.get("/v1/stats/self")
+def stats_self(request: Request, since: str = "", until: str = "") -> dict:
+    """The collector's own gauges (#96), one row per maintenance pass
+    (about a minute), kept 7 days: poll duration (ms, the mean of the last
+    30 polls), connections in the last snapshot, failed polls since the
+    panel started, seconds since the last good poll, stats.db bytes, and
+    mihomo's in-use memory (MiB). `null` is "not measured", never 0.
+    `since`/`until` compare against the minute keys (`YYYY-MM-DDTHH:MM`, UTC)
+    as strings, like every stats read: `until=2026-10-16` ends BEFORE that
+    day; `until=2026-10-16T23:59` includes it."""
+    with _stats_reader(request) as conn:
+        return {"retention_days": stats_store.DOMAIN_RETENTION_DAYS,
+                "rows": stats_store.read_self(conn, since, until)}
 
 
 @router.get("/v1/stats/gaps")

@@ -647,6 +647,55 @@ _ph_field() {
     | head -n 1 | tr '|' '/'
 }
 
+# _cch_uint VALUE - true when VALUE is a plain non-negative integer. A key
+# an older panel does not send, a JSON null ("not measured") or anything
+# else is NOT a number, and the check it would feed is skipped - never judged
+# on an invented value.
+_cch_uint() { case "$1" in ''|*[!0-9]*) return 1 ;; esac; }
+
+# _cch_warnings - the collector-telemetry warnings (#96) over the fetched
+# /health, one per line. Only numbers the panel itself reports are compared
+# (DEC-C: its effective interval and cap travel in /health), so the doctor
+# never re-parses a knob the app may read differently. Thresholds:
+# collector=stale; the mean poll slower than half the interval; stats.db at
+# >= 90 % of the cap (the cap prunes history at 100 %); mihomo memory above
+# PANEL_MIHOMO_MEM_WARN_MB (0 = off). Byte maths runs in awk so a large cap
+# cannot overflow a 32-bit shell.
+_cch_warnings() {
+  _cw_col="$(_ph_field collector)"
+  _cw_lag="$(_ph_field collector_lag_s)"
+  if [ "$_cw_col" = stale ]; then
+    _cw_last="$(_ph_field collector_last_ts)"
+    if _cch_uint "$_cw_lag"; then
+      echo "stats collection is stale - no successful poll for ${_cw_lag}s"
+    elif [ -n "$_cw_last" ] && [ "$_cw_last" != null ]; then
+      echo "stats collection is stale - no successful poll since $_cw_last"
+    else
+      echo "stats collection is stale - no successful poll since the panel started"
+    fi
+  fi
+  _cw_ms="$(_ph_field collector_poll_ms)"
+  _cw_iv="$(_ph_field collector_interval_s)"
+  if _cch_uint "$_cw_ms" && _cch_uint "$_cw_iv" && [ "$_cw_iv" -gt 0 ] \
+     && [ "$((_cw_ms * 2))" -gt "$((_cw_iv * 1000))" ]; then
+    echo "a stats poll takes ${_cw_ms} ms on average, more than half the ${_cw_iv}s interval - raise PANEL_STATS_POLL_S or expect gaps"
+  fi
+  _cw_b="$(_ph_field stats_db_bytes)"
+  _cw_cap="$(_ph_field stats_cap_mb)"
+  if _cch_uint "$_cw_b" && _cch_uint "$_cw_cap" && [ "$_cw_cap" -gt 0 ]; then
+    _cw_pct="$(awk -v b="$_cw_b" -v c="$_cw_cap" 'BEGIN { printf "%d", b * 100 / (c * 1048576) }')"
+    if [ "${_cw_pct:-0}" -ge 90 ]; then
+      echo "stats.db is at ${_cw_pct}% of its ${_cw_cap} MB cap - the oldest history is pruned at 100% (raise PANEL_STATS_CAP_MB or shorten retention)"
+    fi
+  fi
+  _cw_mem="$(_ph_field mihomo_mem_mb)"
+  _cw_lim="${PANEL_MIHOMO_MEM_WARN_MB:-512}"
+  _cch_uint "$_cw_lim" || _cw_lim=512
+  if _cch_uint "$_cw_mem" && [ "$_cw_lim" -gt 0 ] && [ "$_cw_mem" -gt "$_cw_lim" ]; then
+    echo "mihomo uses ${_cw_mem} MB, above PANEL_MIHOMO_MEM_WARN_MB=${_cw_lim}"
+  fi
+}
+
 chk_companion_health() {
   if ! detect_compose >/dev/null 2>&1; then
     CHECK_VALUE=unknown CHECK_SEV=silent
@@ -683,6 +732,16 @@ chk_companion_health() {
       CHECK_DETAIL="panel is up but stats collection is broken (collector=error) - policy editing works; history has a hole"
       return 0 ;;
   esac
+  # the telemetry warnings share ONE record (the value stays `degraded`,
+  # the severity `warn`: the exit-code class never changes) with every
+  # condition that holds in its detail
+  _cch_warn="$(_cch_warnings | awk 'NR > 1 { printf "; " } { printf "%s", $0 }')"
+  if [ -n "$_cch_warn" ]; then
+    CHECK_VALUE=degraded CHECK_SEV=warn
+    CHECK_DETAIL="panel is up, policy editing works, but: $_cch_warn"
+    CHECK_HINT="      the collector's own numbers: GET /v1/stats/self on the panel (7 days, one row a minute)"
+    return 0
+  fi
   CHECK_VALUE=ok CHECK_SEV=ok
   CHECK_DETAIL="panel healthy (collector=${_cch_col:-unknown})"
 }

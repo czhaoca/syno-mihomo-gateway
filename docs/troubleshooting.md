@@ -844,6 +844,31 @@ Recovery, in order:
 3. `sudo docker restart mihomo-panel` re-runs the startup re-sync, which re-applies the
    whole desired state from `policy.db`.
 
+## Panel: `companion_health` warns about the collector
+
+The panel is up and policy editing works, but the doctor reports
+`companion_health: degraded` with one or more of these in its detail. Each is
+a warning: routing is unaffected and the doctor's exit class does not change.
+
+- **"stats collection is stale"**: the panel has not completed a poll of
+  mihomo's `/connections` recently. Check that mihomo is running and that the
+  panel reaches its controller (`sudo docker logs mihomo-panel`). Right after
+  a deploy, a few seconds of staleness while mihomo starts is normal.
+- **"a stats poll takes N ms on average, more than half the Ns interval"**:
+  polls are too slow for the cadence, so collection gaps are likely. Raise
+  `PANEL_STATS_POLL_S` in `.env` (for example to 5) and redeploy.
+- **"stats.db is at N% of its cap"**: at 100 % the panel prunes the oldest
+  history. Raise `PANEL_STATS_CAP_MB`, shorten retention
+  (`PANEL_STATS_HOUR_DAYS`, `PANEL_STATS_DAY_DAYS`), or purge what you do
+  not need ([operations](operations.md)).
+- **"mihomo uses N MB, above PANEL_MIHOMO_MEM_WARN_MB"**: mihomo's memory is
+  above your threshold (default 512). If that is normal for your host,
+  raise the threshold or set it to 0. If it is not, check for a runaway
+  subscription or a very large connection count, and restart mihomo.
+
+The collector's own history is at `GET /v1/stats/self` on the panel: one
+row a minute for seven days.
+
 ## Panel: every change answers 403
 
 Mutations are bearer-gated. A 403 on **every** mutation means `PANEL_SECRET` is empty

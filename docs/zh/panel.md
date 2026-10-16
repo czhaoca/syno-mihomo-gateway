@@ -12,7 +12,8 @@
 - CLI：`gateway.sh policy --list` / `--set <ip> --mode full-tunnel|full-direct|default`
   （[CLI 参考](cli.md)）。
 - HTTP API：[生成的参考](../panel-api.md)（仅英文）——只增不破的 `/v1` 契约。
-- 体检：`companion_health`（面板停止或降级 ⇒ 告警）与 `policy_parity`
+- 体检：`companion_health`（面板停止或降级、采集器滞后、轮询过慢、`stats.db`
+  接近上限，或 mihomo 内存超过阈值 ⇒ 告警）与 `policy_parity`
   （面板状态与 mihomo 规则出现漂移 ⇒ **错误，退出码 3**）。
 
 ## 策略变更如何生效
@@ -202,9 +203,29 @@ mihomo 自身的流量（订阅拉取、健康检查）计在设备 `gateway` �
   授权范围，因为这里的 cloudflared 运行在令牌模式下，它的入站映射对
   任何本地文件都不可见。在它出现之前，本节的警告就是唯一的控制手段。
 
+## 采集器健康状况
+
+`/health`（局域网开放、扁平键、只含数字、不含错误文本）报告统计采集器的状况。`null` 表示“尚未测量”，从不表示零。
+
+| 键 | 含义 |
+|---|---|
+| `collector` | `ok`、`stale`（近期没有成功的轮询）、`off`（`PANEL_STATS_POLL_S=0`）或 `error`（统计库不可用） |
+| `collector_lag_s` | 距上次成功轮询的秒数 |
+| `collector_poll_ms` | 最近 30 次成功轮询（获取 + 写入）的平均耗时，毫秒 |
+| `collector_conns` | 上一次快照中的连接数 |
+| `collector_failed_polls` | 面板启动以来失败的轮询次数 |
+| `collector_interval_s` | 面板实际使用的轮询间隔（`0` = 采集器关闭） |
+| `stats_db_bytes` / `stats_cap_mb` | `stats.db` 的大小，以及面板实际使用的上限（`0` = 无上限） |
+| `stats_db_growth_mb_day` | `stats.db` 在最近一天的增长速度，MB/天（采样满一小时之前为 null；清除后可能为负） |
+| `mihomo_mem_mb` / `mihomo_version` | mihomo 的内存占用与运行版本，每分钟读取一次 |
+
+`collector_interval_s` 和 `stats_cap_mb` 超出了工单所列的七个遥测键。有了它们，doctor 和发布验证脚本比较的是面板自己报告的数字，而不是重新读取 `.env` 中的开关——面板解析这些开关的方式可能不同，或者 `.env` 已被修改却尚未重新部署。
+
+`GET /v1/stats/self` 以时间线形式提供同样的指标，每分钟一行，保留 7 天。可以像其他表一样清除（`stats_self`）。
+
 ## 感觉不对时
 
 [故障排查](troubleshooting.md)覆盖了具体场景：策略漂移
 （`policy_parity` 退出码 3、那个标记文件）、每次修改都返回 403、
-fail-static 的恢复路径，以及为什么一台 full-direct 设备仍可能出现
-境外 DNS 的不对称现象。
+fail-static 的恢复路径、采集器的各项警告，以及为什么一台 full-direct
+设备仍可能出现境外 DNS 的不对称现象。

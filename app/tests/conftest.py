@@ -32,6 +32,10 @@ class FakeMihomoClient:
         # fail_connections simulates a controller outage for gap testing.
         self.conns: list[dict] = []
         self.fail_connections = False
+        # /version + /memory (#96): None = endpoint answers nothing usable
+        self.version_text = ""
+        self.mem_bytes: int | None = None
+        self.fail_meta = False
 
     def refresh_provider(self, name: str) -> None:
         if self.fail_puts:
@@ -42,6 +46,16 @@ class FakeMihomoClient:
         if self.fail_connections:
             raise MihomoError("GET /connections failed (fixture)")
         return [dict(c) for c in self.conns]
+
+    def version(self) -> str:
+        if self.fail_meta:
+            raise MihomoError("GET /version failed (fixture)")
+        return self.version_text
+
+    def memory_inuse(self) -> int | None:
+        if self.fail_meta:
+            raise MihomoError("GET /memory failed (fixture)")
+        return self.mem_bytes
 
     def provider_rule_counts(self) -> dict:
         counts = {}

@@ -14,6 +14,7 @@ from app.store.stats.schema import (
     DOMAIN_RETENTION_DAYS,
     MINUTE_TABLE,
     PURGE_TABLES,
+    SELF_TABLE,
     _db_bytes,
     _parse_ts,
 )
@@ -24,8 +25,13 @@ _DAY_ROLLS = (("stats_hour", "stats_day", "chain", True),
               *((f"stats_{dim}_hour", f"stats_{dim}_day", "value", False)
                 for dim in DIMENSIONS))
 
-# the tables under the FORCED seven-day horizon (brief DEC-8 rider, #77 DEC-A)
-_SEVEN_DAY_TABLES = ("stats_domain", "stats_coverage", *CLASS_TABLES)
+# the tables under the FORCED seven-day horizon (brief DEC-8 rider, #77 DEC-A,
+# and #96's own gauges)
+_SEVEN_DAY_TABLES = ("stats_domain", "stats_coverage", *CLASS_TABLES,
+                     SELF_TABLE)
+
+# tables with no device column: a device-scoped purge leaves them alone
+_NO_DEVICE_TABLES = ("stats_gap", SELF_TABLE)
 
 
 def _roll_days(conn, hour_table, day_table, key_col, facts, hours, frame):
@@ -146,6 +152,7 @@ _CAP_TIERS = (("domain", "stats_domain", "bucket", 13, 0),
               ("coverage", "stats_coverage", "bucket", 13, 0),
               *((t.removeprefix("stats_"), t, "bucket", 13, 0)
                 for t in CLASS_TABLES),
+              ("self", SELF_TABLE, "bucket", 16, 0),
               ("minute", MINUTE_TABLE, "bucket", 16, 1),
               ("legacy_minute", "stats_minute", "bucket", 16, 1),
               ("hour", "stats_hour", "bucket", 13, 2),
@@ -303,14 +310,15 @@ def purge_stats(conn, *, device: str = "", tables=None,
     deliberately survive every form: dropping a baseline would make every
     still-open connection re-contribute its entire pre-purge cumulative on
     the very next poll - the exact double-count the delta model exists to
-    prevent. The gap history has no device, so a device scope leaves it.
+    prevent. The gap history and the collector's gauges have no device, so
+    a device scope leaves them.
     The POLICY audit lives in policy.db and is untouched by construction.
     """
     # PURGE_TABLES is the single list, so a table added later cannot
     # quietly survive the one operation whose promise is that none does.
     chosen = [t for t in PURGE_TABLES if tables is None or t in tables]
     if device:
-        chosen = [t for t in chosen if t != "stats_gap"]
+        chosen = [t for t in chosen if t not in _NO_DEVICE_TABLES]
     deleted = {}
     conn.execute("BEGIN IMMEDIATE")
     try:

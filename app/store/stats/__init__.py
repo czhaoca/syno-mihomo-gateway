@@ -45,6 +45,7 @@ from app.store.stats.schema import (
     KLASS_IP_ONLY,
     MINUTE_TABLE,
     PURGE_TABLES,
+    SELF_TABLE,
     STATS_MIGRATIONS,
     UNATTRIBUTED,
     UNKNOWN,
@@ -55,6 +56,7 @@ from app.store.stats.schema import (
     meta_get,
     open_stats_db,
 )
+from app.store.stats.self import read_self, record_self, self_growth_mb_day
 from app.store.stats.window import (
     RANGE_SPECS,
     range_window,
@@ -78,6 +80,7 @@ __all__ = [
     "PAYLOAD_RULES",
     "PURGE_TABLES",
     "RANGE_SPECS",
+    "SELF_TABLE",
     "STATS_MIGRATIONS",
     "UNATTRIBUTED",
     "UNKNOWN",
@@ -102,11 +105,14 @@ __all__ = [
     "read_domains",
     "read_gaps",
     "read_grouped",
+    "read_self",
     "read_timeline",
     "read_window_dimension",
     "read_window_grouped",
     "read_window_timeline",
+    "record_self",
     "rollup",
+    "self_growth_mb_day",
     "window_framings",
     "window_key",
 ]
