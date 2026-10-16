@@ -10,7 +10,7 @@ Deliberately NO CORSMiddleware anywhere: the panel is same-origin only
 """
 
 import threading
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -67,10 +67,9 @@ def create_app(*, mihomo_client=None, notifier=None) -> FastAPI:
         app.state.stats_lock = threading.RLock()
         app.state.collector = None
         stats_loop = None
-        try:
+        # a failure is surfaced via /health; policy is unaffected by design
+        with suppress(StoreError):
             app.state.stats_conn = open_stats_db(config.stats_db_path())
-        except StoreError:
-            pass  # surfaced via /health; policy is unaffected by design
         if app.state.stats_conn is not None:
             def day_source():
                 """The day tier's framing, resolved FRESH every maintenance

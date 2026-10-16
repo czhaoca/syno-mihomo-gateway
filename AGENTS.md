@@ -72,6 +72,14 @@
   because the Woodpecker repo is untrusted (no socket, no privileged steps; step containers
   stay plain daemonless images). The pre-tag release gate is BOTH surfaces green.
 
+## Code layout norm
+
+- Panel modules under `app/` stay around **400 lines or fewer** — a soft norm, not a CI gate.
+  When one grows past it, split it into a package with re-exports in its `__init__.py` (the
+  precedent: `app/store/stats/` — schema / ingest / maintain / read / window / coverage), so
+  callers keep importing the package. A monkeypatch on the package reaches the calls callers
+  make through it, not calls between its submodules — patch the submodule that makes the call.
+
 ## Documentation
 
 - Operator + developer manual: `docs/` (English) and `docs/zh/` (中文); indexes at

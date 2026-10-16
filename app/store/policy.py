@@ -16,6 +16,7 @@ row - /v1 is additive-only, so the shipped write paths stay byte-identical
 import os
 import sqlite3
 import time
+from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -180,10 +181,8 @@ def remove_device(conn, device_id: int, *, requester: str = "",
 
 
 def _rollback(conn) -> None:
-    try:
+    with suppress(sqlite3.Error):
         conn.execute("ROLLBACK")
-    except sqlite3.Error:
-        pass
 
 
 def backup_db(conn, db_path: Path, keep: int) -> Path | None:

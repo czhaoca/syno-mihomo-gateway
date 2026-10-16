@@ -1,6 +1,6 @@
 """Operator settings: defaults in code, the table stores only overrides.
 
-The k/v shape mirrors `stats_meta` (stats.py:61-64), the closest existing
+The k/v shape mirrors `stats_meta` (app/store/stats/schema.py), the closest existing
 idiom. What it deliberately does NOT mirror is where the default lives:
 `stats_meta` stores whatever the collector wrote, whereas here an unset key
 must resolve through code, so that shipping a new default actually reaches

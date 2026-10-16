@@ -12,6 +12,8 @@ version prefix and explicit owner acknowledgment (see the committed
 app/openapi.json contract gate).
 """
 
+import sqlite3
+from contextlib import contextmanager, suppress
 from datetime import UTC, datetime
 from typing import Annotated, Literal
 
@@ -24,6 +26,7 @@ from app.collector.core import GAP_FACTOR, effective_interval_s
 from app.store import dayframe, identity, settings
 from app.store import stats as stats_store
 from app.store.audit import append_audit, list_audit
+from app.store.db import StoreError, open_reader
 from app.store.policy import (
     StoreConflict,
     add_device,
@@ -178,6 +181,39 @@ def _stats_conn(request: Request):
     return conn
 
 
+@contextmanager
+def _stats_reader(request: Request):
+    """A per-request READ-ONLY connection for a stats read (#93).
+
+    Reads used to take the one stats connection under the lock the collector
+    holds for its flush and its maintenance pass, so a slow rollup or cap
+    prune stalled every stats view. A reader opened here sees the last
+    committed snapshot through WAL and never touches that lock, which is
+    left to the writer (collector + purge) alone.
+
+    The whole response is read inside ONE read transaction, so a body built
+    from several queries (window rows + framings, the coverage report)
+    still describes a single moment - the guarantee the lock used to give.
+    The writer connection must be up: it is what ran the migrations, and a
+    degraded store answers the same 503 as before.
+    """
+    _stats_conn(request)
+    try:
+        conn = open_reader(config.stats_db_path())
+    except StoreError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="stats store unavailable - collection degraded; policy "
+                   "serving is unaffected (see /health)") from exc
+    try:
+        conn.execute("BEGIN")
+        yield conn
+    finally:
+        with suppress(sqlite3.Error):
+            conn.execute("ROLLBACK")  # read-only: ending the snapshot is all
+        conn.close()
+
+
 Tier = Literal["minute", "hour", "day"]
 
 # The range vocabulary (#91) - settings.STATS_RANGES is the one list; a test
@@ -205,18 +241,15 @@ def _utcnow() -> datetime:
     return datetime.now(UTC)
 
 
-def _range_args(request: Request, range_: str, tier: str, since: str,
-                until: str):
+def _range_args(request: Request, range_: str, tier: str):
     """(resolution, window start, frame) for a `range=` read.
 
     The day framing is resolved only for a DAY-resolution read - the only
-    one that keys anything by local day - and HERE, before the caller takes
-    the stats lock. The production source reads the timezone from policy.db
+    one that keys anything by local day - and HERE, before the caller opens
+    its reader. The production source reads the timezone from policy.db
     under the POLICY mutex, which a policy change holds across its mihomo
     controller calls: resolving it for every read would put the landing 7d
-    view behind each policy apply in flight, and resolving it inside the
-    stats lock would invent a stats->policy lock ordering (see
-    CollectorLoop) one future route away from a deadlock.
+    view behind each policy apply in flight.
     """
     # presence, not value: `since=` sent empty is still a second way of
     # naming the window, and accepting it would make the refusal depend on
@@ -237,11 +270,10 @@ def _range_args(request: Request, range_: str, tier: str, since: str,
     return resolution, start, frame
 
 
-def _range_grouped(request: Request, group_col: str, range_: str, tier: str,
-                   since: str, until: str) -> dict:
-    resolution, start, frame = _range_args(request, range_, tier, since, until)
-    with request.app.state.stats_lock:
-        conn = _stats_conn(request)
+def _range_grouped(request: Request, group_col: str, range_: str,
+                   tier: str) -> dict:
+    resolution, start, frame = _range_args(request, range_, tier)
+    with _stats_reader(request) as conn:
         body = {"tier": resolution,
                 "rows": stats_store.read_window_grouped(conn, resolution,
                                                         group_col, start,
@@ -272,9 +304,8 @@ def stats_devices(request: Request, tier: Tier = "minute",
     """Per-device totals. With `range`, window-complete across tiers; with
     only `tier`, the single tier table (unchanged since v1.8.0)."""
     if range_ is not None:
-        return _range_grouped(request, "device", range_, tier, since, until)
-    with request.app.state.stats_lock:
-        conn = _stats_conn(request)
+        return _range_grouped(request, "device", range_, tier)
+    with _stats_reader(request) as conn:
         return {"tier": tier,
                 "rows": stats_store.read_grouped(conn, tier, "device",
                                                  since, until),
@@ -288,9 +319,8 @@ def stats_chains(request: Request, tier: Tier = "minute",
     """Per-chain totals. With `range`, window-complete across tiers; with
     only `tier`, the single tier table (unchanged since v1.8.0)."""
     if range_ is not None:
-        return _range_grouped(request, "chain", range_, tier, since, until)
-    with request.app.state.stats_lock:
-        conn = _stats_conn(request)
+        return _range_grouped(request, "chain", range_, tier)
+    with _stats_reader(request) as conn:
         return {"tier": tier,
                 "rows": stats_store.read_grouped(conn, tier, "chain",
                                                  since, until),
@@ -300,8 +330,7 @@ def stats_chains(request: Request, tier: Tier = "minute",
 @router.get("/v1/stats/domains")
 def stats_domains(request: Request, since: str = "",
                   until: str = "") -> dict:
-    with request.app.state.stats_lock:
-        conn = _stats_conn(request)
+    with _stats_reader(request) as conn:
         return {"enabled": config.stats_domains(),
                 "rows": stats_store.read_domains(conn, since, until)}
 
@@ -315,15 +344,12 @@ def stats_timeline(request: Request, tier: Tier = "minute",
     framing for the not-yet-rolled tail, stamped like stored ones); with
     only `tier`, the single tier table (unchanged since v1.8.0)."""
     if range_ is not None:
-        resolution, start, frame = _range_args(request, range_, tier, since,
-                                               until)
-        with request.app.state.stats_lock:
-            conn = _stats_conn(request)
+        resolution, start, frame = _range_args(request, range_, tier)
+        with _stats_reader(request) as conn:
             return {"tier": resolution, "device": device,
                     "rows": stats_store.read_window_timeline(
                         conn, resolution, device, start, frame)}
-    with request.app.state.stats_lock:
-        conn = _stats_conn(request)
+    with _stats_reader(request) as conn:
         return {"tier": tier, "device": device,
                 "rows": stats_store.read_timeline(conn, tier, device,
                                                   since, until)}
@@ -349,15 +375,13 @@ def stats_coverage(request: Request, since: str = "", until: str = "") -> dict:
     by construction, so the report needs none of the privacy surface the
     opt-in domain table carries.
     """
-    with request.app.state.stats_lock:
-        conn = _stats_conn(request)
+    with _stats_reader(request) as conn:
         return stats_store.coverage_report(conn, since, until)
 
 
 @router.get("/v1/stats/gaps")
 def stats_gaps(request: Request, limit: int = 100) -> dict:
-    with request.app.state.stats_lock:
-        conn = _stats_conn(request)
+    with _stats_reader(request) as conn:
         return {"rows": stats_store.read_gaps(conn, limit)}
 
 

@@ -1,6 +1,6 @@
 """Operator settings - defaults in code, the table holds only overrides.
 
-The storage shape mirrors `stats_meta` (stats.py:61-64), the existing k/v
+The storage shape mirrors `stats_meta` (app/store/stats/schema.py), the existing k/v
 idiom in this codebase. The RESOLUTION does not: `stats_meta` answers with
 whatever was written, whereas an unset key here resolves through
 `SPEC[key].default()`. That difference is the whole design. If first boot
@@ -15,6 +15,7 @@ setting is one SPEC entry rather than a new endpoint.
 import re
 import sqlite3
 import zoneinfo
+from contextlib import suppress
 from datetime import UTC, datetime
 
 from app import config
@@ -136,7 +137,7 @@ def _check_stats_range(raw: str) -> str:
 
 
 class _Setting:
-    __slots__ = ("default", "check", "description")
+    __slots__ = ("check", "default", "description")
 
     def __init__(self, default, check, description):
         self.default = default
@@ -318,10 +319,8 @@ def apply_values(conn, values: dict, *, requester: str = "",
                 changed.append(key)
         conn.execute("COMMIT")
     except BaseException:
-        try:
+        with suppress(sqlite3.Error):
             conn.execute("ROLLBACK")
-        except sqlite3.Error:
-            pass
         raise
     return changed
 

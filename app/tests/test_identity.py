@@ -516,8 +516,8 @@ def test_the_column_default_does_not_hand_out_authority(tmp_path):
     that blocks every sync - indistinguishable from the backfill. '' means
     unknown provenance: the weakest precedence, always overwritable."""
     conn = open_db(tmp_path / "policy.db")
-    default = [r for r in conn.execute("PRAGMA table_info(device_identity)")
-               if r["name"] == "source"][0]["dflt_value"]
+    default = next(r for r in conn.execute("PRAGMA table_info(device_identity)")
+                   if r["name"] == "source")["dflt_value"]
     assert default in ("''", '""'), (
         f"the source default must be blank, not authoritative; got {default!r}")
     # a column-omitting raw INSERT lands as unknown provenance...
@@ -684,13 +684,14 @@ def test_import_endpoint_carries_no_vendor_specific_code():
         text = path.read_text()
         low = text.lower()
         for vendor in vendors:
-            for pattern in (f"import {vendor}", f"from {vendor}",
-                            f'== "{vendor}"', f"== '{vendor}'",
-                            f'!= "{vendor}"', f"{vendor}_url",
-                            f"{vendor}_user", f"{vendor}_password",
-                            f"{vendor}.com", f"{vendor}os"):
-                if pattern in low:
-                    offenders.append(f"{path.name}: {pattern}")
+            offenders.extend(
+                f"{path.name}: {pattern}"
+                for pattern in (f"import {vendor}", f"from {vendor}",
+                                f'== "{vendor}"', f"== '{vendor}'",
+                                f'!= "{vendor}"', f"{vendor}_url",
+                                f"{vendor}_user", f"{vendor}_password",
+                                f"{vendor}.com", f"{vendor}os")
+                if pattern in low)
     assert not offenders, (
         f"the panel must hold no vendor logic or credential: {offenders}")
     # and no vendor credential may be read from the environment here
