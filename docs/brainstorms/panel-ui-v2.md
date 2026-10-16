@@ -193,6 +193,10 @@ npx playwright test                                        # required UI gate
 On-device: `validate_release.sh` A6 stays required, extended with a settings/stats
 surface leg (A6b) once those ship.
 
+> Erratum (2026-10-15): `scripts/ci/run_all.sh` never existed — the shell suites run one
+> by one. The authoritative local gate is `docs/development.md` "Local checks before
+> pushing", which mirrors `.woodpecker.yml` step for step.
+
 ## Work breakdown
 
 **v1.8.1 — CSS relief (no framework):**

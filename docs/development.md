@@ -308,8 +308,10 @@ here in the same change.
 # POSIX syntax (CI parse-checks EVERY .sh in the repo, incl. install.sh, installer/, ci/)
 for f in $(find . -path ./.git -prune -o -name "*.sh" -print); do sh -n "$f" || echo "FAIL $f"; done
 
-# renderer + rule check, then the CLI contract (both need pyyaml)
+# compose YAML parse (validate-yaml), renderer + rule check, then the CLI contract
+# (all need pyyaml)
 python3 -m venv /tmp/v && /tmp/v/bin/pip install -q pyyaml
+/tmp/v/bin/python -c "import yaml; yaml.safe_load(open('docker-compose.yml'))"
 /tmp/v/bin/python scripts/ci/render_check.py
 /tmp/v/bin/python scripts/ci/cli_contract_check.py   # --write regenerates the artifacts
 
@@ -318,9 +320,21 @@ python3 -m venv /tmp/v && /tmp/v/bin/pip install -q pyyaml
 /tmp/v/bin/python scripts/ci/woodpecker_pin_check.py
 /tmp/v/bin/python scripts/ci/woodpecker_pin_check_test.py
 
-# the panel app: lint, unit suite + OpenAPI contract gate, hermetic e2e
-# (own venv - the app pins its deps in app/requirements*.txt)
+# the panel's own venv (the app pins its deps in app/requirements*.txt)
 python3 -m venv /tmp/vp && /tmp/vp/bin/pip install -q -r app/requirements.txt -r app/requirements-dev.txt
+
+# the panel UI FIRST, in CI order: lockfile install + lint + the built-artifact gate
+# (ui-build), then the browser gate against the built panel (ui-e2e; needs the
+# Playwright browsers locally, or run it in the digest-pinned image CI reads from
+# .woodpecker.yml). Order matters: the served-build assertions in app/tests/test_ui.py
+# only run when app/ui/dist exists, so pytest before the build skips them silently.
+npm --prefix app/ui ci --no-audit --no-fund
+npm --prefix app/ui run lint
+python3 scripts/ci/ui_build_check.py --build
+(cd scripts/ci && python3 ui_build_check_test.py)
+(cd app/ui && PANEL_E2E_PYTHON=/tmp/vp/bin/python npx playwright test)
+
+# the panel app: lint, unit suite + OpenAPI contract gate, hermetic e2e
 /tmp/vp/bin/ruff check app
 /tmp/vp/bin/python -m pytest app/tests -q
 /tmp/vp/bin/python scripts/ci/panel_contract_check.py   # --write regenerates app/openapi.json

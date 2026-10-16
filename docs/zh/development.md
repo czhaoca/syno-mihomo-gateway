@@ -295,8 +295,10 @@ NAS 上的部署是由**非 root 管理员账户**持有的 bundle 安装；部�
 # POSIX 语法（CI 会解析检查仓库中的每一个 .sh，包括 install.sh、installer/、ci/）
 for f in $(find . -path ./.git -prune -o -name "*.sh" -print); do sh -n "$f" || echo "FAIL $f"; done
 
-# 渲染器 + 规则检查，然后是 CLI 契约（两者都需要 pyyaml）
+# compose YAML 解析（validate-yaml）、渲染器 + 规则检查，然后是 CLI 契约
+#（都需要 pyyaml）
 python3 -m venv /tmp/v && /tmp/v/bin/pip install -q pyyaml
+/tmp/v/bin/python -c "import yaml; yaml.safe_load(open('docker-compose.yml'))"
 /tmp/v/bin/python scripts/ci/render_check.py
 /tmp/v/bin/python scripts/ci/cli_contract_check.py   # --write 重新生成这些产物
 
@@ -305,9 +307,20 @@ python3 -m venv /tmp/v && /tmp/v/bin/pip install -q pyyaml
 /tmp/v/bin/python scripts/ci/woodpecker_pin_check.py
 /tmp/v/bin/python scripts/ci/woodpecker_pin_check_test.py
 
-# 面板应用：lint、单元测试 + OpenAPI 契约门、封闭式 e2e
-#（独立 venv——应用依赖钉在 app/requirements*.txt）
+# 面板自己的 venv（应用依赖钉在 app/requirements*.txt）
 python3 -m venv /tmp/vp && /tmp/vp/bin/pip install -q -r app/requirements.txt -r app/requirements-dev.txt
+
+# 先跑面板 UI，与 CI 顺序一致：按 lockfile 安装 + lint + 构建产物守门（ui-build），然后
+# 针对构建好的面板运行浏览器门（ui-e2e；本地需要 Playwright 浏览器，或在 CI 从
+# .woodpecker.yml 读取的、按 digest 钉死的镜像中运行）。顺序很重要：app/tests/test_ui.py
+# 中针对已构建产物的断言只在 app/ui/dist 存在时运行，先跑 pytest 会让它们悄悄跳过。
+npm --prefix app/ui ci --no-audit --no-fund
+npm --prefix app/ui run lint
+python3 scripts/ci/ui_build_check.py --build
+(cd scripts/ci && python3 ui_build_check_test.py)
+(cd app/ui && PANEL_E2E_PYTHON=/tmp/vp/bin/python npx playwright test)
+
+# 面板应用：lint、单元测试 + OpenAPI 契约门、封闭式 e2e
 /tmp/vp/bin/ruff check app
 /tmp/vp/bin/python -m pytest app/tests -q
 /tmp/vp/bin/python scripts/ci/panel_contract_check.py   # --write 重新生成 app/openapi.json

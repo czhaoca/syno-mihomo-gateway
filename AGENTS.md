@@ -49,20 +49,23 @@
 ## CI/CD
 
 - **Platform**: Woodpecker CI (on-premise), plus one GitHub Actions check (below)
-- **Pipeline**: `.woodpecker.yml` — 15 blocking steps, in declaration order: `validate-compose`,
-  `validate-yaml`, `render-config` (`scripts/ci/render_check.py`, also enforces the
+- **Pipeline**: `.woodpecker.yml` — 16 blocking steps, in declaration order: `validate-compose`,
+  `validate-yaml`, `ci-pins` (every step image pinned `name:tag@sha256:<digest>`, plus the gate's
+  own controls), `render-config` (`scripts/ci/render_check.py`, also enforces the
   no-hardcoded-DNS rule), `cli-contract` (generated CLI docs must regenerate byte-identical),
   `compose-policy`, `package-check` (the packager's guards, proven in a throwaway fixture),
   `release-bundle` (the real packager on the real tree: both curated bundles + leak gate must
   build from HEAD on every push), `privacy-check`, `dsm-shell-tests`
-  (twelve BusyBox-sh suites — `dsm_installer_check`, `lifecycle_check`, `auto_update_check`,
+  (thirteen BusyBox-sh suites — `dsm_installer_check`, `lifecycle_check`, `auto_update_check`,
   `cloudflared_check`, `generic_update_check`, `gateway_cli_check`, `seed_provider_check`,
   `proxy_groups_check`, `full_proxy_check`, `mihomo_entrypoint_check`, `pi_installer_check`,
-  `linux_installer_check` — plus `validate_release.sh --self-test`), `shellcheck`,
+  `linux_installer_check`, `insights_baseline_check` — plus `validate_release.sh --self-test`),
+  `shellcheck` (24 targets),
   `ui-build` (npm ci + lint + the built-artifact gate `ui_build_check.py`), `ui-e2e`
   (Playwright against the real panel), `app-lint` (ruff over `app/`), `app-unit` (the panel's
   pytest suite + the contract gate: `app/openapi.json` and the generated `docs/panel-api.md`
-  regenerate byte-identical), and `app-e2e` (the hermetic loopback e2e). Full step table:
+  regenerate byte-identical, then the baseline probe's self-test with its python fixture layer),
+  and `app-e2e` (the hermetic loopback e2e). Full step table and local equivalents:
   docs/development.md. Triggers on `main` and `master`.
 - **panel-image** (`.github/workflows/panel-image.yml`, GitHub Actions): `docker build` of
   `app/Dockerfile` on every push — build-and-discard, no registry credential. It lives there
