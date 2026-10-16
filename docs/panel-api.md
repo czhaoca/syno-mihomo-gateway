@@ -76,7 +76,7 @@ Put Settings
 
 Stats Chains
 
-Parameters: `tier`, `since`, `until`
+Parameters: `tier`, `since`, `until`, `range`
 
 ## `GET /v1/stats/coverage`
 
@@ -88,7 +88,7 @@ Parameters: `since`, `until`
 
 Stats Devices
 
-Parameters: `tier`, `since`, `until`
+Parameters: `tier`, `since`, `until`, `range`
 
 ## `GET /v1/stats/domains`
 
@@ -110,4 +110,4 @@ Stats Purge
 
 Stats Timeline
 
-Parameters: `tier`, `device`, `since`, `until`
+Parameters: `tier`, `device`, `since`, `until`, `range`

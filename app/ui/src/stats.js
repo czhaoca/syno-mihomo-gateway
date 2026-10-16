@@ -10,36 +10,32 @@
 export const RANGES = ["48h", "7d", "30d", "daily"];
 export const DEFAULT_RANGE = "7d";
 
-// Bucket keys are compared as STRINGS server-side (stats.py read_grouped),
-// so `since` has to be truncated to exactly the width the tier writes:
-// 13 chars for an hour bucket (`YYYY-MM-DDTHH`), 16 for a minute one.
-const SPEC = {
-  "48h": { tier: "minute", hours: 48, width: 16 },
-  "7d": { tier: "hour", hours: 24 * 7, width: 13 },
-  "30d": { tier: "hour", hours: 24 * 30, width: 13 },
-  // The day tier keys on a LOCAL calendar date whose boundary the operator
-  // sets, so a rolling `since` computed in the browser would disagree with
-  // the rows. It asks for the whole tier and lets the server's own framing
-  // report say what the window means.
-  daily: { tier: "day", hours: null, width: 0 },
-};
-
+/* The SERVER owns the window (#91). A `range=` read is computed from the
+   panel's own clock and covers every tier the window spans - the
+   resolution's tier plus the finer ones holding the newest rows not yet
+   rolled up. The browser used to send `tier` + a `since` it computed itself,
+   and that read ONE tier table: rollup moves rows between tiers, so the 7d
+   and 30d views lost the newest 48 hours and "daily" lost the last 90 days.
+   Naming the preset is all the client does now. */
 export function normalizeRange(value) {
   return RANGES.includes(value) ? value : DEFAULT_RANGE;
 }
 
-export function rangeQuery(range, now = new Date()) {
-  const spec = SPEC[normalizeRange(range)];
-  if (spec.hours === null) return { tier: spec.tier, since: "" };
-  const from = new Date(now.getTime() - spec.hours * 3600 * 1000);
-  return { tier: spec.tier, since: from.toISOString().slice(0, spec.width) };
+export function statsPath(base, range, extra = {}) {
+  const params = new URLSearchParams({ range: normalizeRange(range), ...extra });
+  return `${base}?${params.toString()}`;
 }
 
-export function statsPath(base, range, extra = {}) {
-  const { tier, since } = rangeQuery(range);
-  const params = new URLSearchParams({ tier, ...extra });
-  if (since) params.set("since", since);
-  return `${base}?${params.toString()}`;
+// Hours each preset looks back over - used ONLY for the coverage report,
+// which has no `range` parameter (attribution lives in one hour-keyed
+// table), so its `since` is still sent: truncated to the 13-char hour key
+// that table writes, because bucket keys are compared as strings.
+const COVERAGE_HOURS = { "48h": 48, "7d": 24 * 7, "30d": 24 * 30, daily: null };
+
+export function coverageSince(range, now = new Date()) {
+  const hours = COVERAGE_HOURS[normalizeRange(range)];
+  if (hours === null) return "";
+  return new Date(now.getTime() - hours * 3600 * 1000).toISOString().slice(0, 13);
 }
 
 /* `/v1/stats/coverage` takes since/until but NO tier - attribution lives in
@@ -49,7 +45,7 @@ export function statsPath(base, range, extra = {}) {
    show a 7-day percentage beside a 30-day table and claim nothing was
    missing. */
 export function coveragePath(range) {
-  const { since } = rangeQuery(range);
+  const since = coverageSince(range);
   return since ? `/v1/stats/coverage?since=${encodeURIComponent(since)}`
                : "/v1/stats/coverage";
 }

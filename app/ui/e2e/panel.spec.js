@@ -330,20 +330,46 @@ test.describe("stats is the landing view", () => {
       expect(asked.length, "the coverage report must be fetched").toBeGreaterThan(0);
       expect(asked[asked.length - 1],
         `coverage must be scoped to the selected window, got ${asked}`)
-        .toMatch(/[?&]since=/);
+        .toMatch(/[?&]since=\d{4}-\d{2}-\d{2}T\d{2}(&|$)/);
+    });
+
+  test("the stats reads name the window and let the server compute it",
+    async ({ page }) => {
+      /* #91: rollup MOVES rows between tiers, so a `tier=hour` read of a
+         7-day window lost the newest 48 hours (still in the minute tier)
+         and a `tier=day` read of "daily" lost the last 90 days. The view
+         must ask for the PRESET and let the server union the tiers - a
+         client-computed tier + since is exactly the read that was wrong. */
+      const asked = [];
+      for (const path of ["devices", "timeline"]) {
+        await page.route(`**/v1/stats/${path}**`, (route) => {
+          asked.push(route.request().url());
+          return route.continue();
+        });
+      }
+      await open(page);
+      await page.locator('[data-testid="stats-range"]').selectOption("30d");
+      await page.waitForLoadState("networkidle");
+      const last = asked.slice(-2);
+      expect(last.length, "devices and timeline must both be read").toBe(2);
+      for (const url of last) {
+        expect(url, `the read must name the preset: ${url}`).toMatch(/[?&]range=30d(&|$)/);
+        expect(url, `the client must not compute the window: ${url}`)
+          .not.toMatch(/[?&](tier|since)=/);
+      }
     });
 
   test("a slow answer for an abandoned window never repaints over a newer one",
     async ({ page }) => {
-      /* Switching 48h (a minute-tier aggregation, the heaviest query the
-         panel issues) to daily (a small one with no `since` at all) reliably
-         lands the OLDER answer last. Without a request id the table then
+      /* The ranges' reads differ a lot in cost, so switching between them
+         lands answers out of order; here the 48h answer is held back so it
+         arrives LAST. Without a request id the table then
          shows 48h numbers while the selector says daily, and nothing on
          screen says so - the quiet inaccuracy this view exists to prevent.
          AuditView spends a ref on exactly this; StatsView did not. */
       await page.route("**/v1/stats/devices**", async (route) => {
         const url = route.request().url();
-        if (url.includes("tier=minute")) {
+        if (url.includes("range=48h")) {
           await new Promise((done) => setTimeout(done, 1500));
           return route.fulfill({
             status: 200, contentType: "application/json",
@@ -388,7 +414,7 @@ test.describe("stats is the landing view", () => {
     });
 
   test("a slow or broken settings read never blanks the tab", async ({ page }) => {
-    // /v1/settings reads policy.db while every stats route reads the separate
+    // /v1/settings reads policy.db while the stats routes read the separate
     // stats.db, so a policy-store failure says nothing about whether stats are
     // servable. The view must paint at the shipped default rather than wait.
     await page.route("**/v1/settings", (route) => {

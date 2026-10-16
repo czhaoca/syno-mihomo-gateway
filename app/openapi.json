@@ -695,6 +695,7 @@
     },
     "/v1/stats/chains": {
       "get": {
+        "description": "Per-chain totals. With `range`, window-complete across tiers; with\nonly `tier`, the single tier table (unchanged since v1.8.0).",
         "operationId": "stats_chains_v1_stats_chains_get",
         "parameters": [
           {
@@ -730,6 +731,30 @@
               "default": "",
               "title": "Until",
               "type": "string"
+            }
+          },
+          {
+            "description": "A window preset: `48h` (minute resolution), `7d` and `30d` (hour resolution), `daily` (local-day resolution, everything held). The server computes the window from its own clock and reads it WINDOW-COMPLETE: the resolution's tier plus every finer tier, which hold the newer rows not yet rolled up - so a 7-day total includes the newest 48 hours. Coarser tiers are not read, so a window ends at the resolution tier's retention: with the shipped retention every preset is whole, and an explicit `tier` finer than the window (e.g. `range=7d&tier=minute`) reaches back only as far as that tier holds. An explicit `tier` overrides the resolution only. Mutually exclusive with `since`/`until`, even empty ones (422). Without `range`, a read covers the single `tier` table exactly as before.",
+            "in": "query",
+            "name": "range",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "48h",
+                    "7d",
+                    "30d",
+                    "daily"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "A window preset: `48h` (minute resolution), `7d` and `30d` (hour resolution), `daily` (local-day resolution, everything held). The server computes the window from its own clock and reads it WINDOW-COMPLETE: the resolution's tier plus every finer tier, which hold the newer rows not yet rolled up - so a 7-day total includes the newest 48 hours. Coarser tiers are not read, so a window ends at the resolution tier's retention: with the shipped retention every preset is whole, and an explicit `tier` finer than the window (e.g. `range=7d&tier=minute`) reaches back only as far as that tier holds. An explicit `tier` overrides the resolution only. Mutually exclusive with `since`/`until`, even empty ones (422). Without `range`, a read covers the single `tier` table exactly as before.",
+              "title": "Range"
             }
           }
         ],
@@ -815,6 +840,7 @@
     },
     "/v1/stats/devices": {
       "get": {
+        "description": "Per-device totals. With `range`, window-complete across tiers; with\nonly `tier`, the single tier table (unchanged since v1.8.0).",
         "operationId": "stats_devices_v1_stats_devices_get",
         "parameters": [
           {
@@ -850,6 +876,30 @@
               "default": "",
               "title": "Until",
               "type": "string"
+            }
+          },
+          {
+            "description": "A window preset: `48h` (minute resolution), `7d` and `30d` (hour resolution), `daily` (local-day resolution, everything held). The server computes the window from its own clock and reads it WINDOW-COMPLETE: the resolution's tier plus every finer tier, which hold the newer rows not yet rolled up - so a 7-day total includes the newest 48 hours. Coarser tiers are not read, so a window ends at the resolution tier's retention: with the shipped retention every preset is whole, and an explicit `tier` finer than the window (e.g. `range=7d&tier=minute`) reaches back only as far as that tier holds. An explicit `tier` overrides the resolution only. Mutually exclusive with `since`/`until`, even empty ones (422). Without `range`, a read covers the single `tier` table exactly as before.",
+            "in": "query",
+            "name": "range",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "48h",
+                    "7d",
+                    "30d",
+                    "daily"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "A window preset: `48h` (minute resolution), `7d` and `30d` (hour resolution), `daily` (local-day resolution, everything held). The server computes the window from its own clock and reads it WINDOW-COMPLETE: the resolution's tier plus every finer tier, which hold the newer rows not yet rolled up - so a 7-day total includes the newest 48 hours. Coarser tiers are not read, so a window ends at the resolution tier's retention: with the shipped retention every preset is whole, and an explicit `tier` finer than the window (e.g. `range=7d&tier=minute`) reaches back only as far as that tier holds. An explicit `tier` overrides the resolution only. Mutually exclusive with `since`/`until`, even empty ones (422). Without `range`, a read covers the single `tier` table exactly as before.",
+              "title": "Range"
             }
           }
         ],
@@ -997,6 +1047,7 @@
     },
     "/v1/stats/timeline": {
       "get": {
+        "description": "Bucket rows, optionally for one device. With `range`, window-complete\nacross tiers at the resolution (local days synthesised under the current\nframing for the not-yet-rolled tail, stamped like stored ones); with\nonly `tier`, the single tier table (unchanged since v1.8.0).",
         "operationId": "stats_timeline_v1_stats_timeline_get",
         "parameters": [
           {
@@ -1042,6 +1093,30 @@
               "default": "",
               "title": "Until",
               "type": "string"
+            }
+          },
+          {
+            "description": "A window preset: `48h` (minute resolution), `7d` and `30d` (hour resolution), `daily` (local-day resolution, everything held). The server computes the window from its own clock and reads it WINDOW-COMPLETE: the resolution's tier plus every finer tier, which hold the newer rows not yet rolled up - so a 7-day total includes the newest 48 hours. Coarser tiers are not read, so a window ends at the resolution tier's retention: with the shipped retention every preset is whole, and an explicit `tier` finer than the window (e.g. `range=7d&tier=minute`) reaches back only as far as that tier holds. An explicit `tier` overrides the resolution only. Mutually exclusive with `since`/`until`, even empty ones (422). Without `range`, a read covers the single `tier` table exactly as before.",
+            "in": "query",
+            "name": "range",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "48h",
+                    "7d",
+                    "30d",
+                    "daily"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "A window preset: `48h` (minute resolution), `7d` and `30d` (hour resolution), `daily` (local-day resolution, everything held). The server computes the window from its own clock and reads it WINDOW-COMPLETE: the resolution's tier plus every finer tier, which hold the newer rows not yet rolled up - so a 7-day total includes the newest 48 hours. Coarser tiers are not read, so a window ends at the resolution tier's retention: with the shipped retention every preset is whole, and an explicit `tier` finer than the window (e.g. `range=7d&tier=minute`) reaches back only as far as that tier holds. An explicit `tier` overrides the resolution only. Mutually exclusive with `since`/`until`, even empty ones (422). Without `range`, a read covers the single `tier` table exactly as before.",
+              "title": "Range"
             }
           }
         ],

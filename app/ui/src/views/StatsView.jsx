@@ -48,17 +48,19 @@ export default function StatsView({ t, notify, tick }) {
      window must never repaint over a newer one, or the selector and the
      numbers beside it name different windows with nothing saying so.
 
-     This is not hypothetical ordering paranoia: switching 48h (a minute-tier
-     aggregation, the heaviest query the panel issues) to daily (a small one
-     with no `since` at all) reliably lands the older answer last. */
+     This is not hypothetical ordering paranoia: the ranges' reads differ a
+     lot in cost (48h sums minute rows, daily sums every tier and keys the
+     unrolled tail into local days), so switching between them reliably
+     lands answers out of order. */
   const generation = useRef(0);
 
   /* The settings-backed default (DEC-A). The view paints IMMEDIATELY at the
      shipped default and corrects itself if the operator's stored preference
      differs - it never blocks on this call. `/v1/settings` reads policy.db
-     while every stats route reads the separate stats.db, so gating the
-     landing tab on it would invent a dependency the storage layer was
-     deliberately built without. */
+     while the stats routes read the separate stats.db (only a daily read
+     also looks up the timezone, server-side), so gating the landing tab on
+     it would invent a dependency the storage layer was deliberately built
+     without. */
   useEffect(() => {
     let live = true;
     api("GET", "/v1/settings").then(({ status, data }) => {

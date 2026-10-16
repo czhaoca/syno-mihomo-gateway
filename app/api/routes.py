@@ -12,15 +12,16 @@ version prefix and explicit owner acknowledgment (see the committed
 app/openapi.json contract gate).
 """
 
-from typing import Literal
+from datetime import UTC, datetime
+from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from app import config
 from app.api.auth import require_mutation_auth
 from app.collector.core import GAP_FACTOR, effective_interval_s
-from app.store import identity, settings
+from app.store import dayframe, identity, settings
 from app.store import stats as stats_store
 from app.store.audit import append_audit, list_audit
 from app.store.policy import (
@@ -179,6 +180,76 @@ def _stats_conn(request: Request):
 
 Tier = Literal["minute", "hour", "day"]
 
+# The range vocabulary (#91) - settings.STATS_RANGES is the one list; a test
+# pins this Literal and stats_store.RANGE_SPECS to it.
+StatsRange = Literal["48h", "7d", "30d", "daily"]
+
+RangeParam = Annotated[StatsRange | None, Query(
+    alias="range",
+    description=(
+        "A window preset: `48h` (minute resolution), `7d` and `30d` (hour "
+        "resolution), `daily` (local-day resolution, everything held). The "
+        "server computes the window from its own clock and reads it "
+        "WINDOW-COMPLETE: the resolution's tier plus every finer tier, which "
+        "hold the newer rows not yet rolled up - so a 7-day total includes "
+        "the newest 48 hours. Coarser tiers are not read, so a window ends at "
+        "the resolution tier's retention: with the shipped retention every "
+        "preset is whole, and an explicit `tier` finer than the window (e.g. "
+        "`range=7d&tier=minute`) reaches back only as far as that tier holds. "
+        "An explicit `tier` overrides the resolution only. Mutually exclusive "
+        "with `since`/`until`, even empty ones (422). Without `range`, a read "
+        "covers the single `tier` table exactly as before."))]
+
+
+def _utcnow() -> datetime:
+    return datetime.now(UTC)
+
+
+def _range_args(request: Request, range_: str, tier: str, since: str,
+                until: str):
+    """(resolution, window start, frame) for a `range=` read.
+
+    The day framing is resolved only for a DAY-resolution read - the only
+    one that keys anything by local day - and HERE, before the caller takes
+    the stats lock. The production source reads the timezone from policy.db
+    under the POLICY mutex, which a policy change holds across its mihomo
+    controller calls: resolving it for every read would put the landing 7d
+    view behind each policy apply in flight, and resolving it inside the
+    stats lock would invent a stats->policy lock ordering (see
+    CollectorLoop) one future route away from a deadlock.
+    """
+    # presence, not value: `since=` sent empty is still a second way of
+    # naming the window, and accepting it would make the refusal depend on
+    # what a client happened to fill in
+    if "since" in request.query_params or "until" in request.query_params:
+        raise HTTPException(
+            status_code=422,
+            detail="range and since/until are mutually exclusive - range sets "
+                   "the window; send one or the other")
+    resolution, start = stats_store.range_window(range_, _utcnow())
+    if "tier" in request.query_params:
+        resolution = tier
+    frame = dayframe.utc_frame()  # unused below day resolution
+    if resolution == "day":
+        collector = getattr(request.app.state, "collector", None)
+        if collector is not None:
+            frame = collector.day_frame()
+    return resolution, start, frame
+
+
+def _range_grouped(request: Request, group_col: str, range_: str, tier: str,
+                   since: str, until: str) -> dict:
+    resolution, start, frame = _range_args(request, range_, tier, since, until)
+    with request.app.state.stats_lock:
+        conn = _stats_conn(request)
+        body = {"tier": resolution,
+                "rows": stats_store.read_window_grouped(conn, resolution,
+                                                        group_col, start,
+                                                        frame)}
+        if resolution == "day":
+            body["framings"] = stats_store.window_framings(conn, start, frame)
+        return body
+
 
 def _day_framings(conn, tier: str, since: str, until: str) -> dict:
     """Day-tier totals sum ACROSS framings, which is arithmetically exact -
@@ -196,7 +267,12 @@ def _day_framings(conn, tier: str, since: str, until: str) -> dict:
 
 @router.get("/v1/stats/devices")
 def stats_devices(request: Request, tier: Tier = "minute",
-                  since: str = "", until: str = "") -> dict:
+                  since: str = "", until: str = "",
+                  range_: RangeParam = None) -> dict:
+    """Per-device totals. With `range`, window-complete across tiers; with
+    only `tier`, the single tier table (unchanged since v1.8.0)."""
+    if range_ is not None:
+        return _range_grouped(request, "device", range_, tier, since, until)
     with request.app.state.stats_lock:
         conn = _stats_conn(request)
         return {"tier": tier,
@@ -207,7 +283,12 @@ def stats_devices(request: Request, tier: Tier = "minute",
 
 @router.get("/v1/stats/chains")
 def stats_chains(request: Request, tier: Tier = "minute",
-                 since: str = "", until: str = "") -> dict:
+                 since: str = "", until: str = "",
+                 range_: RangeParam = None) -> dict:
+    """Per-chain totals. With `range`, window-complete across tiers; with
+    only `tier`, the single tier table (unchanged since v1.8.0)."""
+    if range_ is not None:
+        return _range_grouped(request, "chain", range_, tier, since, until)
     with request.app.state.stats_lock:
         conn = _stats_conn(request)
         return {"tier": tier,
@@ -228,7 +309,19 @@ def stats_domains(request: Request, since: str = "",
 @router.get("/v1/stats/timeline")
 def stats_timeline(request: Request, tier: Tier = "minute",
                    device: str = "", since: str = "",
-                   until: str = "") -> dict:
+                   until: str = "", range_: RangeParam = None) -> dict:
+    """Bucket rows, optionally for one device. With `range`, window-complete
+    across tiers at the resolution (local days synthesised under the current
+    framing for the not-yet-rolled tail, stamped like stored ones); with
+    only `tier`, the single tier table (unchanged since v1.8.0)."""
+    if range_ is not None:
+        resolution, start, frame = _range_args(request, range_, tier, since,
+                                               until)
+        with request.app.state.stats_lock:
+            conn = _stats_conn(request)
+            return {"tier": resolution, "device": device,
+                    "rows": stats_store.read_window_timeline(
+                        conn, resolution, device, start, frame)}
     with request.app.state.stats_lock:
         conn = _stats_conn(request)
         return {"tier": tier, "device": device,

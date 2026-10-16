@@ -57,6 +57,22 @@ edit.
   together with the window that share was measured over, and — on the daily
   range — a warning when the *definition of a day* changed inside the window
   you asked about.
+
+  Every range covers its **whole window** (with the shipped retention
+  settings — see below). Collected traffic moves from
+  minute rows to hour rows to day rows as it ages, so the server reads the
+  range's own tier *plus* the finer ones that still hold the newest rows:
+  the 7- and 30-day totals include the last 48 hours, and the daily range
+  includes the last 90 days. Days the panel has not rolled up yet are keyed
+  under the current timezone and day start — the stamp they will carry once
+  rolled — so a window that spans a changed day boundary still shows the
+  seam. (Before v1.10.3 the browser picked one tier and the newest part of
+  each window was silently missing.) The API exposes the same presets as
+  `range=48h|7d|30d|daily`; a request with only `tier` still reads that one
+  table, as it always has. Coarser rows are never split back into finer
+  ones, so a window still ends at its resolution's retention: lowering
+  `PANEL_STATS_MINUTE_HOURS` below 48 or `PANEL_STATS_HOUR_DAYS` below 30
+  shortens the 48-hour or 30-day view to that retention, as it did before.
 - **Devices** — the policy editor, with the band badge, the confirm before
   overriding a band address, and the apply badge described above.
 - **Audit** — one screenful at a time through the server's existing
