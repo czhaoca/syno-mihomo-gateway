@@ -21,6 +21,13 @@
  * (#101): per scope, with the sections a scope cannot answer `null` and the
  * reason under `unavailable` - the shapes app/store/stats/overview.py
  * writes. The lists add up to the timeline: 200 B up, 2000 B down.
+ *
+ * The gateway widgets (#103) read their own synthesised answers:
+ * `goldenNodeDelay` serves /v1/stats/node-delay from one list of raw tests
+ * (DELAY_TESTS) the way app/store/stats/node_delay.py reads them - the
+ * tests themselves at a minute preset, hour aggregates at a longer one -
+ * and GOLDEN_QUOTA is a /v1/stats/quota answer. Group and node names are
+ * placeholders, long and CJK/emoji on purpose (the 390 px sweep).
  */
 import { expect } from "@playwright/test";
 
@@ -135,6 +142,125 @@ function scaled(rows, share) {
                             down: Math.round(r.down * share) }));
 }
 
+// The delay history (#103): every test mihomo "ran", oldest first, as
+// [group, node, tested_at, delay_ms] - null is a failed test. Chosen so the
+// picture holds each rule the widget must keep:
+//   - "Proxy": a failed test (10:05), a slot with no test (10:15), a switch
+//     inside one 5-minute slot (10:20 JP 01, 10:21 US 01) and so, at hour
+//     resolution, an hour where JP 01 partly failed beside US 01;
+//   - "Fallback": its newest test failed - "no answer", never 0 ms;
+//   - "Games": tested once, 12 days ago - outside 48h and 7d, inside 30d;
+//   - "Telegram": every test failed - a null-delay hour.
+export const DELAY_RETENTION_DAYS = 14;
+const LONG_CJK = "节点选择（这是一个用于测试换行的非常非常长的策略组名称）";
+const LONG_EMOJI = "🚀 Emoji 🚀 group with a very long name that has to wrap on a phone";
+export const DELAY_TESTS = [
+  ["Games", "SG 03", "2026-09-30T08:00:00Z", 60],
+  ["Proxy", "JP 01", "2026-10-12T10:00:00Z", 120],
+  ["Proxy", "JP 01", "2026-10-12T10:05:00Z", null],
+  ["Proxy", "JP 01", "2026-10-12T10:10:00Z", 130],
+  ["Proxy", "JP 01", "2026-10-12T10:20:00Z", 125],
+  ["Proxy", "US 01", "2026-10-12T10:21:00Z", 210],
+  ["Proxy", "US 01", "2026-10-12T10:25:00Z", 206],
+  ["AI", "JP 01", "2026-10-12T11:00:00Z", 150],
+  ["Fallback", "HK 02", "2026-10-12T11:00:00Z", 90],
+  ["AI", "JP 01", "2026-10-12T11:05:00Z", 160],
+  ["Fallback", "HK 02", "2026-10-12T11:05:00Z", null],
+  ["AI", "US 01", "2026-10-12T11:10:00Z", 180],
+  ["Fallback", "HK 02", "2026-10-12T11:10:00Z", null],
+  ["AI", "US 01", "2026-10-12T11:15:00Z", 175],
+  [LONG_EMOJI, "🇯🇵 JP 01", "2026-10-12T11:20:00Z", 140],
+  ["Telegram", "SG 03", "2026-10-12T11:30:00Z", null],
+  ["Telegram", "SG 03", "2026-10-12T11:35:00Z", null],
+  ["♻️ 自动选择", "HK 02", "2026-10-12T11:40:00Z", 80],
+  [LONG_CJK, "日本 东京 01 - 一个很长的节点名称用于测试换行", "2026-10-12T11:45:00Z", 95],
+  ["Proxy", "US 01", "2026-10-12T11:50:00Z", 200],
+  ["Streaming", "JP 01", "2026-10-12T11:55:00Z", 300],
+];
+const RANGE_HOURS = { "24h": 24, "48h": 48, "7d": 168, "30d": 720, daily: null };
+const stamp = (ms) => `${new Date(ms).toISOString().slice(0, 19)}Z`;
+
+/** The node delay answer for URL (a /v1/stats/node-delay request): the
+ *  window starts at the later of the preset's start and the retention
+ *  horizon, `truncated` when the preset reached past it; a minute preset
+ *  lists the tests, a longer one aggregates them per hour and node (a
+ *  failed test counted, never averaged in). Groups sort by name and every
+ *  group's `latest` is its newest test, wherever it falls. */
+export function goldenNodeDelay(url, { tests = DELAY_TESTS,
+                                       retentionDays = DELAY_RETENTION_DAYS } = {}) {
+  const range = new URL(url).searchParams.get("range") || "7d";
+  const hours = RANGE_HOURS[range] === undefined ? 168 : RANGE_HOURS[range];
+  const now = Date.parse(GOLDEN.now);
+  const floor = now - retentionDays * 86_400_000;
+  const start = hours === null ? floor : Math.max(now - hours * 3_600_000, floor);
+  const since = stamp(start);
+  const raw = range === "24h" || range === "48h";
+  const groups = new Map();
+  const group = (name) => {
+    if (!groups.has(name)) groups.set(name, { group: name, latest: null, points: [] });
+    return groups.get(name);
+  };
+  for (const [grp, node, at, ms] of tests) {
+    group(grp).latest = { node, tested_at: at, delay_ms: ms };
+  }
+  const inside = tests.filter(([, , at]) => at >= since);
+  if (raw) {
+    const ordered = inside.slice().sort((a, b) => (a[2] < b[2] ? -1 : a[2] > b[2] ? 1
+      : a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0));
+    for (const [grp, node, at, ms] of ordered) {
+      group(grp).points.push({ at, node, delay_ms: ms });
+    }
+  } else {
+    const hoursOf = new Map();
+    for (const [grp, node, at, ms] of inside) {
+      const key = `${grp}\u0000${at.slice(0, 13)}\u0000${node}`;
+      if (!hoursOf.has(key)) hoursOf.set(key, { grp, node, hour: at.slice(0, 13), ok: [], failed: 0 });
+      const slot = hoursOf.get(key);
+      if (ms === null) slot.failed += 1;
+      else slot.ok.push(ms);
+    }
+    const keys = [...hoursOf.keys()].sort();
+    for (const key of keys) {
+      const { grp, node, hour, ok, failed } = hoursOf.get(key);
+      group(grp).points.push({
+        at: hour, node,
+        delay_ms: ok.length ? Math.round(ok.reduce((s, v) => s + v, 0) / ok.length) : null,
+        min_ms: ok.length ? Math.min(...ok) : null,
+        max_ms: ok.length ? Math.max(...ok) : null,
+        tests: ok.length, failed,
+      });
+    }
+  }
+  const byName = (a, b) => {
+    const x = [...a.group].map((c) => c.codePointAt(0));
+    const y = [...b.group].map((c) => c.codePointAt(0));
+    for (let i = 0; i < Math.min(x.length, y.length); i += 1) {
+      if (x[i] !== y[i]) return x[i] - y[i];
+    }
+    return x.length - y.length;
+  };
+  return { range, resolution: raw ? "test" : "hour", retention_days: retentionDays,
+           since, truncated: hours === null || now - hours * 3_600_000 < floor,
+           sampled_every_s: 300, groups: [...groups.values()].sort(byName) };
+}
+
+/** A /v1/stats/quota answer: one provider with a limit and an expiry, one
+ *  that reports neither (mihomo's zero-fill, served as null), one past both
+ *  its total and its expiry, and one with half its use unreported. */
+export const GOLDEN_QUOTA = {
+  state: "ok", sampled_at: "2026-10-12T11:00:00Z",
+  providers: [
+    { provider: "provider-a", upload: 1_073_741_824, download: 9_663_676_416,
+      total: 107_374_182_400, expire: 1_798_761_600, updatedAt: "2026-10-12T10:58:00Z" },
+    { provider: "provider-b 一个很长的提供者名称", upload: 0, download: 5_368_709_120,
+      total: null, expire: null, updatedAt: null },
+    { provider: "provider-c", upload: 0, download: 161_061_273_600,
+      total: 107_374_182_400, expire: 1_767_225_600, updatedAt: "2026-10-12T10:30:00Z" },
+    { provider: "provider-d", upload: null, download: 1_073_741_824,
+      total: 107_374_182_400, expire: null, updatedAt: null },
+  ],
+};
+
 /** The overview answer for URL (a /v1/stats/overview request) over the
  *  golden picture. OPTIONS: `timeline` replaces the series, `extraDevices`
  *  adds that many small TEST-NET devices (for "show more"), `domains`
@@ -248,8 +374,10 @@ export function plainOverview(range, devices) {
 }
 
 /** Serve the golden series for every stats read and /health. OVERRIDES maps
- *  a path fragment ("overview", "health", ...) to a route handler, for the
- *  specs that break one read on purpose; OPTIONS go to goldenOverview. */
+ *  a path fragment ("overview", "health", "nodeDelay", "quota", ...) to a
+ *  route handler, for the specs that break one read on purpose; OPTIONS go
+ *  to goldenOverview. The live stream is never stubbed here: a spec that
+ *  opens it routes it itself, and an unrouted one fails loudly. */
 export async function routeGolden(page, overrides = {}, options = {}) {
   const serve = (name, body) => async (route) => (overrides[name]
     ? overrides[name](route) : json(route, body));
@@ -263,6 +391,10 @@ export async function routeGolden(page, overrides = {}, options = {}) {
   await page.route("**/v1/stats/coverage**", serve("coverage", GOLDEN.coverage));
   await page.route("**/v1/stats/domains**",
                    serve("domains", { enabled: false, rows: [] }));
+  await page.route("**/v1/stats/node-delay**", async (route) => (overrides.nodeDelay
+    ? overrides.nodeDelay(route)
+    : json(route, goldenNodeDelay(route.request().url()))));
+  await page.route("**/v1/stats/quota**", serve("quota", GOLDEN_QUOTA));
 }
 
 /** Open the panel's stats tab on RANGE and wait until that load settled. */

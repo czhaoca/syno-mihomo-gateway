@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-import { buildGrid, sparseGrid } from "../src/charts/grid.js";
+import { buildGrid, delayGrid, sparseGrid } from "../src/charts/grid.js";
 
 /**
  * The bucket grid's rules (#100 DEC-D), on the module itself - no browser.
@@ -9,6 +9,7 @@ import { buildGrid, sparseGrid } from "../src/charts/grid.js";
  * list, a moved day boundary, a gap mapped under a real zone across DST, a
  * last poll read as a local day west of UTC, the regions before the data
  * and after the last poll, malformed rows, and the device strip's breaks.
+ * The delay grid (#103) has its own rules: fixed slots, no zero-fill.
  */
 
 const at = (iso) => Date.parse(iso);
@@ -198,4 +199,63 @@ test("the grid tells each bucket what it may claim", () => {
   expect(strip.cells.map((c) => [c.key, c.x])).toEqual([
     ["2026-10-15T10:00", 0], ["2026-10-15T10:04", 4]]);
   expect(strip.units).toBe(5);
+});
+
+test("the delay grid draws tests, never zeros", () => {
+  const marks = (g) => g.cells.map((c) => [c.key, c.ms, c.gap, c.framing]);
+  // test resolution: one slot per sampling interval from the server's own
+  // start. A failed test is a value-less mark (null, never 0); a slot with
+  // no test has no mark at all; a switch inside one slot splits it
+  const tests = delayGrid({
+    points: [{ at: "2026-10-15T10:00:00Z", node: "JP 01", delay_ms: 120 },
+             { at: "2026-10-15T10:05:00Z", node: "JP 01", delay_ms: null },
+             { at: "2026-10-15T10:20:00Z", node: "JP 01", delay_ms: 125 },
+             { at: "2026-10-15T10:21:00Z", node: "US 01", delay_ms: 210 }],
+    resolution: "test", since: "2026-10-15T10:00:00Z", sampledEveryS: 300,
+    now: at("2026-10-15T10:30:00Z"),
+  });
+  expect(marks(tests)).toEqual([
+    ["2026-10-15T10:00:00Z", 120, "", "JP 01"],
+    ["2026-10-15T10:05:00Z", null, "full", "JP 01"],
+    ["2026-10-15T10:20:00Z", 125, "", "JP 01"],
+    ["2026-10-15T10:21:00Z", 210, "", "US 01"],
+  ]);
+  expect(tests.cells.find((c) => c.ms === 0), "a failed test is never 0 ms")
+    .toBeUndefined();
+  expect(tests.units).toBe(6);
+  expect(tests.cells.map((c) => [c.x, c.width])).toEqual([
+    [0, 1], [1, 1], [4, 0.5], [4.5, 0.5]]);
+  expect(tests.max).toBe(210);
+
+  // hour resolution: an hour that partly failed keeps its mean under a
+  // partial mark, one that only failed is value-less, and a point before
+  // the window or not a timestamp is dropped
+  const hours = delayGrid({
+    points: [{ at: "2026-10-14T23", node: "JP 01", delay_ms: 99, tests: 1, failed: 0 },
+             { at: "2026-10-15T08", node: "JP 01", delay_ms: 125, min_ms: 120,
+               max_ms: 130, tests: 3, failed: 1 },
+             { at: "2026-10-15T09", node: "JP 01", delay_ms: null, min_ms: null,
+               max_ms: null, tests: 0, failed: 4 },
+             { at: 7, node: "JP 01", delay_ms: 1 }, null],
+    resolution: "hour", since: "2026-10-15T08:00:00Z", now: at("2026-10-15T10:30:00Z"),
+  });
+  expect(marks(hours)).toEqual([["2026-10-15T08", 125, "partial", "JP 01"],
+                                ["2026-10-15T09", null, "full", "JP 01"]]);
+  expect(hours.cells[0]).toMatchObject({ answered: 3, failed: 1, min: 120, maxMs: 130 });
+  expect(hours.units).toBe(3);
+
+  // the server's start is to the second: its first hour aggregate (keyed
+  // by the hour the start falls in) is kept, and hours sit on hour slots
+  const offHour = delayGrid({
+    points: [{ at: "2026-10-15T08", node: "JP 01", delay_ms: 90, tests: 2, failed: 0 },
+             { at: "2026-10-15T09", node: "JP 01", delay_ms: 95, tests: 12, failed: 0 }],
+    resolution: "hour", since: "2026-10-15T08:37:12Z", now: at("2026-10-15T09:50:00Z"),
+  });
+  expect(offHour.cells.map((c) => [c.key, c.x])).toEqual([["2026-10-15T08", 0],
+                                                          ["2026-10-15T09", 1]]);
+  expect(offHour.units).toBe(2);
+
+  // a start that is not a timestamp draws nothing rather than guessing
+  expect(delayGrid({ points: [{ at: "2026-10-15T08", delay_ms: 1 }],
+                     resolution: "hour", since: "garbage" }).cells).toEqual([]);
 });

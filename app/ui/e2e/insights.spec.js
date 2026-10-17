@@ -1,7 +1,8 @@
 import { expect, test } from "@playwright/test";
 
 import { CADENCE_MS, isDue } from "../src/stats.js";
-import { GOLDEN, goldenOverview, json, ready, routeGolden } from "./fixtures/stats.js";
+import { GOLDEN, goldenNodeDelay, goldenOverview, json, ready,
+         routeGolden } from "./fixtures/stats.js";
 
 /**
  * Gateway Insights (#101): the scoped views, their routes and their honesty
@@ -174,6 +175,8 @@ test.describe("Gateway Insights", () => {
       await page.clock.install({ time: new Date(GOLDEN.now) });
       const reads = [];
       let hold = null;
+      let holdDelay = null;
+      let failDelay = false;
       let fail = false;
       await routeGolden(page, {
         overview: async (route) => {
@@ -182,23 +185,42 @@ test.describe("Gateway Insights", () => {
           if (fail) return json(route, { detail: "down" }, 503);
           return json(route, goldenOverview(route.request().url()));
         },
+        nodeDelay: async (route) => {
+          if (holdDelay) await holdDelay;
+          // a superseded read is aborted by the page: fulfilling it then fails
+          if (failDelay) return json(route, { detail: "down" }, 503).catch(() => {});
+          return json(route, goldenNodeDelay(route.request().url())).catch(() => {});
+        },
       });
+      // the gateway widgets read on their OWN cadence (#103 DEC-D): every
+      // 300 s, the delay for the view's range and the quota with no query
+      const widget = { delay: [], quota: [] };
       const others = [];
       page.on("request", (r) => {
-        if (r.url().includes("/v1/stats/") && !r.url().includes("/v1/stats/overview")) {
-          others.push(r.url());
-        }
+        const url = r.url();
+        if (!url.includes("/v1/stats/") || url.includes("/v1/stats/overview")) return;
+        if (url.includes("/v1/stats/node-delay")) widget.delay.push(url);
+        else if (url.includes("/v1/stats/quota")) widget.quota.push(url);
+        else others.push(url);
+      });
+      const widgetReads = () => [widget.delay.length, widget.quota.length];
+      const aborted = [];
+      page.on("requestfailed", (r) => {
+        if (r.url().includes("/v1/stats/node-delay")) aborted.push(r.url());
       });
       const quiet = () => page.waitForTimeout(300);
       // the golden answer is day-resolution: re-read every 300 s
       await land(page, "#/insights?range=7d", "overview");
       const base = reads.length;
+      await expect.poll(widgetReads, "one widget read each on open").toEqual([1, 1]);
 
       await page.clock.runFor(60_000);
       await quiet();
       expect(reads.length, "six shell ticks, none of them due").toBe(base);
+      expect(widgetReads(), "nor any widget's").toEqual([1, 1]);
       await page.clock.runFor(250_000);
       await expect.poll(() => reads.length).toBe(base + 1);
+      await expect.poll(widgetReads, "the widgets at 300 s").toEqual([2, 2]);
 
       // hidden: nothing, however long
       await page.evaluate(() => {
@@ -208,12 +230,14 @@ test.describe("Gateway Insights", () => {
       await page.clock.runFor(900_000);
       await quiet();
       expect(reads.length, "a hidden page reads nothing").toBe(base + 1);
+      expect(widgetReads(), "nor do its widgets").toEqual([2, 2]);
       // visible again and long due: at once
       await page.evaluate(() => {
         Object.defineProperty(document, "hidden", { configurable: true, get: () => false });
         document.dispatchEvent(new Event("visibilitychange"));
       });
       await expect.poll(() => reads.length).toBe(base + 2);
+      await expect.poll(widgetReads, "the widgets on return").toEqual([3, 3]);
 
       // a read that hangs is never piled on, however many ticks fall due
       let release;
@@ -231,7 +255,53 @@ test.describe("Gateway Insights", () => {
       await expect(page.locator(READY("overview"))).toBeAttached();
       // ... and once it answers, the stall it described is over
       await expect(page.locator('[data-testid="stats-chart-frame-fresh"]')).toBeAttached();
-      expect(others, "Insights reads nothing but the scoped overview").toEqual([]);
+
+      // a widget read that hangs is never piled on either, and its widget
+      // says the picture is stale while it hangs - the overview unaffected
+      let releaseDelay;
+      holdDelay = new Promise((resolve) => { releaseDelay = resolve; });
+      const held = widget.delay.length;
+      await page.clock.runFor(310_000);
+      await expect.poll(() => widget.delay.length).toBe(held + 1);
+      await page.clock.runFor(900_000);
+      await quiet();
+      expect(widget.delay.length, "fifteen minutes behind one slow delay read")
+        .toBe(held + 1);
+      await expect(page.locator('[data-testid="node-delay-frame-stale"]')).toBeVisible();
+      await expect(page.locator('[data-testid="stats-chart-frame-fresh"]')).toBeAttached();
+      // Refresh supersedes the hung read: one request on the wire (the old
+      // one aborted), and the picture stays stale until a read answers
+      await page.locator('[data-testid="stats-refresh"]').click();
+      await expect.poll(() => widget.delay.length).toBe(held + 2);
+      await expect.poll(() => aborted.length, "the superseded read is aborted").toBe(1);
+      await expect(page.locator('[data-testid="node-delay-frame-stale"]')).toBeVisible();
+      releaseDelay();
+      holdDelay = null;
+      await expect(page.locator('[data-testid="node-delay-frame-fresh"]')).toBeAttached();
+      expect(aborted, "exactly one read was superseded").toHaveLength(1);
+
+      // a failed refresh is retried at the minute cadence, not left stale
+      // for five minutes
+      failDelay = true;
+      const beforeFail = widget.delay.length;
+      await page.clock.runFor(310_000);
+      await expect.poll(() => widget.delay.length).toBeGreaterThan(beforeFail);
+      await expect(page.locator('[data-testid="node-delay-frame-stale"]')).toBeVisible();
+      failDelay = false;
+      const afterFail = widget.delay.length;
+      await page.clock.runFor(10_000);
+      await expect.poll(() => widget.delay.length).toBeGreaterThan(afterFail);
+      await expect(page.locator('[data-testid="node-delay-frame-fresh"]')).toBeAttached();
+
+      expect(others, "Insights reads the scoped overview and its widgets, nothing else")
+        .toEqual([]);
+      for (const url of widget.delay) {
+        expect(new URL(url).search, `the delay names the view's range: ${url}`)
+          .toBe("?range=7d");
+      }
+      for (const url of widget.quota) {
+        expect(new URL(url).search, `the quota takes no query: ${url}`).toBe("");
+      }
 
       // the real tick drifts by its /health round trip: a minute view's
       // next tick a hair early is still due - every tick reads - while an
@@ -245,6 +315,7 @@ test.describe("Gateway Insights", () => {
       // its resolution: a failed first read of "long term" is retried in
       // ten seconds, not five minutes
       fail = true;
+      const atClient = widgetReads();
       await land(page, "#/insights/client/192.0.2.20?range=daily", "client");
       await expect(page.locator('[data-testid="stats-chart-frame-unavailable"]'))
         .toBeVisible();
@@ -253,6 +324,7 @@ test.describe("Gateway Insights", () => {
       await page.clock.runFor(10_000);
       await expect.poll(() => reads.length).toBe(failed + 1);
       await expect(page.locator('[data-testid="stats-chart-frame-fresh"]')).toBeAttached();
+      expect(widgetReads(), "a client's view reads no gateway widget").toEqual(atClient);
     });
 
   test("every scope fits a phone, in both schemes", async ({ page }) => {
@@ -270,6 +342,11 @@ test.describe("Gateway Insights", () => {
       await page.emulateMedia({ colorScheme: scheme });
       for (const [hash, scope] of scopes) {
         await land(page, hash, scope);
+        if (scope === "overview") {
+          // the gateway's widgets (#103) settle on their own reads
+          await page.locator('[data-testid="node-delay-ready"]').waitFor({ state: "attached" });
+          await page.locator('[data-testid="quota-ready"]').waitFor({ state: "attached" });
+        }
         const overflow = await page.evaluate(
           () => document.documentElement.scrollWidth
             - document.documentElement.clientWidth);

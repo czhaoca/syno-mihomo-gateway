@@ -35,6 +35,9 @@ export function resolutionOf(range) {
 // finer than the cadence would change between reads unseen; one coarser
 // would be re-read for nothing.
 export const CADENCE_MS = { minute: 10_000, hour: 60_000, day: 300_000 };
+// the gateway widgets' reads (#103 DEC-D): node delay is sampled every
+// 300 s and the quota hourly, so neither is re-read more often than this
+export const WIDGET_CADENCE_MS = 300_000;
 
 /* Whether a read ELAPSED ms after the last one is due at CADENCE ms. The
    shell's tick fires 10 s after the previous one PLUS that tick's /health

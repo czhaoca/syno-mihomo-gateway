@@ -170,6 +170,53 @@ itself (see [Panel API](panel-api.md)):
   not send, so a total or expiry of 0 is shown as unknown, not as a limit.
   Nothing else of the provider is kept: never its URL or its nodes.
 
+### In the overview
+
+The overview, the whole gateway's view, shows all three; a device,
+category or hostname view shows none of them.
+
+- **The live tile** is off until you tick **Live throughput**. The choice
+  is kept by this browser only, so another browser or device starts with
+  it off. While it is on and the tab is visible, the tile holds one stream:
+  hiding the tab closes it, and showing the tab again opens a new one that
+  starts a new minute. The tile shows the gateway's upload and download per
+  second now, and a sparkline of the last minute. After 3 s with no new
+  figure, the rates give way to "No new figures for Ns". "Too many live
+  viewers" means the panel already serves 16 streams. "The live feed
+  closed" means the stream could not be opened. Untick the box and tick it
+  again to retry.
+- **Node delay** has one row per policy group, with two parts. The first is
+  the selected node and its newest test, with that test's time, which can
+  be older than the range. The second is a strip of the range's tests:
+  - a hatched mark is a failed test: no answer, never 0 ms;
+  - a blank stretch had no test;
+  - on an hour strip, a hatched cap marks an hour where some tests failed,
+    and the bar is the average of the tests that answered;
+  - a switch of node inside one slot splits that slot, and each half names
+    its node.
+
+  When the range reaches past the retention, a note says where it really
+  starts.
+- **Subscription quota** shows, for each provider, a bar of the traffic used
+  against the reported total, the expiry, and when the provider last
+  reported. A provider that reports no total gets no bar and no
+  percentage. The text gives the true share, so an overrun reads as one
+  (the bar stops at full), and a past expiry says "Expired".
+
+Both widgets re-read every 300 s, or every 10 s until they have a first
+answer. They never read while the tab is hidden, and never beside a read
+still in flight. Refresh re-reads them at once, and so does a purge, which
+deletes what both of them draw. Pressed in a device, category or hostname
+view, either one makes the overview read both afresh on the way back, so
+deleted figures are never shown as current. Each widget says what it can be trusted for:
+- it is stale, and keeps the last good picture, when a read failed, a read
+  hangs or the collector stopped. Node delay gives the time of its newest
+  test; the quota gives the time of its last good sample, and a separate
+  note when mihomo did not answer that sample. A failed read is retried
+  every 10 s until it answers;
+- it says so when it cannot be read at all;
+- before the first sample, it says that nothing is stored yet.
+
 The node labels and the quota sit behind the controller secret in
 MetaCubexD; here, like every panel read, they need no password on the LAN.
 Keep the panel off the WAN.

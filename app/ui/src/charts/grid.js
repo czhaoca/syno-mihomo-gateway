@@ -282,3 +282,57 @@ export function sparseGrid(rows, tier = null) {
            axisStart: held.length ? held[0].bucket : null,
            axisEnd: held.length ? held[held.length - 1].bucket : null };
 }
+
+/* The delay grid of one policy group (#103 DEC-E): the tests mihomo ran
+   on the group's selected node, on FIXED slots - SAMPLED_EVERY_S at test
+   resolution, an hour at hour resolution - from the server's own SINCE
+   (floored to its hour at hour resolution) to NOW. Never buildGrid's zero-fill and never sparseGrid's `|| 0`: a slot
+   with no test is blank (no mark at all), a failed test is the value-less
+   mark (`gap: "full"`) and never 0 ms, and an hour where some tests failed
+   keeps its mean under a partial mark. Two nodes in one slot (a switch)
+   split it as separate marks, each naming its node. */
+export function delayGrid({ points, resolution, since, sampledEveryS = 300,
+                            now = Date.now() }) {
+  const empty = { tier: "delay", units: 0, cells: [], before: null,
+                  stale: null, shade: null, max: 0, axisStart: null,
+                  axisEnd: null };
+  const from = Date.parse(since);
+  if (!Number.isFinite(from)) return empty;
+  const slot = resolution === "hour" ? STEP_MS.hour
+    : Math.max(1, Number(sampledEveryS) || 300) * 1000;
+  // the server's start is to the second; its first hour aggregate is keyed
+  // by the hour it falls in. Hour slots start on the hour, so that first
+  // (partial) hour is kept and every hour sits on its own slot
+  const start = resolution === "hour" ? Math.floor(from / slot) * slot : from;
+  const units = Math.max(1, Math.ceil((Math.max(now, start) - start) / slot));
+  if (units > MAX_SLOTS) return empty;
+  const bySlot = new Map();
+  for (const point of points || []) {
+    if (!point || typeof point.at !== "string") continue;
+    const at = resolution === "hour" ? keyStart(point.at, "hour")
+      : Date.parse(point.at);
+    if (!Number.isFinite(at) || at < start) continue;
+    const index = Math.min(Math.floor((at - start) / slot), units - 1);
+    if (!bySlot.has(index)) bySlot.set(index, []);
+    bySlot.get(index).push(point);
+  }
+  const cells = [];
+  let max = 0;
+  for (const [index, here] of [...bySlot.entries()].sort((a, b) => a[0] - b[0])) {
+    here.forEach((point, i) => {
+      const ms = Number.isFinite(point.delay_ms) ? point.delay_ms : null;
+      if (ms !== null && ms > max) max = ms;
+      const failed = Number(point.failed) || 0;
+      cells.push({
+        key: point.at, x: index + i / here.length, width: 1 / here.length,
+        ms, held: ms !== null, framing: point.node || "",
+        gap: ms === null ? "full" : failed > 0 ? "partial" : "", seam: false,
+        failed, answered: Number.isFinite(point.tests) ? point.tests : null,
+        min: point.min_ms ?? null, maxMs: point.max_ms ?? null,
+      });
+    });
+  }
+  return { tier: "delay", units, cells, max, before: null, stale: null,
+           shade: null, axisStart: new Date(start).toISOString().slice(0, 16),
+           axisEnd: new Date(Math.max(now, start)).toISOString().slice(0, 16) };
+}

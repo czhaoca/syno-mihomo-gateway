@@ -27,7 +27,13 @@ import Tooltip from "./Tooltip.jsx";
 const HEIGHT = 100;
 
 export default function TimeSeries({ grid, testid, t, height = 140,
-                                      compact = false, shadeLabel = "" }) {
+                                      compact = false, shadeLabel = "",
+                                      unit = "bytes" }) {
+  // bps: bytes per second (the live tile) - the bytes marks, rates in words
+  // ms: ONE series - a delay (#103 DEC-E). No down rect, delay wording in
+  // the aria name, tooltip, axis and legend, and a value mark carries
+  // `data-ms`, never data-up / data-down
+  const delay = unit === "ms";
   const chart = useTheme().palette.chart;
   const uid = useId().replace(/:/g, "");
   const box = useRef(null);
@@ -38,8 +44,10 @@ export default function TimeSeries({ grid, testid, t, height = 140,
   const units = Math.max(grid.units, 1);
   const max = Math.max(grid.max, 1);
   const cells = grid.cells;
+  // a grid whose keys can repeat (the live minute: frames stamped to the
+  // second) gives each cell its own `id`
   const idOf = (i) => (i === null || !cells[i] ? null
-    : `${cells[i].key}|${cells[i].framing || ""}`);
+    : cells[i].id || `${cells[i].key}|${cells[i].framing || ""}`);
   const found = picked === null ? -1 : cells.findIndex((_c, i) => idOf(i) === picked);
   const active = found === -1 ? null : found;
   const setActive = (next) => {
@@ -73,7 +81,9 @@ export default function TimeSeries({ grid, testid, t, height = 140,
     }
   };
 
-  const lines = active === null ? null : describe(cells[active], t);
+  const lines = active === null ? null
+    : delay ? describeDelay(cells[active], t)
+      : describe(cells[active], t, unit === "bps" ? "/s" : "");
   const tipAt = active === null || !cells[active] ? null
     : ((cells[active].x + cells[active].width / 2) / units) * 100;
   const scale = (v) => (v / max) * (HEIGHT - 6);
@@ -85,7 +95,7 @@ export default function TimeSeries({ grid, testid, t, height = 140,
         ref={box}
         tabIndex={0}
         role="group"
-        aria-label={t("chart_aria")}
+        aria-label={delay ? t("delay_aria") : t("chart_aria")}
         data-testid={testid ? `${testid}-focus` : undefined}
         onPointerMove={onPointer}
         onPointerDown={onPointer}
@@ -151,8 +161,23 @@ export default function TimeSeries({ grid, testid, t, height = 140,
             if (cell.gap === "full") {
               return (
                 <rect key={`${cell.key}:${i}`} {...mark} data-mark="1"
+                      data-node={delay ? cell.framing : undefined}
                       x={cell.x} y="0" width={cell.width} height={HEIGHT}
                       fill={`url(#${hatch})`} />
+              );
+            }
+            if (delay) {
+              const ms = scale(cell.ms);
+              return (
+                <g key={`${cell.key}:${i}`}>
+                  <rect {...mark} data-mark="1" data-ms={cell.ms}
+                        data-node={cell.framing} x={x} y={HEIGHT - ms}
+                        width={w} height={ms} fill={chart.up} />
+                  {cell.gap === "partial" ? (
+                    <rect x={cell.x} y="0" width={cell.width} height="10"
+                          fill={`url(#${hatch})`} />
+                  ) : null}
+                </g>
               );
             }
             const down = scale(cell.down);
@@ -192,27 +217,57 @@ export default function TimeSeries({ grid, testid, t, height = 140,
       {compact ? null : (
         <>
           <Axis testid={`${testid}-axis`} start={grid.axisStart}
-                end={grid.axisEnd} top={grid.max ? fmtBytes(grid.max) : ""} />
+                end={grid.axisEnd}
+                top={grid.max ? (delay ? `${grid.max} ms` : fmtBytes(grid.max)) : ""} />
           <Legend testid={`${testid}-legend`}
-                  items={legendItems(grid, t, shadeLabel)} />
+                  items={delay ? delayLegend(grid, t)
+                    : legendItems(grid, t, shadeLabel)} />
         </>
       )}
     </Box>
   );
 }
 
-function describe(cell, t) {
+function describe(cell, t, per = "") {
   if (!cell) return null;
-  const out = [cell.framing ? `${cell.key} (${cell.framing})` : cell.key];
+  const out = [cell.label || (cell.framing ? `${cell.key} (${cell.framing})` : cell.key)];
   if (cell.gap === "full") {
-    out.push(t("chart_gap"));
+    out.push(cell.note || t("chart_gap"));
     return out;
   }
-  out.push(`${t("chart_up")}: ${fmtBytes(cell.up)}`);
-  out.push(`${t("chart_down")}: ${fmtBytes(cell.down)}`);
+  out.push(`${t("chart_up")}: ${fmtBytes(cell.up)}${per}`);
+  out.push(`${t("chart_down")}: ${fmtBytes(cell.down)}${per}`);
   if (cell.gap === "partial") out.push(t("chart_gap_partial"));
   if (cell.seam) out.push(t("chart_seam"));
   return out;
+}
+
+/* A delay bucket: the node it was tested on, then its delay - or that the
+   test failed - and at hour resolution the range and how many answered. */
+function describeDelay(cell, t) {
+  if (!cell) return null;
+  const out = [cell.framing ? `${cell.key} (${cell.framing})` : cell.key];
+  if (cell.gap === "full") {
+    out.push(t("delay_no_answer"));
+  } else {
+    out.push(`${cell.ms} ms`);
+    if (cell.min !== null && cell.maxMs !== null) {
+      out.push(`${cell.min}-${cell.maxMs} ms`);
+    }
+  }
+  if (cell.answered !== null) {
+    out.push(`${cell.answered} ${t("delay_answered")}, ${cell.failed} ${t("delay_failed")}`);
+  }
+  return out;
+}
+
+function delayLegend(grid, t) {
+  const items = [{ key: "delay", label: t("delay_series"), tone: "up" }];
+  if (grid.cells.some((c) => c.gap)) {
+    items.push({ key: "failed", label: t("delay_failed_legend"), tone: "gap",
+                 hatch: true });
+  }
+  return items;
 }
 
 function legendItems(grid, t, shadeLabel) {

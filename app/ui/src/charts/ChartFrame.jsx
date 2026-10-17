@@ -12,13 +12,16 @@ import Typography from "@mui/material/Typography";
                   and an unreadable one are pixel-identical and mean
                   opposite things
      empty        an answer with nothing in it: no traffic in the window
-                  (EMPTY_TEXT says what that means for a scope)
+                  (EMPTY_TEXT says what that means for a scope or widget,
+                  and STALE_TEXT / UNAVAILABLE_TEXT likewise - a widget that
+                  is not traffic must never claim to be)
 
    Before the first answer there is no state at all - no "no traffic" text a
    reader could take for a measurement. */
 export default function ChartFrame({ id, state = null, since = "", reason = "",
                                       t, children, minHeight = 60,
-                                      emptyText = "" }) {
+                                      emptyText = "", staleText = "",
+                                      unavailableText = "" }) {
   const drawn = state === "fresh" || state === "stale";
   return (
     <Box data-testid={id} data-state={state || "none"}
@@ -27,14 +30,14 @@ export default function ChartFrame({ id, state = null, since = "", reason = "",
       {state === "stale" ? (
         <Typography variant="body2" color="warning.main"
                     data-testid={`${id}-stale`} sx={{ mb: 0.5 }}>
-          {`${t("chart_stale_since")} ${since}`}
+          {`${staleText || t("chart_stale_since")} ${since}`}
         </Typography>
       ) : null}
       {state === "unavailable" ? (
         <Typography variant="body2" color="warning.main"
                     data-testid={`${id}-unavailable`}>
-          {reason === "unreachable" ? t("chart_unreachable")
-            : t("chart_unavailable")}
+          {unavailableText || (reason === "unreachable" ? t("chart_unreachable")
+            : t("chart_unavailable"))}
         </Typography>
       ) : null}
       {state === "empty" ? (

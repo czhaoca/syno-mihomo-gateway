@@ -65,6 +65,27 @@ then redeploy. Categories, exit nodes, countries and per-device totals are
 kept either way.
 
 --------------------------------------------------------------------------
+Live throughput, node delay and quota
+--------------------------------------------------------------------------
+The overview also shows three things the panel reads from mihomo:
+
+      Live throughput   off until you tick it, and remembered by this
+                        browser only. Bytes per second now and over the
+                        last minute. Nothing from it is stored. "No new
+                        figures for Ns" means the stream went quiet; it
+                        never shows a frozen number as current.
+      Node delay        each policy group's selected node, from the tests
+                        mihomo itself runs (sampled every 5 minutes, kept
+                        14 days by default). A hatched mark is a failed
+                        test: no answer, never 0 ms. A blank had no test.
+      Quota             each provider's used traffic against its total,
+                        and its expiry, as the provider reports them
+                        (sampled hourly). No total, no bar.
+
+A widget whose newest read failed, or whose collector stopped, says it is
+stale and keeps the last good picture.
+
+--------------------------------------------------------------------------
 What the panel cannot see
 --------------------------------------------------------------------------
 Only traffic that passes through the gateway is counted. A device that

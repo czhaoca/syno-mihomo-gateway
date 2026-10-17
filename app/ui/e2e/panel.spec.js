@@ -83,6 +83,11 @@ test.describe("the panel makes no external request", () => {
       await page.locator(`[data-testid="tab-${id}"]`).click();
       await ready(page, id);
     }
+    // the live tile's stream (#103) is same-origin too: open it
+    const live = page.waitForRequest((r) => r.url().includes("/v1/stats/live"));
+    await page.locator('[data-testid="live-toggle"]').check();
+    await live;
+    await page.locator('[data-testid="live-toggle"]').uncheck();
     // and the language toggle, which fetches a second dictionary
     const before = await page.locator('[data-testid="app-ready"]')
       .getAttribute("data-lang");
@@ -383,12 +388,33 @@ test.describe("Insights is the landing view", () => {
       });
       await open(page);
       await page.locator('[data-testid="stats-range"]').selectOption("30d");
-      await expect.poll(() => asked.some((url) => url.includes("/v1/stats/overview?")
-          && /[?&]range=30d(&|$)/.test(url)),
-        { message: "the overview must be read for 30d" }).toBe(true);
+      for (const path of ["/v1/stats/overview?", "/v1/stats/node-delay?"]) {
+        await expect.poll(() => asked.some((url) => url.includes(path)
+            && /[?&]range=30d(&|$)/.test(url)),
+          { message: `${path} must be read for 30d` }).toBe(true);
+      }
+      // an EXACT allowlist (#103): the scoped overview and the node delay
+      // name a preset; the quota is the gateway's and takes no query; the
+      // live stream is never opened while its tile is off
       for (const url of asked) {
-        expect(url, `the tab reads the scoped overview only: ${url}`)
-          .toContain("/v1/stats/overview?");
+        const { pathname, search } = new URL(url);
+        if (pathname === "/v1/stats/quota") {
+          expect(search, `the quota takes no query: ${url}`).toBe("");
+          continue;
+        }
+        expect(["/v1/stats/overview", "/v1/stats/node-delay"],
+               `the tab reads the overview and its widgets only: ${url}`)
+          .toContain(pathname);
+        const keys = [...new URLSearchParams(search).keys()];
+        if (pathname === "/v1/stats/node-delay") {
+          expect(keys, `the node delay takes the range and nothing else: ${url}`)
+            .toEqual(["range"]);
+        } else {
+          for (const key of keys) {
+            expect(["range", "limit", "device", "category", "host"],
+                   `the overview takes its scope keys only: ${url}`).toContain(key);
+          }
+        }
         expect(url, `every stats read must name a preset: ${url}`)
           .toMatch(/[?&]range=(24h|48h|7d|30d|daily)(&|$)/);
         expect(url, `the client must not compute the window: ${url}`)

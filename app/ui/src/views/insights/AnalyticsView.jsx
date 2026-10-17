@@ -10,6 +10,9 @@ import { buildGrid, keyStart } from "../../charts/grid.js";
 import {
   BEYOND_CLASS, CLASS_RETENTION_DAYS, fmtBytes, labelFor, windowStart,
 } from "../../stats.js";
+import LiveTile from "./LiveTile.jsx";
+import NodeDelay from "./NodeDelay.jsx";
+import Quota from "./Quota.jsx";
 import TopList from "./TopList.jsx";
 
 /* One scope's analytics (#101 DEC-I): a KPI row, the scoped timeline in its
@@ -54,7 +57,7 @@ const COVERAGE_TONES = { hostname: "up", ip_only: "unattributed" };
 
 export default function AnalyticsView({ t, descriptor, scope, range, view,
                                         health, aliases, counts, onMore, busy,
-                                        hrefFor }) {
+                                        hrefFor, widgets = null }) {
   const { data, failed, stalled, linePoll, lastGood, settledAt } = view;
   const lastPoll = health ? health.collector_last_ts : null;
   const collecting = !health || health.collector === "ok";
@@ -128,6 +131,9 @@ export default function AnalyticsView({ t, descriptor, scope, range, view,
         </Box>
       ) : null}
 
+      {/* the gateway view's live tile (#103): off until this browser opts in */}
+      {widgets ? <LiveTile t={t} /> : null}
+
       {data && !timeline ? null : (
         <ChartFrame id="stats-chart-frame" state={frame} since={since}
                     reason={failed || ""} t={t}
@@ -168,6 +174,15 @@ export default function AnalyticsView({ t, descriptor, scope, range, view,
           <Typography variant="subtitle2">{t("share_title")}</Typography>
           <ShareBar testid="stats-share" segments={shares} />
         </Stack>
+      ) : null}
+
+      {widgets ? (
+        <Box sx={{ display: "grid", gap: 2, minWidth: 0,
+                   gridTemplateColumns: { xs: "minmax(0, 1fr)",
+                                          md: "repeat(2, minmax(0, 1fr))" } }}>
+          <NodeDelay t={t} read={widgets.delay} range={range} collecting={collecting} />
+          <Quota t={t} read={widgets.quota} collecting={collecting} />
+        </Box>
       ) : null}
 
       {attributable ? (

@@ -4,6 +4,7 @@ import Stack from "@mui/material/Stack";
 
 import { api } from "../api.js";
 import { SelectInput } from "../controls.jsx";
+import useGatewayReads from "../hooks/useGatewayReads.js";
 import { formatHash } from "../hooks/useHashRoute.js";
 import useScopedStats from "../hooks/useScopedStats.js";
 import { LIMIT_MAX, PAGE, RANGES, aliasMap, labelFor, normalizeRange } from "../stats.js";
@@ -77,6 +78,9 @@ export default function InsightsView({ t, notify, tick, health, healthSettled,
 
   const stats = useScopedStats({ range, scope, limit, tick, health, healthSettled });
   const busy = !stats.ready;
+  // the gateway widgets' own reads (#103 DEC-D): only in a gateway view
+  const widgets = useGatewayReads({ enabled: Boolean(descriptor.gateway), range,
+                                    tick, healthSettled });
 
   const more = (dim) => setSizes({
     view, counts: { ...counts, [dim]: Math.min(countOf(dim) + PAGE, LIMIT_MAX) },
@@ -85,12 +89,17 @@ export default function InsightsView({ t, notify, tick, health, healthSettled,
     app: null, host: null, ...next }, range });
   const refresh = () => {
     stats.refresh();
+    widgets.refresh();
     readAliases();
   };
   const purge = async () => {
     if (!window.confirm(t("purge_confirm"))) return;
     const result = await api("POST", "/v1/stats/purge");
-    if (result.status === 200) await stats.refresh();
+    // the bare purge also deletes the node delay and the quota (#102): the
+    // widgets re-read with the overview, never drawing deleted figures
+    if (result.status === 200) {
+      await Promise.all([stats.refresh(), widgets.refresh({ forget: true })]);
+    }
     else if (result.status !== 403) {
       notify((result.data && result.data.detail) || t("error_generic"));
     }
@@ -142,7 +151,8 @@ export default function InsightsView({ t, notify, tick, health, healthSettled,
                      view={stats} health={health} aliases={aliases}
                      counts={Object.fromEntries(
                        descriptor.order.map((dim) => [dim, countOf(dim)]))}
-                     onMore={more} busy={busy} hrefFor={hrefFor} />
+                     onMore={more} busy={busy} hrefFor={hrefFor}
+                     widgets={descriptor.gateway ? widgets : null} />
     </Stack>
   );
 }
