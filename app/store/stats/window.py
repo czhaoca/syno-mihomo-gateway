@@ -114,13 +114,19 @@ def _window_plan(conn, resolution: str, since, frame,
                                                 since_day, frame))]
 
 
-def _union(plan, columns: str, device: str = "") -> tuple[str, list]:
+def _union(plan, columns: str, device: str = "",
+           value: tuple | None = None) -> tuple[str, list]:
+    """One UNION ALL over PLAN's tables. VALUE, a (column, value) pair,
+    keeps only that value's rows (one category of a dimension, #98)."""
     selects, params = [], []
     for table, bound in plan:
         where = []
         if device:
             where.append("device = ?")
             params.append(device)
+        if value is not None:
+            where.append(f"{value[0]} = ?")
+            params.append(value[1])
         if bound is not None:
             where.append("bucket >= ?")
             params.append(bound)
@@ -162,9 +168,12 @@ def read_window_dimension(conn, dim: str, resolution: str, since, frame,
 
 
 def read_window_timeline(conn, resolution: str, device: str, since,
-                         frame) -> list:
+                         frame, tables=_TIER_TABLES,
+                         value: tuple | None = None) -> list:
     """Bucket rows at RESOLUTION over a window, from the tables its plan
-    takes. Same row shapes as `read_timeline`.
+    takes. Same row shapes as `read_timeline`. TABLES and VALUE read one
+    value of a dimension instead of the device tier (#98's scoped
+    overview): `dimension_tables(dim)` and ("value", <value>).
 
     At day resolution the not-yet-rolled hours are keyed into local days
     under FRAME - the current framing, the same key and stamp rollup will
@@ -174,9 +183,9 @@ def read_window_timeline(conn, resolution: str, device: str, since,
     changed day boundary remains visible rather than summed away.
     """
     frame = _usable(frame)
-    plan = _window_plan(conn, resolution, since, frame)
+    plan = _window_plan(conn, resolution, since, frame, tables)
     if resolution != "day":
-        union, params = _union(plan, "bucket, up, down", device)
+        union, params = _union(plan, "bucket, up, down", device, value)
         rows = conn.execute(
             f"SELECT bucket, SUM(up) AS up, SUM(down) AS down "
             f"FROM ({union}) GROUP BY bucket {MOVED} ORDER BY bucket",
@@ -185,14 +194,15 @@ def read_window_timeline(conn, resolution: str, device: str, since,
     days = {}
     day_plan, hour_plan = plan[:1], plan[1:]
     union, params = _union(day_plan,
-                           "bucket, bucket_tz, day_boundary, up, down", device)
+                           "bucket, bucket_tz, day_boundary, up, down", device,
+                           value)
     for r in conn.execute(
             f"SELECT bucket, bucket_tz, day_boundary, SUM(up) AS up, "
             f"SUM(down) AS down FROM ({union}) "
             f"GROUP BY bucket, bucket_tz, day_boundary", params):
         days[(r["bucket"], r["bucket_tz"], r["day_boundary"])] = [r["up"],
                                                                   r["down"]]
-    union, params = _union(hour_plan, "bucket, up, down", device)
+    union, params = _union(hour_plan, "bucket, up, down", device, value)
     for r in conn.execute(
             f"SELECT bucket, SUM(up) AS up, SUM(down) AS down FROM ({union}) "
             f"GROUP BY bucket", params):

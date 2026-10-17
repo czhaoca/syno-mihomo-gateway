@@ -147,8 +147,24 @@ def read_domains(conn, since: str = "", until: str = "") -> list:
     return [dict(r) for r in rows]
 
 
-def read_gaps(conn, limit: int = 100) -> list:
+def read_gaps(conn, limit: int = 100, since: str = "",
+              until: str = "") -> list:
+    """The newest LIMIT gaps - or, with SINCE/UNTIL (#98), the newest LIMIT
+    that overlap that window: a gap that ended at or after SINCE and started
+    at or before UNTIL. String comparison over the stored `...Z` stamps, as
+    every stats read compares; a shorter key (`2026-10-15T12`) names its
+    whole bucket on either side - UNTIL is extended past every stamp it
+    prefixes, which as a bare string it would sort before."""
+    where, params = [], []
+    if since:
+        where.append("ended >= ?")
+        params.append(since)
+    if until:
+        where.append("started <= ?")
+        params.append(until + "~")
+    clause = f"WHERE {' AND '.join(where)} " if where else ""
     rows = conn.execute(
-        "SELECT started, ended, reason FROM stats_gap "
-        "ORDER BY id DESC LIMIT ?", (max(1, min(limit, 1000)),)).fetchall()
+        f"SELECT started, ended, reason FROM stats_gap {clause}"
+        f"ORDER BY id DESC LIMIT ?",
+        (*params, max(1, min(limit, 1000)))).fetchall()
     return [dict(r) for r in rows]

@@ -21,6 +21,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app import config
+from app.api import csv_export
 from app.api.auth import require_mutation_auth
 from app.collector.core import GAP_FACTOR, effective_interval_s
 from app.store import dayframe, identity, settings
@@ -403,24 +404,38 @@ def stats_domains(request: Request, since: str = "",
                 "rows": stats_store.read_domains(conn, since, until)}
 
 
-@router.get("/v1/stats/timeline")
+@router.get("/v1/stats/timeline", responses=csv_export.CSV_RESPONSES)
 def stats_timeline(request: Request, tier: Tier = "minute",
                    device: str = "", since: str = "",
-                   until: str = "", range_: RangeParam = None) -> dict:
+                   until: str = "", range_: RangeParam = None,
+                   fmt: csv_export.FormatParam = "json") -> dict:
     """Bucket rows, optionally for one device. With `range`, window-complete
     across tiers at the resolution (local days synthesised under the current
     framing for the not-yet-rolled tail, stamped like stored ones); with
-    only `tier`, the single tier table (unchanged since v1.8.0)."""
+    only `tier`, the single tier table (unchanged since v1.8.0). A bucket
+    that moved no bytes is not listed. `format=csv` (#98) exports the rows:
+    `bucket,up,down`, plus `bucket_tz,day_boundary` at day resolution."""
     if range_ is not None:
         resolution, start, frame = _range_args(request, range_, tier)
         with _stats_reader(request) as conn:
-            return {"tier": resolution, "device": device,
+            body = {"tier": resolution, "device": device,
                     "rows": stats_store.read_window_timeline(
                         conn, resolution, device, start, frame)}
-    with _stats_reader(request) as conn:
-        return {"tier": tier, "device": device,
-                "rows": stats_store.read_timeline(conn, tier, device,
-                                                  since, until)}
+    else:
+        with _stats_reader(request) as conn:
+            body = {"tier": tier, "device": device,
+                    "rows": stats_store.read_timeline(conn, tier, device,
+                                                      since, until)}
+    if fmt == "csv":
+        day = body["tier"] == "day"
+        header = ["bucket", "up", "down"] + (
+            ["bucket_tz", "day_boundary"] if day else [])
+        rows = [[r["bucket"], r["up"], r["down"]]
+                + ([r["bucket_tz"], r["day_boundary"]] if day else [])
+                for r in body["rows"]]
+        return csv_export.response(
+            header, rows, f"stats-timeline-{range_ or tier}.csv")
+    return body
 
 
 @router.get("/v1/stats/coverage")
@@ -473,9 +488,15 @@ def stats_self(request: Request, since: str = "", until: str = "") -> dict:
 
 
 @router.get("/v1/stats/gaps")
-def stats_gaps(request: Request, limit: int = 100) -> dict:
+def stats_gaps(request: Request, limit: int = 100, since: str = "",
+               until: str = "") -> dict:
+    """The newest `limit` collection gaps (1-1000). With `since`/`until`
+    (#98), only the gaps that overlap that window: ended at or after
+    `since`, started at or before `until` - compared as strings with the
+    stored `YYYY-MM-DDTHH:MM:SSZ` stamps, where a shorter key names its
+    whole bucket on either side."""
     with _stats_reader(request) as conn:
-        return {"rows": stats_store.read_gaps(conn, limit)}
+        return {"rows": stats_store.read_gaps(conn, limit, since, until)}
 
 
 @router.post("/v1/stats/purge",

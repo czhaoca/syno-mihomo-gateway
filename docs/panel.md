@@ -302,13 +302,66 @@ scripts/ci/categories_regen.py --write`. That fetches the pinned source, or
 takes `--source <tarball>`. CI's `categories_check.py` refuses a hand-edited
 file; see [development](development.md).
 
+## Insights reads
+
+From v1.12 two reads answer the Insights screens, beside the per-view reads
+listed in the [API reference](panel-api.md):
+
+- `GET /v1/stats/breakdown?dim=...` gives one dimension's values over a
+  window, largest first. The dimensions are `exit` (exit node), `group`
+  (policy group), `rule` (rule type), `category` and `country`; with
+  `PANEL_STATS_DOMAINS` on, also `host` and `app`. It takes `range=` (or
+  `tier` with `since`/`until`), `device`, `sort=total|up|down`, `limit`
+  (1 to 200) and `offset`. `total` and `total_rows` cover the whole window,
+  not the page, and `tier` names the resolution actually read: the
+  dimensions have no minute tier, so a 48-hour read is hourly.
+  - A long-term dimension reports `unrecorded`: device bytes in the whole
+    window that it has no record of, from before v1.11, from a time an
+    older panel ran, or left by purging one table. They are shown as such,
+    never as less traffic. `window.oldest_bucket` says where the
+    dimension's data starts, and `window.truncated` that the window reaches
+    before it.
+  - `category` rows carry `class`: `coarse`, `unattributed` (the value
+    `unknown`) or `no_dictionary` (the empty value, counted without a
+    dictionary).
+  - `host` and `app` never reach back more than seven days, whatever the
+    window asks for; `window.since` says where the read starts. With the
+    switch off they answer `enabled: false` and no rows.
+- `GET /v1/stats/overview?range=...` is the landing page in one read: the
+  totals, the timeline, the top values of each dimension, the gaps and the
+  coverage, all from the same moment. Scope it with `device`, and with
+  `category` or `host`. What the stored tables cannot answer for a scope is
+  `null`, and `unavailable` says why. A category has no exit nodes or
+  countries, for example, because the dimensions are stored independently,
+  and coverage is measured for the whole gateway only. A scoped `totals`
+  carries the scope's `window`.
+- `format=csv` on the breakdown and on `/v1/stats/timeline` exports the
+  same rows as a CSV attachment (UTF-8, no byte-order mark, header row
+  first). A text cell a spreadsheet would run as a formula is prefixed with
+  `'`. The columns:
+  - breakdown: `kind,value,up,down`, plus `class` for `dim=category`.
+    `kind` is `value` for a dimension value, and `unrecorded` for the one
+    row (with an empty `value`) that carries the device bytes the dimension
+    has no record of. That row covers the whole window, so it comes on the
+    first page only. A `host` or `app` export with the switch off is the
+    header row alone.
+  - timeline: `bucket,up,down`, plus `bucket_tz,day_boundary` for daily
+    rows.
+- `/v1/stats/gaps` takes `since` and `until` to list only the gaps that
+  overlap a window.
+
+A device, group or bucket that moved no bytes is never listed by these or
+the other byte reads. These reads are open on the LAN, like every stats
+read, and they show which devices used which services: **never expose the
+panel to the WAN** (see Security).
+
 ## Security
 
 - **Never expose the panel to the WAN** — do not point cloudflared (or any
   tunnel/port-forward) at `PANEL_IP`. The panel is designed for the LAN only:
   **reads are open on the LAN even when mutations are locked**, so WAN
-  exposure leaks your device policy and traffic history no matter how strong
-  `PANEL_SECRET` is, and the bearer check has no rate limiting — secret
+  exposure leaks your device policy and traffic history (from v1.12 down to
+  which services each device used) no matter how strong `PANEL_SECRET` is, and the bearer check has no rate limiting — secret
   entropy is the only brute-force barrier for mutations.
 - Mutations always require `Authorization: Bearer <PANEL_SECRET>`; an empty
   secret refuses every mutation (fail closed), it does not open them.

@@ -18,6 +18,7 @@ from fastapi.responses import PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from app import config
+from app.api.insights import router as insights_router
 from app.api.routes import router
 from app.collector.core import Collector, CollectorLoop
 from app.mihomo_client.client import MihomoClient
@@ -108,6 +109,7 @@ def create_app(*, mihomo_client=None, notifier=None) -> FastAPI:
     app = FastAPI(title="Syno Mihomo Gateway Panel", version="1.0.0",
                   description=API_DESCRIPTION, lifespan=lifespan)
     app.include_router(router)
+    app.include_router(insights_router)
     # Same-origin UI (#66, rebuilt in React at #80): the built tree ships
     # inside the image and is served by the app itself - the reason the API
     # can run with ZERO CORS headers. Neither the mount nor the root redirect

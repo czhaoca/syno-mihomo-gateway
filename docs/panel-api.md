@@ -72,6 +72,12 @@ Get Settings
 
 Put Settings
 
+## `GET /v1/stats/breakdown`
+
+Stats Breakdown
+
+Parameters: `dim`, `tier`, `since`, `until`, `device`, `sort`, `limit`, `offset`, `range`, `format`
+
 ## `GET /v1/stats/chains`
 
 Stats Chains
@@ -100,7 +106,13 @@ Parameters: `since`, `until`
 
 Stats Gaps
 
-Parameters: `limit`
+Parameters: `limit`, `since`, `until`
+
+## `GET /v1/stats/overview`
+
+Stats Overview
+
+Parameters: `range`, `device`, `category`, `host`, `limit`
 
 ## `POST /v1/stats/purge`
 
@@ -116,4 +128,4 @@ Parameters: `since`, `until`
 
 Stats Timeline
 
-Parameters: `tier`, `device`, `since`, `until`, `range`
+Parameters: `tier`, `device`, `since`, `until`, `range`, `format`

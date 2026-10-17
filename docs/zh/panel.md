@@ -208,12 +208,28 @@ mihomo 自身的流量（订阅拉取、健康检查）计在设备 `gateway` �
 
 词典基于 [v2fly/domain-list-community](https://github.com/v2fly/domain-list-community)（MIT 许可证）在某个锁定提交上的 geosite 列表构建，覆盖面板整理的 150 个 id；不在其中的应用保持未归因。词典随面板镜像发布，面板从不下载它。如需修改，请编辑 `scripts/ci/categories_regen.py` 中的整理表或锁定的提交，然后运行 `python3 scripts/ci/categories_regen.py --write`。它会获取锁定的源，也可以用 `--source <tarball>` 指定。CI 中的 `categories_check.py` 会拒绝手工编辑过的文件；见[开发](development.md)。
 
+## Insights 读取接口
+
+自 v1.12 起，除了[API 参考](panel-api.md)中列出的各视图读取接口之外，另有两个读取接口为 Insights 界面提供数据：
+
+- `GET /v1/stats/breakdown?dim=...` 给出某个维度在一个时间窗口内的各个取值，从大到小排列。维度有 `exit`（出口节点）、`group`（策略组）、`rule`（规则类型）、`category` 和 `country`；开启 `PANEL_STATS_DOMAINS` 时还有 `host` 和 `app`。它接受 `range=`（或 `tier` 加 `since`/`until`）、`device`、`sort=total|up|down`、`limit`（1 到 200）和 `offset`。`total` 和 `total_rows` 覆盖整个窗口而不只是当前页；`tier` 标明实际读取的粒度：各维度没有分钟层级，所以 48 小时的读取按小时计。
+  - 长期维度会报告 `unrecorded`：整个窗口内该维度没有记录的设备字节，来自 v1.11 之前、旧版面板运行期间，或只清除了某一张表之后。这些字节会如实标出，绝不会显示成流量变少。`window.oldest_bucket` 标明该维度的数据从何时开始，`window.truncated` 表示窗口回溯到了这之前。
+  - `category` 的每一行带有 `class`：`coarse`、`unattributed`（取值 `unknown`）或 `no_dictionary`（空值，未经词典统计）。
+  - 无论窗口要求多长，`host` 和 `app` 最多只回溯 7 天；`window.since` 标明读取从何处开始。开关关闭时，它们返回 `enabled: false` 且没有任何行。
+- `GET /v1/stats/overview?range=...` 一次读取就给出首页所需的全部内容：合计、时间线、各维度的前几名、空缺和覆盖率，全部来自同一时刻。可以用 `device` 限定范围，也可以用 `category` 或 `host` 限定。对于某个范围，存储的表无法回答的部分为 `null`，并由 `unavailable` 说明原因。例如，一个类别没有出口节点或国家信息，因为各维度是分开存储的；覆盖率也只针对整个网关测量。限定范围时，`totals` 会带上该范围的 `window`。
+- 在 breakdown 和 `/v1/stats/timeline` 上加 `format=csv`，会把同样的行导出为 CSV 附件（UTF-8，无字节顺序标记，首行为表头）。电子表格会当作公式执行的文本单元格，会在前面加上 `'`。各列如下：
+  - breakdown：`kind,value,up,down`，`dim=category` 时另加 `class`。维度取值行的 `kind` 为 `value`；另有一行 `kind` 为 `unrecorded`（`value` 为空），给出该维度没有记录的设备字节。这一行覆盖整个窗口，因此只出现在第一页。开关关闭时，`host` 或 `app` 的导出只有表头一行。
+  - timeline：`bucket,up,down`，按天的行另加 `bucket_tz,day_boundary`。
+- `/v1/stats/gaps` 接受 `since` 和 `until`，只列出与某个窗口重叠的空缺。
+
+这些接口以及其他字节读取接口，都不会列出没有传输任何字节的设备、策略组或时间桶。与所有统计读取接口一样，这些接口在局域网内无需认证即可访问，而且会显示哪些设备使用了哪些服务：**切勿把面板暴露到公网**（见“安全”一节）。
+
 ## 安全
 
 - **绝不要把面板暴露到公网**——不要让 cloudflared（或任何隧道/端口
   转发）指向 `PANEL_IP`。面板按局域网专用设计：**即使修改被锁定，读取
-  在局域网内也始终开放**，所以暴露到公网会泄漏你的设备策略与流量历史，
-  无论 `PANEL_SECRET` 多强都无济于事；而且 bearer 校验没有速率限制——
+  在局域网内也始终开放**，所以暴露到公网会泄漏你的设备策略与流量历史
+  （自 v1.12 起细到每台设备使用了哪些服务），无论 `PANEL_SECRET` 多强都无济于事；而且 bearer 校验没有速率限制——
   对于修改操作，密钥的熵是唯一的抗暴力破解屏障。
 - 修改操作始终要求 `Authorization: Bearer <PANEL_SECRET>`；空密钥会
   拒绝所有修改（失败即停），而不会因此放行。

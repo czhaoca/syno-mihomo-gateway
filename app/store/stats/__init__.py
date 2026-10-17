@@ -21,6 +21,15 @@ auto_update.sh counts-header honesty style).
 # here does NOT reach calls made between the submodules - they bind each
 # other's names directly - so patch the submodule that makes the call.
 
+from app.store.stats.breakdown import (
+    BREAKDOWN_DIMS,
+    CLASS_DIMS,
+    LIMIT_MAX,
+    SORTS,
+    Window,
+    category_class,
+    read_breakdown,
+)
 from app.store.stats.coverage import (
     coverage_report,
     coverage_rules,
@@ -29,6 +38,7 @@ from app.store.stats.coverage import (
 )
 from app.store.stats.ingest import PAYLOAD_RULES, flush_poll
 from app.store.stats.maintain import _CAP_TIERS, enforce_cap, purge_stats, rollup
+from app.store.stats.overview import INVISIBLE_TRAFFIC_HINT, read_overview
 from app.store.stats.read import (
     _TIER_TABLES,
     day_framings,
@@ -77,6 +87,8 @@ from app.store.stats.window import (
 
 __all__ = [
     "APP_TABLE",
+    "BREAKDOWN_DIMS",
+    "CLASS_DIMS",
     "CLASS_TABLES",
     "COVERAGE_CLASSES",
     "DICTIONARY_CLASSES",
@@ -84,22 +96,27 @@ __all__ = [
     "DIMENSION_TABLES",
     "DOMAIN_RETENTION_DAYS",
     "GATEWAY_DEVICE",
+    "INVISIBLE_TRAFFIC_HINT",
     "KLASS_HOSTNAME",
     "KLASS_IP_ONLY",
+    "LIMIT_MAX",
     "MINUTE_TABLE",
     "NO_DICTIONARY",
     "PAYLOAD_RULES",
     "PURGE_TABLES",
     "RANGE_SPECS",
     "SELF_TABLE",
+    "SORTS",
     "STATS_MIGRATIONS",
     "UNATTRIBUTED",
     "UNKNOWN",
     "_CAP_TIERS",
     "_TIER_TABLES",
+    "Window",
     "_db_bytes",
     "_fmt_ts",
     "_parse_ts",
+    "category_class",
     "coverage_report",
     "coverage_rules",
     "day_framings",
@@ -112,11 +129,13 @@ __all__ = [
     "open_stats_db",
     "purge_stats",
     "range_window",
+    "read_breakdown",
     "read_coverage",
     "read_dimension",
     "read_domains",
     "read_gaps",
     "read_grouped",
+    "read_overview",
     "read_self",
     "read_timeline",
     "read_window_dimension",
