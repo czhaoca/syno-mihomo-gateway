@@ -19,6 +19,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app import config
 from app.api.insights import router as insights_router
+from app.api.metrics import router as metrics_router
 from app.api.routes import router
 from app.collector.core import Collector, CollectorLoop
 from app.mihomo_client.client import MihomoClient
@@ -110,10 +111,12 @@ def create_app(*, mihomo_client=None, notifier=None) -> FastAPI:
                   description=API_DESCRIPTION, lifespan=lifespan)
     app.include_router(router)
     app.include_router(insights_router)
+    app.include_router(metrics_router)
     # Same-origin UI (#66, rebuilt in React at #80): the built tree ships
     # inside the image and is served by the app itself - the reason the API
     # can run with ZERO CORS headers. Neither the mount nor the root redirect
-    # belongs in the /v1 contract (the gate allows only /health + /v1/*).
+    # belongs in the /v1 contract (the gate allows only /v1/* and its
+    # ROOT_PATHS, /health and /metrics).
     #
     # `dist/` is gitignored and built by app/Dockerfile, so a bare source
     # checkout has none. That must fail LOUDLY rather than 404: a mysterious

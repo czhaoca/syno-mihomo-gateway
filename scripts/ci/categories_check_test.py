@@ -122,11 +122,12 @@ class CategoriesGateTests(unittest.TestCase):
 
     def test_a_sentinel_in_the_enum_is_refused(self):
         original = regen.COARSE
-        try:
-            regen.COARSE = (*original, "unknown")
-            self.assertRejected("sentinel 'unknown'")
-        finally:
-            regen.COARSE = original
+        for sentinel in ("unknown", "no_dictionary", "none"):
+            try:
+                regen.COARSE = (*original, sentinel)
+                self.assertRejected(f"sentinel {sentinel!r}")
+            finally:
+                regen.COARSE = original
 
     def test_a_missing_file_is_unreadable_not_a_crash(self):
         (self.dir / "suffixes.json").unlink()

@@ -511,13 +511,21 @@ def stats_purge(request: Request,
     no body (or `{}`) clears everything, as it always has. `rows` counts
     what each table lost. The POLICY audit lives in policy.db and is
     untouched - it records this purge, with its scope, like any other
-    mutation."""
+    mutation. A purge that touches the device tier or a dimension table
+    also resets the `/metrics` byte counters (#99), so purged traffic is
+    not served on as if it were still held."""
     scope = scope or StatsPurge()
     with request.app.state.stats_lock:
         conn = _stats_conn(request)
         rows = stats_store.purge_stats(
             conn, device=scope.device or "", tables=scope.tables,
             before=scope.before or "")
+        collector = getattr(request.app.state, "collector", None)
+        mirrored = {"stats_minute", stats_store.MINUTE_TABLE, "stats_hour",
+                    "stats_day", *stats_store.DIMENSION_TABLES}
+        if collector is not None and (scope.tables is None
+                                      or mirrored & set(scope.tables)):
+            collector.counters.reset()
     details = " ".join(
         f"{key}={','.join(val) if isinstance(val, list) else val}"
         for key, val in sorted(scope.model_dump(exclude_none=True).items()))

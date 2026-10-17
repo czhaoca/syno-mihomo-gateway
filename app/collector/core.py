@@ -71,6 +71,8 @@ class Collector:
                        "db_growth_mb_day": None}
         self._last_maintenance = None
         self._poll_ms = deque(maxlen=POLL_MS_WINDOW)
+        # the Prometheus byte counters (#99): since this process started
+        self.counters = stats_store.Counters()
         # the growth rate from the gauges already stored, so it is not
         # blank for the first minute after every restart
         with contextlib.suppress(Exception):
@@ -106,7 +108,8 @@ class Collector:
                     self.conn, raw, now,
                     domains_enabled=config.stats_domains(),
                     gap_threshold_s=GAP_FACTOR * effective_interval_s(),
-                    interval_s=effective_interval_s())
+                    interval_s=effective_interval_s(),
+                    counters=self.counters)
             self.status["last_poll_ts"] = now
             self.status["last_error"] = None
             # the whole poll - fetch, parse, flush (and any wait for the

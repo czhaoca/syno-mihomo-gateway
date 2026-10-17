@@ -30,6 +30,7 @@ from app.store.stats.breakdown import (
     category_class,
     read_breakdown,
 )
+from app.store.stats.counters import Counters
 from app.store.stats.coverage import (
     coverage_report,
     coverage_rules,
@@ -112,6 +113,7 @@ __all__ = [
     "UNKNOWN",
     "_CAP_TIERS",
     "_TIER_TABLES",
+    "Counters",
     "Window",
     "_db_bytes",
     "_fmt_ts",

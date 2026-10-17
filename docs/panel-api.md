@@ -14,6 +14,10 @@ unset - fail closed. All responses are JSON. The base URL is
 
 Health
 
+## `GET /metrics`
+
+Metrics
+
 ## `POST /v1/apply`
 
 Post Apply

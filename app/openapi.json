@@ -318,6 +318,28 @@
         "summary": "Health"
       }
     },
+    "/metrics": {
+      "get": {
+        "description": "Prometheus text exposition (format 0.0.4), only with\n`PANEL_METRICS=true` - 404 otherwise. Open on the LAN like every read:\nnever expose the panel to the WAN.\n\nCounters, since the panel started (a restart resets them):\n`insights_device_bytes_total{device,direction}`,\n`insights_group_bytes_total{group,direction}`,\n`insights_exit_bytes_total{exit,direction}`,\n`insights_rule_bytes_total{rule_type,direction}`,\n`insights_category_bytes_total{category,direction}`,\n`insights_country_bytes_total{country,direction}` - `direction` is\n`up` or `down`. An empty value is written `no_dictionary` (category,\nbytes counted without a dictionary) or `none` (anything else, e.g. a\nflow no rule decided). Gauges mirror `/health`: `insights_collector_*`,\n`insights_stats_*`, `insights_mihomo_*`. No label carries a hostname,\nsniffed name, ASN, port or app-level id.",
+        "operationId": "metrics_metrics_get",
+        "responses": {
+          "200": {
+            "content": {
+              "text/plain; version=0.0.4": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "The Prometheus text exposition"
+          },
+          "404": {
+            "description": "PANEL_METRICS is off"
+          }
+        },
+        "summary": "Metrics"
+      }
+    },
     "/v1/apply": {
       "post": {
         "operationId": "post_apply_v1_apply_post",
@@ -1407,7 +1429,7 @@
     },
     "/v1/stats/purge": {
       "post": {
-        "description": "Clears every visible stats surface (tiers, dimensions, the seven-day\ntables, gap history) but preserves conn_baseline + the poll stamp -\ndropping baselines would make still-open connections re-contribute\ntheir pre-purge cumulative. An optional body narrows it to one\n`device`, some `tables`, rows `before` a moment, or any combination;\nno body (or `{}`) clears everything, as it always has. `rows` counts\nwhat each table lost. The POLICY audit lives in policy.db and is\nuntouched - it records this purge, with its scope, like any other\nmutation.",
+        "description": "Clears every visible stats surface (tiers, dimensions, the seven-day\ntables, gap history) but preserves conn_baseline + the poll stamp -\ndropping baselines would make still-open connections re-contribute\ntheir pre-purge cumulative. An optional body narrows it to one\n`device`, some `tables`, rows `before` a moment, or any combination;\nno body (or `{}`) clears everything, as it always has. `rows` counts\nwhat each table lost. The POLICY audit lives in policy.db and is\nuntouched - it records this purge, with its scope, like any other\nmutation. A purge that touches the device tier or a dimension table\nalso resets the `/metrics` byte counters (#99), so purged traffic is\nnot served on as if it were still held.",
         "operationId": "stats_purge_v1_stats_purge_post",
         "requestBody": {
           "content": {

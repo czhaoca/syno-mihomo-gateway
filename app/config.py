@@ -124,6 +124,12 @@ def stats_domains() -> bool:
         "1", "true", "yes")
 
 
+def metrics() -> bool:
+    """The Prometheus exposition at /metrics (#99) - OFF unless explicitly
+    enabled; off, the path answers 404."""
+    return os.environ.get("PANEL_METRICS", "").lower() in ("1", "true", "yes")
+
+
 def full_proxy_sources() -> str:
     """The static band knob, for the UI's band_member badge. Compose wires
     it through at Sequence 60; unset (the norm until then) = no band."""

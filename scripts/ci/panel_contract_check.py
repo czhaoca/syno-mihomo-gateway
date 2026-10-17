@@ -17,8 +17,9 @@ Live assertions (bare mode):
   * docs/panel-api.md matches a fresh render byte-for-byte;
   * the additive-only /v1 policy is stated in the spec's info.description
     (breaking = new version prefix + explicit owner acknowledgment);
-  * every path is /health or versioned under /v1 — an unversioned surface
-    could never honor the additive-only promise.
+  * every path is versioned under /v1 — an unversioned surface could never
+    honor the additive-only promise — or one of ROOT_PATHS, each admitted
+    for a stated reason.
 """
 
 import json
@@ -30,6 +31,14 @@ if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
 CONTRACT = REPO / "app" / "openapi.json"
+
+# The only unversioned paths, each with the reason it may live at the root.
+ROOT_PATHS = {
+    "/health": "the doctor and the release validator read it by this fixed "
+               "path, from every panel version",
+    "/metrics": "Prometheus scrapes the root /metrics by convention; it is "
+                "opt-in (PANEL_METRICS) and its label set is fixed by #99",
+}
 API_MD = REPO / "docs" / "panel-api.md"
 REGEN_CMD = "python3 scripts/ci/panel_contract_check.py --write"
 
@@ -80,6 +89,14 @@ def render_api_md(doc: dict) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
+def path_problems(doc: dict) -> list:
+    """Every path that is neither under /v1 nor one of ROOT_PATHS."""
+    return [f"unversioned path {path!r}: every surface must live under /v1 "
+            f"(the additive-only contract) except {sorted(ROOT_PATHS)}"
+            for path in (doc.get("paths") or {})
+            if path not in ROOT_PATHS and not path.startswith("/v1/")]
+
+
 def main():
     from app.export_openapi import render_openapi
 
@@ -113,14 +130,12 @@ def main():
     if "additive-only" not in description:
         fail("the spec's info.description must state the additive-only /v1 "
              "policy (breaking = new version prefix + owner acknowledgment)")
-    for path in (doc.get("paths") or {}):
-        if path != "/health" and not path.startswith("/v1/"):
-            fail(f"unversioned path {path!r}: every surface except /health "
-                 f"must live under /v1 (the additive-only contract)")
+    for problem in path_problems(doc):
+        fail(problem)
 
     print("OK: panel contract is fresh - app/openapi.json + docs/panel-api.md "
           "regenerate byte-identical, the additive-only /v1 policy is stated, "
-          "and every path is /health or /v1-versioned.")
+          f"and every path is /v1-versioned or one of {sorted(ROOT_PATHS)}.")
 
 
 if __name__ == "__main__":

@@ -143,7 +143,7 @@ def _device(meta: dict) -> str:
 
 def flush_poll(conn, raw_conns: list, now: str, *, domains_enabled: bool,
                gap_threshold_s: int, interval_s: int | None = None,
-               dictionary=SHIPPED) -> None:
+               dictionary=SHIPPED, counters=None) -> None:
     """One poll's delta flush - a single transaction covering the minute
     and hour upserts, the dimension upserts, the (hourly) coverage and
     seven-day class upserts, the baseline update, the closed-connection
@@ -163,6 +163,10 @@ def flush_poll(conn, raw_conns: list, now: str, *, domains_enabled: bool,
     an unknown one - is UNATTRIBUTED. Without a dictionary (None, or the
     shipped one failing to load) every byte is NO_DICTIONARY, which is what
     an older image writes too.
+
+    COUNTERS (#99), when given, receive the poll's device, group and
+    dimension deltas only after the transaction has committed, so the
+    Prometheus counters never count a poll the store rolled back.
 
     The work is done in Python and written with a bounded number of
     statements (#94): the baseline set is read ONCE, each table is written
@@ -323,3 +327,5 @@ def flush_poll(conn, raw_conns: list, now: str, *, domains_enabled: bool,
         with suppress(Exception):
             conn.execute("ROLLBACK")
         raise
+    if counters is not None:
+        counters.add_poll(rows, dims)

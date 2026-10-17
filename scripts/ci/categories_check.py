@@ -13,9 +13,10 @@ What it proves, and what it cannot:
   * UPSTREAM-LICENSE matches the digest the header recorded;
   * bounds: at most MAX_IDS ids, MAX_RULES rules, MAX_BYTES bytes;
   * totality: every id is curated, has a coarse id inside the enum, and owns
-    at least one rule; every coarse id is used; the enum holds neither
-    sentinel ("" = no dictionary, "unknown" = no answer); every name is a
-    hostname held by exactly one id.
+    at least one rule; every coarse id is used; the enum holds no sentinel
+    ("" = no dictionary, "unknown" = no answer, and the /metrics
+    placeholders `no_dictionary` and `none`); every name is a hostname held
+    by exactly one id.
 Re-deriving suffixes.json byte for byte needs the upstream tree, so it is a
 development-time step: `python3 scripts/ci/categories_regen.py`.
 """
@@ -31,7 +32,9 @@ if str(HERE) not in sys.path:
 
 import categories_regen as regen
 
-SENTINELS = ("", "unknown")
+# values that are not a category: "" (no dictionary), "unknown" (no answer),
+# and the /metrics placeholders for an empty value (#99 DEC-C)
+SENTINELS = ("", "unknown", "no_dictionary", "none")
 
 
 def problems(directory: Path = regen.OUT_DIR) -> list:

@@ -355,6 +355,34 @@ the other byte reads. These reads are open on the LAN, like every stats
 read, and they show which devices used which services: **never expose the
 panel to the WAN** (see Security).
 
+### Prometheus metrics
+
+With `PANEL_METRICS=true` (see [configuration](configuration.md)) the panel
+serves a Prometheus text exposition at `/metrics`; off, `/metrics` answers
+404. It holds:
+
+- byte counters per dimension, each with its value in one label and
+  `direction` (`up` or `down`): `insights_device_bytes_total{device}`,
+  `insights_group_bytes_total{group}`, `insights_exit_bytes_total{exit}`,
+  `insights_rule_bytes_total{rule_type}`,
+  `insights_category_bytes_total{category}` and
+  `insights_country_bytes_total{country}`. They count from the moment the
+  panel started, so a restart resets them (Prometheus' `rate()` handles
+  that), and so does a purge of the traffic history. They count only polls
+  the store committed;
+- the collector's own gauges, the same numbers `/health` reports, in base
+  units (bytes, seconds): `insights_collector_*`, `insights_stats_*` and
+  `insights_mihomo_*`. A number that is not measured yet has no sample,
+  never a zero.
+
+No label ever carries a hostname, sniffed name, ASN, port or app-level id.
+Prometheus reads an empty label value as no label at all, so an empty value
+is written `no_dictionary` (a category counted without a dictionary) or
+`none` (anything else, such as a flow no rule decided). An exit node or
+group literally named `none` would share that series; no category can be
+named `no_dictionary` or `none`, because the dictionary's own check refuses
+either as a category id.
+
 ## Security
 
 - **Never expose the panel to the WAN** — do not point cloudflared (or any
@@ -363,6 +391,8 @@ panel to the WAN** (see Security).
   exposure leaks your device policy and traffic history (from v1.12 down to
   which services each device used) no matter how strong `PANEL_SECRET` is, and the bearer check has no rate limiting — secret
   entropy is the only brute-force barrier for mutations.
+- `/metrics` (with `PANEL_METRICS` on) is open on the LAN like every read
+  and carries per-device byte counters: scrape it from the LAN only.
 - Mutations always require `Authorization: Bearer <PANEL_SECRET>`; an empty
   secret refuses every mutation (fail closed), it does not open them.
 - Recorded follow-up (not in v1): an automated doctor check for accidental

@@ -224,6 +224,15 @@ mihomo 自身的流量（订阅拉取、健康检查）计在设备 `gateway` �
 
 这些接口以及其他字节读取接口，都不会列出没有传输任何字节的设备、策略组或时间桶。与所有统计读取接口一样，这些接口在局域网内无需认证即可访问，而且会显示哪些设备使用了哪些服务：**切勿把面板暴露到公网**（见“安全”一节）。
 
+### Prometheus 指标
+
+设置 `PANEL_METRICS=true`（见[配置](configuration.md)）后，面板会在 `/metrics` 提供 Prometheus 文本格式的指标；关闭时 `/metrics` 返回 404。其中包括：
+
+- 按维度统计的字节计数，每个维度的取值放在一个标签中，另有 `direction`（`up` 或 `down`）：`insights_device_bytes_total{device}`、`insights_group_bytes_total{group}`、`insights_exit_bytes_total{exit}`、`insights_rule_bytes_total{rule_type}`、`insights_category_bytes_total{category}` 和 `insights_country_bytes_total{country}`。它们从面板启动时开始计数，因此重启会把它们清零（Prometheus 的 `rate()` 能处理这种情况），清除流量历史也会把它们清零。它们只统计统计库已提交的轮询；
+- 采集器自身的指标，与 `/health` 报告的数值相同，均使用基本单位（字节、秒）：`insights_collector_*`、`insights_stats_*` 和 `insights_mihomo_*`。尚未测得的数值没有样本，绝不会显示为零。
+
+任何标签都不会带有主机名、嗅探到的名称、ASN、端口或应用级 id。Prometheus 会把空的标签值当作没有该标签，因此空值会写成 `no_dictionary`（未经词典统计的类别）或 `none`（其他情况，例如没有任何规则决定的流量）。名称恰好为 `none` 的出口节点或策略组会与之共用同一序列；而类别不可能命名为 `no_dictionary` 或 `none`，因为词典自身的检查会拒绝把二者用作类别 id。
+
 ## 安全
 
 - **绝不要把面板暴露到公网**——不要让 cloudflared（或任何隧道/端口
@@ -231,6 +240,7 @@ mihomo 自身的流量（订阅拉取、健康检查）计在设备 `gateway` �
   在局域网内也始终开放**，所以暴露到公网会泄漏你的设备策略与流量历史
   （自 v1.12 起细到每台设备使用了哪些服务），无论 `PANEL_SECRET` 多强都无济于事；而且 bearer 校验没有速率限制——
   对于修改操作，密钥的熵是唯一的抗暴力破解屏障。
+- `/metrics`（开启 `PANEL_METRICS` 时）与所有读取接口一样在局域网内开放，并带有按设备统计的字节计数：只能从局域网抓取。
 - 修改操作始终要求 `Authorization: Bearer <PANEL_SECRET>`；空密钥会
   拒绝所有修改（失败即停），而不会因此放行。
 - 记录在案的后续工作（v1 尚未包含）：一项自动化的 doctor 检查——用于

@@ -145,6 +145,8 @@ services:
       - PANEL_STATS_DAY_DAYS=${PANEL_STATS_DAY_DAYS:-}
       - PANEL_STATS_CAP_MB=${PANEL_STATS_CAP_MB:-}
       - PANEL_STATS_DOMAINS=${PANEL_STATS_DOMAINS:-}
+      # The Prometheus exposition at /metrics (#99; off unless true).
+      - PANEL_METRICS=${PANEL_METRICS:-}
       - PANEL_BACKUP_KEEP=${PANEL_BACKUP_KEEP:-}
       - PANEL_PORT=${PANEL_PORT:-8090}
     depends_on:
