@@ -3,6 +3,9 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- both schemes: the browser paints its own surfaces (the canvas
+         before the bundle runs, scrollbars) to match the device -->
+    <meta name="color-scheme" content="light dark" />
     <!--
       data-i18n="app_title" MUST survive `vite build` into dist/index.html.
       validate_release.sh:548 greps this exact string out of a raw wget during

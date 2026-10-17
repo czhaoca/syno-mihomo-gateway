@@ -32,6 +32,10 @@ export default function SettingsView({ t, notify }) {
   const [draft, setDraft] = useState({});
   const [changed, setChanged] = useState(null);
   const [identities, setIdentities] = useState([]);
+  // both first reads have settled, good or failed (the readiness marker)
+  const [settingsSettled, setSettingsSettled] = useState(false);
+  const [identitiesSettled, setIdentitiesSettled] = useState(false);
+  const settled = settingsSettled && identitiesSettled;
   const [alias, setAlias] = useState({ ip: "", name: "" });
 
   /* The keys the operator has edited but not saved. The seed below must
@@ -48,6 +52,7 @@ export default function SettingsView({ t, notify }) {
 
   const loadSettings = useCallback(async ({ reseed = false } = {}) => {
     const { status, data } = await api("GET", "/v1/settings");
+    setSettingsSettled(true);
     if (status !== 200 || !data) return;
     setSettings(data.settings);
     // Seed each key from its EFFECTIVE value, so saving an untouched form is
@@ -66,6 +71,7 @@ export default function SettingsView({ t, notify }) {
 
   const loadIdentities = useCallback(async () => {
     const { status, data } = await api("GET", "/v1/identity");
+    setIdentitiesSettled(true);
     if (status === 200 && data) setIdentities(data.identities || []);
   }, []);
 
@@ -110,6 +116,8 @@ export default function SettingsView({ t, notify }) {
 
   return (
     <Stack spacing={2}>
+      {/* readiness (#100 DEC-C): the first load has settled */}
+      {settled ? <span data-testid="settings-ready" hidden /> : null}
       <Card variant="outlined" sx={{ p: 1.5 }} data-testid="settings-card">
         <Typography variant="subtitle1" sx={{ mb: 1 }}>
           {t("settings_title")}

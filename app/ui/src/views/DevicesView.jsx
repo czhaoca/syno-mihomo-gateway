@@ -41,8 +41,12 @@ export default function DevicesView({ t, notify, tick, health, refreshHealth }) 
 
   const parity = health ? health.parity : "unknown";
 
+  // the first load has settled, good or failed (the readiness marker)
+  const [settled, setSettled] = useState(false);
+
   const refresh = useCallback(async () => {
     const { status, data } = await api("GET", "/v1/devices");
+    setSettled(true);
     // Only discard the list once a good answer is in hand: a failed refresh
     // must not wipe a correctly-rendered view and leave the operator staring
     // at nothing.
@@ -174,6 +178,8 @@ export default function DevicesView({ t, notify, tick, health, refreshHealth }) 
 
   return (
     <Stack spacing={1.5}>
+      {/* readiness (#100 DEC-C): the first load has settled */}
+      {settled ? <span data-testid="devices-ready" hidden /> : null}
       <Box component="form" data-testid="add-form" onSubmit={addDevice}
            sx={{ display: "grid", gap: 1,
                  gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" } }}>
@@ -251,7 +257,8 @@ export default function DevicesView({ t, notify, tick, health, refreshHealth }) 
 
               {history[dev.cidr] ? (
                 <Box sx={{ mt: 1 }}>
-                  <Sparkline rows={history[dev.cidr]} height={40}
+                  <Sparkline rows={history[dev.cidr]} height={44} t={t}
+                             tier="minute"
                              testid={`device-sparkline-${dev.cidr}`} />
                 </Box>
               ) : null}

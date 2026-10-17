@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
 
+import { ready } from "./fixtures/stats.js";
+
 /**
  * The browser gate (#79, moved onto the React tree by #80).
  *
@@ -39,14 +41,17 @@ async function routeAudit(page) {
   }));
 }
 
-/** Wait for the shell AND its dictionary: every label renders as its own key
- *  until the fetch lands, so asserting on text before then is a race. */
+/** Open the panel and wait until the shell and the tab say they are READY
+ *  (#100 DEC-C; `ready` in fixtures/stats.js). Network silence was the old
+ *  proxy, and it raced: a view can settle on a failed read, and a stream
+ *  (v1.14) would never let the network fall silent at all. */
 async function open(page, tab) {
-  await page.goto(PANEL, { waitUntil: "networkidle" });
+  await page.goto(PANEL);
   await expect(page.locator('[data-testid="app-shell"]')).toBeVisible();
-  if (tab) {
+  await ready(page, "stats");
+  if (tab && tab !== "stats") {
     await page.locator(`[data-testid="tab-${tab}"]`).click();
-    await page.waitForLoadState("networkidle");
+    await ready(page, tab);
   }
 }
 
@@ -71,15 +76,19 @@ test.describe("the panel makes no external request", () => {
       return route.continue();
     });
 
-    await page.reload({ waitUntil: "networkidle" });
+    await page.reload();
+    await ready(page, "stats");
     // exercise every tab so their fetches happen too, not just first paint
     for (const id of ["devices", "audit", "settings", "stats"]) {
       await page.locator(`[data-testid="tab-${id}"]`).click();
-      await page.waitForLoadState("networkidle");
+      await ready(page, id);
     }
     // and the language toggle, which fetches a second dictionary
+    const before = await page.locator('[data-testid="app-ready"]')
+      .getAttribute("data-lang");
     await page.locator('[data-testid="lang-toggle"]').click();
-    await page.waitForLoadState("networkidle");
+    await expect(page.locator('[data-testid="app-ready"]'))
+      .not.toHaveAttribute("data-lang", before);
     expect(offOrigin, `off-origin requests: ${offOrigin.join(", ")}`)
       .toEqual([]);
   });
@@ -214,16 +223,40 @@ test.describe("the panel is readable at both ends", () => {
       // The defect that started this epic was layout, and layout is exactly
       // what no amount of string-matching could see. A page wider than its own
       // viewport is the machine-checkable form of "unreadable".
+      //
+      // In BOTH colour schemes (#100 DEC-13): the device's own preference
+      // decides the first paint, and the picker's choice survives a reload.
       await page.setViewportSize({ width, height });
-      for (const tab of ["stats", "devices", "audit", "settings"]) {
-        await open(page, tab);
-        const overflow = await page.evaluate(
-          () => document.documentElement.scrollWidth
-            - document.documentElement.clientWidth,
-        );
-        expect(overflow, `${tab} overflows its viewport by ${overflow}px`)
-          .toBeLessThanOrEqual(1);
+      for (const scheme of ["light", "dark"]) {
+        await page.emulateMedia({ colorScheme: scheme });
+        for (const tab of ["stats", "devices", "audit", "settings"]) {
+          await open(page, tab);
+          await expect(page.locator("html"))
+            .toHaveAttribute("data-theme", scheme);
+          const overflow = await page.evaluate(
+            () => document.documentElement.scrollWidth
+              - document.documentElement.clientWidth,
+          );
+          expect(overflow,
+                 `${tab} (${scheme}) overflows its viewport by ${overflow}px`)
+            .toBeLessThanOrEqual(1);
+        }
       }
+      // the picker overrides the device and is remembered; "system" hands
+      // the scheme back to the device, which is then followed live
+      await page.emulateMedia({ colorScheme: "light" });
+      await open(page);
+      const picker = page.locator('[data-testid="theme-select"]');
+      await picker.selectOption("dark");
+      await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+      await page.reload();
+      await ready(page);
+      await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+      await expect(picker).toHaveValue("dark");
+      await picker.selectOption("system");
+      await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+      await page.emulateMedia({ colorScheme: "dark" });
+      await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
     });
   }
 
@@ -326,7 +359,8 @@ test.describe("stats is the landing view", () => {
       });
       await open(page);
       await page.locator('[data-testid="stats-range"]').selectOption("30d");
-      await page.waitForLoadState("networkidle");
+      await page.locator('[data-testid="stats-ready"][data-range="30d"]')
+        .waitFor({ state: "attached" });
       expect(asked.length, "the coverage report must be fetched").toBeGreaterThan(0);
       expect(asked[asked.length - 1],
         `coverage must be scoped to the selected window, got ${asked}`)

@@ -18,6 +18,12 @@ is a separate script rather than a pytest:
    tree is an explicit allowlist rather than an outright ban, and anything
    outside it fails here.
 
+3. The bundle-size budget (#100, brief DEC-7). No chart library is added -
+   the kit under src/charts is hand-rolled - and this ceiling is what keeps
+   that decision honest: the total raw size of the built JavaScript may not
+   pass JS_BUDGET_BYTES. Raising it is a deliberate change with its reason
+   written next to the constant, never a silent drift.
+
 Usage: python3 scripts/ci/ui_build_check.py [--build]
   --build runs `npm ci && npm run build` first; without it an existing
   dist/ is checked (the Dockerfile builds it, and CI passes --build).
@@ -58,6 +64,13 @@ ALLOWED_URL_PREFIXES = {
 }
 
 URL_RE = re.compile(r"https?://[^\s\"'`)\\]+")
+
+# The total raw size every built .js asset may reach, in bytes, and why it
+# is what it is. Each bump appends its reason; none may be silent.
+#   450 KB  #100: React 19 + MUI 6 + the hand-rolled chart kit came to
+#           about 403 KB; the headroom is for the Insights views (#101),
+#           and a chart library (or a second copy of MUI) cannot fit in it.
+JS_BUDGET_BYTES = 450_000
 
 
 def _rel(path: Path) -> str:
@@ -123,16 +136,33 @@ def check_urls() -> None:
             + "\n  ".join(sorted(set(offenders))[:20]))
 
 
+def check_size() -> int:
+    """The total raw size of the built JavaScript; fails past the budget.
+    A dist without any .js asset is a broken build, not a small one."""
+    scripts = sorted((DIST / "assets").glob("*.js")) if DIST.exists() else []
+    if not scripts:
+        fail(f"{_rel(DIST / 'assets')} holds no .js asset - run with --build")
+    total = sum(path.stat().st_size for path in scripts)
+    if total > JS_BUDGET_BYTES:
+        fail(f"the built JavaScript is {total} bytes, over the "
+             f"{JS_BUDGET_BYTES}-byte budget (JS_BUDGET_BYTES): drop what "
+             f"grew it, or raise the budget with its reason written beside "
+             f"the constant")
+    return total
+
+
 def main() -> None:
     if "--build" in sys.argv[1:]:
         build()
     check_marker()
     check_urls()
+    total = check_size()
     allowed = ", ".join(sorted(ALLOWED_URL_PREFIXES))
     print(
         f"OK: built panel UI carries the A6 marker {A6_MARKER!r} outside any "
-        f"comment, and every external URL is in the inert allowlist "
-        f"({allowed}).")
+        f"comment, every external URL is in the inert allowlist "
+        f"({allowed}), and the built JavaScript is {total} of "
+        f"{JS_BUDGET_BYTES} budgeted bytes.")
 
 
 if __name__ == "__main__":

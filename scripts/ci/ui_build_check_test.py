@@ -75,6 +75,28 @@ class UiBuildPolicyTests(unittest.TestCase):
         with self.dist(commented):
             self.assert_rejected(gate.check_marker)
 
+    # --- the bundle-size budget (#100) ---------------------------------
+
+    def test_a_bundle_inside_the_budget_is_accepted(self) -> None:
+        with self.dist(MARKER_SHELL, asset="var a=1;"):
+            self.assertLess(gate.check_size(), gate.JS_BUDGET_BYTES)
+
+    def test_an_oversize_bundle_is_rejected(self) -> None:
+        # one byte past the budget fails - the ceiling is a ceiling
+        with self.dist(MARKER_SHELL,
+                       asset="x" * (gate.JS_BUDGET_BYTES + 1)):
+            self.assert_rejected(gate.check_size)
+
+    def test_a_build_without_javascript_is_rejected(self) -> None:
+        with self.dist(MARKER_SHELL):
+            self.assert_rejected(gate.check_size)
+
+    def test_the_budget_states_its_reason(self) -> None:
+        source = Path(gate.__file__).read_text(encoding="utf-8")
+        head = source[:source.index("JS_BUDGET_BYTES =")]
+        self.assertIn("KB  #", head.rsplit("\n\n", 1)[-1],
+                      "JS_BUDGET_BYTES must carry its reason beside it")
+
     def test_a_missing_build_is_rejected_rather_than_skipped(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             original = gate.DIST

@@ -1,5 +1,8 @@
 import { styled } from "@mui/material/styles";
 
+import TimeSeries from "./charts/TimeSeries.jsx";
+import { sparseGrid } from "./charts/grid.js";
+
 /* Real `<input>` and `<select>` elements, styled - NOT MUI's `TextField` or
    `Select`.
 
@@ -30,41 +33,15 @@ const base = ({ theme }) => ({
 export const TextInput = styled("input")(base);
 export const SelectInput = styled("select")(base);
 
-/* The traffic sparkline, carried over from the classic tree.
-
-   A single bucket has no line segment to draw, so it becomes a flat stroke
-   across the full width - otherwise one data point renders as nothing at
-   all, which reads identically to "no data" and is a different claim. */
-export function Sparkline({ rows, testid, height = 60 }) {
-  const data = rows || [];
-  const width = 300;
-  const box = 60;
-  let points = "";
-  if (data.length) {
-    const max = Math.max(...data.map((r) => r.up + r.down), 1);
-    const step = width / Math.max(data.length - 1, 1);
-    points = data.map((r, i) => {
-      const y = box - ((r.up + r.down) / max) * (box - 4) - 2;
-      return `${(i * step).toFixed(1)},${y.toFixed(1)}`;
-    }).join(" ");
-    if (data.length === 1) {
-      const y = points.split(",")[1];
-      points = `0,${y} ${width},${y}`;
-    }
-  }
+/* A traffic strip (#100): the chart kit's series in its compact form, over
+   the rows ALONE - no zero-fill, because a strip like a device's history
+   reads no gap list, and a missing bucket there is a break, never a zero
+   drawn across it (grid.js `sparseGrid`). Every colour comes from the
+   theme. */
+export function Sparkline({ rows, testid, height = 60, tier = null,
+                           t = (k) => k }) {
   return (
-    <svg
-      data-testid={testid}
-      viewBox={`0 0 ${width} ${box}`}
-      preserveAspectRatio="none"
-      style={{
-        width: "100%", height, display: "block",
-        background: "#fff", border: "1px solid #d7dde3", borderRadius: 6,
-      }}
-    >
-      {points
-        ? <polyline points={points} fill="none" stroke="#2563eb" strokeWidth="2" />
-        : null}
-    </svg>
+    <TimeSeries grid={sparseGrid(rows, tier)} testid={testid} t={t}
+                height={height} compact />
   );
 }

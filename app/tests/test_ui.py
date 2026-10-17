@@ -17,6 +17,7 @@ import re
 from pathlib import Path
 
 from app.store import settings as settings_store
+from app.store import stats as stats_store
 from app.tests.conftest import auth_headers
 
 APP = Path(__file__).resolve().parents[1]
@@ -178,6 +179,13 @@ def test_every_used_i18n_key_exists():
         # settings.py without a translation fails here rather than rendering
         # its own key at the operator
         "range": lambda: set(settings_store.STATS_RANGES),
+        # the attribution classes the coverage report names (#97, #100):
+        # both partitions, read from the store that defines them
+        "class": lambda: set(stats_store.DICTIONARY_CLASSES)
+        | set(stats_store.COVERAGE_CLASSES),
+        # the scheme picker (#100): "system" plus every scheme theme.js
+        # defines
+        "theme": lambda: {"system"} | set(_scheme_tokens()),
     }
     unknown = prefixes - resolvers.keys()
     assert not unknown, (
@@ -254,6 +262,76 @@ def test_no_warning_rides_on_a_suppressible_dialog():
     assert "prev" in body and "..." in body, (
         "notify() must stack messages onto the existing ones, not overwrite "
         "an unread one")
+
+
+def _scheme_tokens():
+    """theme.js's chart tokens per scheme: {scheme: {token: "#rrggbb"}}."""
+    theme = _read(SRC / "theme.js")
+    assert 'CHOICES = ["system", ...MODES]' in theme, (
+        "the scheme picker no longer offers system + every scheme - the "
+        "theme resolver below would check the wrong keys")
+    schemes = theme.split("const SCHEMES = {")[1].split("\n};")[0]
+    out = {}
+    for name, body in re.findall(r"^  ([a-z]+): \{\n(.*?)^  \},$", schemes,
+                                 re.M | re.S):
+        chart = body.split("chart: {")[1].split("}")[0]
+        out[name] = dict(re.findall(r'(\w+): "(#[0-9a-fA-F]{6})"', chart))
+    return out
+
+
+def _luminance(colour):
+    channels = [int(colour[i:i + 2], 16) / 255 for i in (1, 3, 5)]
+    r, g, b = (c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+               for c in channels)
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def test_chart_tokens_meet_the_non_text_contrast_floor():
+    """Every token the kit draws a mark, a line or an outline in stands 3:1
+    against the chart's own surface (WCAG 1.4.11) in BOTH schemes. The two
+    region fills (before / stale) are faint on purpose and are drawn
+    OUTLINED in `axis`, so `axis` carries their contrast - and the kit is
+    held to actually drawing that outline."""
+    schemes = _scheme_tokens()
+    assert set(schemes) == {"light", "dark"}, sorted(schemes)
+    for name, tokens in schemes.items():
+        surface = _luminance(tokens["surface"])
+        for token in ("up", "down", "gap", "seam", "unattributed", "axis"):
+            mark = _luminance(tokens[token])
+            ratio = (max(mark, surface) + 0.05) / (min(mark, surface) + 0.05)
+            assert ratio >= 3.0, (
+                f"{name}.{token} {tokens[token]} on {tokens['surface']}: "
+                f"{ratio:.2f}:1, below the 3:1 floor")
+    series = _read(SRC / "charts" / "TimeSeries.jsx")
+    assert series.count("stroke={chart.axis}") >= 2, (
+        "the before / stale regions must be outlined in the axis token")
+    # a token is checked at full strength, so it must be DRAWN at full
+    # strength: an opacity below 1 can take a passing token under the floor
+    for name in ("TimeSeries.jsx", "ShareBar.jsx", "TopBars.jsx", "Legend.jsx"):
+        assert "opacity" not in _code_only(_read(SRC / "charts" / name)), (
+            f"{name} dims a mark - outline a selection instead")
+    # and a share segment is painted in a drawn token, never in a region's
+    # deliberately faint fill
+    view = _code_only(_read(SRC / "views" / "StatsView.jsx"))
+    for table in re.findall(r"_TONES = \{(.*?)\};", view, re.S):
+        tones = set(re.findall(r':\s*"(\w+)"', table))
+        assert tones and tones <= {"up", "down", "gap", "seam", "unattributed"}, (
+            f"a share segment painted in a token the floor does not hold: {tones}")
+
+
+def test_the_chart_kit_names_no_colour_of_its_own():
+    """Every colour the chart kit paints comes from the theme (#100 DEC-B):
+    a literal under src/charts is a colour the dark scheme cannot reach.
+    Comments are stripped first, and the floor below keeps the gate from
+    passing on an empty directory."""
+    charts = sorted((SRC / "charts").glob("*.js*"))
+    assert len(charts) >= 7, f"the chart kit is missing files: {charts}"
+    colour = re.compile(
+        r"#[0-9a-fA-F]{3,8}\b|\b(?:rgba?|hsla?)\(|\b(?:white|black|red|"
+        r"green|blue|gray|grey|orange|yellow|purple)\b")
+    for path in charts:
+        found = colour.findall(_code_only(_read(path)))
+        assert not found, f"{path.name}: colour literal(s) {found[:3]}"
 
 
 def test_every_interactive_jsx_element_has_testid():

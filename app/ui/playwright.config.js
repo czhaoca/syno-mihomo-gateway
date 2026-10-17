@@ -16,6 +16,9 @@ export default defineConfig({
   // both are worth failing on.
   retries: 0,
   workers: 1,
+  // A hung browser or server fails the run instead of holding CI until its
+  // own step timeout - the whole suite runs in well under this.
+  globalTimeout: 15 * 60_000,
   reporter: process.env.CI ? "list" : "line",
   use: {
     baseURL: `http://127.0.0.1:${PORT}`,

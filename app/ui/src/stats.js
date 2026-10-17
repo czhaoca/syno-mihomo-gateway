@@ -50,6 +50,31 @@ export function coveragePath(range) {
                : "/v1/stats/coverage";
 }
 
+/* Where a preset's window starts, for the chart's axis and for the gap read
+   (#100). The SERVER still computes the window it reads; this is only how
+   far back the chart's axis reaches, so the span before the data starts is
+   drawn as such. `daily` is everything held: no start. */
+const WINDOW_HOURS = { "48h": 48, "7d": 24 * 7, "30d": 24 * 30, daily: null };
+
+export function windowStart(range, now = new Date()) {
+  const hours = WINDOW_HOURS[normalizeRange(range)];
+  return hours === null ? null : new Date(now.getTime() - hours * 3600 * 1000);
+}
+
+/* The gaps that overlap the window, from the start of its first HOUR - the
+   first bucket an hour-resolution window draws, so a gap that ended inside
+   that bucket but before the window's own minute is still listed - as many
+   as the server lists (1000). The chart hatches each one, and a list cut at
+   its limit is reported as such rather than read as complete. */
+export const GAPS_LIMIT = 1000;
+
+export function gapsPath(range, now = new Date()) {
+  const start = windowStart(range, now);
+  const params = new URLSearchParams({ limit: String(GAPS_LIMIT) });
+  if (start) params.set("since", `${start.toISOString().slice(0, 13)}:00`);
+  return `/v1/stats/gaps?${params.toString()}`;
+}
+
 export function fmtBytes(n) {
   const units = ["B", "KB", "MB", "GB", "TB"];
   let value = Number(n) || 0;
