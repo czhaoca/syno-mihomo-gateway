@@ -12,6 +12,7 @@ import {
 } from "../applystate.js";
 import { SelectInput, Sparkline, TextInput } from "../controls.jsx";
 import { displayName, hostIp, inBand, isHost } from "../devices.js";
+import { formatHash } from "../hooks/useHashRoute.js";
 
 // `label` carries the i18n key as a literal on purpose: a key assembled at
 // the call site (`t(`mode_${mode.replace("-", "_")}`)`) is invisible to the
@@ -260,6 +261,18 @@ export default function DevicesView({ t, notify, tick, health, refreshHealth }) 
                   <Sparkline rows={history[dev.cidr]} height={44} t={t}
                              tier="minute"
                              testid={`device-sparkline-${dev.cidr}`} />
+                  {/* a host's history continues in Insights (#101 DEC-C); a
+                      range has no client scope */}
+                  {isHost(dev.cidr) ? (
+                    <Box component="a"
+                         data-testid={`device-insights-${dev.cidr}`}
+                         href={formatHash({ tab: "stats", scope: {
+                           client: hostIp(dev.cidr), app: null, host: null } })}
+                         sx={{ minHeight: 44, display: "inline-flex",
+                               alignItems: "center", color: "primary.main" }}>
+                      {t("open_insights")}
+                    </Box>
+                  ) : null}
                 </Box>
               ) : null}
             </Card>

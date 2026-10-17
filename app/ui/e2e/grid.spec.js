@@ -143,6 +143,29 @@ test("the grid tells each bucket what it may claim", () => {
   expect(east.cells.map((c) => [c.key, c.gap])).toEqual([
     ["2026-10-03", ""], ["2026-10-06", "full"], ["2026-10-07", ""]]);
 
+  // the span older than the hostname class keeps (#101) is a region of its
+  // own, through the bucket that holds the cap - beneath bars that are
+  // still real; where a scope's own data IS that class, it replaces
+  // "before the data starts" over the same span
+  const shadeArgs = {
+    rows: [{ bucket: "2026-10-15T08", up: 1, down: 1 },
+           { bucket: "2026-10-15T12", up: 1, down: 1 }],
+    tier: "hour", windowStart: new Date("2026-10-15T06:00:00Z"),
+    lastPoll: "2026-10-15T12:10:00Z", now: at("2026-10-15T12:20:00Z"),
+    shadeUntil: at("2026-10-15T09:30:00Z"),
+  };
+  const shaded = buildGrid(shadeArgs);
+  expect(shaded.shade).toEqual({ from: 0, to: 4, until: "2026-10-15T09" });
+  expect(shaded.before).toEqual({ from: 0, to: 2, until: "2026-10-15T08" });
+  expect(cells(shaded).map(([key, up]) => [key, up])).toEqual([
+    ["2026-10-15T08", 1], ["2026-10-15T09", null], ["2026-10-15T10", null],
+    ["2026-10-15T11", null], ["2026-10-15T12", 1]]);
+  expect(buildGrid({ ...shadeArgs, shadeOverBefore: true }).before).toBeNull();
+  expect(buildGrid({ ...shadeArgs, shadeUntil: null }).shade).toBeNull();
+  // a floor ON a bucket start: that bucket is the first one kept
+  expect(buildGrid({ ...shadeArgs, shadeUntil: at("2026-10-15T10:00:00Z") }).shade)
+    .toEqual({ from: 0, to: 4, until: "2026-10-15T09" });
+
   // nothing to draw is nothing at all - never a zero row
   expect(buildGrid({ rows: [], tier: "hour" }).cells).toEqual([]);
   expect(buildGrid({ rows: [{ bucket: "garbage", up: 1, down: 1 }],

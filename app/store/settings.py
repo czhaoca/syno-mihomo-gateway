@@ -116,11 +116,15 @@ def _check_day_boundary(raw: str) -> str:
 #
 # `48h` is here rather than dropped because it is the only window the minute
 # tier covers (config.stats_minute_hours), and retiring it would have taken
-# a shipped capability out of the panel under cover of an IA change.
+# a shipped capability out of the panel under cover of an IA change. `24h`
+# (#101) is the same minute-resolution read over the last day - the window
+# Gateway Insights opens a "what just happened" question on. An older panel
+# reading a stored `24h` lands on its own default: reads never re-validate,
+# and its view normalises a range it does not know.
 # `daily` reads the day tier, whose rows carry their own framing (#76) - a
 # rolling "today" would have been a fourth spelling of a window the hour
 # tier already answers.
-STATS_RANGES = ("48h", "7d", "30d", "daily")
+STATS_RANGES = ("24h", "48h", "7d", "30d", "daily")
 DEFAULT_STATS_RANGE = "7d"
 
 
@@ -162,7 +166,8 @@ SPEC = {
     "stats_default_range": _Setting(
         default=lambda: DEFAULT_STATS_RANGE,
         check=_check_stats_range,
-        description="Window the stats tab lands on (48h | 7d | 30d | daily). "
+        description="Window the Insights tab lands on (24h | 48h | 7d | 30d | "
+                    "daily). "
                     "The operator's own preference, not a bundle constant"),
 }
 

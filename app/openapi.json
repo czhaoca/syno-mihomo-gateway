@@ -897,7 +897,7 @@
             }
           },
           {
-            "description": "A window preset: `48h` (minute resolution), `7d` and `30d` (hour resolution), `daily` (local-day resolution, everything held). The server computes the window from its own clock and reads it WINDOW-COMPLETE. The hour tier is written at every poll, so a minute or hour read takes its own tier alone, and a day read takes the day tier plus the hour tier, which holds the days not rolled up yet - so a 7-day total includes the newest 48 hours and `daily` includes today. A window ends at the resolution tier's retention: with the shipped retention every preset is whole, and an explicit `tier` finer than the window (e.g. `range=7d&tier=minute`) reaches back only as far as that tier holds. An explicit `tier` overrides the resolution only. Mutually exclusive with `since`/`until`, even empty ones (422). Without `range`, a read covers the single `tier` table (since v1.11 the hour table also holds the newest 48 hours).",
+            "description": "A window preset: `24h` and `48h` (minute resolution), `7d` and `30d` (hour resolution), `daily` (local-day resolution, everything held). The server computes the window from its own clock and reads it WINDOW-COMPLETE. The hour tier is written at every poll, so a minute or hour read takes its own tier alone, and a day read takes the day tier plus the hour tier, which holds the days not rolled up yet - so a 7-day total includes the newest 48 hours and `daily` includes today. A window ends at the resolution tier's retention: with the shipped retention every preset is whole, and an explicit `tier` finer than the window (e.g. `range=7d&tier=minute`) reaches back only as far as that tier holds. An explicit `tier` overrides the resolution only. Mutually exclusive with `since`/`until`, even empty ones (422). Without `range`, a read covers the single `tier` table (since v1.11 the hour table also holds the newest 48 hours).",
             "in": "query",
             "name": "range",
             "required": false,
@@ -905,6 +905,7 @@
               "anyOf": [
                 {
                   "enum": [
+                    "24h",
                     "48h",
                     "7d",
                     "30d",
@@ -916,7 +917,7 @@
                   "type": "null"
                 }
               ],
-              "description": "A window preset: `48h` (minute resolution), `7d` and `30d` (hour resolution), `daily` (local-day resolution, everything held). The server computes the window from its own clock and reads it WINDOW-COMPLETE. The hour tier is written at every poll, so a minute or hour read takes its own tier alone, and a day read takes the day tier plus the hour tier, which holds the days not rolled up yet - so a 7-day total includes the newest 48 hours and `daily` includes today. A window ends at the resolution tier's retention: with the shipped retention every preset is whole, and an explicit `tier` finer than the window (e.g. `range=7d&tier=minute`) reaches back only as far as that tier holds. An explicit `tier` overrides the resolution only. Mutually exclusive with `since`/`until`, even empty ones (422). Without `range`, a read covers the single `tier` table (since v1.11 the hour table also holds the newest 48 hours).",
+              "description": "A window preset: `24h` and `48h` (minute resolution), `7d` and `30d` (hour resolution), `daily` (local-day resolution, everything held). The server computes the window from its own clock and reads it WINDOW-COMPLETE. The hour tier is written at every poll, so a minute or hour read takes its own tier alone, and a day read takes the day tier plus the hour tier, which holds the days not rolled up yet - so a 7-day total includes the newest 48 hours and `daily` includes today. A window ends at the resolution tier's retention: with the shipped retention every preset is whole, and an explicit `tier` finer than the window (e.g. `range=7d&tier=minute`) reaches back only as far as that tier holds. An explicit `tier` overrides the resolution only. Mutually exclusive with `since`/`until`, even empty ones (422). Without `range`, a read covers the single `tier` table (since v1.11 the hour table also holds the newest 48 hours).",
               "title": "Range"
             }
           },
@@ -1006,7 +1007,7 @@
             }
           },
           {
-            "description": "A window preset: `48h` (minute resolution), `7d` and `30d` (hour resolution), `daily` (local-day resolution, everything held). The server computes the window from its own clock and reads it WINDOW-COMPLETE. The hour tier is written at every poll, so a minute or hour read takes its own tier alone, and a day read takes the day tier plus the hour tier, which holds the days not rolled up yet - so a 7-day total includes the newest 48 hours and `daily` includes today. A window ends at the resolution tier's retention: with the shipped retention every preset is whole, and an explicit `tier` finer than the window (e.g. `range=7d&tier=minute`) reaches back only as far as that tier holds. An explicit `tier` overrides the resolution only. Mutually exclusive with `since`/`until`, even empty ones (422). Without `range`, a read covers the single `tier` table (since v1.11 the hour table also holds the newest 48 hours).",
+            "description": "A window preset: `24h` and `48h` (minute resolution), `7d` and `30d` (hour resolution), `daily` (local-day resolution, everything held). The server computes the window from its own clock and reads it WINDOW-COMPLETE. The hour tier is written at every poll, so a minute or hour read takes its own tier alone, and a day read takes the day tier plus the hour tier, which holds the days not rolled up yet - so a 7-day total includes the newest 48 hours and `daily` includes today. A window ends at the resolution tier's retention: with the shipped retention every preset is whole, and an explicit `tier` finer than the window (e.g. `range=7d&tier=minute`) reaches back only as far as that tier holds. An explicit `tier` overrides the resolution only. Mutually exclusive with `since`/`until`, even empty ones (422). Without `range`, a read covers the single `tier` table (since v1.11 the hour table also holds the newest 48 hours).",
             "in": "query",
             "name": "range",
             "required": false,
@@ -1014,6 +1015,7 @@
               "anyOf": [
                 {
                   "enum": [
+                    "24h",
                     "48h",
                     "7d",
                     "30d",
@@ -1025,7 +1027,7 @@
                   "type": "null"
                 }
               ],
-              "description": "A window preset: `48h` (minute resolution), `7d` and `30d` (hour resolution), `daily` (local-day resolution, everything held). The server computes the window from its own clock and reads it WINDOW-COMPLETE. The hour tier is written at every poll, so a minute or hour read takes its own tier alone, and a day read takes the day tier plus the hour tier, which holds the days not rolled up yet - so a 7-day total includes the newest 48 hours and `daily` includes today. A window ends at the resolution tier's retention: with the shipped retention every preset is whole, and an explicit `tier` finer than the window (e.g. `range=7d&tier=minute`) reaches back only as far as that tier holds. An explicit `tier` overrides the resolution only. Mutually exclusive with `since`/`until`, even empty ones (422). Without `range`, a read covers the single `tier` table (since v1.11 the hour table also holds the newest 48 hours).",
+              "description": "A window preset: `24h` and `48h` (minute resolution), `7d` and `30d` (hour resolution), `daily` (local-day resolution, everything held). The server computes the window from its own clock and reads it WINDOW-COMPLETE. The hour tier is written at every poll, so a minute or hour read takes its own tier alone, and a day read takes the day tier plus the hour tier, which holds the days not rolled up yet - so a 7-day total includes the newest 48 hours and `daily` includes today. A window ends at the resolution tier's retention: with the shipped retention every preset is whole, and an explicit `tier` finer than the window (e.g. `range=7d&tier=minute`) reaches back only as far as that tier holds. An explicit `tier` overrides the resolution only. Mutually exclusive with `since`/`until`, even empty ones (422). Without `range`, a read covers the single `tier` table (since v1.11 the hour table also holds the newest 48 hours).",
               "title": "Range"
             }
           }
@@ -1151,7 +1153,7 @@
             }
           },
           {
-            "description": "A window preset: `48h` (minute resolution), `7d` and `30d` (hour resolution), `daily` (local-day resolution, everything held). The server computes the window from its own clock and reads it WINDOW-COMPLETE. The hour tier is written at every poll, so a minute or hour read takes its own tier alone, and a day read takes the day tier plus the hour tier, which holds the days not rolled up yet - so a 7-day total includes the newest 48 hours and `daily` includes today. A window ends at the resolution tier's retention: with the shipped retention every preset is whole, and an explicit `tier` finer than the window (e.g. `range=7d&tier=minute`) reaches back only as far as that tier holds. An explicit `tier` overrides the resolution only. Mutually exclusive with `since`/`until`, even empty ones (422). Without `range`, a read covers the single `tier` table (since v1.11 the hour table also holds the newest 48 hours).",
+            "description": "A window preset: `24h` and `48h` (minute resolution), `7d` and `30d` (hour resolution), `daily` (local-day resolution, everything held). The server computes the window from its own clock and reads it WINDOW-COMPLETE. The hour tier is written at every poll, so a minute or hour read takes its own tier alone, and a day read takes the day tier plus the hour tier, which holds the days not rolled up yet - so a 7-day total includes the newest 48 hours and `daily` includes today. A window ends at the resolution tier's retention: with the shipped retention every preset is whole, and an explicit `tier` finer than the window (e.g. `range=7d&tier=minute`) reaches back only as far as that tier holds. An explicit `tier` overrides the resolution only. Mutually exclusive with `since`/`until`, even empty ones (422). Without `range`, a read covers the single `tier` table (since v1.11 the hour table also holds the newest 48 hours).",
             "in": "query",
             "name": "range",
             "required": false,
@@ -1159,6 +1161,7 @@
               "anyOf": [
                 {
                   "enum": [
+                    "24h",
                     "48h",
                     "7d",
                     "30d",
@@ -1170,7 +1173,7 @@
                   "type": "null"
                 }
               ],
-              "description": "A window preset: `48h` (minute resolution), `7d` and `30d` (hour resolution), `daily` (local-day resolution, everything held). The server computes the window from its own clock and reads it WINDOW-COMPLETE. The hour tier is written at every poll, so a minute or hour read takes its own tier alone, and a day read takes the day tier plus the hour tier, which holds the days not rolled up yet - so a 7-day total includes the newest 48 hours and `daily` includes today. A window ends at the resolution tier's retention: with the shipped retention every preset is whole, and an explicit `tier` finer than the window (e.g. `range=7d&tier=minute`) reaches back only as far as that tier holds. An explicit `tier` overrides the resolution only. Mutually exclusive with `since`/`until`, even empty ones (422). Without `range`, a read covers the single `tier` table (since v1.11 the hour table also holds the newest 48 hours).",
+              "description": "A window preset: `24h` and `48h` (minute resolution), `7d` and `30d` (hour resolution), `daily` (local-day resolution, everything held). The server computes the window from its own clock and reads it WINDOW-COMPLETE. The hour tier is written at every poll, so a minute or hour read takes its own tier alone, and a day read takes the day tier plus the hour tier, which holds the days not rolled up yet - so a 7-day total includes the newest 48 hours and `daily` includes today. A window ends at the resolution tier's retention: with the shipped retention every preset is whole, and an explicit `tier` finer than the window (e.g. `range=7d&tier=minute`) reaches back only as far as that tier holds. An explicit `tier` overrides the resolution only. Mutually exclusive with `since`/`until`, even empty ones (422). Without `range`, a read covers the single `tier` table (since v1.11 the hour table also holds the newest 48 hours).",
               "title": "Range"
             }
           }
@@ -1331,6 +1334,7 @@
               "default": "7d",
               "description": "The window preset, as on the other stats reads",
               "enum": [
+                "24h",
                 "48h",
                 "7d",
                 "30d",
@@ -1579,7 +1583,7 @@
             }
           },
           {
-            "description": "A window preset: `48h` (minute resolution), `7d` and `30d` (hour resolution), `daily` (local-day resolution, everything held). The server computes the window from its own clock and reads it WINDOW-COMPLETE. The hour tier is written at every poll, so a minute or hour read takes its own tier alone, and a day read takes the day tier plus the hour tier, which holds the days not rolled up yet - so a 7-day total includes the newest 48 hours and `daily` includes today. A window ends at the resolution tier's retention: with the shipped retention every preset is whole, and an explicit `tier` finer than the window (e.g. `range=7d&tier=minute`) reaches back only as far as that tier holds. An explicit `tier` overrides the resolution only. Mutually exclusive with `since`/`until`, even empty ones (422). Without `range`, a read covers the single `tier` table (since v1.11 the hour table also holds the newest 48 hours).",
+            "description": "A window preset: `24h` and `48h` (minute resolution), `7d` and `30d` (hour resolution), `daily` (local-day resolution, everything held). The server computes the window from its own clock and reads it WINDOW-COMPLETE. The hour tier is written at every poll, so a minute or hour read takes its own tier alone, and a day read takes the day tier plus the hour tier, which holds the days not rolled up yet - so a 7-day total includes the newest 48 hours and `daily` includes today. A window ends at the resolution tier's retention: with the shipped retention every preset is whole, and an explicit `tier` finer than the window (e.g. `range=7d&tier=minute`) reaches back only as far as that tier holds. An explicit `tier` overrides the resolution only. Mutually exclusive with `since`/`until`, even empty ones (422). Without `range`, a read covers the single `tier` table (since v1.11 the hour table also holds the newest 48 hours).",
             "in": "query",
             "name": "range",
             "required": false,
@@ -1587,6 +1591,7 @@
               "anyOf": [
                 {
                   "enum": [
+                    "24h",
                     "48h",
                     "7d",
                     "30d",
@@ -1598,7 +1603,7 @@
                   "type": "null"
                 }
               ],
-              "description": "A window preset: `48h` (minute resolution), `7d` and `30d` (hour resolution), `daily` (local-day resolution, everything held). The server computes the window from its own clock and reads it WINDOW-COMPLETE. The hour tier is written at every poll, so a minute or hour read takes its own tier alone, and a day read takes the day tier plus the hour tier, which holds the days not rolled up yet - so a 7-day total includes the newest 48 hours and `daily` includes today. A window ends at the resolution tier's retention: with the shipped retention every preset is whole, and an explicit `tier` finer than the window (e.g. `range=7d&tier=minute`) reaches back only as far as that tier holds. An explicit `tier` overrides the resolution only. Mutually exclusive with `since`/`until`, even empty ones (422). Without `range`, a read covers the single `tier` table (since v1.11 the hour table also holds the newest 48 hours).",
+              "description": "A window preset: `24h` and `48h` (minute resolution), `7d` and `30d` (hour resolution), `daily` (local-day resolution, everything held). The server computes the window from its own clock and reads it WINDOW-COMPLETE. The hour tier is written at every poll, so a minute or hour read takes its own tier alone, and a day read takes the day tier plus the hour tier, which holds the days not rolled up yet - so a 7-day total includes the newest 48 hours and `daily` includes today. A window ends at the resolution tier's retention: with the shipped retention every preset is whole, and an explicit `tier` finer than the window (e.g. `range=7d&tier=minute`) reaches back only as far as that tier holds. An explicit `tier` overrides the resolution only. Mutually exclusive with `since`/`until`, even empty ones (422). Without `range`, a read covers the single `tier` table (since v1.11 the hour table also holds the newest 48 hours).",
               "title": "Range"
             }
           },

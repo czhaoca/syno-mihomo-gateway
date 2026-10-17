@@ -19,6 +19,8 @@ export const FOLD_PX = 760;
      unattributed   the permanent "no answer" segment
      before         the span before the data starts (nothing is claimed)
      stale          the span after the last good poll
+     shade          the span older than the hostname class keeps (#101) -
+                    bytes there are still real; the detail is not
                     (both regions are faint fills OUTLINED in `axis`: the
                     outline is what meets the 3:1 non-text contrast floor,
                     which test_ui.py holds every drawn token to)
@@ -34,6 +36,7 @@ const SCHEMES = {
     chart: {
       up: "#2563eb", down: "#0d9488", gap: "#d97706", seam: "#7c3aed",
       unattributed: "#64748b", before: "#eef2f6", stale: "#e2e8f0",
+      shade: "#f3eefb",
       grid: "#e5e9ef", axis: "#52606d", surface: "#ffffff",
       border: "#d7dde3", overlay: "rgba(15, 23, 42, 0.45)",
     },
@@ -47,6 +50,7 @@ const SCHEMES = {
     chart: {
       up: "#60a5fa", down: "#2dd4bf", gap: "#fbbf24", seam: "#c4b5fd",
       unattributed: "#64748b", before: "#1b2633", stale: "#243142",
+      shade: "#211c30",
       grid: "#223040", axis: "#9aa7b4", surface: "#16202b",
       border: "#2b3846", overlay: "rgba(0, 0, 0, 0.6)",
     },

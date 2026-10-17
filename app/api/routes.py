@@ -285,12 +285,13 @@ Tier = Literal["minute", "hour", "day"]
 
 # The range vocabulary (#91) - settings.STATS_RANGES is the one list; a test
 # pins this Literal and stats_store.RANGE_SPECS to it.
-StatsRange = Literal["48h", "7d", "30d", "daily"]
+StatsRange = Literal["24h", "48h", "7d", "30d", "daily"]
 
 RangeParam = Annotated[StatsRange | None, Query(
     alias="range",
     description=(
-        "A window preset: `48h` (minute resolution), `7d` and `30d` (hour "
+        "A window preset: `24h` and `48h` (minute resolution), `7d` and "
+        "`30d` (hour "
         "resolution), `daily` (local-day resolution, everything held). The "
         "server computes the window from its own clock and reads it "
         "WINDOW-COMPLETE. The hour tier is written at every poll, so a minute "

@@ -30,7 +30,8 @@ from app.store.stats.read import _TIER_TABLES, MOVED, dimension_tables
 # The panel's range vocabulary: settings.STATS_RANGES is the one list (the UI
 # selector and the stored default use it; a test pins these keys to it).
 # Each preset is (resolution, window in hours; None = everything held).
-RANGE_SPECS = {"48h": ("minute", 48), "7d": ("hour", 24 * 7),
+RANGE_SPECS = {"24h": ("minute", 24), "48h": ("minute", 48),
+               "7d": ("hour", 24 * 7),
                "30d": ("hour", 24 * 30), "daily": ("day", None)}
 
 # Sorts after every digit, so `key >= _NOTHING` matches no bucket at all.

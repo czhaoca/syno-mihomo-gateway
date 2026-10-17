@@ -16,6 +16,11 @@
  *     03:00): one seam;
  *   - the coverage report's dictionary partition carries an unattributed
  *     share, the permanent segment.
+ *
+ * `goldenOverview` serves the same picture as /v1/stats/overview answers it
+ * (#101): per scope, with the sections a scope cannot answer `null` and the
+ * reason under `unavailable` - the shapes app/store/stats/overview.py
+ * writes. The lists add up to the timeline: 200 B up, 2000 B down.
  */
 import { expect } from "@playwright/test";
 
@@ -92,18 +97,166 @@ export const GOLDEN = {
   },
 };
 
-function json(route, body, status = 200) {
+export function json(route, body, status = 200) {
   return route.fulfill({ status, contentType: "application/json",
                          body: JSON.stringify(body) });
 }
 
+const EXITS = [{ value: "JP 01", up: 140, down: 1400 },
+               { value: "US 01", up: 60, down: 600 }];
+const COUNTRIES = [{ value: "JP", up: 140, down: 1400 },
+                   { value: "US", up: 60, down: 600 }];
+const CATEGORIES = [{ value: "unknown", class: "unattributed", up: 106, down: 1066 },
+                    { value: "video", class: "coarse", up: 80, down: 800 },
+                    { value: "", class: "no_dictionary", up: 14, down: 134 }];
+const HOSTS = [{ value: "video.example.com", up: 60, down: 600 },
+               { value: "cdn.example.org", up: 34, down: 334 }];
+// the hostname class's floor at GOLDEN.now: seven days back, an hour key
+const HOST_FLOOR = "2026-10-05T12";
+const INDEPENDENT = (scope) => ("the dimensions are stored independently, so "
+  + `this breakdown cannot be cut by ${scope}`);
+const DOMAINS_OFF = ("the hostname class is off (PANEL_STATS_DOMAINS), so no "
+  + "per-host traffic is kept");
+
+function list(dim, rows, limit, extra = {}) {
+  const sorted = rows.slice().sort((a, b) => (b.up + b.down) - (a.up + a.down));
+  return {
+    dim, tier: "day", sort: "total", limit, offset: 0,
+    rows: sorted.slice(0, limit), total_rows: sorted.length,
+    total: { up: sorted.reduce((s, r) => s + r.up, 0),
+             down: sorted.reduce((s, r) => s + r.down, 0) },
+    window: { oldest_bucket: "2026-10-01T00", truncated: false },
+    ...extra,
+  };
+}
+
+function scaled(rows, share) {
+  return rows.map((r) => ({ ...r, up: Math.round(r.up * share),
+                            down: Math.round(r.down * share) }));
+}
+
+/** The overview answer for URL (a /v1/stats/overview request) over the
+ *  golden picture. OPTIONS: `timeline` replaces the series, `extraDevices`
+ *  adds that many small TEST-NET devices (for "show more"), `domains`
+ *  turns the hostname class on. */
+export function goldenOverview(url, { timeline = GOLDEN.timeline, extraDevices = 0,
+                                      domains = false } = {}) {
+  const q = new URL(url).searchParams;
+  const range = q.get("range") || "7d";
+  const limit = Math.min(Math.max(Number(q.get("limit")) || 10, 1), 200);
+  const device = q.get("device") || "";
+  const category = q.has("category") ? q.get("category") : null;
+  const host = q.get("host");
+  const devices = [
+    ...GOLDEN.devices.rows.map((r) => ({ value: r.device, up: r.up, down: r.down })),
+    ...Array.from({ length: extraDevices }, (_v, i) => ({
+      value: `203.0.113.${i + 1}`, up: 1, down: 2 })),
+  ];
+  const unavailable = {};
+  const top = { device: null, exit: null, category: null, country: null, host: null };
+  const hostList = domains
+    ? list("host", HOSTS, limit, { enabled: true,
+                                   window: { since: HOST_FLOOR, retention_days: 7,
+                                             oldest_bucket: HOST_FLOOR,
+                                             truncated: true } })
+    : { dim: "host", tier: "hour", sort: "total", limit, offset: 0, enabled: false,
+        rows: [], total_rows: 0, total: { up: 0, down: 0 },
+        window: { retention_days: 7 } };
+  let share = 1;
+  let rows = timeline.rows;
+  let totalsWindow = null;
+  if (host !== null && !domains) {
+    for (const key of ["totals", "timeline", "top.device", "top.exit",
+                       "top.category", "top.country", "top.host"]) {
+      unavailable[key] = DOMAINS_OFF;
+    }
+    rows = null;
+  } else if (host !== null || category !== null) {
+    const kind = host !== null ? "one host" : "one category";
+    const value = host !== null ? HOSTS.find((h) => h.value === host)
+      : CATEGORIES.find((c) => c.value === category);
+    share = value ? (value.up + value.down) / 2200 : 0;
+    if (host !== null) {
+      rows = rows.filter((r) => r.bucket >= HOST_FLOOR.slice(0, 10));
+      totalsWindow = { since: HOST_FLOOR, retention_days: 7,
+                       oldest_bucket: HOST_FLOOR, truncated: true };
+    } else {
+      totalsWindow = { oldest_bucket: "2026-10-01T00", truncated: false };
+    }
+    if (device) unavailable["top.device"] = "scoped to one device";
+    else top.device = list("device", scaled(devices, share), limit);
+    for (const dim of ["exit", "country"]) unavailable[`top.${dim}`] = INDEPENDENT(kind);
+    if (host !== null) {
+      unavailable["top.category"] = INDEPENDENT(kind);
+      unavailable["top.host"] = "scoped to one host";
+    } else {
+      unavailable["top.category"] = "scoped to one category";
+      unavailable["top.host"] = INDEPENDENT(kind);
+    }
+  } else {
+    if (device) {
+      const own = devices.find((d) => d.value === device);
+      share = own ? (own.up + own.down) / 2200 : 0;
+      unavailable["top.device"] = "scoped to one device";
+    } else {
+      top.device = list("device", devices, limit);
+    }
+    top.exit = list("exit", scaled(EXITS, share), limit,
+                    { unrecorded: { up: 0, down: 0 } });
+    top.category = list("category", scaled(CATEGORIES, share), limit);
+    top.country = list("country", scaled(COUNTRIES, share), limit);
+    top.host = hostList;
+  }
+  if (rows) rows = scaled(rows, share);
+  const tier = timeline.tier;
+  const body = {
+    range,
+    scope: { device, category, host },
+    totals: rows ? { tier, up: rows.reduce((s, r) => s + r.up, 0),
+                     down: rows.reduce((s, r) => s + r.down, 0),
+                     ...(totalsWindow ? { window: totalsWindow } : {}) } : null,
+    timeline: rows ? { tier, rows } : null,
+    top, unavailable,
+    gaps: GOLDEN.gaps.rows, gaps_truncated: false,
+    coverage: null,
+    invisible_traffic_hint: { code: "gateway_only", text: "Only traffic that "
+      + "passes through the gateway is counted." },
+  };
+  if (tier === "day") body.framings = GOLDEN.devices.framings;
+  if (device || category !== null || host !== null) {
+    unavailable.coverage = "coverage is measured for the whole gateway only, not per scope";
+  } else {
+    body.coverage = GOLDEN.coverage;
+  }
+  return body;
+}
+
+/** A minimal overview answer: DEVICES [{value, up, down}] as the device list
+ *  and nothing else - for the specs that only care whose rows are shown. */
+export function plainOverview(range, devices) {
+  const up = devices.reduce((s, r) => s + r.up, 0);
+  const down = devices.reduce((s, r) => s + r.down, 0);
+  return {
+    range, scope: { device: "", category: null, host: null },
+    totals: { tier: "day", up, down },
+    timeline: { tier: "day", rows: [] },
+    top: { device: list("device", devices, 10), exit: null, category: null,
+           country: null, host: null },
+    unavailable: {}, gaps: [], gaps_truncated: false, coverage: null,
+    invisible_traffic_hint: { code: "gateway_only", text: "" },
+  };
+}
+
 /** Serve the golden series for every stats read and /health. OVERRIDES maps
- *  a path fragment ("timeline", "health", ...) to a route handler, for the
- *  specs that break one read on purpose. */
-export async function routeGolden(page, overrides = {}) {
+ *  a path fragment ("overview", "health", ...) to a route handler, for the
+ *  specs that break one read on purpose; OPTIONS go to goldenOverview. */
+export async function routeGolden(page, overrides = {}, options = {}) {
   const serve = (name, body) => async (route) => (overrides[name]
     ? overrides[name](route) : json(route, body));
   await page.route("**/health", serve("health", GOLDEN.health));
+  await page.route("**/v1/stats/overview**", async (route) => (overrides.overview
+    ? overrides.overview(route)
+    : json(route, goldenOverview(route.request().url(), options))));
   await page.route("**/v1/stats/timeline**", serve("timeline", GOLDEN.timeline));
   await page.route("**/v1/stats/devices**", serve("devices", GOLDEN.devices));
   await page.route("**/v1/stats/gaps**", serve("gaps", GOLDEN.gaps));

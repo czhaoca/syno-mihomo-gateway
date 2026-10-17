@@ -14,7 +14,9 @@ import Tooltip from "./Tooltip.jsx";
    the full height of the chart (a hole, never a zero); a partial gap keeps
    its bar under a hatched cap; a seam is a marker line before its bar; the
    span before the data starts and the one after the last good poll are
-   flat, unmarked regions. Marks are drawn at full strength; the selected
+   flat, unmarked regions, and so is a `shade` beneath them (the span older
+   than the hostname class keeps - its bars are real). Marks are drawn at
+   full strength; the selected
    bucket is outlined, never shown by dimming the rest.
 
    The SVG scales to its container's width (viewBox units are slots), so
@@ -25,7 +27,7 @@ import Tooltip from "./Tooltip.jsx";
 const HEIGHT = 100;
 
 export default function TimeSeries({ grid, testid, t, height = 140,
-                                      compact = false }) {
+                                      compact = false, shadeLabel = "" }) {
   const chart = useTheme().palette.chart;
   const uid = useId().replace(/:/g, "");
   const box = useRef(null);
@@ -115,6 +117,14 @@ export default function TimeSeries({ grid, testid, t, height = 140,
                     fill={chart.gap} />
             </pattern>
           </defs>
+          {grid.shade ? (
+            <rect data-testid={testid ? `${testid}-shade` : undefined}
+                  data-until={grid.shade.until}
+                  x={grid.shade.from} y="0"
+                  width={grid.shade.to - grid.shade.from} height={HEIGHT}
+                  fill={chart.shade} stroke={chart.axis} strokeWidth="1"
+                  strokeDasharray="1 3" vectorEffect="non-scaling-stroke" />
+          ) : null}
           {grid.before ? (
             <rect data-testid={testid ? `${testid}-before` : undefined}
                   x={grid.before.from} y="0"
@@ -183,7 +193,8 @@ export default function TimeSeries({ grid, testid, t, height = 140,
         <>
           <Axis testid={`${testid}-axis`} start={grid.axisStart}
                 end={grid.axisEnd} top={grid.max ? fmtBytes(grid.max) : ""} />
-          <Legend testid={`${testid}-legend`} items={legendItems(grid, t)} />
+          <Legend testid={`${testid}-legend`}
+                  items={legendItems(grid, t, shadeLabel)} />
         </>
       )}
     </Box>
@@ -204,7 +215,7 @@ function describe(cell, t) {
   return out;
 }
 
-function legendItems(grid, t) {
+function legendItems(grid, t, shadeLabel) {
   const items = [
     { key: "up", label: t("chart_up"), tone: "up" },
     { key: "down", label: t("chart_down"), tone: "down" },
@@ -222,6 +233,10 @@ function legendItems(grid, t) {
   if (grid.stale) {
     items.push({ key: "stale", label: t("chart_stale_band"), tone: "stale",
                  region: true });
+  }
+  if (grid.shade) {
+    items.push({ key: "shade", label: shadeLabel || t("chart_shade"),
+                 tone: "shade", region: true });
   }
   return items;
 }

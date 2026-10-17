@@ -68,6 +68,22 @@ def test_the_default_range_is_the_settings_default(client, pinned_clock):
     assert overview(client)["range"] == "7d"
 
 
+def test_the_24h_preset_reads_the_last_day_at_minute_resolution(
+        client, pinned_clock):
+    """#101: `24h` is the 48h read over one day - minute resolution, and
+    nothing from before the day it covers."""
+    conn = client.app.state.stats_conn
+    push(conn, [geo_conn("old", A, 5, 50, chains=("JP 01", "Auto"),
+                         host="video.example.com", geo=["JP"])],
+         now="2026-10-14T10:00:00Z")
+    push(conn, [geo_conn("new", B, 1, 2, chains=("US 01", "Auto"),
+                         host="cdn.example.org", geo=["US"])])
+    day = overview(client, "range=24h")
+    assert day["range"] == "24h"
+    assert day["totals"] == {"tier": "minute", "up": 1, "down": 2}
+    assert overview(client, "range=48h")["totals"]["up"] == 6
+
+
 def test_a_day_window_carries_its_framings(client, pinned_clock):
     seed(client.app.state.stats_conn)
     body = overview(client, "range=daily")

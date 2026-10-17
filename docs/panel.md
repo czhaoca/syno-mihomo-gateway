@@ -45,23 +45,29 @@ the band remains the declarative baseline that survives a panel reset).
 
 ## The web UI
 
-Four tabs, and **Stats is the one it opens on** — the question you open a
-gateway panel with is what the network is doing, not which policy row to
+Four tabs, and **Insights is the one it opens on** — the question you open
+a gateway panel with is what the network is doing, not which policy row to
 edit.
 
-- **Stats** — a range selector (48h / 7 days / 30 days / long-term daily), a
-  traffic sparkline, and per-device totals with aliases resolved onto them.
-  The window it lands on is the `stats_default_range` **setting**, not a
-  constant in the bundle, so changing it does not mean shipping a new panel.
-  Notes appear only when they have something to say: collection gaps (honest
-  holes, never interpolated), the share of traffic attributable to an app
-  together with the window that share was measured over, and — on the daily
-  range — a warning when the *definition of a day* changed inside the window
-  you asked about.
+- **Insights** (Gateway Insights, called Stats before v1.13) — the
+  analytics view: totals, a timeline and the top devices, categories, exit
+  nodes, countries and hostnames over a range (24h / 48h / 7 days / 30 days
+  / long-term daily), with drilldowns into one device, category or hostname.
+  Every view is one read of `/v1/stats/overview`, and its route lives in the
+  page address (`#/insights/client/<ip>`), so links and reloads keep it.
+  [Gateway Insights](insights.md) is its guide: scopes, drilling, the top
+  lists and how to read the chart. The window it lands on is the
+  `stats_default_range` **setting**, not a constant in the bundle, so
+  changing it does not mean shipping a new panel. Notes appear only when
+  they have something to say: collection gaps (honest holes, never
+  interpolated), the share of traffic attributable to an app together with
+  the window that share was measured over, hostnames being off, what the
+  gateway cannot see, and — on the daily range — a warning when the
+  *definition of a day* changed inside the window you asked about.
 
   Every range covers its **whole window** (with the shipped retention
   settings — see below). Since v1.11 every poll is written to the minute
-  *and* the hour rows, so the 48-hour range reads the minute rows and the
+  *and* the hour rows, so the 24- and 48-hour ranges read the minute rows and the
   7- and 30-day ranges read the hour rows, which already include the last
   48 hours. Hours older than 90 days roll up into day rows, so the daily
   range reads the day rows *plus* the hour rows not rolled up yet, and so
@@ -70,7 +76,7 @@ edit.
   rolled — so a window that spans a changed day boundary still shows the
   seam. (Before v1.10.3 the browser picked one tier and the newest part of
   each window was silently missing.) The API exposes the same presets as
-  `range=48h|7d|30d|daily`; a request with only `tier` still reads that one
+  `range=24h|48h|7d|30d|daily`; a request with only `tier` still reads that one
   table, as it always has. Coarser rows are never split back into finer
   ones, so a window still ends at its resolution's retention: lowering
   `PANEL_STATS_MINUTE_HOURS` below 48 or `PANEL_STATS_HOUR_DAYS` below 30

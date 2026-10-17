@@ -223,7 +223,7 @@ def test_the_stats_range_accepts_exactly_what_the_ui_can_show(conn):
     """The setting and the view's selector are ONE list. A default naming a
     range the UI cannot render would land the operator on a blank tab with
     nothing saying why - the setting would look honoured and be unusable."""
-    assert settings.STATS_RANGES == ("48h", "7d", "30d", "daily")
+    assert settings.STATS_RANGES == ("24h", "48h", "7d", "30d", "daily")
     for value in settings.STATS_RANGES:
         settings.set_value(conn, "stats_default_range", value, requester="t")
         assert settings.get(conn, "stats_default_range") == value

@@ -138,13 +138,17 @@ function framing(row) {
    bucket older than its oldest gap is known to be gap-free, so a bucket
    there without a row is a break rather than a zero (rows held there still
    show). GAPS_KNOWN false (the gap read failed for this window) makes every
-   bucket without a row a break. Returns the cells and the regions, in slot
-   units. */
+   bucket without a row a break. SHADE_UNTIL (an instant) marks the span
+   older than it - the hostname class's cap (#101 DEC-G) - as a region of
+   its own, drawn beneath the marks; SHADE_OVER_BEFORE lets it replace the
+   `before` region over the same span. Returns the cells and the regions, in
+   slot units. */
 const MAX_SLOTS = 20_000;
 
 export function buildGrid({ rows, tier, windowStart = null, lastPoll = null,
                             gaps = [], gapsTruncated = false,
-                            gapsKnown = true, now = Date.now() }) {
+                            gapsKnown = true, now = Date.now(),
+                            shadeUntil = null, shadeOverBefore = false }) {
   // a row whose key is not this tier's key is dropped, not drawn - and
   // never allowed to send the slot arithmetic to NaN
   const held = (rows || []).filter((r) => r && typeof r.bucket === "string"
@@ -157,7 +161,7 @@ export function buildGrid({ rows, tier, windowStart = null, lastPoll = null,
                                               Date.parse(g.ended)])
     .filter(([a, b]) => Number.isFinite(a) && Number.isFinite(b));
   const empty = { tier, units: 0, cells: [], before: null, stale: null,
-                  max: 0, axisStart: null, axisEnd: null };
+                  shade: null, max: 0, axisStart: null, axisEnd: null };
   if (!held.length) return empty;
   const dataStart = held[0].bucket;
   // with a truncated gap list, the instant from which a missing row is
@@ -233,9 +237,22 @@ export function buildGrid({ rows, tier, windowStart = null, lastPoll = null,
   const units = offset(axisStart, axisEnd, tier) + 1;
   const firstX = offset(axisStart, dataStart, tier);
   const lastX = offset(axisStart, lastKey, tier) + 1;
+  // the span older than SHADE_UNTIL (an instant), through the last bucket
+  // that starts before it: a bucket the floor cuts is shaded (erring toward
+  // saying more), one that starts AT the floor is the first one kept
+  let shade = null;
+  if (Number.isFinite(shadeUntil)) {
+    const last = bucketOf(shadeUntil - 1);
+    const to = Math.min(offset(axisStart, last, tier) + 1, units);
+    if (to > 0) shade = { from: 0, to, until: last };
+  }
+  // SHADE_OVER_BEFORE: where the shade says the span is not kept, it is not
+  // "before the data starts" (a scope whose own data is the class)
+  const beforeFrom = shadeOverBefore && shade ? shade.to : 0;
   return {
-    tier, units, cells, max, axisStart, axisEnd,
-    before: firstX > 0 ? { from: 0, to: firstX, until: dataStart } : null,
+    tier, units, cells, max, axisStart, axisEnd, shade,
+    before: firstX > beforeFrom
+      ? { from: beforeFrom, to: firstX, until: dataStart } : null,
     stale: lastX < units ? { from: lastX, to: units, since: lastKey } : null,
   };
 }

@@ -12,11 +12,12 @@ import { api, registerTokenPrompt, setToken } from "./api.js";
 import { clearAll } from "./applystate.js";
 import { htmlLang, initialLang, loadDict, rememberLang, translator } from "./i18n.js";
 import { SelectInput, TextInput } from "./controls.jsx";
+import { useHashRoute } from "./hooks/useHashRoute.js";
 import { CHOICES } from "./theme.js";
 import AuditView from "./views/AuditView.jsx";
 import DevicesView from "./views/DevicesView.jsx";
 import SettingsView from "./views/SettingsView.jsx";
-import StatsView from "./views/StatsView.jsx";
+import InsightsView from "./views/InsightsView.jsx";
 
 /* The panel shell.
 
@@ -33,7 +34,7 @@ const REFRESH_MS = 10000;
 const NOTICE_KEEP = 4;
 
 const TABS = [
-  { id: "stats", label: "tab_stats" },
+  { id: "stats", label: "tab_insights" },
   { id: "devices", label: "tab_devices" },
   { id: "audit", label: "tab_audit" },
   { id: "settings", label: "tab_settings" },
@@ -47,7 +48,10 @@ export default function App({ choice = "system", onChoice = () => {} }) {
   // load renders keys, but it is still the final answer for this language)
   const [dictLang, setDictLang] = useState(null);
   const [healthTried, setHealthTried] = useState(false);
-  const [tab, setTab] = useState("stats");
+  // the tab is the route's (#101 DEC-A): a link from another tab, a reload
+  // and the back button all land where the hash says
+  const [route, navigate] = useHashRoute();
+  const tab = route.tab;
   const [health, setHealth] = useState(null);
   const [reachable, setReachable] = useState(true);
   const [notices, setNotices] = useState([]);
@@ -261,7 +265,7 @@ export default function App({ choice = "system", onChoice = () => {} }) {
 
       <Tabs
         value={tab}
-        onChange={(_e, next) => setTab(next)}
+        onChange={(_e, next) => navigate({ tab: next })}
         variant="scrollable"
         scrollButtons={false}
         sx={{ borderBottom: "1px solid", borderColor: "divider",
@@ -279,7 +283,8 @@ export default function App({ choice = "system", onChoice = () => {} }) {
       </Tabs>
 
       <Box component="main" sx={{ p: 1.5, mx: "auto", maxWidth: viewWidth(tab) }}>
-        {tab === "stats" ? <StatsView {...shared} /> : null}
+        {tab === "stats"
+          ? <InsightsView {...shared} route={route} navigate={navigate} /> : null}
         {tab === "devices" ? <DevicesView {...shared} /> : null}
         {tab === "audit" ? <AuditView {...shared} /> : null}
         {tab === "settings" ? <SettingsView {...shared} /> : null}

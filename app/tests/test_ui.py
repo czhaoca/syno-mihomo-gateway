@@ -312,7 +312,7 @@ def test_chart_tokens_meet_the_non_text_contrast_floor():
             f"{name} dims a mark - outline a selection instead")
     # and a share segment is painted in a drawn token, never in a region's
     # deliberately faint fill
-    view = _code_only(_read(SRC / "views" / "StatsView.jsx"))
+    view = _code_only(_read(SRC / "views" / "insights" / "AnalyticsView.jsx"))
     for table in re.findall(r"_TONES = \{(.*?)\};", view, re.S):
         tones = set(re.findall(r':\s*"(\w+)"', table))
         assert tones and tones <= {"up", "down", "gap", "seam", "unattributed"}, (

@@ -95,6 +95,7 @@ Where to read next
                            (Linux bundle only)
   * CONFIGURE.txt        - the .env settings reference
   * PANEL.txt            - the gateway panel (per-device modes + statistics)
+  * INSIGHTS.txt         - Gateway Insights, the panel's traffic view
   * AUTO-UPDATE.txt      - scheduling automatic updates
   * TROUBLESHOOTING.txt  - symptoms and fixes
   * CLI.txt              - the gateway.sh command-line reference

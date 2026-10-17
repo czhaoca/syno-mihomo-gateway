@@ -12,7 +12,7 @@
 |---------|---------------|----------|-------|
 | metacubexd | 80 | http | Web UI dashboard |
 | mihomo | — | — | Network proxy (privileged, no exposed port) |
-| panel | 8090 | http | Gateway panel (`mihomo-panel`): dynamic device policy + stats; FastAPI app on its own macvlan seat at `PANEL_IP` (LAN-only — never WAN-exposed) |
+| panel | 8090 | http | Gateway panel (`mihomo-panel`): dynamic device policy + Gateway Insights (traffic analytics, `docs/insights.md`); FastAPI app on its own macvlan seat at `PANEL_IP` (LAN-only — never WAN-exposed) |
 
 ## Environments
 

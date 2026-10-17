@@ -12,11 +12,13 @@ import Typography from "@mui/material/Typography";
                   and an unreadable one are pixel-identical and mean
                   opposite things
      empty        an answer with nothing in it: no traffic in the window
+                  (EMPTY_TEXT says what that means for a scope)
 
    Before the first answer there is no state at all - no "no traffic" text a
    reader could take for a measurement. */
 export default function ChartFrame({ id, state = null, since = "", reason = "",
-                                      t, children, minHeight = 60 }) {
+                                      t, children, minHeight = 60,
+                                      emptyText = "" }) {
   const drawn = state === "fresh" || state === "stale";
   return (
     <Box data-testid={id} data-state={state || "none"}
@@ -38,7 +40,7 @@ export default function ChartFrame({ id, state = null, since = "", reason = "",
       {state === "empty" ? (
         <Typography variant="body2" color="text.secondary"
                     data-testid={`${id}-empty`}>
-          {t("chart_empty")}
+          {emptyText || t("chart_empty")}
         </Typography>
       ) : null}
       {drawn ? children : null}

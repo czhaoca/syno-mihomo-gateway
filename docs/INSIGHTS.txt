@@ -1,0 +1,81 @@
+Gateway Insights
+================
+
+Gateway Insights is the panel's traffic view, and the page the panel opens
+on:
+
+      http://<PANEL_IP>:8090/ui/
+
+It shows what the network is doing: totals, a timeline, and the top
+devices, categories, exit nodes, countries and hostnames over a range you
+pick (24 hours, 48 hours, 7 days, 30 days, or long term).
+
+--------------------------------------------------------------------------
+Drilling down
+--------------------------------------------------------------------------
+Click a row to look closer, and use the trail above the view (or the
+browser's back button) to return:
+
+      Overview  ->  a device  ->  one of its categories
+                              ->  one of its hostnames
+      Overview  ->  a category  ->  the devices that used it
+      Overview  ->  a hostname  ->  the devices that used it
+
+The page address names the view, so a reload or a bookmark returns to it.
+The Devices tab links each device's history here.
+
+A category view cannot list hostnames or exit nodes: the panel stores each
+of these separately, so it cannot cut one by the other. The view says so
+instead of showing an empty list. To see a device's hostnames, go back to
+the device and pick a hostname there.
+
+Each list shows ten values and says what it left out. "Show more" adds ten
+more, up to 200.
+
+--------------------------------------------------------------------------
+Reading the chart
+--------------------------------------------------------------------------
+      hatched band     a collection gap - the panel was not counting.
+                       Not a zero.
+      no bar           a real zero - counting, but no traffic.
+      marker line      the day boundary or time zone changed there.
+      "stale since"    the newest read failed or is still unanswered, or
+                       the collector stopped; the picture shown is the
+                       last good one.
+      shaded (30 days, long term)
+                       older than 7 days: hostnames are not kept there.
+                       The bytes are still real. (Never in a category
+                       view: everything in it is kept long-term.) In a
+                       hostname view the shade is where that hostname's
+                       traffic is not kept: no bar there means no data,
+                       not no traffic.
+
+"Unavailable" means the panel's statistics did not answer. "No traffic"
+means they answered with nothing. They are never the same thing.
+
+--------------------------------------------------------------------------
+Hostnames are off by default
+--------------------------------------------------------------------------
+For privacy the panel keeps no hostnames unless you ask it to. To keep
+them (and the specific app each device used) for 7 days, set in .env:
+
+      PANEL_STATS_DOMAINS=true
+
+then redeploy. Categories, exit nodes, countries and per-device totals are
+kept either way.
+
+--------------------------------------------------------------------------
+What the panel cannot see
+--------------------------------------------------------------------------
+Only traffic that passes through the gateway is counted. A device that
+bypasses it - for example over an IPv6 route the router hands out - or a
+DNS server outside the gateway is not seen. TROUBLESHOOTING.txt explains
+the fix ("IPv6 carries traffic around the gateway"); the doctor checks:
+
+      sudo sh scripts/doctor.sh
+
+--------------------------------------------------------------------------
+Security
+--------------------------------------------------------------------------
+The panel needs no password to read and shows per-device traffic. Keep it
+on the LAN; never forward its port to the internet.

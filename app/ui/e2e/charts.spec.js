@@ -1,10 +1,12 @@
 import { expect, test } from "@playwright/test";
 
-import { GOLDEN, openStats, ready, routeGolden } from "./fixtures/stats.js";
+import {
+  GOLDEN, goldenOverview, json, openStats, ready, routeGolden,
+} from "./fixtures/stats.js";
 
 /**
  * The chart kit (#100), against the GOLDEN series (fixtures/stats.js) on the
- * real stats view. Marks are counted and read through their data-attributes
+ * real Insights overview (#101: one scoped overview read). Marks are counted and read through their data-attributes
  * - never by pixel - and every honesty rule is a separate assertion: a gap
  * is a band without a value, a missing bucket with no gap is a zero, a
  * moved day boundary is one seam, and the unattributed share is always
@@ -12,11 +14,8 @@ import { GOLDEN, openStats, ready, routeGolden } from "./fixtures/stats.js";
  */
 
 const SERIES = '[data-testid="stats-sparkline"]';
-
-function json(route, body, status = 200) {
-  return route.fulfill({ status, contentType: "application/json",
-                         body: JSON.stringify(body) });
-}
+const overviewOf = (route, options) => json(
+  route, goldenOverview(route.request().url(), options));
 
 test.describe("the chart kit draws the golden series honestly", () => {
   // the golden "now": the axis ends where the series does, whatever day
@@ -29,7 +28,8 @@ test.describe("the chart kit draws the golden series honestly", () => {
     page,
   }) => {
     let series = GOLDEN.timeline;
-    await routeGolden(page, { timeline: (route) => json(route, series) });
+    await routeGolden(page, {
+      overview: (route) => overviewOf(route, { timeline: series }) });
     await openStats(page, "daily");
     await expect(page.locator('[data-testid="stats-chart-frame-fresh"]'))
       .toBeAttached();
@@ -75,7 +75,7 @@ test.describe("the chart kit draws the golden series honestly", () => {
     await expect(page.locator('[data-testid="stats-share-app"]')).toHaveCount(0);
 
     // the top devices, largest first
-    const top = page.locator('[data-testid="stats-top-row"]');
+    const top = page.locator('[data-testid="stats-top-device-row"]');
     await expect(top).toHaveCount(GOLDEN.devices.rows.length);
     await expect(top.first()).toHaveAttribute("data-key", "192.0.2.20");
 
@@ -105,7 +105,9 @@ test.describe("the chart kit draws the golden series honestly", () => {
     await expect(page.locator('[data-testid="stats-sparkline-tooltip"]'))
       .toContainText("2026-10-12");
     series = { ...GOLDEN.timeline, rows: GOLDEN.timeline.rows.slice(5) };
-    await page.clock.runFor(10_000);
+    // a day-resolution answer is re-read every 300 s (#101 DEC-H): one
+    // shell tick past that
+    await page.clock.runFor(310_000);
     await expect(marks).toHaveCount(7);
     await expect(page.locator('[data-testid="app-shell"]')).toBeAttached();
     await expect(page.locator('[data-testid="stats-sparkline-tooltip"]'))
@@ -115,9 +117,7 @@ test.describe("the chart kit draws the golden series honestly", () => {
   test("the frame says when a chart cannot be trusted", async ({ page }) => {
     // no answer at all: nothing is drawn, and it is not "no traffic"
     await routeGolden(page, {
-      timeline: (route) => route.fulfill({
-        status: 503, contentType: "application/json",
-        body: '{"detail":"stats store unavailable"}' }),
+      overview: (route) => json(route, { detail: "stats store unavailable" }, 503),
     });
     await openStats(page, "daily");
     await expect(page.locator('[data-testid="stats-chart-frame-unavailable"]'))
@@ -127,9 +127,8 @@ test.describe("the chart kit draws the golden series honestly", () => {
 
     // an answer with nothing in it: empty, said so
     await routeGolden(page, {
-      timeline: (route) => route.fulfill({
-        status: 200, contentType: "application/json",
-        body: JSON.stringify({ tier: "day", device: "", rows: [] }) }),
+      overview: (route) => overviewOf(route, {
+        timeline: { tier: "day", device: "", rows: [] } }),
     });
     await openStats(page, "daily");
     await expect(page.locator('[data-testid="stats-chart-frame-empty"]'))
@@ -148,8 +147,8 @@ test.describe("the chart kit draws the golden series honestly", () => {
         await json(route, { ...GOLDEN.health, collector_last_ts: polled });
         if (polled !== before) told();
       },
-      timeline: async (route) => {
-        if (!fail) return json(route, GOLDEN.timeline);
+      overview: async (route) => {
+        if (!fail) return overviewOf(route);
         // the failure lands only once the newer poll has been reported
         if (polled !== before) await toldNewer;
         return json(route, { detail: "down" }, 503);
