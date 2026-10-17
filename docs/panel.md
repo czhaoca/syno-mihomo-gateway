@@ -214,6 +214,8 @@ What `stats.db` keeps (since v1.11):
 | The same, per local day | 730 d | Hours older than 90 d roll into days. |
 | Bytes per device by exit node, rule type, category, destination country | 90 d of hours + 730 d of days | Recorded from v1.11 on. For that traffic each adds up to the device total; a window that reaches back before the upgrade (or into a time an older panel ran) holds device bytes the dimensions never saw. Country reads `unknown` while the running mihomo build does not report it. Category is the coarse category of the flow's hostname from v1.12 on ([categories](#categories)); bytes counted before v1.12 have an empty category. |
 | Bytes per device by hostname, sniffed name, destination ASN, destination port, app (geosite id) | 7 d, forced | Only with `PANEL_STATS_DOMAINS` on. No knob extends it. The app ids are recorded from v1.12 on. |
+| The delay of each policy group's selected node | 14 d (`PANEL_NODE_DELAY_DAYS`, 7 to 30) | From v1.14. The newest test mihomo itself ran, sampled every 300 s; a failed test is stored as no answer, never 0 ms. Airport node labels are stored as given. No device. |
+| Each proxy provider's subscription quota | the newest sample | From v1.14, sampled hourly: upload, download, total, expiry and the provider's own update time, nothing else - never its URL or its nodes. Kept in `stats_meta`, replaced by every sample. |
 | Attribution coverage (which share carried a hostname, by rule) | 7 d, forced | A rule's payload is stored only for GeoSite, GeoIP, RuleSet, Match and SrcIPCIDR rules. Every other type (the Domain rules, which can name your subscription's own server) is stored blank. Rows written before v1.11 keep their payload until they age out or are purged. |
 
 mihomo's own traffic (subscription pulls, health checks) is counted under the
@@ -237,6 +239,10 @@ does not know:
   until the newer panel returns. Its first maintenance pass, about a minute
   after start while the collector runs, prunes them.
 - Its size cap trims only its own tables.
+- A pre-v1.14 panel never prunes or purges the node delay history
+  (`stats_node_delay`) and never touches the stored quota; both wait for
+  the newer panel, whose first pass prunes the history to its retention and
+  whose next quota sample (at start) replaces the quota.
 - The dimensions get no entries for the time a pre-v1.11 panel ran. A v1.11
   panel over a v1.12 store records them, but with an empty category: those
   bytes read as counted without a dictionary (`no_dictionary`), never as
@@ -399,6 +405,11 @@ either as a category id.
   entropy is the only brute-force barrier for mutations.
 - `/metrics` (with `PANEL_METRICS` on) is open on the LAN like every read
   and carries per-device byte counters: scrape it from the LAN only.
+- From v1.14 the reads also serve your airport's node labels and their
+  delays (`/v1/stats/node-delay`) and your subscription's quota
+  (`/v1/stats/quota`) - details that sit behind the controller secret in
+  MetaCubexD are LAN-readable here, one more reason the panel stays off the
+  WAN.
 - Mutations always require `Authorization: Bearer <PANEL_SECRET>`; an empty
   secret refuses every mutation (fail closed), it does not open them.
 - Recorded follow-up (not in v1): an automated doctor check for accidental
@@ -422,6 +433,7 @@ stats collector is doing. `null` means "not measured yet", never zero.
 | `stats_db_bytes` / `stats_cap_mb` | `stats.db` size, and the cap the panel is actually using (`0` = none) |
 | `stats_db_growth_mb_day` | How fast `stats.db` grew over the last day, MB/day (null until an hour of samples; negative after a purge) |
 | `mihomo_mem_mb` / `mihomo_version` | mihomo's in-use memory and running version, read once a minute |
+| `live_viewers` | How many browsers hold a live throughput stream (`/v1/stats/live`) now; the panel reads mihomo's stream only while this is above 0 (v1.14) |
 
 `collector_interval_s` and `stats_cap_mb` go beyond the seven telemetry keys
 the work order listed. They let the doctor and the release validator compare

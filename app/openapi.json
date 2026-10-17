@@ -231,7 +231,8 @@
                     "stats_asn",
                     "stats_port",
                     "stats_app",
-                    "stats_self"
+                    "stats_self",
+                    "stats_node_delay"
                   ],
                   "type": "string"
                 },
@@ -1320,6 +1321,80 @@
         "summary": "Stats Gaps"
       }
     },
+    "/v1/stats/live": {
+      "get": {
+        "description": "Gateway-wide throughput, live, as Server-Sent Events. Nothing from\nthis stream is stored.\n\nThe stream opens with `retry: 5000` (reconnect after 5 s), then sends\none event per mihomo /traffic frame (about one a second):\n\n    data: {\"ts\": \"2026-10-16T12:00:00Z\", \"up_bps\": 1200, \"down_bps\": 56000}\n\n`up_bps` / `down_bps` are BYTES per second, as mihomo reports them, and\n`ts` is the panel's clock when the frame was relayed. `/health`\n`live_viewers` says how many viewers are connected right now. When no frame has\narrived for 15 s - mihomo restarting, the stream reconnecting - a\n`: ping` comment keeps the connection open; a viewer shows how long it\nhas been since the last `data` event, never a frozen number. One relay\nserves every viewer and reads mihomo only while at least one is\nconnected; past 16 concurrent viewers the answer is 503 - or, when the\n16th slot went in the instant between that check and the stream\nstarting, a stream of `retry: 60000`, one `event: full` and its end.\nThe panel shutting down ends every stream.",
+        "operationId": "stats_live_v1_stats_live_get",
+        "responses": {
+          "200": {
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "An unending text/event-stream (see above)."
+          },
+          "503": {
+            "description": "Too many live viewers already connected"
+          }
+        },
+        "summary": "Stats Live"
+      }
+    },
+    "/v1/stats/node-delay": {
+      "get": {
+        "description": "The delay of each policy group's SELECTED node over a window, from\nthe tests mihomo itself ran (sampled every 300 s; the panel never probes\na node). `24h` and `48h` list the tests (`resolution: \"test\"`); longer\npresets give one entry per hour and node (`resolution: \"hour\"`) with the\nmean delay of the tests that answered, their range, how many answered\n(`tests`) and how many failed (`failed`). A failed test is null, never\n0 ms - an hour of nothing but failures has a null delay. `since` is\nwhere the window really starts: the later of the preset's start and the\nretention, and `truncated` says the preset reached further back than\nanything is kept. `latest` is each group's newest stored test - the\nselection as of its `tested_at`. Node labels are the provider's own,\nstored as given.",
+        "operationId": "stats_node_delay_v1_stats_node_delay_get",
+        "parameters": [
+          {
+            "description": "The window preset, cut to the retention (PANEL_NODE_DELAY_DAYS)",
+            "in": "query",
+            "name": "range",
+            "required": false,
+            "schema": {
+              "default": "7d",
+              "description": "The window preset, cut to the retention (PANEL_NODE_DELAY_DAYS)",
+              "enum": [
+                "24h",
+                "48h",
+                "7d",
+                "30d",
+                "daily"
+              ],
+              "title": "Range",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Stats Node Delay V1 Stats Node Delay Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Stats Node Delay"
+      }
+    },
     "/v1/stats/overview": {
       "get": {
         "description": "The landing page in one read: `totals`, `timeline`, `top` lists per\ndimension (the breakdown's shape), window-scoped `gaps`, `framings` at\nday resolution, the `coverage` report and `invisible_traffic_hint`, all\nfrom one read transaction, so every section describes the same moment.\n\nScoped to a `category` or a `host` (not both), a section the stored\ntables cannot answer - the dimensions are stored independently, so a\ncategory has no exit nodes - is `null` and `unavailable` says why;\nnothing unknown is ever shown as zero. A scoped `totals` carries the\nscope's `window` (where its data starts; a host's seven-day floor), a\nscoped `top.device` names the scope in `within`, and `coverage` is\n`null` under any scope: it is measured for the whole gateway only.\n`gaps` lists the newest 100 overlapping the window, from the start of\nits first bucket; `gaps_truncated` says when there may be more.",
@@ -1433,7 +1508,7 @@
     },
     "/v1/stats/purge": {
       "post": {
-        "description": "Clears every visible stats surface (tiers, dimensions, the seven-day\ntables, gap history) but preserves conn_baseline + the poll stamp -\ndropping baselines would make still-open connections re-contribute\ntheir pre-purge cumulative. An optional body narrows it to one\n`device`, some `tables`, rows `before` a moment, or any combination;\nno body (or `{}`) clears everything, as it always has. `rows` counts\nwhat each table lost. The POLICY audit lives in policy.db and is\nuntouched - it records this purge, with its scope, like any other\nmutation. A purge that touches the device tier or a dimension table\nalso resets the `/metrics` byte counters (#99), so purged traffic is\nnot served on as if it were still held.",
+        "description": "Clears every visible stats surface (tiers, dimensions, the seven-day\ntables, gap history) but preserves conn_baseline + the poll stamp -\ndropping baselines would make still-open connections re-contribute\ntheir pre-purge cumulative. An optional body narrows it to one\n`device`, some `tables`, rows `before` a moment, or any combination;\nno body (or `{}`) clears everything, as it always has. `rows` counts\nwhat each table lost. The POLICY audit lives in policy.db and is\nuntouched - it records this purge, with its scope, like any other\nmutation. A purge that touches the device tier or a dimension table\nalso resets the `/metrics` byte counters (#99), so purged traffic is\nnot served on as if it were still held. The bare call (no body, or\n`{}`) also clears the stored subscription quota (#102); every scoped\nform leaves it.",
         "operationId": "stats_purge_v1_stats_purge_post",
         "requestBody": {
           "content": {
@@ -1477,6 +1552,27 @@
           }
         },
         "summary": "Stats Purge"
+      }
+    },
+    "/v1/stats/quota": {
+      "get": {
+        "description": "Each proxy provider's subscription quota, as mihomo last read it from\nthe provider's `subscription-userinfo` header (sampled hourly):\n`upload`, `download` and `total` in bytes, `expire` as a Unix time, and\nthe provider's own `updatedAt`. Nothing else of the provider is kept -\nnever its URL or its nodes. mihomo zero-fills a field the provider did\nnot send, so a `total` or `expire` of 0 is reported as null (unknown,\nunlimited or no expiry). `state` says what the newest sample found:\n`ok`, `none` (no provider reports a quota), `error` (mihomo did not\nanswer - the list is the last good one), `pending` (not sampled yet) or\n`off` (the collector is not running).",
+        "operationId": "stats_quota_v1_stats_quota_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Stats Quota V1 Stats Quota Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Stats Quota"
       }
     },
     "/v1/stats/self": {

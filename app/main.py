@@ -19,9 +19,12 @@ from fastapi.staticfiles import StaticFiles
 
 from app import config
 from app.api.insights import router as insights_router
+from app.api.live import Relay
+from app.api.live import router as live_router
 from app.api.metrics import router as metrics_router
 from app.api.routes import router
 from app.collector.core import Collector, CollectorLoop
+from app.collector.sampler import Sampler
 from app.mihomo_client.client import MihomoClient
 from app.notify import webhook_notify
 from app.reconciler.core import Reconciler
@@ -68,6 +71,10 @@ def create_app(*, mihomo_client=None, notifier=None) -> FastAPI:
         app.state.stats_conn = None
         app.state.stats_lock = threading.RLock()
         app.state.collector = None
+        app.state.sampler = None
+        # the live relay (#102) reads mihomo only while a viewer is
+        # connected, and needs no store
+        app.state.live_relay = Relay(client)
         stats_loop = None
         # a failure is surfaced via /health; policy is unaffected by design
         with suppress(StoreError):
@@ -94,12 +101,17 @@ def create_app(*, mihomo_client=None, notifier=None) -> FastAPI:
                                             day_source=day_source)
             interval = config.stats_poll_s()
             if interval > 0:
+                app.state.sampler = Sampler(client=client,
+                                            conn=app.state.stats_conn,
+                                            lock=app.state.stats_lock)
                 stats_loop = CollectorLoop(app.state.collector,
-                                           app.state.stats_lock, interval)
+                                           app.state.stats_lock, interval,
+                                           sampler=app.state.sampler)
                 stats_loop.start()
         try:
             yield
         finally:
+            app.state.live_relay.close()
             if stats_loop is not None:
                 stats_loop.stop()
             if app.state.stats_conn is not None:
@@ -111,6 +123,7 @@ def create_app(*, mihomo_client=None, notifier=None) -> FastAPI:
                   description=API_DESCRIPTION, lifespan=lifespan)
     app.include_router(router)
     app.include_router(insights_router)
+    app.include_router(live_router)
     app.include_router(metrics_router)
     # Same-origin UI (#66, rebuilt in React at #80): the built tree ships
     # inside the image and is served by the app itself - the reason the API

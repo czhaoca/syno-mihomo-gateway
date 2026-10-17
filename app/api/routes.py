@@ -90,7 +90,7 @@ PurgeTable = Literal[
     "stats_exit_hour", "stats_exit_day", "stats_rule_hour", "stats_rule_day",
     "stats_category_hour", "stats_category_day", "stats_country_hour",
     "stats_country_day", "stats_sniff", "stats_asn", "stats_port",
-    "stats_app", "stats_self"]
+    "stats_app", "stats_self", "stats_node_delay"]
 
 
 class StatsPurge(BaseModel):
@@ -225,7 +225,14 @@ def _telemetry(request: Request, last_poll) -> dict:
         "stats_db_growth_mb_day": status.get("db_growth_mb_day"),
         "mihomo_mem_mb": status.get("mihomo_mem_mb"),
         "mihomo_version": status.get("mihomo_version", ""),
+        # viewers holding a /v1/stats/live stream now (#102)
+        "live_viewers": _live_viewers(request),
     }
+
+
+def _live_viewers(request: Request) -> int:
+    relay = getattr(request.app.state, "live_relay", None)
+    return relay.viewers() if relay is not None else 0
 
 
 def _day_status(request: Request) -> dict:
@@ -514,7 +521,9 @@ def stats_purge(request: Request,
     untouched - it records this purge, with its scope, like any other
     mutation. A purge that touches the device tier or a dimension table
     also resets the `/metrics` byte counters (#99), so purged traffic is
-    not served on as if it were still held."""
+    not served on as if it were still held. The bare call (no body, or
+    `{}`) also clears the stored subscription quota (#102); every scoped
+    form leaves it."""
     scope = scope or StatsPurge()
     with request.app.state.stats_lock:
         conn = _stats_conn(request)
@@ -527,6 +536,15 @@ def stats_purge(request: Request,
         if collector is not None and (scope.tables is None
                                       or mirrored & set(scope.tables)):
             collector.counters.reset()
+        sampler = getattr(request.app.state, "sampler", None)
+        if sampler is not None and scope.tables is None and not scope.device \
+                and not scope.before:
+            sampler.forget_quota()
+        # the delay history has no device; any purge that took it leaves a
+        # floor, or the next sample writes mihomo's older tests straight back
+        if sampler is not None and not scope.device and (
+                scope.tables is None or stats_store.NODE_DELAY_TABLE in scope.tables):
+            sampler.forget_delays(_purge_floor(scope.before))
     details = " ".join(
         f"{key}={','.join(val) if isinstance(val, list) else val}"
         for key, val in sorted(scope.model_dump(exclude_none=True).items()))
@@ -536,6 +554,14 @@ def stats_purge(request: Request,
             append_audit(pconn, action="stats-purge",
                          requester=_requester(request), details=details)
     return {"purged": True, "rows": rows}
+
+
+def _purge_floor(before: str) -> str:
+    """The moment a delay-history purge cleared up to, as a test stamp: its
+    `before` (a key prefix, padded to the second), else now."""
+    if before:
+        return (before + "0000-00-00T00:00:00Z"[len(before):])
+    return _utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _band_entries() -> list:

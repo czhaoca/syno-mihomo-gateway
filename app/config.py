@@ -118,6 +118,17 @@ def stats_cap_mb() -> int:
     return _int_env("PANEL_STATS_CAP_MB", 512)
 
 
+# The node delay history's retention (#102 DEC-B): 14 days unless set,
+# clamped to 7-30 - shorter would not show a week's pattern, longer keeps a
+# history of airport node labels for no analytic gain.
+NODE_DELAY_DAYS_DEFAULT = 14
+
+
+def node_delay_days() -> int:
+    return min(30, max(7, _int_env("PANEL_NODE_DELAY_DAYS",
+                                   NODE_DELAY_DAYS_DEFAULT)))
+
+
 def stats_domains() -> bool:
     """The opt-in per-domain table - OFF unless explicitly enabled."""
     return os.environ.get("PANEL_STATS_DOMAINS", "").lower() in (

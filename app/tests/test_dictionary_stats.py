@@ -40,7 +40,9 @@ def classes(report):
 # --- migration v7 ----------------------------------------------------------------
 
 def test_v7_adds_the_app_table_with_its_device_index(sconn):
-    assert sconn.execute("PRAGMA user_version").fetchone()[0] == 7
+    # the newest migration, whichever later ticket appended it (#102: v8)
+    assert sconn.execute("PRAGMA user_version").fetchone()[0] == len(
+        STATS_MIGRATIONS)
     names = {r[0] for r in sconn.execute(
         "SELECT name FROM sqlite_master WHERE tbl_name = 'stats_app'")}
     assert names >= {"stats_app", "stats_app_device"}
@@ -58,7 +60,8 @@ def test_a_v6_store_migrates_to_v7_and_keeps_its_rows(panel_env):
     older.close()
     conn = open_stats_db(path)
     try:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 7
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == len(
+            STATS_MIGRATIONS)
         assert tuple(conn.execute(
             "SELECT value, up, down FROM stats_category_hour").fetchone()
         ) == ("", 3, 4)
@@ -76,7 +79,9 @@ def test_an_older_image_opens_a_v7_store_and_leaves_the_app_table(panel_env):
     older = open_db(path, migrations=STATS_MIGRATIONS[:6],
                     pre_migrate=("PRAGMA auto_vacuum = INCREMENTAL",))
     try:
-        assert older.execute("PRAGMA user_version").fetchone()[0] == 7
+        # an older image leaves the newer store's version as it found it
+        assert older.execute("PRAGMA user_version").fetchone()[0] == len(
+            STATS_MIGRATIONS)
         assert tuple(older.execute(
             "SELECT value, up, down FROM stats_app").fetchone()
         ) == ("example-video", 10, 100)

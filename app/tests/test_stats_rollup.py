@@ -127,7 +127,8 @@ def test_cap_noop_when_under(panel_env, stats_conn):
     seed_minute(stats_conn, "2026-07-23T09:59")
     pruned = enforce_cap(stats_conn, db_path, cap_mb=512)
     # UPDATED (never relaxed) as tables land: #77 added `coverage`, #95
-    # the dimension and seven-day class tables, #97 `app`. An exact-set
+    # the dimension and seven-day class tables, #97 `app`, #102
+    # `node_delay`. An exact-set
     # assertion is the point - it is what catches a table added without a
     # place in the cap (test_migration_v5 also checks it against the live
     # schema).
@@ -136,7 +137,8 @@ def test_cap_noop_when_under(panel_env, stats_conn):
          "minute",
          "legacy_minute", "hour", "day",
          "exit_hour", "exit_day", "rule_hour", "rule_day", "category_hour",
-         "category_day", "country_hour", "country_day", "gap"], 0)
+         "category_day", "country_hour", "country_day", "gap",
+         "node_delay"], 0)
     assert stats_conn.execute(
         "SELECT COUNT(*) c FROM stats_minute_v5").fetchone()["c"] == 1
 

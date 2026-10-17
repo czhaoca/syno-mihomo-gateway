@@ -45,7 +45,7 @@ def _age(entry, key):
 
 def _key(entry, moment):
     _name, _table, col, length, _rank = entry
-    if col == "started":
+    if col in ("started", "tested_at"):
         return moment.strftime("%Y-%m-%dT%H:%M:%SZ")
     return moment.strftime("%Y-%m-%dT%H:%M")[:length]
 
@@ -55,6 +55,10 @@ def _insert(conn, entry, key, device):
     if col == "started":
         conn.execute("INSERT INTO stats_gap (started, ended, reason) "
                      "VALUES (?, ?, 'test')", (key, key))
+        return
+    if col == "tested_at":
+        conn.execute("INSERT OR IGNORE INTO stats_node_delay (tested_at, grp, "
+                     "node, delay_ms) VALUES (?, 'Auto', ?, 1)", (key, device))
         return
     cols = {r["name"]: r for r in conn.execute(f"PRAGMA table_info({table})")}
     names, vals = ["bucket"], [key]

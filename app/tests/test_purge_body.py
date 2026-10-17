@@ -55,9 +55,10 @@ def _seed(conn):
 
 def _left(conn, table, device=None):
     clause, params = (" WHERE device = ?", (device,)) if device else ("", ())
+    column = {"stats_gap": "started", "stats_node_delay": "tested_at"}.get(
+        table, "bucket")
     return sorted(r[0] for r in conn.execute(
-        f"SELECT {'started' if table == 'stats_gap' else 'bucket'} "
-        f"FROM {table}{clause}", params))
+        f"SELECT {column} FROM {table}{clause}", params))
 
 
 def _purge(client, panel_env, body=None):

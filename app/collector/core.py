@@ -16,6 +16,7 @@ from collections import deque
 from datetime import UTC, datetime
 
 from app import config
+from app.collector import sampler as sampler_mod
 from app.store import dayframe
 from app.store import stats as stats_store
 
@@ -189,7 +190,8 @@ class CollectorLoop:
     Every stats-db WRITE serializes through LOCK - the flush, the
     maintenance pass and the purge route. Reads do not take it (#93)."""
 
-    def __init__(self, collector: Collector, lock, interval_s: int):
+    def __init__(self, collector: Collector, lock, interval_s: int,
+                 sampler=None):
         # NOTE: `lock` stays unannotated - threading.RLock is a factory
         # FUNCTION on python 3.12 (the CI image), so `threading.RLock |
         # None` TypeErrors at import there (it only became a class later).
@@ -201,6 +203,9 @@ class CollectorLoop:
                                         name="panel-stats-collector")
         self._since_maintenance = 0.0
         self._sampler = None
+        # the node delay + quota sampler (#102): same side thread, after
+        # the version and memory read
+        self.sampler = sampler
 
     def _sample_mihomo(self) -> None:
         """Start a mihomo telemetry sample on a side thread unless the last
@@ -208,10 +213,15 @@ class CollectorLoop:
         /memory must never delay a poll (a late poll is a gap row)."""
         if self._sampler is not None and self._sampler.is_alive():
             return
-        self._sampler = threading.Thread(target=self.collector.sample_mihomo,
+        self._sampler = threading.Thread(target=self._side_samples,
                                          daemon=True,
                                          name="panel-mihomo-sampler")
         self._sampler.start()
+
+    def _side_samples(self) -> None:
+        self.collector.sample_mihomo()
+        if self.sampler is not None:
+            sampler_mod.run_quietly(self.sampler)
 
     def start(self) -> None:
         self._thread.start()

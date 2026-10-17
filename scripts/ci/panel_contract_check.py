@@ -63,7 +63,9 @@ def render_api_md(doc: dict) -> str:
         "",
         "Reads are open on the LAN; every mutation (POST/PATCH/DELETE) requires",
         "`Authorization: Bearer <PANEL_SECRET>` and is refused when the secret is",
-        "unset - fail closed. All responses are JSON. The base URL is",
+        "unset - fail closed. Responses are JSON unless an endpoint says",
+        "otherwise: the CSV exports (`format=csv`), the `/metrics` text",
+        "exposition and the `/v1/stats/live` event stream. The base URL is",
         "`http://<PANEL_IP>:<PANEL_PORT>` (default port 8090); prefer",
         "`gateway.sh policy` over raw calls for the policy surface.",
         "",
@@ -86,7 +88,26 @@ def render_api_md(doc: dict) -> str:
                 lines.append("Parameters: "
                              + ", ".join(f"`{p}`" for p in params))
                 lines.append("")
+            # an event stream's events are its schema, and no JSON schema
+            # can say them: such an operation carries its full description
+            if _streams(op):
+                lines.extend(_description(op))
     return "\n".join(lines).rstrip() + "\n"
+
+
+def _streams(op: dict) -> bool:
+    ok = (op.get("responses") or {}).get("200") or {}
+    return "text/event-stream" in (ok.get("content") or {})
+
+
+def _description(op: dict) -> list:
+    """The operation's description as markdown: its paragraphs, with an
+    indented line kept as code (FastAPI keeps a docstring's relative
+    indentation)."""
+    out = []
+    for line in (op.get("description") or "").strip().splitlines():
+        out.append(line.rstrip())
+    return [*out, ""] if out else []
 
 
 def path_problems(doc: dict) -> list:

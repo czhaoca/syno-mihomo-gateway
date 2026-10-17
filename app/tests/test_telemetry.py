@@ -34,6 +34,7 @@ NEW_KEYS = {
     "mihomo_version": (str,),
     "collector_interval_s": (int,),
     "stats_cap_mb": (int,),
+    "live_viewers": (int,),
 }
 
 

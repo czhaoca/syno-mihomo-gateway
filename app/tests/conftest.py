@@ -36,6 +36,34 @@ class FakeMihomoClient:
         self.version_text = ""
         self.mem_bytes: int | None = None
         self.fail_meta = False
+        # #102: the /traffic frames (then the stream ends), and the /group,
+        # /proxies/<name> history and /providers/proxies documents
+        self.traffic: list[tuple[int, int]] = []
+        self.fail_traffic = False
+        self.groups_doc: list[dict] = []
+        self.histories: dict[str, list] = {}
+        self.providers_doc: dict[str, dict] = {}
+        self.fail_samples = False
+
+    def traffic_frames(self):
+        if self.fail_traffic:
+            raise MihomoError("GET /traffic failed (fixture)")
+        yield from list(self.traffic)
+
+    def groups(self) -> list[dict]:
+        if self.fail_samples:
+            raise MihomoError("GET /group failed (fixture)")
+        return [dict(g) for g in self.groups_doc]
+
+    def proxy_history(self, name: str) -> list[dict]:
+        if self.fail_samples:
+            raise MihomoError("GET /proxies failed (fixture)")
+        return [dict(h) for h in self.histories.get(name, [])]
+
+    def proxy_providers(self) -> dict:
+        if self.fail_samples:
+            raise MihomoError("GET /providers/proxies failed (fixture)")
+        return {k: dict(v) for k, v in self.providers_doc.items()}
 
     def refresh_provider(self, name: str) -> None:
         if self.fail_puts:

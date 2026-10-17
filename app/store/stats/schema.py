@@ -63,6 +63,11 @@ CLASS_TABLES = (*_V5_CLASS_TABLES, APP_TABLE)
 # seven-day tables.
 SELF_TABLE = "stats_self"
 
+# The selected node's delay per policy group (#102): mihomo's own test
+# results, keyed by the test's time, no device, retained for
+# PANEL_NODE_DELAY_DAYS. Airport node labels are stored as given.
+NODE_DELAY_TABLE = "stats_node_delay"
+
 # The value written when a field is absent from the snapshot (DEC-A: the
 # geo fields are feature-detected per snapshot) - a row, never a drop.
 UNKNOWN = "unknown"
@@ -86,7 +91,7 @@ GATEWAY_DEVICE = "gateway"
 # is that nothing does.
 PURGE_TABLES = ("stats_minute", MINUTE_TABLE, "stats_hour", "stats_day",
                 "stats_domain", "stats_coverage", "stats_gap",
-                *DIMENSION_TABLES, *CLASS_TABLES, SELF_TABLE)
+                *DIMENSION_TABLES, *CLASS_TABLES, SELF_TABLE, NODE_DELAY_TABLE)
 
 
 def _value_table(name: str, *, day: bool = False) -> str:
@@ -300,6 +305,19 @@ STATS_MIGRATIONS = [
     (7, "\n".join([
         _value_table(APP_TABLE),
         f"CREATE INDEX {APP_TABLE}_device ON {APP_TABLE} (device, bucket);"])),
+    # v8 - the selected node's delay per policy group (#102). A failed test
+    # is NULL, never 0. CREATE only, so an older image opens a v8 store
+    # unchanged (it cannot prune or purge this table: the v1.14.0 notes).
+    (8, f"""
+    CREATE TABLE {NODE_DELAY_TABLE} (
+        tested_at TEXT NOT NULL,
+        grp TEXT NOT NULL,
+        node TEXT NOT NULL,
+        delay_ms INTEGER,
+        PRIMARY KEY (grp, node, tested_at)
+    );
+    CREATE INDEX {NODE_DELAY_TABLE}_tested ON {NODE_DELAY_TABLE} (tested_at);
+    """),
 ]
 
 

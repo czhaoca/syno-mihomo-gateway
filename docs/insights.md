@@ -143,11 +143,44 @@ Show more waits for a read in flight.
 The colour scheme (System, Light or Dark) is the picker beside the language
 toggle. On System it follows the device.
 
+## Live throughput, node delay and quota
+
+From v1.14 the panel also serves three things it reads from mihomo
+itself (see [Panel API](panel-api.md)):
+
+- **Live throughput** (`GET /v1/stats/live`): the whole gateway's bytes per
+  second, about once a second, as a Server-Sent Events stream. **Nothing
+  from it is stored**: it is a live picture only, and the history stays in
+  the timeline above. The panel reads mihomo's stream only while at least
+  one viewer is connected, one stream for every viewer; it stops when the
+  last viewer leaves. When mihomo stops answering, the stream keeps the
+  connection open and says nothing new; a viewer shows how long it has been
+  since the last frame, never a frozen number as if it were current.
+- **Node delay** (`GET /v1/stats/node-delay`): for each policy group, the
+  delay of the node it has selected, from the tests mihomo itself runs
+  (the panel never probes a node). It is sampled every 300 s and kept for
+  `PANEL_NODE_DELAY_DAYS` (14 days by default). A failed test is no answer,
+  never 0 ms. 24h and 48h list every test; longer ranges give one value per
+  hour and node, the average of the tests that answered, with how many
+  failed. A range longer than the retention says where it really starts.
+  The selected node is shown as of its newest test.
+- **Subscription quota** (`GET /v1/stats/quota`): each provider's used
+  upload and download, total and expiry, sampled hourly from what the
+  provider reports to mihomo. mihomo writes 0 for a number the provider did
+  not send, so a total or expiry of 0 is shown as unknown, not as a limit.
+  Nothing else of the provider is kept: never its URL or its nodes.
+
+The node labels and the quota sit behind the controller secret in
+MetaCubexD; here, like every panel read, they need no password on the LAN.
+Keep the panel off the WAN.
+
 ## Downgrading
 
 An older panel that reads a stored `24h` default lands on its own default
 range. Reads never re-validate a stored setting, and an older view ignores
-a range it does not know.
+a range it does not know. A pre-v1.14 panel keeps no node delay or quota
+and cannot prune what a newer one stored; the newer panel prunes and
+replaces it when it returns.
 
 ## Security
 

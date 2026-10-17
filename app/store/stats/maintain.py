@@ -8,11 +8,13 @@ from pathlib import Path
 
 from app import config
 from app.store import dayframe
+from app.store.stats.node_delay import QUOTA_PREFIX, delete_quota_sql, prune_delays_sql
 from app.store.stats.schema import (
     CLASS_TABLES,
     DIMENSIONS,
     DOMAIN_RETENTION_DAYS,
     MINUTE_TABLE,
+    NODE_DELAY_TABLE,
     PURGE_TABLES,
     SELF_TABLE,
     _db_bytes,
@@ -31,7 +33,7 @@ _SEVEN_DAY_TABLES = ("stats_domain", "stats_coverage", *CLASS_TABLES,
                      SELF_TABLE)
 
 # tables with no device column: a device-scoped purge leaves them alone
-_NO_DEVICE_TABLES = ("stats_gap", SELF_TABLE)
+_NO_DEVICE_TABLES = ("stats_gap", SELF_TABLE, NODE_DELAY_TABLE)
 
 
 def _roll_days(conn, hour_table, day_table, key_col, facts, hours, frame):
@@ -128,6 +130,8 @@ def rollup(conn, now: str, *, day) -> None:
         # any retained measurement explains nothing (and an unbounded gap
         # table could otherwise defeat the hard size cap)
         conn.execute("DELETE FROM stats_gap WHERE ended < ?", (day_slack,))
+        # the node delay history keeps its own knob's horizon (#102)
+        conn.execute(*prune_delays_sql(now_dt, config.node_delay_days()))
         conn.execute("COMMIT")
     except BaseException:
         with suppress(Exception):
@@ -160,7 +164,10 @@ _CAP_TIERS = (("domain", "stats_domain", "bucket", 13, 0),
               *((f"{dim}_{tier}", f"stats_{dim}_{tier}", "bucket",
                  13 if tier == "hour" else 10, 2)
                 for dim in DIMENSIONS for tier in ("hour", "day")),
-              ("gap", "stats_gap", "started", 16, 3))
+              ("gap", "stats_gap", "started", 16, 3),
+              # a test time is a full stamp, not a bucket: like the gap
+              # rows, node delay rides along with the cutoff (#102)
+              ("node_delay", NODE_DELAY_TABLE, "tested_at", 16, 0))
 # age groups - distinct (start, rank) - removed per cap batch
 _CAP_BATCH = 20
 
@@ -310,8 +317,14 @@ def purge_stats(conn, *, device: str = "", tables=None,
     deliberately survive every form: dropping a baseline would make every
     still-open connection re-contribute its entire pre-purge cumulative on
     the very next poll - the exact double-count the delta model exists to
-    prevent. The gap history and the collector's gauges have no device, so
-    a device scope leaves them.
+    prevent. The gap history, the collector's gauges and the node delay
+    history have no device, so a device scope leaves them.
+
+    The subscription quota (#102) lives in `stats_meta` beside that
+    accounting state, so it is no table here: the BARE purge (no device, no
+    tables, no before) also deletes its `quota:` keys - by exact prefix,
+    never the poll stamp - and every scoped form leaves them. An older
+    image's purge cannot clear them; the next quota sample replaces them.
     The POLICY audit lives in policy.db and is untouched by construction.
     """
     # PURGE_TABLES is the single list, so a table added later cannot
@@ -326,6 +339,8 @@ def purge_stats(conn, *, device: str = "", tables=None,
             clause, params = _purge_where(table, device, before)
             deleted[table] = conn.execute(f"DELETE FROM {table}{clause}",
                                           params).rowcount
+        if tables is None and not device and not before:
+            conn.execute(delete_quota_sql(), (QUOTA_PREFIX,))
         conn.execute("COMMIT")
     except BaseException:
         with suppress(Exception):

@@ -45,4 +45,8 @@ COPY --from=ui /build/dist ./app/ui/dist
 USER panel
 ENV PANEL_PORT=8090
 EXPOSE 8090
-CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${PANEL_PORT:-8090}"]
+# --timeout-graceful-shutdown: an open live stream (#102) never ends on its
+# own, and uvicorn would otherwise wait for it - `docker stop` and the
+# updater's unattended rollback would hang until the SIGKILL. 5 s is inside
+# Docker's 10 s stop grace, so the lifespan shutdown still runs.
+CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${PANEL_PORT:-8090} --timeout-graceful-shutdown 5"]
