@@ -178,6 +178,78 @@
         "title": "SettingsUpdate",
         "type": "object"
       },
+      "StatsPurge": {
+        "additionalProperties": false,
+        "properties": {
+          "before": {
+            "anyOf": [
+              {
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}(T\\d{2}(:\\d{2})?)?$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Only rows whose bucket STARTS before this UTC moment (`YYYY-MM-DD`, `YYYY-MM-DDTHH` or `YYYY-MM-DDTHH:MM`): a bucket straddling it goes too, so nothing older survives. A day row is compared by its date",
+            "title": "Before"
+          },
+          "device": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Only this device's rows. The gap history has no device and is kept",
+            "title": "Device"
+          },
+          "tables": {
+            "anyOf": [
+              {
+                "items": {
+                  "enum": [
+                    "stats_minute",
+                    "stats_minute_v5",
+                    "stats_hour",
+                    "stats_day",
+                    "stats_domain",
+                    "stats_coverage",
+                    "stats_gap",
+                    "stats_exit_hour",
+                    "stats_exit_day",
+                    "stats_rule_hour",
+                    "stats_rule_day",
+                    "stats_category_hour",
+                    "stats_category_day",
+                    "stats_country_hour",
+                    "stats_country_day",
+                    "stats_sniff",
+                    "stats_asn",
+                    "stats_port",
+                    "stats_app",
+                    "stats_self",
+                    "stats_node_delay"
+                  ],
+                  "type": "string"
+                },
+                "minItems": 1,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Only these tables",
+            "title": "Tables"
+          }
+        },
+        "title": "StatsPurge",
+        "type": "object"
+      },
       "ValidationError": {
         "properties": {
           "ctx": {
@@ -245,6 +317,28 @@
           }
         },
         "summary": "Health"
+      }
+    },
+    "/metrics": {
+      "get": {
+        "description": "Prometheus text exposition (format 0.0.4), only with\n`PANEL_METRICS=true` - 404 otherwise. Open on the LAN like every read:\nnever expose the panel to the WAN.\n\nCounters, since the panel started (a restart resets them):\n`insights_device_bytes_total{device,direction}`,\n`insights_group_bytes_total{group,direction}`,\n`insights_exit_bytes_total{exit,direction}`,\n`insights_rule_bytes_total{rule_type,direction}`,\n`insights_category_bytes_total{category,direction}`,\n`insights_country_bytes_total{country,direction}` - `direction` is\n`up` or `down`. An empty value is written `no_dictionary` (category,\nbytes counted without a dictionary) or `none` (anything else, e.g. a\nflow no rule decided). Gauges mirror `/health`: `insights_collector_*`,\n`insights_stats_*`, `insights_mihomo_*`. No label carries a hostname,\nsniffed name, ASN, port or app-level id.",
+        "operationId": "metrics_metrics_get",
+        "responses": {
+          "200": {
+            "content": {
+              "text/plain; version=0.0.4": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "The Prometheus text exposition"
+          },
+          "404": {
+            "description": "PANEL_METRICS is off"
+          }
+        },
+        "summary": "Metrics"
       }
     },
     "/v1/apply": {
@@ -693,6 +787,186 @@
         "summary": "Put Settings"
       }
     },
+    "/v1/stats/breakdown": {
+      "get": {
+        "description": "One dimension's values over a window, largest first, one page.\n\n`tier` is the resolution actually read: the dimensions have no minute\ntier (a 48-hour read is hourly) and the seven-day class holds hours\nonly. `total` and `total_rows` cover the whole window, not the page; a\nvalue that moved no bytes is never listed. A long-term dimension\nreports `unrecorded` - device bytes in the window it has no record of\n(before v1.11, a time an older panel ran, a one-table purge) - and\n`window.oldest_bucket` / `window.truncated` say where its data starts.\n`category` rows carry `class`: `coarse`, `unattributed` (`unknown`, no\nanswer) or `no_dictionary` (`\"\"`, counted without a dictionary). `host`\nand `app` answer `enabled: false` and no rows with the gate off, and\nnever reach back more than seven days (`window.since`, an hour key). A\nsingle-tier read at another tier than asked fits `since`/`until` to the\ntier read, so the bucket a bound falls in is kept: a minute bound on an\nhourly dimension is cut to its hour, and a day `until` on the hourly\nseven-day class takes every hour of that day.\n\n`format=csv` columns: `kind,value,up,down`, plus `class` for\n`dim=category`. `kind` is `value` for a dimension value and `unrecorded`\nfor the one row (empty `value`) carrying the device bytes the dimension\nhas no record of - a whole-window figure, so only on the first page\n(`offset=0`). A seven-day class export with the gate off is the header\nrow alone.",
+        "operationId": "stats_breakdown_v1_stats_breakdown_get",
+        "parameters": [
+          {
+            "description": "The dimension: `exit` (exit node), `group` (policy group), `rule` (rule type), `category`, `country` - long-term - or `host` / `app` (hostname / app-level category id), the seven-day class, answered only with PANEL_STATS_DOMAINS on",
+            "in": "query",
+            "name": "dim",
+            "required": true,
+            "schema": {
+              "description": "The dimension: `exit` (exit node), `group` (policy group), `rule` (rule type), `category`, `country` - long-term - or `host` / `app` (hostname / app-level category id), the seven-day class, answered only with PANEL_STATS_DOMAINS on",
+              "enum": [
+                "exit",
+                "group",
+                "rule",
+                "category",
+                "country",
+                "host",
+                "app"
+              ],
+              "title": "Dim",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "tier",
+            "required": false,
+            "schema": {
+              "default": "hour",
+              "enum": [
+                "minute",
+                "hour",
+                "day"
+              ],
+              "title": "Tier",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "since",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Since",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "until",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Until",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "device",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Device",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Largest first by `total` (up + down), `up` or `down`",
+            "in": "query",
+            "name": "sort",
+            "required": false,
+            "schema": {
+              "default": "total",
+              "description": "Largest first by `total` (up + down), `up` or `down`",
+              "enum": [
+                "total",
+                "up",
+                "down"
+              ],
+              "title": "Sort",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Rows per page, clamped to 1-200",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "description": "Rows per page, clamped to 1-200",
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "A window preset: `24h` and `48h` (minute resolution), `7d` and `30d` (hour resolution), `daily` (local-day resolution, everything held). The server computes the window from its own clock and reads it WINDOW-COMPLETE. The hour tier is written at every poll, so a minute or hour read takes its own tier alone, and a day read takes the day tier plus the hour tier, which holds the days not rolled up yet - so a 7-day total includes the newest 48 hours and `daily` includes today. A window ends at the resolution tier's retention: with the shipped retention every preset is whole, and an explicit `tier` finer than the window (e.g. `range=7d&tier=minute`) reaches back only as far as that tier holds. An explicit `tier` overrides the resolution only. Mutually exclusive with `since`/`until`, even empty ones (422). Without `range`, a read covers the single `tier` table (since v1.11 the hour table also holds the newest 48 hours).",
+            "in": "query",
+            "name": "range",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "24h",
+                    "48h",
+                    "7d",
+                    "30d",
+                    "daily"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "A window preset: `24h` and `48h` (minute resolution), `7d` and `30d` (hour resolution), `daily` (local-day resolution, everything held). The server computes the window from its own clock and reads it WINDOW-COMPLETE. The hour tier is written at every poll, so a minute or hour read takes its own tier alone, and a day read takes the day tier plus the hour tier, which holds the days not rolled up yet - so a 7-day total includes the newest 48 hours and `daily` includes today. A window ends at the resolution tier's retention: with the shipped retention every preset is whole, and an explicit `tier` finer than the window (e.g. `range=7d&tier=minute`) reaches back only as far as that tier holds. An explicit `tier` overrides the resolution only. Mutually exclusive with `since`/`until`, even empty ones (422). Without `range`, a read covers the single `tier` table (since v1.11 the hour table also holds the newest 48 hours).",
+              "title": "Range"
+            }
+          },
+          {
+            "description": "`json` (the default) or `csv`: the same rows as a `text/csv; charset=utf-8` attachment, header row first, no byte-order mark. A text cell that starts with `=`, `+`, `-`, `@`, a tab or a carriage return is prefixed with `'` so a spreadsheet shows it as text",
+            "in": "query",
+            "name": "format",
+            "required": false,
+            "schema": {
+              "default": "json",
+              "description": "`json` (the default) or `csv`: the same rows as a `text/csv; charset=utf-8` attachment, header row first, no byte-order mark. A text cell that starts with `=`, `+`, `-`, `@`, a tab or a carriage return is prefixed with `'` so a spreadsheet shows it as text",
+              "enum": [
+                "json",
+                "csv"
+              ],
+              "title": "Format",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              },
+              "text/csv": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "JSON, or CSV with `format=csv`"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Stats Breakdown"
+      }
+    },
     "/v1/stats/chains": {
       "get": {
         "description": "Per-chain totals. With `range`, window-complete across tiers; with\nonly `tier`, the single tier table (unchanged since v1.8.0).",
@@ -734,7 +1008,7 @@
             }
           },
           {
-            "description": "A window preset: `48h` (minute resolution), `7d` and `30d` (hour resolution), `daily` (local-day resolution, everything held). The server computes the window from its own clock and reads it WINDOW-COMPLETE: the resolution's tier plus every finer tier, which hold the newer rows not yet rolled up - so a 7-day total includes the newest 48 hours. Coarser tiers are not read, so a window ends at the resolution tier's retention: with the shipped retention every preset is whole, and an explicit `tier` finer than the window (e.g. `range=7d&tier=minute`) reaches back only as far as that tier holds. An explicit `tier` overrides the resolution only. Mutually exclusive with `since`/`until`, even empty ones (422). Without `range`, a read covers the single `tier` table exactly as before.",
+            "description": "A window preset: `24h` and `48h` (minute resolution), `7d` and `30d` (hour resolution), `daily` (local-day resolution, everything held). The server computes the window from its own clock and reads it WINDOW-COMPLETE. The hour tier is written at every poll, so a minute or hour read takes its own tier alone, and a day read takes the day tier plus the hour tier, which holds the days not rolled up yet - so a 7-day total includes the newest 48 hours and `daily` includes today. A window ends at the resolution tier's retention: with the shipped retention every preset is whole, and an explicit `tier` finer than the window (e.g. `range=7d&tier=minute`) reaches back only as far as that tier holds. An explicit `tier` overrides the resolution only. Mutually exclusive with `since`/`until`, even empty ones (422). Without `range`, a read covers the single `tier` table (since v1.11 the hour table also holds the newest 48 hours).",
             "in": "query",
             "name": "range",
             "required": false,
@@ -742,6 +1016,7 @@
               "anyOf": [
                 {
                   "enum": [
+                    "24h",
                     "48h",
                     "7d",
                     "30d",
@@ -753,7 +1028,7 @@
                   "type": "null"
                 }
               ],
-              "description": "A window preset: `48h` (minute resolution), `7d` and `30d` (hour resolution), `daily` (local-day resolution, everything held). The server computes the window from its own clock and reads it WINDOW-COMPLETE: the resolution's tier plus every finer tier, which hold the newer rows not yet rolled up - so a 7-day total includes the newest 48 hours. Coarser tiers are not read, so a window ends at the resolution tier's retention: with the shipped retention every preset is whole, and an explicit `tier` finer than the window (e.g. `range=7d&tier=minute`) reaches back only as far as that tier holds. An explicit `tier` overrides the resolution only. Mutually exclusive with `since`/`until`, even empty ones (422). Without `range`, a read covers the single `tier` table exactly as before.",
+              "description": "A window preset: `24h` and `48h` (minute resolution), `7d` and `30d` (hour resolution), `daily` (local-day resolution, everything held). The server computes the window from its own clock and reads it WINDOW-COMPLETE. The hour tier is written at every poll, so a minute or hour read takes its own tier alone, and a day read takes the day tier plus the hour tier, which holds the days not rolled up yet - so a 7-day total includes the newest 48 hours and `daily` includes today. A window ends at the resolution tier's retention: with the shipped retention every preset is whole, and an explicit `tier` finer than the window (e.g. `range=7d&tier=minute`) reaches back only as far as that tier holds. An explicit `tier` overrides the resolution only. Mutually exclusive with `since`/`until`, even empty ones (422). Without `range`, a read covers the single `tier` table (since v1.11 the hour table also holds the newest 48 hours).",
               "title": "Range"
             }
           }
@@ -787,7 +1062,7 @@
     },
     "/v1/stats/coverage": {
       "get": {
-        "description": "What share of traffic could be attributed to an app at all (#77).\n\nDEC-6 makes this the deliverable: the per-app feature exists to enable\nBLOCKING, and blocking on bad attribution takes out the wrong app on a\ngateway carrying all LAN traffic. So the number comes first, and it is\nmeasured rather than assumed.\n\nA flow counts as attributable only when it carried a hostname (DEC-B).\nRouting signals never promote one - `rule`/`rulePayload` name a\nrouting category, not an application, and the release gate already\nrefuses to read `GeoSite/cn` as proof of anything. `rules` breaks the\nunattributable remainder down by the rule that routed it, which is\nwhat distinguishes a deliberate exclusion from a real gap.\n\nNo hostname is stored to produce this: the counters are hostname-free\nby construction, so the report needs none of the privacy surface the\nopt-in domain table carries.",
+        "description": "What share of traffic could be attributed to an app at all (#77).\n\nDEC-6 makes this the deliverable: the per-app feature exists to enable\nBLOCKING, and blocking on bad attribution takes out the wrong app on a\ngateway carrying all LAN traffic. So the number comes first, and it is\nmeasured rather than assumed.\n\nA flow counts as attributable only when it carried a hostname (DEC-B).\nRouting signals never promote one - `rule`/`rulePayload` name a\nrouting category, not an application, and the release gate already\nrefuses to read `GeoSite/cn` as proof of anything. `rules` breaks the\nunattributable remainder down by the rule that routed it, which is\nwhat distinguishes a deliberate exclusion from a real gap.\n\nNo hostname is stored to produce this: the counters are hostname-free\nby construction, so the report needs none of the privacy surface the\nopt-in domain table carries.\n\n`dictionary` (#97) is a second partition of the same window: what the\ncategory dictionary named - `app` (its app-level id kept, only with\nPANEL_STATS_DOMAINS on), `coarse` (only the coarse category kept),\n`unattributed` (no answer: no hostname, or one it does not know) and\n`no_dictionary` (counted before v1.12, or by an older image). Each\npartition sums to 100 on its own; `dictionary.total` is the bytes the\ncategory dimension still holds per hour in the window, from\n`dictionary.oldest_bucket` on.",
         "operationId": "stats_coverage_v1_stats_coverage_get",
         "parameters": [
           {
@@ -879,7 +1154,7 @@
             }
           },
           {
-            "description": "A window preset: `48h` (minute resolution), `7d` and `30d` (hour resolution), `daily` (local-day resolution, everything held). The server computes the window from its own clock and reads it WINDOW-COMPLETE: the resolution's tier plus every finer tier, which hold the newer rows not yet rolled up - so a 7-day total includes the newest 48 hours. Coarser tiers are not read, so a window ends at the resolution tier's retention: with the shipped retention every preset is whole, and an explicit `tier` finer than the window (e.g. `range=7d&tier=minute`) reaches back only as far as that tier holds. An explicit `tier` overrides the resolution only. Mutually exclusive with `since`/`until`, even empty ones (422). Without `range`, a read covers the single `tier` table exactly as before.",
+            "description": "A window preset: `24h` and `48h` (minute resolution), `7d` and `30d` (hour resolution), `daily` (local-day resolution, everything held). The server computes the window from its own clock and reads it WINDOW-COMPLETE. The hour tier is written at every poll, so a minute or hour read takes its own tier alone, and a day read takes the day tier plus the hour tier, which holds the days not rolled up yet - so a 7-day total includes the newest 48 hours and `daily` includes today. A window ends at the resolution tier's retention: with the shipped retention every preset is whole, and an explicit `tier` finer than the window (e.g. `range=7d&tier=minute`) reaches back only as far as that tier holds. An explicit `tier` overrides the resolution only. Mutually exclusive with `since`/`until`, even empty ones (422). Without `range`, a read covers the single `tier` table (since v1.11 the hour table also holds the newest 48 hours).",
             "in": "query",
             "name": "range",
             "required": false,
@@ -887,6 +1162,7 @@
               "anyOf": [
                 {
                   "enum": [
+                    "24h",
                     "48h",
                     "7d",
                     "30d",
@@ -898,7 +1174,7 @@
                   "type": "null"
                 }
               ],
-              "description": "A window preset: `48h` (minute resolution), `7d` and `30d` (hour resolution), `daily` (local-day resolution, everything held). The server computes the window from its own clock and reads it WINDOW-COMPLETE: the resolution's tier plus every finer tier, which hold the newer rows not yet rolled up - so a 7-day total includes the newest 48 hours. Coarser tiers are not read, so a window ends at the resolution tier's retention: with the shipped retention every preset is whole, and an explicit `tier` finer than the window (e.g. `range=7d&tier=minute`) reaches back only as far as that tier holds. An explicit `tier` overrides the resolution only. Mutually exclusive with `since`/`until`, even empty ones (422). Without `range`, a read covers the single `tier` table exactly as before.",
+              "description": "A window preset: `24h` and `48h` (minute resolution), `7d` and `30d` (hour resolution), `daily` (local-day resolution, everything held). The server computes the window from its own clock and reads it WINDOW-COMPLETE. The hour tier is written at every poll, so a minute or hour read takes its own tier alone, and a day read takes the day tier plus the hour tier, which holds the days not rolled up yet - so a 7-day total includes the newest 48 hours and `daily` includes today. A window ends at the resolution tier's retention: with the shipped retention every preset is whole, and an explicit `tier` finer than the window (e.g. `range=7d&tier=minute`) reaches back only as far as that tier holds. An explicit `tier` overrides the resolution only. Mutually exclusive with `since`/`until`, even empty ones (422). Without `range`, a read covers the single `tier` table (since v1.11 the hour table also holds the newest 48 hours).",
               "title": "Range"
             }
           }
@@ -984,6 +1260,7 @@
     },
     "/v1/stats/gaps": {
       "get": {
+        "description": "The newest `limit` collection gaps (1-1000). With `since`/`until`\n(#98), only the gaps that overlap that window: ended at or after\n`since`, started at or before `until` - compared as strings with the\nstored `YYYY-MM-DDTHH:MM:SSZ` stamps, where a shorter key names its\nwhole bucket on either side.",
         "operationId": "stats_gaps_v1_stats_gaps_get",
         "parameters": [
           {
@@ -994,6 +1271,26 @@
               "default": 100,
               "title": "Limit",
               "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "since",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Since",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "until",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Until",
+              "type": "string"
             }
           }
         ],
@@ -1024,10 +1321,212 @@
         "summary": "Stats Gaps"
       }
     },
+    "/v1/stats/live": {
+      "get": {
+        "description": "Gateway-wide throughput, live, as Server-Sent Events. Nothing from\nthis stream is stored.\n\nThe stream opens with `retry: 5000` (reconnect after 5 s), then sends\none event per mihomo /traffic frame (about one a second):\n\n    data: {\"ts\": \"2026-10-16T12:00:00Z\", \"up_bps\": 1200, \"down_bps\": 56000}\n\n`up_bps` / `down_bps` are BYTES per second, as mihomo reports them, and\n`ts` is the panel's clock when the frame was relayed. `/health`\n`live_viewers` says how many viewers are connected right now. When no frame has\narrived for 15 s - mihomo restarting, the stream reconnecting - a\n`: ping` comment keeps the connection open; a viewer shows how long it\nhas been since the last `data` event, never a frozen number. One relay\nserves every viewer and reads mihomo only while at least one is\nconnected; past 16 concurrent viewers the answer is 503 - or, when the\n16th slot went in the instant between that check and the stream\nstarting, a stream of `retry: 60000`, one `event: full` and its end.\nThe panel shutting down ends every stream.",
+        "operationId": "stats_live_v1_stats_live_get",
+        "responses": {
+          "200": {
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "An unending text/event-stream (see above)."
+          },
+          "503": {
+            "description": "Too many live viewers already connected"
+          }
+        },
+        "summary": "Stats Live"
+      }
+    },
+    "/v1/stats/node-delay": {
+      "get": {
+        "description": "The delay of each policy group's SELECTED node over a window, from\nthe tests mihomo itself ran (sampled every 300 s; the panel never probes\na node). `24h` and `48h` list the tests (`resolution: \"test\"`); longer\npresets give one entry per hour and node (`resolution: \"hour\"`) with the\nmean delay of the tests that answered, their range, how many answered\n(`tests`) and how many failed (`failed`). A failed test is null, never\n0 ms - an hour of nothing but failures has a null delay. `since` is\nwhere the window really starts: the later of the preset's start and the\nretention, and `truncated` says the preset reached further back than\nanything is kept. `latest` is each group's newest stored test - the\nselection as of its `tested_at`. Node labels are the provider's own,\nstored as given.",
+        "operationId": "stats_node_delay_v1_stats_node_delay_get",
+        "parameters": [
+          {
+            "description": "The window preset, cut to the retention (PANEL_NODE_DELAY_DAYS)",
+            "in": "query",
+            "name": "range",
+            "required": false,
+            "schema": {
+              "default": "7d",
+              "description": "The window preset, cut to the retention (PANEL_NODE_DELAY_DAYS)",
+              "enum": [
+                "24h",
+                "48h",
+                "7d",
+                "30d",
+                "daily"
+              ],
+              "title": "Range",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Stats Node Delay V1 Stats Node Delay Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Stats Node Delay"
+      }
+    },
+    "/v1/stats/overview": {
+      "get": {
+        "description": "The landing page in one read: `totals`, `timeline`, `top` lists per\ndimension (the breakdown's shape), window-scoped `gaps`, `framings` at\nday resolution, the `coverage` report and `invisible_traffic_hint`, all\nfrom one read transaction, so every section describes the same moment.\n\nScoped to a `category` or a `host` (not both), a section the stored\ntables cannot answer - the dimensions are stored independently, so a\ncategory has no exit nodes - is `null` and `unavailable` says why;\nnothing unknown is ever shown as zero. A scoped `totals` carries the\nscope's `window` (where its data starts; a host's seven-day floor), a\nscoped `top.device` names the scope in `within`, and `coverage` is\n`null` under any scope: it is measured for the whole gateway only.\n`gaps` lists the newest 100 overlapping the window, from the start of\nits first bucket; `gaps_truncated` says when there may be more.",
+        "operationId": "stats_overview_v1_stats_overview_get",
+        "parameters": [
+          {
+            "description": "The window preset, as on the other stats reads",
+            "in": "query",
+            "name": "range",
+            "required": false,
+            "schema": {
+              "default": "7d",
+              "description": "The window preset, as on the other stats reads",
+              "enum": [
+                "24h",
+                "48h",
+                "7d",
+                "30d",
+                "daily"
+              ],
+              "title": "Range",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "device",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Device",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Scope to one category value (a coarse id, `unknown`, or empty for bytes counted without a dictionary)",
+            "in": "query",
+            "name": "category",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Scope to one category value (a coarse id, `unknown`, or empty for bytes counted without a dictionary)",
+              "title": "Category"
+            }
+          },
+          {
+            "description": "Scope to one hostname (the seven-day class: only with PANEL_STATS_DOMAINS on)",
+            "in": "query",
+            "name": "host",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Scope to one hostname (the seven-day class: only with PANEL_STATS_DOMAINS on)",
+              "title": "Host"
+            }
+          },
+          {
+            "description": "Values per top list, clamped to 1-200",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 10,
+              "description": "Values per top list, clamped to 1-200",
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Stats Overview V1 Stats Overview Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Stats Overview"
+      }
+    },
     "/v1/stats/purge": {
       "post": {
-        "description": "Clears every visible stats surface (tiers, domains, gap history)\nbut preserves conn_baseline + the poll stamp - dropping baselines\nwould make still-open connections re-contribute their pre-purge\ncumulative. The POLICY audit lives in policy.db and is untouched -\nit records this purge like any other mutation.",
+        "description": "Clears every visible stats surface (tiers, dimensions, the seven-day\ntables, gap history) but preserves conn_baseline + the poll stamp -\ndropping baselines would make still-open connections re-contribute\ntheir pre-purge cumulative. An optional body narrows it to one\n`device`, some `tables`, rows `before` a moment, or any combination;\nno body (or `{}`) clears everything, as it always has. `rows` counts\nwhat each table lost. The POLICY audit lives in policy.db and is\nuntouched - it records this purge, with its scope, like any other\nmutation. A purge that touches the device tier or a dimension table\nalso resets the `/metrics` byte counters (#99), so purged traffic is\nnot served on as if it were still held. The bare call (no body, or\n`{}`) also clears the stored subscription quota (#102); every scoped\nform leaves it.",
         "operationId": "stats_purge_v1_stats_purge_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/StatsPurge"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Scope"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "content": {
@@ -1040,14 +1539,98 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
         "summary": "Stats Purge"
       }
     },
+    "/v1/stats/quota": {
+      "get": {
+        "description": "Each proxy provider's subscription quota, as mihomo last read it from\nthe provider's `subscription-userinfo` header (sampled hourly):\n`upload`, `download` and `total` in bytes, `expire` as a Unix time, and\nthe provider's own `updatedAt`. Nothing else of the provider is kept -\nnever its URL or its nodes. mihomo zero-fills a field the provider did\nnot send, so a `total` or `expire` of 0 is reported as null (unknown,\nunlimited or no expiry). `state` says what the newest sample found:\n`ok`, `none` (no provider reports a quota), `error` (mihomo did not\nanswer - the list is the last good one), `pending` (not sampled yet) or\n`off` (the collector is not running).",
+        "operationId": "stats_quota_v1_stats_quota_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Stats Quota V1 Stats Quota Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Stats Quota"
+      }
+    },
+    "/v1/stats/self": {
+      "get": {
+        "description": "The collector's own gauges (#96), one row per maintenance pass\n(about a minute), kept 7 days: poll duration (ms, the mean of the last\n30 polls), connections in the last snapshot, failed polls since the\npanel started, seconds since the last good poll, stats.db bytes, and\nmihomo's in-use memory (MiB). `null` is \"not measured\", never 0.\n`since`/`until` compare against the minute keys (`YYYY-MM-DDTHH:MM`, UTC)\nas strings, like every stats read: `until=2026-10-16` ends BEFORE that\nday; `until=2026-10-16T23:59` includes it.",
+        "operationId": "stats_self_v1_stats_self_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "since",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Since",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "until",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Until",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Stats Self V1 Stats Self Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Stats Self"
+      }
+    },
     "/v1/stats/timeline": {
       "get": {
-        "description": "Bucket rows, optionally for one device. With `range`, window-complete\nacross tiers at the resolution (local days synthesised under the current\nframing for the not-yet-rolled tail, stamped like stored ones); with\nonly `tier`, the single tier table (unchanged since v1.8.0).",
+        "description": "Bucket rows, optionally for one device. With `range`, window-complete\nacross tiers at the resolution (local days synthesised under the current\nframing for the not-yet-rolled tail, stamped like stored ones); with\nonly `tier`, the single tier table (unchanged since v1.8.0). A bucket\nthat moved no bytes is not listed. `format=csv` (#98) exports the rows:\n`bucket,up,down`, plus `bucket_tz,day_boundary` at day resolution.",
         "operationId": "stats_timeline_v1_stats_timeline_get",
         "parameters": [
           {
@@ -1096,7 +1679,7 @@
             }
           },
           {
-            "description": "A window preset: `48h` (minute resolution), `7d` and `30d` (hour resolution), `daily` (local-day resolution, everything held). The server computes the window from its own clock and reads it WINDOW-COMPLETE: the resolution's tier plus every finer tier, which hold the newer rows not yet rolled up - so a 7-day total includes the newest 48 hours. Coarser tiers are not read, so a window ends at the resolution tier's retention: with the shipped retention every preset is whole, and an explicit `tier` finer than the window (e.g. `range=7d&tier=minute`) reaches back only as far as that tier holds. An explicit `tier` overrides the resolution only. Mutually exclusive with `since`/`until`, even empty ones (422). Without `range`, a read covers the single `tier` table exactly as before.",
+            "description": "A window preset: `24h` and `48h` (minute resolution), `7d` and `30d` (hour resolution), `daily` (local-day resolution, everything held). The server computes the window from its own clock and reads it WINDOW-COMPLETE. The hour tier is written at every poll, so a minute or hour read takes its own tier alone, and a day read takes the day tier plus the hour tier, which holds the days not rolled up yet - so a 7-day total includes the newest 48 hours and `daily` includes today. A window ends at the resolution tier's retention: with the shipped retention every preset is whole, and an explicit `tier` finer than the window (e.g. `range=7d&tier=minute`) reaches back only as far as that tier holds. An explicit `tier` overrides the resolution only. Mutually exclusive with `since`/`until`, even empty ones (422). Without `range`, a read covers the single `tier` table (since v1.11 the hour table also holds the newest 48 hours).",
             "in": "query",
             "name": "range",
             "required": false,
@@ -1104,6 +1687,7 @@
               "anyOf": [
                 {
                   "enum": [
+                    "24h",
                     "48h",
                     "7d",
                     "30d",
@@ -1115,8 +1699,24 @@
                   "type": "null"
                 }
               ],
-              "description": "A window preset: `48h` (minute resolution), `7d` and `30d` (hour resolution), `daily` (local-day resolution, everything held). The server computes the window from its own clock and reads it WINDOW-COMPLETE: the resolution's tier plus every finer tier, which hold the newer rows not yet rolled up - so a 7-day total includes the newest 48 hours. Coarser tiers are not read, so a window ends at the resolution tier's retention: with the shipped retention every preset is whole, and an explicit `tier` finer than the window (e.g. `range=7d&tier=minute`) reaches back only as far as that tier holds. An explicit `tier` overrides the resolution only. Mutually exclusive with `since`/`until`, even empty ones (422). Without `range`, a read covers the single `tier` table exactly as before.",
+              "description": "A window preset: `24h` and `48h` (minute resolution), `7d` and `30d` (hour resolution), `daily` (local-day resolution, everything held). The server computes the window from its own clock and reads it WINDOW-COMPLETE. The hour tier is written at every poll, so a minute or hour read takes its own tier alone, and a day read takes the day tier plus the hour tier, which holds the days not rolled up yet - so a 7-day total includes the newest 48 hours and `daily` includes today. A window ends at the resolution tier's retention: with the shipped retention every preset is whole, and an explicit `tier` finer than the window (e.g. `range=7d&tier=minute`) reaches back only as far as that tier holds. An explicit `tier` overrides the resolution only. Mutually exclusive with `since`/`until`, even empty ones (422). Without `range`, a read covers the single `tier` table (since v1.11 the hour table also holds the newest 48 hours).",
               "title": "Range"
+            }
+          },
+          {
+            "description": "`json` (the default) or `csv`: the same rows as a `text/csv; charset=utf-8` attachment, header row first, no byte-order mark. A text cell that starts with `=`, `+`, `-`, `@`, a tab or a carriage return is prefixed with `'` so a spreadsheet shows it as text",
+            "in": "query",
+            "name": "format",
+            "required": false,
+            "schema": {
+              "default": "json",
+              "description": "`json` (the default) or `csv`: the same rows as a `text/csv; charset=utf-8` attachment, header row first, no byte-order mark. A text cell that starts with `=`, `+`, `-`, `@`, a tab or a carriage return is prefixed with `'` so a spreadsheet shows it as text",
+              "enum": [
+                "json",
+                "csv"
+              ],
+              "title": "Format",
+              "type": "string"
             }
           }
         ],
@@ -1129,9 +1729,14 @@
                   "title": "Response Stats Timeline V1 Stats Timeline Get",
                   "type": "object"
                 }
+              },
+              "text/csv": {
+                "schema": {
+                  "type": "string"
+                }
               }
             },
-            "description": "Successful Response"
+            "description": "JSON, or CSV with `format=csv`"
           },
           "422": {
             "content": {

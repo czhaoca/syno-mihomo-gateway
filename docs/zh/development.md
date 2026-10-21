@@ -83,7 +83,10 @@ scripts/
     linux_installer_check.sh  # 使用伪 Docker 的通用 Linux 入口 + 覆盖层测试
     insights_baseline_check.sh # 基线探测自测的驱动：桩 docker-exec、键契约、变异体控制（python 夹具层在有 python3 的环境运行）
     panel_contract_check.py   # CI：app/openapi.json 与全新导出逐字节比对（--write 重新生成）
+    categories_check.py       # CI：分类词典文件与 categories_regen.py 比对，并检查上限与完整性——离线运行（另有 categories_check_test.py 反向对照）
+    categories_regen.py       # 仅开发时使用：从锁定的上游 geosite 源重建 app/store/categories/（联网获取，或用 --source <tarball>）
     panel_e2e_check.py        # CI：真实 uvicorn 面板对回环上的步内伪控制器
+    panel_bench.py            # 仅限本地：统计刷写的单次轮询开销（毫秒 + WAL 字节）；CI 运行的是留有 10 倍余量的宽松守卫（app/tests/test_perf_guard.py）
     lib/assert.sh             # sh 测试套件共享的断言
 app/                          # 网关面板：FastAPI 服务核心（store/reconciler/api/tests）
 .woodpecker.yml               # CI：16 个阻断式步骤（见下方 CI 表格）
@@ -173,10 +176,10 @@ EXIT 陷阱不会回收它（`CF_KEEP_CANDIDATE`）。
 | `privacy-check` | 扫描被跟踪文件和可达 blob，拒绝私有运维标识、凭据、私钥和意外跟踪的运行时文件（+ 该守卫的自测） |
 | `dsm-shell-tests` | 十三个在 BusyBox `sh` 下、使用伪 Docker/Compose/服务 CLI 的测试套件：`dsm_installer_check`、`lifecycle_check`、`auto_update_check`、`cloudflared_check`、`generic_update_check`、`gateway_cli_check`、`seed_provider_check`、`proxy_groups_check`（doctor 对生成的国家分组的零节点守卫——含 `default-empty` 状态：`Exit Country` 正在骑乘的国家分组归零）、`full_proxy_check`（doctor 对按设备全代理网段的守卫——开关/渲染双向一致性、`/connections` 代理链扫描（含局域网目标豁免与 UDP/QUIC 直通标记）、以及 proxy_groups 未知状态短路夹具）、`mihomo_entrypoint_check`（入口点先渲染到临时文件再 `mihomo -t` 守门：通过才切换、保留上一份好配置并写入脱敏拒绝标记）、`pi_installer_check`（Raspberry Pi 移植的共享接缝）、`linux_installer_check`（通用 Linux 入口：install-linux.sh 的 source 检查、i18n 增量覆盖层（含目录级无 Pi 品牌扫描）、lite_ctl 输出改写并保留退出码、菜单到 pi 引擎的分发，以及 macvlan 可用性守卫——虚拟化/云主机检测、警告 + 显式确认、拒绝则转入精简模式、在部署前清理（确认先于任何拆除）与 create_network 两处收口——通用流程上的 `EXPECTED_ARCH` 自动锁定、和只写用户 `.env` 的 docker 默认镜像源向导（含堵住快速路径绕过））、`insights_baseline_check`（只读的 Gateway Insights 基线探测：桩 docker-exec 的记录契约——正向、缺键、探测失败、空输出与容器停止五个控制——一个必须让自测变红的变异体，以及“不打印异常文本”守卫；容器内程序的夹具层在有 `python3` 的环境运行，在 alpine 下显式打印 SKIP）——外加 `validate_release.sh --self-test`，即 NAS 端发布验证助手的测量函数单元检查 |
 | `shellcheck` | 先对仓库中**每一个** `*.sh` 运行 `sh -n` 语法检查，再对 24 个目标运行 `shellcheck -x`：`install.sh`、`install-pi.sh`、`install-linux.sh`、`gateway.sh`、`auto_update.sh`、`pi/auto_update_lite.sh`、`pi/lite_ctl.sh`、`install_scheduler.sh`、`setup_network.sh`、`render_config.sh`、`mihomo_entrypoint.sh`、`package.sh`、`doctor.sh`、`state_diff.sh`、`seed_provider.sh`、`bootstrap.sh`、`lib/container.sh`、`lib/targets.sh`、`lib/geodata.sh`、`lib/panel.sh`、`linux/i18n_linux.sh`、`linux/preflight_linux.sh`、`validate_release.sh`、`insights_baseline.sh`（被 source 的库在上下文中一并检查） |
-| `ui-build` | `npm --prefix app/ui ci` + `npm run lint`，然后 `python3 scripts/ci/ui_build_check.py --build` —— 前端工具链（#78）：用 `npm ci` 使 lockfile 具有权威性，随后是**构建产物**门：A6 发布标记（`data-i18n="app_title"`）在打包器处理后仍存活于注释之外，且打包产物中每个外部 URL 都在文档化的惰性白名单内——外加该门自身的正/负自测（`ui_build_check_test.py`） |
-| `ui-e2e` | `npx playwright test` —— 真实面板在 uvicorn 下对 API e2e 使用的同一个 FakeController（`scripts/ci/ui_e2e_server.py`）；浏览器来自钉定版本的 `mcr.microsoft.com/playwright` 镜像而非每次运行时从 CDN 下载，因此浏览器构建绝不会与 Playwright 版本漂移 |
+| `ui-build` | `npm --prefix app/ui ci` + `npm run lint`，然后 `python3 scripts/ci/ui_build_check.py --build` —— 前端工具链（#78）：用 `npm ci` 使 lockfile 具有权威性，随后是**构建产物**门：A6 发布标记（`data-i18n="app_title"`）在打包器处理后仍存活于注释之外，打包产物中每个外部 URL 都在文档化的惰性白名单内，且构建出的 JavaScript 不超过 `JS_BUDGET_BYTES`（原始大小 450 KB，#100：不引入图表库，使用自写的组件；提高上限时须在常量旁写明原因）——外加该门自身的正/负自测（`ui_build_check_test.py`，含体积超限的对照） |
+| `ui-e2e` | `npx playwright test` —— 真实面板在 uvicorn 下对 API e2e 使用的同一个 FakeController（`scripts/ci/ui_e2e_server.py`）；浏览器来自钉定版本的 `mcr.microsoft.com/playwright` 镜像而非每次运行时从 CDN 下载，因此浏览器构建绝不会与 Playwright 版本漂移。用例等待的是就绪标记而不是网络静默（#100）：`app-ready`（外壳已拿到词典和第一次 `/health` 应答）与 `<tab>-ready`（该视图针对当前输入的最新一次加载已结束），辅助函数 `ready()` 位于 `app/ui/e2e/fixtures/stats.js`，该文件还包含合成的 GOLDEN 统计序列，供图表用例（`charts.spec.js`）和网关洞察用例（`insights.spec.js`）使用，并通过 `goldenOverview` 按 `/v1/stats/overview` 对每个范围的应答方式提供（范围无法回答的部分为 `null`，并附上服务器给出的原因）；洞察的刷新节奏用例用 `page.clock` 驱动刷新节拍；溢出检查覆盖两种配色；`globalTimeout` 限制整次运行的时长 |
 | `app-lint` | `ruff check app` —— 面板应用的 lint（ruff 版本钉在 `app/requirements-dev.txt`，配置经 `app/ruff.toml` 限定作用域） |
-| `app-unit` | `python -m pytest app/tests -q` —— 封闭式面板单元测试套件（伪控制器客户端 + 临时目录；校验类、store/迁移/备份、reconciler 正常/告警路径、鉴权矩阵、审计只追加）——随后运行 `python scripts/ci/panel_contract_check.py`，即已提交的契约门：`app/openapi.json` **以及**生成的 `docs/panel-api.md` 逐字节一致性（用 `--write` 同时重新生成两者；/v1 命令面只增不破——破坏性变更 = 新版本前缀 + 所有者显式确认）——随后运行 `sh scripts/insights_baseline.sh --self-test`：基线探测的自测在 python 镜像中运行，其容器内程序在此对着固定夹具执行（alpine 的 `dsm-shell-tests` 覆盖 sh 层并对该层打印 SKIP） |
+| `app-unit` | `python -m pytest app/tests -q` —— 封闭式面板单元测试套件（伪控制器客户端 + 临时目录；校验类、store/迁移/备份、reconciler 正常/告警路径、鉴权矩阵、审计只追加）——随后运行 `python scripts/ci/panel_contract_check.py`，即已提交的契约门：`app/openapi.json` **以及**生成的 `docs/panel-api.md` 逐字节一致性（用 `--write` 同时重新生成两者；/v1 命令面只增不破——破坏性变更 = 新版本前缀 + 所有者显式确认）——随后运行 `python scripts/ci/categories_check.py` 及其对照 `categories_check_test.py`：分类词典门（#97），离线运行——`coarse.json` 与生成脚本内的人工整理表逐字节一致，`suffixes.json` 采用提交时的序列化格式且与其记录的摘要、锁定的上游提交与许可证一致，≤ 150 个 id / 15000 条规则 / 400 KiB，每个 id 都在整理表中并有粗分类——随后运行 `sh scripts/insights_baseline.sh --self-test`：基线探测的自测在 python 镜像中运行，其容器内程序在此对着固定夹具执行（alpine 的 `dsm-shell-tests` 覆盖 sh 层并对该层打印 SKIP） |
 | `app-e2e` | `python scripts/ci/panel_e2e_check.py` —— 真实 uvicorn 下的应用对回环上的步内伪 mihomo 控制器 + webhook 接收器（无守护进程）：启动重同步、bearer 鉴权门、写入→刷新→计数一致性、告警失败路径（标记 + `{title,body}` webhook + `parity=failed`）、经 `/v1/apply` 恢复 |
 
 有一项检查运行在 Woodpecker **之外**：**`panel-image` GitHub Actions 工作流**
@@ -324,8 +327,11 @@ python3 scripts/ci/ui_build_check.py --build
 /tmp/vp/bin/ruff check app
 /tmp/vp/bin/python -m pytest app/tests -q
 /tmp/vp/bin/python scripts/ci/panel_contract_check.py   # --write 重新生成 app/openapi.json
+/tmp/vp/bin/python scripts/ci/categories_check.py        # 词典文件与生成脚本比对（离线）
+/tmp/vp/bin/python scripts/ci/categories_check_test.py   # ……以及该门的反向对照
 /tmp/vp/bin/python scripts/ci/panel_e2e_check.py
 sh scripts/insights_baseline.sh --self-test   # 探测的 python 夹具层在 PATH 上有 python3 的任何环境运行
+/tmp/vp/bin/python scripts/ci/panel_bench.py --conns 3000 --snapshots 30   # 可选，仅限本地：精确的刷写开销（不是 CI 步骤）
 
 # shellcheck（经 Docker，与 CI 相同的 24 个目标，并且是与 CI 相同的、按 digest 钉死的镜像——
 # 直接从 .woodpecker.yml 读取，因此这条本地等价物永远不会偏离 pin）
@@ -398,7 +404,13 @@ sh scripts/ci/panel_e2e_local.sh          # needs docker + internet, ~2-3 min
 面板 `/health` 的 db_ok、同级可达性探测、局域网客户端的界面可达性、用
 两个不同的备用源 IP、依据 `/connections` 判定的按模式策略翻转、跨一次
 mihomo 重启的持久性，以及清理——它的纯解析函数与其他每一个测量辅助
-函数一样，由 `--self-test` 覆盖。
+函数一样，由 `--self-test` 覆盖。自 v1.11 起，**A6c 阶段（必需）**只读取面板 `/health` 中的遥测，不做局域网探测：
+- `collector=ok`；
+- 平均轮询耗时不超过面板报告的间隔的一半；
+- 能读到 mihomo 版本；
+- `stats.db` 低于面板报告的上限的 90%。
+
+它还会为发布说明打印原始数字、本次运行开始以来记录的采集空洞，以及本次运行期间每分钟轮询耗时的分布；当轮询耗时超过 #96 REQ-ADD 对 2 秒默认值允许的 500 毫秒，或本次运行记录到空洞时，会发出警告（不影响门禁）；空洞或指标历史无法读取则判为失败，因为发布决定需要这些证据。操作者关闭了采集器时，各项检查以 WARN 跳过，版本检查也一样，因为此时没有任何东西在采样 mihomo。v1.11 面板应当发送却缺失的键则判为失败。其解析函数 `vr_a6c_lines` 在 `--self-test` 中有正、负对照。
 被中断的运行（Ctrl-C）会先恢复暂存的缓存和原始 `.env` 再重建容器，且
 记录转录的 `tee` 不会被终端信号杀掉，清理过程的输出能完整写入日志。
 

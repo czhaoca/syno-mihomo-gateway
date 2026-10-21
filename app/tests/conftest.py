@@ -32,6 +32,38 @@ class FakeMihomoClient:
         # fail_connections simulates a controller outage for gap testing.
         self.conns: list[dict] = []
         self.fail_connections = False
+        # /version + /memory (#96): None = endpoint answers nothing usable
+        self.version_text = ""
+        self.mem_bytes: int | None = None
+        self.fail_meta = False
+        # #102: the /traffic frames (then the stream ends), and the /group,
+        # /proxies/<name> history and /providers/proxies documents
+        self.traffic: list[tuple[int, int]] = []
+        self.fail_traffic = False
+        self.groups_doc: list[dict] = []
+        self.histories: dict[str, list] = {}
+        self.providers_doc: dict[str, dict] = {}
+        self.fail_samples = False
+
+    def traffic_frames(self):
+        if self.fail_traffic:
+            raise MihomoError("GET /traffic failed (fixture)")
+        yield from list(self.traffic)
+
+    def groups(self) -> list[dict]:
+        if self.fail_samples:
+            raise MihomoError("GET /group failed (fixture)")
+        return [dict(g) for g in self.groups_doc]
+
+    def proxy_history(self, name: str) -> list[dict]:
+        if self.fail_samples:
+            raise MihomoError("GET /proxies failed (fixture)")
+        return [dict(h) for h in self.histories.get(name, [])]
+
+    def proxy_providers(self) -> dict:
+        if self.fail_samples:
+            raise MihomoError("GET /providers/proxies failed (fixture)")
+        return {k: dict(v) for k, v in self.providers_doc.items()}
 
     def refresh_provider(self, name: str) -> None:
         if self.fail_puts:
@@ -42,6 +74,16 @@ class FakeMihomoClient:
         if self.fail_connections:
             raise MihomoError("GET /connections failed (fixture)")
         return [dict(c) for c in self.conns]
+
+    def version(self) -> str:
+        if self.fail_meta:
+            raise MihomoError("GET /version failed (fixture)")
+        return self.version_text
+
+    def memory_inuse(self) -> int | None:
+        if self.fail_meta:
+            raise MihomoError("GET /memory failed (fixture)")
+        return self.mem_bytes
 
     def provider_rule_counts(self) -> dict:
         counts = {}
@@ -83,6 +125,7 @@ def panel_env(tmp_path, monkeypatch):
     # collection is driven explicitly via poll_once/rollup with fake clocks
     monkeypatch.setenv("PANEL_STATS_POLL_S", "0")
     monkeypatch.delenv("PANEL_STATS_DOMAINS", raising=False)
+    monkeypatch.delenv("PANEL_METRICS", raising=False)
     # TZ is an INPUT to the panel (config.timezone_default reads it), so an
     # ambient value on a dev box or CI image would silently change what the
     # settings default resolves to - and a test asserting an override took
@@ -100,6 +143,45 @@ def conn_fixture(cid: str, source: str, up: int, down: int,
             "metadata": {"sourceIP": source, "host": host,
                          "network": "tcp", "type": "tun"},
             "chains": ["JP01", "Japan Auto", "Exit Country", chain]}
+
+
+_ABSENT = object()
+
+
+def geo_conn(cid: str, source: str, up: int, down: int, *,
+             chains=("JP01", "Japan Auto", "Routing Mode"), rule="Match",
+             payload="", geo=_ABSENT, asn=_ABSENT, port="443", host="",
+             sniff="", kind="Tun") -> dict:
+    """A /connections entry carrying every field the star schema reads (#95).
+
+    GEO and ASN default to ABSENT - the key is missing, as on the mihomo
+    build measured in the brief's baseline - so a test opts in to the
+    fields a newer image adds. Synthesised only: TEST-NET addresses,
+    example.com names, documentation ASNs (RFC 5398)."""
+    meta = {"sourceIP": source, "host": host, "sniffHost": sniff,
+            "network": "tcp", "type": kind, "destinationPort": port}
+    if geo is not _ABSENT:
+        meta["dstGeoIP"] = geo
+    if asn is not _ABSENT:
+        meta["dstIPASN"] = asn
+    return {"id": cid, "upload": up, "download": down, "metadata": meta,
+            "chains": list(chains), "rule": rule, "rulePayload": payload}
+
+
+def example_dictionary():
+    """A synthesised category dictionary (#97) over example.* names only:
+    an app with a suffix and an exact name, a CDN, and the vendor that owns
+    the rest of example.com (the DEC-X-2 vendor-level label)."""
+    from app.store.categories import Dictionary
+    return Dictionary(
+        ("video", "cdn", "platform"),
+        {"example-video": "video", "example-cdn": "cdn",
+         "example-vendor": "platform"},
+        {"example-video": {"domain": ["video.example.com"],
+                           "full": ["clip.example.net"]},
+         "example-cdn": {"domain": ["cdn.example.org"], "full": []},
+         "example-vendor": {"domain": ["example.com"], "full": []}},
+        version="test")
 
 
 @pytest.fixture()

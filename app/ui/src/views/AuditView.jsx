@@ -75,9 +75,16 @@ export default function AuditView({ t, tick }) {
 
   useEffect(() => { offsetRef.current = offset; }, [offset]);
 
+  // the load in flight and the newest one settled, good or failed: the
+  // readiness marker is up only when they are the same one, so a page turn
+  // in flight is not "ready"
+  const [pendingGen, setPendingGen] = useState(0);
+  const [settledGen, setSettledGen] = useState(-1);
+
   const load = useCallback(async (target) => {
     const mine = generation.current + 1;
     generation.current = mine;
+    setPendingGen(mine);
     // One more row than we show: its presence is the only honest "there is a
     // next page" signal the API offers, and without it a log whose length is
     // an exact multiple of the page size leaves Older enabled onto a blank
@@ -85,6 +92,7 @@ export default function AuditView({ t, tick }) {
     const { status, data } = await api(
       "GET", `/v1/audit?limit=${PAGE + 1}&offset=${target}`);
     if (mine !== generation.current) return true;
+    setSettledGen(mine);
     if (status !== 200) {
       // Keep whatever is on screen, but never let it pass for current - a
       // silently frozen audit log is the bug this replaced.
@@ -135,6 +143,9 @@ export default function AuditView({ t, tick }) {
 
   return (
     <Stack spacing={1.5}>
+      {/* readiness (#100 DEC-C): the newest load has settled */}
+      {settledGen === pendingGen
+        ? <span data-testid="audit-ready" hidden /> : null}
       {wide ? (
         <TableContainer sx={{ overflowX: "auto" }}>
           <Table size="small" data-testid="audit-table">

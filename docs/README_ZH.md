@@ -36,6 +36,7 @@ Docker Hub/ghcr → 阿里云 ACR → 你的 NAS 的流水线（`REGISTRY_MODE=d
 | [运维](zh/operations.md) | 运维手册：计划任务、试运行、开关、日志、通知、回滚 |
 | [命令行参考](zh/cli.md) | `gateway.sh` 子命令、选项、安全护栏、退出码（由 `scripts/cli/spec.yaml` 生成） |
 | [网关面板](zh/panel.md) | 分设备策略（full-tunnel/full-direct/default）、流量统计、UI/CLI/API 界面、安全模型 |
+| [网关洞察](zh/insights.md) | 面板的分析视图：范围（总览、设备、类别、主机名）、下钻与深链接、排行列表、读懂图表、如实说明 |
 | [面板 API](panel-api.md) | 面板的 HTTP 接口（由 `app/openapi.json` 生成，`/v1` 只增不破；仅英文） |
 | [故障排查](zh/troubleshooting.md) | FAQ + 退出码 + 具体故障处理 |
 | [开发](zh/development.md) | 内部实现（脚本、渲染器、CI）、编码规范、如何扩展 |

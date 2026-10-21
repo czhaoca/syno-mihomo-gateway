@@ -39,7 +39,7 @@ function askToken() {
   return tokenPromise;
 }
 
-export async function api(method, path, body) {
+export async function api(method, path, body, { signal } = {}) {
   const headers = {};
   if (body !== undefined) headers["Content-Type"] = "application/json";
   const mutating = method !== "GET";
@@ -47,7 +47,7 @@ export async function api(method, path, body) {
   let res;
   try {
     res = await fetch(path, {
-      method, headers,
+      method, headers, signal,
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
   } catch {
@@ -55,7 +55,7 @@ export async function api(method, path, body) {
   }
   if (res.status === 403 && mutating) {
     const entered = await askToken();
-    if (entered) return api(method, path, body);
+    if (entered) return api(method, path, body, { signal });
   }
   let data = null;
   try { data = await res.json(); } catch { data = null; }

@@ -23,7 +23,7 @@ def stats_conn(panel_env):
 
 def minute_rows(conn):
     return conn.execute(
-        "SELECT bucket, device, chain, up, down FROM stats_minute "
+        "SELECT bucket, device, chain, up, down FROM stats_minute_v5 "
         "ORDER BY bucket, device, chain").fetchall()
 
 

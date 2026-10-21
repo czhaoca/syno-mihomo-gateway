@@ -41,9 +41,9 @@ def _refuse_network_fs(path: Path) -> None:
     resolved = str(path.resolve())
     best = ("", "")
     for mountpoint, fstype in _mounts():
-        if resolved.startswith(mountpoint.rstrip("/") + "/") or resolved == mountpoint:
-            if len(mountpoint) > len(best[0]):
-                best = (mountpoint, fstype)
+        inside = resolved.startswith(mountpoint.rstrip("/") + "/") or resolved == mountpoint
+        if inside and len(mountpoint) > len(best[0]):
+            best = (mountpoint, fstype)
     if best[1].lower() in NETWORK_FS:
         raise StoreError(
             f"policy.db sits on a network filesystem ({best[1]}) - WAL is "
@@ -85,9 +85,10 @@ MIGRATIONS = [
     #
     # Keyed on the canonical /32, matching `devices.cidr`, because the only
     # consumer today is the /v1/devices listing. NOTE the stats tables key
-    # on the BARE `metadata.sourceIP` (stats.py:120), so a stats-side join
-    # must normalize - `identity.host_key()` is the single place that
-    # conversion lives, and `identity.resolve()` returns /32 keys.
+    # on the BARE `metadata.sourceIP` (`flush_poll` in
+    # app/store/stats/ingest.py), so a stats-side join must normalize -
+    # `identity.host_key()` is the single place that conversion lives, and
+    # `identity.resolve()` returns /32 keys.
     #
     # NOT NULL is explicit: `cidr TEXT PRIMARY KEY` alone is a rowid-table
     # key, and SQLite accepts NULL there - several of them, since NULLs are
@@ -116,9 +117,9 @@ MIGRATIONS = [
     ALTER TABLE device_identity ADD COLUMN source TEXT NOT NULL DEFAULT '';
     UPDATE device_identity SET source = 'hand-edit';
     """),
-    # v4 - operator settings. The k/v shape mirrors `stats_meta`
-    # (stats.py:61-64), the existing idiom; what it does NOT mirror is
-    # where the default lives. This table stores ONLY overrides: an unset
+    # v4 - operator settings. The k/v shape mirrors `stats_meta` (the
+    # `stats_meta` table in app/store/stats/schema.py), the existing idiom;
+    # what it does NOT mirror is where the default lives. This table stores ONLY overrides: an unset
     # key resolves through code, so shipping a new default actually
     # reaches every existing install instead of being shadowed forever by
     # a row written once at first boot.
@@ -232,6 +233,38 @@ def open_db(path: Path, *, migrations=None, pre_migrate=()) -> sqlite3.Connectio
     except (OSError, sqlite3.Error) as exc:
         conn.close()
         raise StoreError(f"{path.name} failed to initialize: {exc}") from exc
+    return conn
+
+
+def open_reader(path: Path) -> sqlite3.Connection:
+    """A READ-ONLY connection to an existing store, for one request (#93).
+
+    Opened per request and closed after it: WAL lets it read the last
+    committed snapshot while the writer works, so a read never waits on the
+    writer's lock, and holding nothing open between requests means nothing
+    pins WAL frames against a checkpoint or needs invalidating after a purge.
+
+    It never creates the database, migrates it or writes to it: the URI's
+    `mode=ro` makes every write - DDL included - fail, and a missing file is
+    a StoreError rather than an empty database conjured into place. (SQLite
+    may still create the WAL sidecars, `-wal` and `-shm`, when no writer
+    has them open; in the panel the writer always does.) The writer
+    (`open_db`) must have opened the store first; that is also what
+    guarantees the migrations ran before any reader exists.
+    """
+    path = Path(path)
+    if not path.is_file():
+        raise StoreError(f"{path.name} does not exist yet")
+    try:
+        # as_uri() percent-encodes the path, so spaces, '%' and '#' in a
+        # data-dir name cannot be read as URI syntax
+        conn = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True,
+                               check_same_thread=False)
+    except sqlite3.Error as exc:
+        raise StoreError(f"cannot open {path.name} read-only: {exc}") from exc
+    conn.row_factory = sqlite3.Row
+    conn.isolation_level = None  # the caller opens its own read transaction
+    conn.execute("PRAGMA busy_timeout = 5000")
     return conn
 
 

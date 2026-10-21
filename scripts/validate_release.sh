@@ -80,6 +80,9 @@ LOG="$STAGE/validate-results.log"   # release transcript; --a6-only re-points it
 BLACKHOLE="https://192.0.2.1/dns-query#All Nodes"  # RFC 5737 TEST-NET-1: never routes
 
 SELF_TEST=0; SKIP_KNOB=0; NO_EXTRACT=0; FINAL=""; PROBE_IP=""; A6_ONLY=0
+# the validation window's start (UTC, the panel's timestamp format): A6c
+# reports the collection gaps and the poll timings recorded since then
+VR_START="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 while [ $# -gt 0 ]; do
   case "$1" in
     --self-test) SELF_TEST=1 ;;
@@ -418,6 +421,141 @@ vr_panel_field() {
       print s; found = 1; exit
     }
     END { exit !found }'
+}
+
+# vr_a6c_lines - stdin = the panel /health (#96). One line per A6c assertion,
+# `PASS|FAIL|SKIP <text>`, then one `INFO <numbers>` line - the raw telemetry
+# the release notes record (the REQ-ADD on #96 reads collector_poll_ms). Only
+# numbers the panel reports are compared (DEC-C: its effective interval and
+# cap ride in /health). A collector the operator turned off
+# (collector_interval_s=0) SKIPs what it cannot measure; a key a v1.11 panel
+# must send but does not FAILs (an older panel image).
+vr_a6c_lines() {
+  _v6_h="$(cat)"
+  _v6f() { printf '%s' "$_v6_h" | vr_panel_field "$1" 2>/dev/null; }
+  _v6n() { case "$1" in ''|*[!0-9]*) return 1 ;; esac; }
+  _v6_col="$(_v6f collector)"; _v6_iv="$(_v6f collector_interval_s)"
+  _v6_ms="$(_v6f collector_poll_ms)"; _v6_ver="$(_v6f mihomo_version)"
+  _v6_b="$(_v6f stats_db_bytes)"; _v6_cap="$(_v6f stats_cap_mb)"
+  if [ "$_v6_iv" = 0 ]; then
+    echo "SKIP collector disabled by the operator (collector_interval_s=0) - nothing to measure"
+  elif [ "$_v6_col" = ok ]; then
+    echo "PASS collector=ok"
+  else
+    echo "FAIL collector=${_v6_col:-<absent>} (want ok)"
+  fi
+  if [ "$_v6_iv" = 0 ]; then
+    :
+  elif ! _v6n "$_v6_iv"; then
+    echo "FAIL collector_interval_s absent - is the panel image older than v1.11?"
+  elif ! _v6n "$_v6_ms"; then
+    echo "FAIL collector_poll_ms absent or not measured yet (${_v6_ms:-<absent>})"
+  elif [ "$((_v6_ms * 2))" -le "$((_v6_iv * 1000))" ]; then
+    echo "PASS collector_poll_ms ${_v6_ms} is at most half the ${_v6_iv}s interval"
+  else
+    echo "FAIL collector_poll_ms ${_v6_ms} is more than half the ${_v6_iv}s interval"
+  fi
+  if [ "$_v6_iv" = 0 ]; then
+    echo "SKIP mihomo_version - the collector is off, so nothing samples mihomo"
+  elif [ -n "$_v6_ver" ] && [ "$_v6_ver" != null ]; then
+    echo "PASS mihomo_version ${_v6_ver}"
+  else
+    echo "FAIL mihomo_version empty - the panel could not read mihomo's /version"
+  fi
+  if ! _v6n "$_v6_cap"; then
+    echo "FAIL stats_cap_mb absent - is the panel image older than v1.11?"
+  elif [ "$_v6_cap" = 0 ]; then
+    echo "SKIP stats_cap_mb=0 - no size cap configured"
+  elif ! _v6n "$_v6_b"; then
+    echo "FAIL stats_db_bytes absent"
+  elif awk -v b="$_v6_b" -v c="$_v6_cap" 'BEGIN { exit !(b * 10 < c * 1048576 * 9) }'; then
+    echo "PASS stats.db below 90% of its ${_v6_cap} MB cap"
+  else
+    echo "FAIL stats.db at or above 90% of its ${_v6_cap} MB cap"
+  fi
+  echo "INFO poll_ms=${_v6_ms:-?} conns=$(_v6f collector_conns) failed_polls=$(_v6f collector_failed_polls) lag_s=$(_v6f collector_lag_s) interval_s=${_v6_iv:-?} mihomo_mem_mb=$(_v6f mihomo_mem_mb) mihomo_version=${_v6_ver:-?} db_bytes=${_v6_b:-?} growth_mb_day=$(_v6f stats_db_growth_mb_day)"
+}
+
+# vr_gap_rows - stdin = the /v1/stats/gaps document; prints how many gap
+# rows it lists (each carries one "started").
+vr_gap_rows() {
+  sed 's/"started"/\
+"started"/g' | grep -c '^"started"' || true
+}
+
+# vr_gaps_since TS - stdin = the /v1/stats/gaps document; prints one line per
+# gap that ENDED at or after TS (a UTC timestamp in the panel's format, so a
+# string comparison orders it): "started -> ended (reason)". These are the
+# holes the validation window itself produced - the redeploy and A6's
+# mihomo restart account for some; anything else is what the REQ-ADD on #96
+# asks about.
+vr_gaps_since() {
+  sed 's/{"started"/\
+{"started"/g' | awk -v ts="$1" '
+    /^\{"started"/ {
+      s = $0; sub(/^\{"started":"/, "", s); st = s; sub(/".*/, "", st)
+      e = $0; sub(/.*"ended":"/, "", e); en = e; sub(/".*/, "", en)
+      r = $0; sub(/.*"reason":"/, "", r); rs = r; sub(/".*/, "", rs)
+      if (en >= ts) print st " -> " en " (" rs ")"
+    }'
+}
+
+# vr_rows_doc BODY - true when BODY is a whole panel list document: the
+# compact JSON the app serves, a top-level "rows" ARRAY that is closed
+# (`{"rows":[...]}`, or `{"retention_days":N,"rows":[...]}` for
+# /v1/stats/self). An error body, `"rows":null` or a truncated answer is
+# missing evidence, never an empty list.
+vr_rows_doc() {
+  case "$1" in
+    '{"rows":['*']}') return 0 ;;
+    '{"retention_days":'*',"rows":['*']}') return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# vr_req_add_lines POLL_MS RUN_MAX_MS GAPS - the #96 REQ-ADD's revert test,
+# separate from the A6c gate (at most half the interval, 1000 ms at 2 s):
+# with the 2 s default, a live or per-minute poll time over 500 ms, or any
+# collection gap during the run, needs the owner's judgement before the tag.
+# Prints `WARN <text>` lines (never gating); absent numbers are skipped.
+vr_req_add_lines() {
+  case "$1" in ''|*[!0-9]*) : ;; *)
+    [ "$1" -le 500 ] || echo "WARN collector_poll_ms $1 ms is over the 500 ms the #96 REQ-ADD allows for the 2 s default - revert PANEL_STATS_POLL_S to 5 s before the tag (see the v1.11.0 notes)" ;;
+  esac
+  case "$2" in ''|*[!0-9]*) : ;; *)
+    [ "$2" -le 500 ] || echo "WARN the slowest minute of this run averaged $2 ms per poll, over the 500 ms the #96 REQ-ADD allows - revert PANEL_STATS_POLL_S to 5 s before the tag unless that minute is explained" ;;
+  esac
+  case "$3" in ''|*[!0-9]*|0) : ;; *)
+    echo "WARN $3 collection gap(s) during this run - match each to the redeploy or A6's mihomo restart; an unexplained one means reverting PANEL_STATS_POLL_S to 5 s (#96 REQ-ADD)" ;;
+  esac
+}
+
+# vr_self_range - stdin = the /v1/stats/self document; prints the spread of
+# the per-minute gauges it holds: poll_ms min/max/last, conns min/max and
+# the row count - the "quiet and busy" poll timings the release notes record.
+vr_self_range() {
+  sed 's/{"bucket"/\
+{"bucket"/g' | awk '
+    /^\{"bucket"/ {
+      n++
+      if (match($0, /"poll_ms":[0-9]+/)) {
+        v = substr($0, RSTART + 10, RLENGTH - 10) + 0
+        if (pm == "" || v < pmin) pmin = v
+        if (pm == "" || v > pmax) pmax = v
+        pm = v
+      }
+      if (match($0, /"conns":[0-9]+/)) {
+        c = substr($0, RSTART + 8, RLENGTH - 8) + 0
+        if (cs == "" || c < cmin) cmin = c
+        if (cs == "" || c > cmax) cmax = c
+        cs = c
+      }
+    }
+    END {
+      if (pm == "") { print "rows=" n + 0 " poll_ms=n/a"; exit }
+      print "rows=" n " poll_ms min=" pmin " max=" pmax " last=" pm \
+            " conns min=" (cs == "" ? "n/a" : cmin) " max=" (cs == "" ? "n/a" : cmax)
+    }'
 }
 
 # vr_devices_mode CIDR - stdin = the panel devices document
@@ -1105,6 +1243,62 @@ All Nodes' ]; then st_ok; else st_bad "urltest_groups got: $(printf '%s' "$_name
   else st_ok; fi
   if [ "$(printf '{"applied": false, "parity": "failed"}' | vr_panel_field applied)" = false ]; then st_ok
   else st_bad "vr_panel_field missed applied=false"; fi
+
+  # A6c (#96): positive control, then one negative control per assertion
+  _a6c_ok='{"db_ok":true,"collector":"ok","collector_last_ts":"2026-10-16T00:00:00Z","stats_db_bytes":4096,"dashboard_port":8080,"collector_lag_s":1,"collector_poll_ms":40,"collector_conns":12,"collector_failed_polls":0,"collector_interval_s":2,"stats_cap_mb":512,"stats_db_growth_mb_day":1.5,"mihomo_mem_mb":137,"mihomo_version":"v1.19.32"}'
+  st_a6c() {  # NAME WANT_FAILS WANT_SKIPS BODY [GREP]
+    _sa_out="$(printf '%s' "$4" | vr_a6c_lines)"
+    _sa_f="$(printf '%s\n' "$_sa_out" | grep -c '^FAIL' || true)"
+    _sa_s="$(printf '%s\n' "$_sa_out" | grep -c '^SKIP' || true)"
+    if [ "$_sa_f" = "$2" ] && [ "$_sa_s" = "$3" ] \
+       && printf '%s\n' "$_sa_out" | grep -q '^INFO poll_ms=' \
+       && { [ -z "${5:-}" ] || printf '%s\n' "$_sa_out" | grep -q "$5"; }; then st_ok
+    else st_bad "vr_a6c_lines $1: want $2 FAIL / $3 SKIP, got: $_sa_out"; fi
+  }
+  st_a6c healthy 0 0 "$_a6c_ok" '^PASS collector_poll_ms 40 is at most half the 2s interval'
+  st_a6c at-half 0 0 "$(printf '%s' "$_a6c_ok" | sed 's/"collector_poll_ms":40/"collector_poll_ms":1000/')" '^PASS collector_poll_ms 1000'
+  st_a6c stale 1 0 "$(printf '%s' "$_a6c_ok" | sed 's/"collector":"ok"/"collector":"stale"/')" '^FAIL collector=stale'
+  st_a6c slow 1 0 "$(printf '%s' "$_a6c_ok" | sed 's/"collector_poll_ms":40/"collector_poll_ms":1001/')" '^FAIL collector_poll_ms 1001'
+  st_a6c not-measured 1 0 "$(printf '%s' "$_a6c_ok" | sed 's/"collector_poll_ms":40/"collector_poll_ms":null/')" 'not measured'
+  st_a6c no-version 1 0 "$(printf '%s' "$_a6c_ok" | sed 's/"mihomo_version":"v1.19.32"/"mihomo_version":""/')" '^FAIL mihomo_version'
+  st_a6c cap-90 1 0 "$(printf '%s' "$_a6c_ok" | sed 's/"stats_db_bytes":4096/"stats_db_bytes":483183821/')" '^FAIL stats.db at or above 90%'
+  st_a6c cap-89 0 0 "$(printf '%s' "$_a6c_ok" | sed 's/"stats_db_bytes":4096/"stats_db_bytes":477815111/')"
+  st_a6c cap-off 0 1 "$(printf '%s' "$_a6c_ok" | sed 's/"stats_cap_mb":512/"stats_cap_mb":0/')" '^SKIP stats_cap_mb=0'
+  # the collector off: nothing samples mihomo either, so an empty version
+  # is a SKIP, not a failure
+  st_a6c collector-off 0 2 "$(printf '%s' "$_a6c_ok" | sed 's/"collector_interval_s":2/"collector_interval_s":0/; s/"collector":"ok"/"collector":"off"/; s/"mihomo_version":"v1.19.32"/"mihomo_version":""/')" '^SKIP collector disabled'
+  st_a6c older-panel 3 0 '{"db_ok":true,"collector":"ok","stats_db_bytes":4096}' 'older than v1.11'
+  if [ "$(printf '{"rows":[{"started":"a","ended":"b","reason":"x"},{"started":"c","ended":"d","reason":"y"}]}' | vr_gap_rows)" = 2 ] \
+     && [ "$(printf '{"rows":[]}' | vr_gap_rows)" = 0 ]; then st_ok
+  else st_bad "vr_gap_rows miscounted"; fi
+  _st_gaps='{"rows":[{"started":"2026-10-16T09:58:00Z","ended":"2026-10-16T10:01:00Z","reason":"no poll for 180s"},{"started":"2026-10-16T08:00:00Z","ended":"2026-10-16T08:00:30Z","reason":"no poll for 30s"}]}'
+  _st_gs="$(printf '%s' "$_st_gaps" | vr_gaps_since 2026-10-16T10:00:00Z)"
+  if [ "$_st_gs" = "2026-10-16T09:58:00Z -> 2026-10-16T10:01:00Z (no poll for 180s)" ]; then st_ok
+  else st_bad "vr_gaps_since kept the wrong rows: $_st_gs"; fi
+  if [ -z "$(printf '{"rows":[]}' | vr_gaps_since 2026-10-16T10:00:00Z)" ]; then st_ok
+  else st_bad "vr_gaps_since invented a row"; fi
+  # a whole list document is evidence; an error body, a null or a
+  # truncated answer is not
+  _st_rd=0
+  for _st_d in '{"rows":[]}' '{"rows":[{"started":"a","ended":"b","reason":"x"}]}' \
+               '{"retention_days":7,"rows":[]}'; do
+    vr_rows_doc "$_st_d" || _st_rd=1
+  done
+  for _st_d in '' '{"detail":"rows"}' '{"rows":null}' '{"rows":[' \
+               '{"rows":[{"started":"a"' 'Internal Server Error'; do
+    vr_rows_doc "$_st_d" && _st_rd=1
+  done
+  if [ "$_st_rd" = 0 ]; then st_ok; else st_bad "vr_rows_doc misjudged a body"; fi
+  if [ -z "$(vr_req_add_lines 40 45 0)" ] && [ -z "$(vr_req_add_lines 500 500 '')" ] \
+     && [ "$(vr_req_add_lines 640 45 0 | grep -c '^WARN collector_poll_ms 640')" = 1 ] \
+     && [ "$(vr_req_add_lines 40 1450 0 | grep -c '^WARN the slowest minute of this run averaged 1450')" = 1 ] \
+     && [ "$(vr_req_add_lines 40 45 2 | grep -c '^WARN 2 collection gap')" = 1 ] \
+     && [ -z "$(vr_req_add_lines null '' '')" ]; then st_ok
+  else st_bad "vr_req_add_lines: thresholds wrong"; fi
+  _st_self='{"retention_days":7,"rows":[{"bucket":"2026-10-16T10:00","poll_ms":12,"conns":300,"failed_polls":0,"lag_s":1,"db_bytes":5,"mihomo_mem_mb":137},{"bucket":"2026-10-16T10:01","poll_ms":null,"conns":null,"failed_polls":0,"lag_s":null,"db_bytes":5,"mihomo_mem_mb":null},{"bucket":"2026-10-16T10:02","poll_ms":45,"conns":620,"failed_polls":0,"lag_s":1,"db_bytes":6,"mihomo_mem_mb":140}]}'
+  if [ "$(printf '%s' "$_st_self" | vr_self_range)" = "rows=3 poll_ms min=12 max=45 last=45 conns min=300 max=620" ] \
+     && [ "$(printf '{"retention_days":7,"rows":[]}' | vr_self_range)" = "rows=0 poll_ms=n/a" ]; then st_ok
+  else st_bad "vr_self_range: $(printf '%s' "$_st_self" | vr_self_range)"; fi
   # The band rides the same document as a FLAT array of CIDR strings (the
   # wire shape of /v1/devices) - it must satisfy neither the mode lookup
   # nor the cidr extraction.
@@ -1238,7 +1432,7 @@ time="2026-07-26T10:00:02.000000000Z" level=info msg="[TCP] 192.0.2.9:41236 --> 
 
   echo "validate_release self-test: $_stp passed, $_stf failed"
   [ "$_stf" -eq 0 ] || exit 1
-  echo "OK: measurement helpers (policy/knob/psn/split-core rule anchoring incl. bootstrap-pin + comment-prose immunity, provider-node counting + real-member egress gate, filtered-group discovery + %XX name encoding + COMPATIBLE/REJECT placeholder exclusion, full-proxy band connection parsing + CIDR membership, quoted-.env parsing, .env.example key coverage, scrubbed child env, doctor rc gate, summary accumulator, summary renderer (green = (no failures), red = FAIL block), cache unpark, staged-bundle pick (numeric version, enduser-only), abort-path cache restore + INT-immune tee (static), keep-split-horizon auto-decision, LAN-probe chain classification + probe-IP derivation incl. ARP-taken refusal, flow rulePayload + tunnel-escape detection, mihomo routing-log evidence (real logfmt: quoted success line, failed-dial form, node-less group refusal, source anchoring), panel probe parsers: /health + policy-set field extraction, device-doc mode lookup, dyn rule-provider counts, full-tunnel chain arm, UI marker pin)"
+  echo "OK: measurement helpers (policy/knob/psn/split-core rule anchoring incl. bootstrap-pin + comment-prose immunity, provider-node counting + real-member egress gate, filtered-group discovery + %XX name encoding + COMPATIBLE/REJECT placeholder exclusion, full-proxy band connection parsing + CIDR membership, quoted-.env parsing, .env.example key coverage, scrubbed child env, doctor rc gate, summary accumulator, summary renderer (green = (no failures), red = FAIL block), cache unpark, staged-bundle pick (numeric version, enduser-only), abort-path cache restore + INT-immune tee (static), keep-split-horizon auto-decision, LAN-probe chain classification + probe-IP derivation incl. ARP-taken refusal, flow rulePayload + tunnel-escape detection, mihomo routing-log evidence (real logfmt: quoted success line, failed-dial form, node-less group refusal, source anchoring), panel probe parsers: /health + policy-set field extraction, device-doc mode lookup, dyn rule-provider counts, full-tunnel chain arm, UI marker pin, A6c telemetry verdicts + gap rows since the run began + the per-minute gauge spread + the REQ-ADD revert warnings)"
   exit 0
 }
 [ "$SELF_TEST" = 1 ] && self_test
@@ -2252,6 +2446,64 @@ if [ -n "$A6_IP1$A6_IP2" ]; then
     bad "A6 cleanup: a probe policy entry is still present after mode-default removal"
   else
     ok "A6 cleanup: probe policy entries removed (mode default deletes)"
+  fi
+fi
+
+say "A6c: gateway panel telemetry (REQUIRED release gate from v1.11, #96)"
+# Telemetry only (DEC-A): /health via docker exec - collection live, a poll
+# well inside its interval, mihomo's version readable, stats.db clear of its
+# cap - plus the raw numbers and the gap rows, which the release notes
+# record. No LAN probe: A6 already proved traffic and policy end to end.
+if [ -z "${PANEL_IMAGE:-}" ]; then
+  bad "A6c: PANEL_IMAGE unset - the panel companion is REQUIRED"
+else
+  _a6c_h="$(panel_get /health || true)"
+  if [ -z "$_a6c_h" ]; then
+    bad "A6c: the panel /health did not answer"
+  else
+    _a6c_lines="$(printf '%s' "$_a6c_h" | vr_a6c_lines)"
+    # a here-document keeps the verdicts in THIS shell (ok/bad/warn append
+    # to the summary) and never glob-expands a line
+    while IFS= read -r _a6c_l; do
+      case "$_a6c_l" in
+        PASS\ *) ok "A6c: ${_a6c_l#PASS }" ;;
+        FAIL\ *) bad "A6c: ${_a6c_l#FAIL }" ;;
+        SKIP\ *) warn "A6c: ${_a6c_l#SKIP }" ;;
+        INFO\ *) echo "  telemetry: ${_a6c_l#INFO }" ;;
+      esac
+    done <<A6C_EOF
+$_a6c_lines
+A6C_EOF
+    # the REQ-ADD evidence (#96): the gaps this run produced, and the poll
+    # timings over the run - read these against the redeploy and A6's
+    # mihomo restart, which cause gaps of their own
+    # an unreadable answer is MISSING evidence, never a zero: the REQ-ADD
+    # decides the shipped default on these numbers
+    _a6c_g="$(panel_get '/v1/stats/gaps?limit=1000' || true)"
+    _a6c_ng=''
+    if vr_rows_doc "$_a6c_g"; then
+      _a6c_gs="$(printf '%s' "$_a6c_g" | vr_gaps_since "$VR_START")"
+      _a6c_ng="$(printf '%s' "$_a6c_gs" | grep -c . || true)"
+      echo "  stats_gap rows since this run began ($VR_START): $_a6c_ng (all-time: $(printf '%s' "$_a6c_g" | vr_gap_rows))"
+      [ -z "$_a6c_gs" ] || printf '%s\n' "$_a6c_gs" | sed 's/^/    /'
+    else
+      bad "A6c: /v1/stats/gaps could not be read - the gap evidence the #96 REQ-ADD needs is missing (re-run the validation)"
+    fi
+    _a6c_since="$(printf '%s' "$VR_START" | cut -c1-16)"
+    _a6c_s="$(panel_get "/v1/stats/self?since=$_a6c_since" || true)"
+    _a6c_max=''
+    if vr_rows_doc "$_a6c_s"; then
+      _a6c_range="$(printf '%s' "$_a6c_s" | vr_self_range)"
+      echo "  collector gauges since this run began: $_a6c_range"
+      _a6c_max="$(printf '%s' "$_a6c_range" | sed -n 's/.* poll_ms min=[0-9]* max=\([0-9]*\).*/\1/p')"
+    else
+      bad "A6c: /v1/stats/self could not be read - the poll-time evidence the #96 REQ-ADD needs is missing (re-run the validation)"
+    fi
+    while IFS= read -r _a6c_l; do
+      case "$_a6c_l" in WARN\ *) warn "A6c: ${_a6c_l#WARN }" ;; esac
+    done <<A6C_REQ_EOF
+$(vr_req_add_lines "$(printf '%s' "$_a6c_h" | vr_panel_field collector_poll_ms 2>/dev/null)" "$_a6c_max" "$_a6c_ng")
+A6C_REQ_EOF
   fi
 fi
 

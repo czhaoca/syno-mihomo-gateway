@@ -12,7 +12,7 @@
 |---------|---------------|----------|-------|
 | metacubexd | 80 | http | Web UI dashboard |
 | mihomo | — | — | Network proxy (privileged, no exposed port) |
-| panel | 8090 | http | Gateway panel (`mihomo-panel`): dynamic device policy + stats; FastAPI app on its own macvlan seat at `PANEL_IP` (LAN-only — never WAN-exposed) |
+| panel | 8090 | http | Gateway panel (`mihomo-panel`): dynamic device policy + Gateway Insights (traffic analytics, `docs/insights.md`); FastAPI app on its own macvlan seat at `PANEL_IP` (LAN-only — never WAN-exposed) |
 
 ## Environments
 
@@ -71,6 +71,14 @@
   `app/Dockerfile` on every push — build-and-discard, no registry credential. It lives there
   because the Woodpecker repo is untrusted (no socket, no privileged steps; step containers
   stay plain daemonless images). The pre-tag release gate is BOTH surfaces green.
+
+## Code layout norm
+
+- Panel modules under `app/` stay around **400 lines or fewer** — a soft norm, not a CI gate.
+  When one grows past it, split it into a package with re-exports in its `__init__.py` (the
+  precedent: `app/store/stats/` — schema / ingest / maintain / read / window / coverage), so
+  callers keep importing the package. A monkeypatch on the package reaches the calls callers
+  make through it, not calls between its submodules — patch the submodule that makes the call.
 
 ## Documentation
 

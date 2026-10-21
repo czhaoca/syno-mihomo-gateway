@@ -86,9 +86,20 @@ def stats_db_path() -> Path:
     return state_dir() / "stats.db"
 
 
+# The collector's cadence (#94, DEC-A): 2 s, chosen by the epic's rule
+# "2 s unless a poll costs more than 500 ms at the production connection
+# count". The number it rests on is an ESTIMATE - a local Apple-silicon
+# bench of the PRE-#94 flush (3.3 ms per poll at 573 connections, the
+# measured busy count; the batched flush measures 1.8 ms there) scaled by
+# an assumed 6-8x for the NAS's Celeron J4125 - until the
+# collector's own poll timing (#96) is read on the NAS, which may move this
+# back to 5 s before release. The one place the default lives.
+STATS_POLL_DEFAULT_S = 2
+
+
 def stats_poll_s() -> int:
     """0 disables the collector loop (tests drive poll_once directly)."""
-    return _int_env("PANEL_STATS_POLL_S", 10)
+    return _int_env("PANEL_STATS_POLL_S", STATS_POLL_DEFAULT_S)
 
 
 def stats_minute_hours() -> int:
@@ -107,10 +118,27 @@ def stats_cap_mb() -> int:
     return _int_env("PANEL_STATS_CAP_MB", 512)
 
 
+# The node delay history's retention (#102 DEC-B): 14 days unless set,
+# clamped to 7-30 - shorter would not show a week's pattern, longer keeps a
+# history of airport node labels for no analytic gain.
+NODE_DELAY_DAYS_DEFAULT = 14
+
+
+def node_delay_days() -> int:
+    return min(30, max(7, _int_env("PANEL_NODE_DELAY_DAYS",
+                                   NODE_DELAY_DAYS_DEFAULT)))
+
+
 def stats_domains() -> bool:
     """The opt-in per-domain table - OFF unless explicitly enabled."""
     return os.environ.get("PANEL_STATS_DOMAINS", "").lower() in (
         "1", "true", "yes")
+
+
+def metrics() -> bool:
+    """The Prometheus exposition at /metrics (#99) - OFF unless explicitly
+    enabled; off, the path answers 404."""
+    return os.environ.get("PANEL_METRICS", "").lower() in ("1", "true", "yes")
 
 
 def full_proxy_sources() -> str:

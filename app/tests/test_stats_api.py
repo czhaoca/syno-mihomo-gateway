@@ -73,7 +73,7 @@ def test_purge_clears_stats_not_audit(client, panel_env, fake_client,
     assert client.get("/v1/stats/devices").json()["rows"] == []
     assert client.get("/v1/stats/domains").json()["rows"] == []
     conn = open_stats_db(panel_env["data"] / "state" / "stats.db")
-    for table in ("stats_minute", "stats_hour", "stats_day", "stats_domain",
+    for table in ("stats_minute_v5", "stats_hour", "stats_day", "stats_domain",
                   "stats_gap"):
         assert conn.execute(f"SELECT * FROM {table}").fetchall() == [], table
     # accounting state SURVIVES the purge: dropping baselines would make
@@ -100,11 +100,11 @@ def test_purge_never_recounts_open_connections(panel_env, fake_client):
     purge_stats(conn)
     # the SAME connection, ZERO growth: nothing may be recorded
     col.poll_once(now="2026-07-23T10:00:10Z")
-    assert conn.execute("SELECT * FROM stats_minute").fetchall() == []
+    assert conn.execute("SELECT * FROM stats_minute_v5").fetchall() == []
     # growth after the purge counts only the delta
     fake_client.conns = [conn_fixture("big", "192.0.2.20", 500_100, 900_500)]
     col.poll_once(now="2026-07-23T10:00:20Z")
-    rows = conn.execute("SELECT up, down FROM stats_minute").fetchall()
+    rows = conn.execute("SELECT up, down FROM stats_minute_v5").fetchall()
     assert [(r["up"], r["down"]) for r in rows] == [(100, 500)]
     conn.close()
 

@@ -84,7 +84,10 @@ scripts/
     linux_installer_check.sh  # fake-Docker suite for the generic-Linux entry + overlay
     insights_baseline_check.sh # driver for the baseline probe's self-test: stubbed docker-exec, key contract, mutant control (python fixture layer runs wherever python3 exists)
     panel_contract_check.py   # CI: app/openapi.json byte-diff vs a fresh export (--write regenerates)
+    categories_check.py       # CI: the category dictionary files vs categories_regen.py, its bounds and totality - offline (+ categories_check_test.py controls)
+    categories_regen.py       # DEV TIME ONLY: rebuilds app/store/categories/ from the pinned upstream geosite source (fetches it, or --source <tarball>)
     panel_e2e_check.py        # CI: real uvicorn panel vs an in-step fake controller on loopback
+    panel_bench.py            # LOCAL ONLY: per-poll cost of the stats flush (ms + WAL bytes); CI runs a loose 10x-headroom guard instead (app/tests/test_perf_guard.py)
     lib/assert.sh             # shared assertions for the sh suites
 app/                          # the gateway panel: FastAPI service core (store/reconciler/api/tests)
 .woodpecker.yml               # CI: 16 blocking steps (see the CI table below)
@@ -179,10 +182,10 @@ Runs on push/PR to `main` and `master`:
 | `privacy-check` | Scans tracked files and reachable blobs for private operational identifiers, credentials, private keys, and accidentally tracked runtime files (+ the gate's self-test) |
 | `dsm-shell-tests` | Thirteen BusyBox `sh` suites with fake Docker/Compose/service CLIs: `dsm_installer_check`, `lifecycle_check`, `auto_update_check`, `cloudflared_check`, `generic_update_check`, `gateway_cli_check`, `seed_provider_check`, `proxy_groups_check` (the doctor's zero-node guard for the generated country groups — incl. the `default-empty` state, the country `Exit Country` is riding gone empty), `full_proxy_check` (the doctor's per-device full-proxy band guard — knob/render parity both directions, the `/connections` chain scan incl. the LAN-destination exemption and the UDP/QUIC fallthrough flag, plus the proxy_groups unknown short-circuit fixture), `mihomo_entrypoint_check` (the entrypoint's render-to-temp + `mihomo -t` gate: swap on green, last-good fallback + scrubbed rejection marker), `pi_installer_check` (the Raspberry Pi port's shared seams), `linux_installer_check` (the generic-Linux entry: install-linux.sh sourcing, the i18n delta overlay incl. the catalog no-Pi-branding sweep, the lite_ctl output rebranding with exit-code preservation, the menu dispatch into the pi engine, plus the macvlan-viability guard — virt/cloud detection, warn + explicit ack, decline steers to lite, choke points at both the pre-deployment cleanup (ack before any teardown) and create_network — the `EXPECTED_ARCH` auto-pin on the generic flow, and the docker-default registry wizard writing only the user `.env`, incl. closing the express fast-path bypass), `insights_baseline_check` (the read-only Gateway Insights baseline probe: stubbed docker-exec record contract — positive, missing-key, probe-failed, empty-output and container-down controls — a mutant that must turn the self-test red, and the no-exception-text guard; the in-container program's fixture layer runs wherever `python3` exists and prints an explicit SKIP in alpine) — plus `validate_release.sh --self-test`, the unit checks of the on-NAS release-validation helper's measurement functions |
 | `shellcheck` | `sh -n` parse-checks **every** `*.sh` in the repo, then `shellcheck -x` on 24 targets: `install.sh`, `install-pi.sh`, `install-linux.sh`, `gateway.sh`, `auto_update.sh`, `pi/auto_update_lite.sh`, `pi/lite_ctl.sh`, `install_scheduler.sh`, `setup_network.sh`, `render_config.sh`, `mihomo_entrypoint.sh`, `package.sh`, `doctor.sh`, `state_diff.sh`, `seed_provider.sh`, `bootstrap.sh`, `lib/container.sh`, `lib/targets.sh`, `lib/geodata.sh`, `lib/panel.sh`, `linux/i18n_linux.sh`, `linux/preflight_linux.sh`, `validate_release.sh`, `insights_baseline.sh` (sourced libs followed in-context) |
-| `ui-build` | `npm --prefix app/ui ci` + `npm run lint`, then `python3 scripts/ci/ui_build_check.py --build` — the frontend toolchain (#78): `npm ci` so the lockfile is authoritative, then the **built-artifact** gate: the A6 release marker (`data-i18n="app_title"`) survived the bundler outside any comment, and every external URL in the bundle is in the documented inert allowlist — plus the gate's own positive/negative self-test (`ui_build_check_test.py`) |
-| `ui-e2e` | `npx playwright test` — the REAL panel under uvicorn against the same FakeController the API e2e uses (`scripts/ci/ui_e2e_server.py`); browsers come from the pinned `mcr.microsoft.com/playwright` image, never a per-run CDN download, so the browser build can never drift from the Playwright version |
+| `ui-build` | `npm --prefix app/ui ci` + `npm run lint`, then `python3 scripts/ci/ui_build_check.py --build` — the frontend toolchain (#78): `npm ci` so the lockfile is authoritative, then the **built-artifact** gate: the A6 release marker (`data-i18n="app_title"`) survived the bundler outside any comment, and every external URL in the bundle is in the documented inert allowlist, and the built JavaScript stays within `JS_BUDGET_BYTES` (450 KB raw, #100: no chart library, a hand-rolled kit; a bump carries its reason beside the constant) — plus the gate's own positive/negative self-test (`ui_build_check_test.py`, including an oversize-bundle control) |
+| `ui-e2e` | `npx playwright test` — the REAL panel under uvicorn against the same FakeController the API e2e uses (`scripts/ci/ui_e2e_server.py`); browsers come from the pinned `mcr.microsoft.com/playwright` image, never a per-run CDN download, so the browser build can never drift from the Playwright version. Specs wait on READINESS markers, never on network silence (#100): `app-ready` (the shell has its dictionary and a first `/health` answer) and `<tab>-ready` (the view's newest load for its current input has settled), helper `ready()` in `app/ui/e2e/fixtures/stats.js`, which also holds the synthesised GOLDEN stats series the chart specs (`charts.spec.js`) and the Gateway Insights specs (`insights.spec.js`) draw, served through `goldenOverview` the way `/v1/stats/overview` answers each scope (scoped sections `null`, with the server's reasons); the Insights cadence spec drives the refresh tick with `page.clock`; both colour schemes are swept for overflow; `globalTimeout` bounds the run |
 | `app-lint` | `ruff check app` — the panel app lint (ruff pinned in `app/requirements-dev.txt`, config scoped via `app/ruff.toml`) |
-| `app-unit` | `python -m pytest app/tests -q` — the hermetic panel unit suite (fake controller client + tmp trees; validation classes, store/migrations/backups, reconciler happy/loud paths, auth matrix, audit append-only) — then `python scripts/ci/panel_contract_check.py`, the committed contract gate: `app/openapi.json` AND the generated `docs/panel-api.md` byte-identity (regenerate both with `--write`; the /v1 surface is additive-only — breaking = new version prefix + explicit owner acknowledgment) — then `sh scripts/insights_baseline.sh --self-test`: the baseline probe's self-test in a python image, where its in-container program runs against the canned fixtures (alpine's `dsm-shell-tests` covers the sh layer and SKIPs this one) |
+| `app-unit` | `python -m pytest app/tests -q` — the hermetic panel unit suite (fake controller client + tmp trees; validation classes, store/migrations/backups, reconciler happy/loud paths, auth matrix, audit append-only) — then `python scripts/ci/panel_contract_check.py`, the committed contract gate: `app/openapi.json` AND the generated `docs/panel-api.md` byte-identity (regenerate both with `--write`; the /v1 surface is additive-only — breaking = new version prefix + explicit owner acknowledgment) — then `python scripts/ci/categories_check.py` and its controls `categories_check_test.py`: the category dictionary gate (#97), offline — `coarse.json` byte-identical to the regen script's curated table, `suffixes.json` in the committed serialization with its recorded digests, the pinned upstream ref and licence, ≤ 150 ids / 15000 rules / 400 KiB, every id curated with a coarse id — then `sh scripts/insights_baseline.sh --self-test`: the baseline probe's self-test in a python image, where its in-container program runs against the canned fixtures (alpine's `dsm-shell-tests` covers the sh layer and SKIPs this one) |
 | `app-e2e` | `python scripts/ci/panel_e2e_check.py` — the REAL app under uvicorn against an in-step fake mihomo controller + webhook sink on loopback (daemonless): startup re-sync, bearer-gated mutations, write→refresh→count-parity, the loud failure path (marker + `{title,body}` webhook + `parity=failed`), recovery via `/v1/apply` |
 
 One check runs **outside** Woodpecker: the **`panel-image` GitHub Actions workflow**
@@ -338,8 +341,11 @@ python3 scripts/ci/ui_build_check.py --build
 /tmp/vp/bin/ruff check app
 /tmp/vp/bin/python -m pytest app/tests -q
 /tmp/vp/bin/python scripts/ci/panel_contract_check.py   # --write regenerates app/openapi.json
+/tmp/vp/bin/python scripts/ci/categories_check.py        # the dictionary files vs the regen script (offline)
+/tmp/vp/bin/python scripts/ci/categories_check_test.py   # ...and the gate's negative controls
 /tmp/vp/bin/python scripts/ci/panel_e2e_check.py
 sh scripts/insights_baseline.sh --self-test   # the probe's python fixture layer runs wherever python3 is on PATH
+/tmp/vp/bin/python scripts/ci/panel_bench.py --conns 3000 --snapshots 30   # optional, local only: exact flush cost (not a CI step)
 
 # shellcheck (via Docker, same 24 targets AND the same digest-pinned image as CI -
 # read straight from .woodpecker.yml so this mirror can never drift from the pin)
@@ -413,7 +419,22 @@ A6 (REQUIRED): panel `/health` db_ok, the sibling-reach probe, LAN-client UI
 reach, per-mode policy flips judged from `/connections` with two distinct
 spare source IPs, persistence across a mihomo restart, and cleanup — its
 pure parsers are covered by `--self-test` like every other measurement
-helper.
+helper. From v1.11, phase **A6c (REQUIRED)** reads the panel's `/health`
+telemetry only, with no LAN probe:
+- `collector=ok`;
+- a mean poll of at most half the interval the panel reports;
+- a readable mihomo version;
+- `stats.db` below 90 % of the cap the panel reports.
+
+It also prints, for the release notes, the raw numbers, the collection gaps
+recorded since the run began, and the spread of the per-minute poll timings
+over the run, and warns (without gating) when a poll time crosses the 500 ms
+the #96 REQ-ADD allows for the 2 s default or the run recorded gaps; an
+unreadable gap or gauge history fails, since it is evidence that release
+decision needs. A collector the operator turned off skips its checks with a
+WARN, including the version check, since nothing then samples mihomo. A key
+a v1.11 panel must send fails. Its parser `vr_a6c_lines` has positive and
+negative controls in `--self-test`.
 An interrupted run (Ctrl-C) restores the parked caches and the original `.env`
 before recreating, and the transcript `tee` survives the terminal's signal so the
 cleanup lines reach the log.

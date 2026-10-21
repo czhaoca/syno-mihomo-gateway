@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
 
+import { json, plainOverview, ready } from "./fixtures/stats.js";
+
 /**
  * The browser gate (#79, moved onto the React tree by #80).
  *
@@ -39,14 +41,17 @@ async function routeAudit(page) {
   }));
 }
 
-/** Wait for the shell AND its dictionary: every label renders as its own key
- *  until the fetch lands, so asserting on text before then is a race. */
+/** Open the panel and wait until the shell and the tab say they are READY
+ *  (#100 DEC-C; `ready` in fixtures/stats.js). Network silence was the old
+ *  proxy, and it raced: a view can settle on a failed read, and a stream
+ *  (v1.14) would never let the network fall silent at all. */
 async function open(page, tab) {
-  await page.goto(PANEL, { waitUntil: "networkidle" });
+  await page.goto(PANEL);
   await expect(page.locator('[data-testid="app-shell"]')).toBeVisible();
-  if (tab) {
+  await ready(page, "stats");
+  if (tab && tab !== "stats") {
     await page.locator(`[data-testid="tab-${tab}"]`).click();
-    await page.waitForLoadState("networkidle");
+    await ready(page, tab);
   }
 }
 
@@ -71,15 +76,24 @@ test.describe("the panel makes no external request", () => {
       return route.continue();
     });
 
-    await page.reload({ waitUntil: "networkidle" });
+    await page.reload();
+    await ready(page, "stats");
     // exercise every tab so their fetches happen too, not just first paint
     for (const id of ["devices", "audit", "settings", "stats"]) {
       await page.locator(`[data-testid="tab-${id}"]`).click();
-      await page.waitForLoadState("networkidle");
+      await ready(page, id);
     }
+    // the live tile's stream (#103) is same-origin too: open it
+    const live = page.waitForRequest((r) => r.url().includes("/v1/stats/live"));
+    await page.locator('[data-testid="live-toggle"]').check();
+    await live;
+    await page.locator('[data-testid="live-toggle"]').uncheck();
     // and the language toggle, which fetches a second dictionary
+    const before = await page.locator('[data-testid="app-ready"]')
+      .getAttribute("data-lang");
     await page.locator('[data-testid="lang-toggle"]').click();
-    await page.waitForLoadState("networkidle");
+    await expect(page.locator('[data-testid="app-ready"]'))
+      .not.toHaveAttribute("data-lang", before);
     expect(offOrigin, `off-origin requests: ${offOrigin.join(", ")}`)
       .toEqual([]);
   });
@@ -214,16 +228,40 @@ test.describe("the panel is readable at both ends", () => {
       // The defect that started this epic was layout, and layout is exactly
       // what no amount of string-matching could see. A page wider than its own
       // viewport is the machine-checkable form of "unreadable".
+      //
+      // In BOTH colour schemes (#100 DEC-13): the device's own preference
+      // decides the first paint, and the picker's choice survives a reload.
       await page.setViewportSize({ width, height });
-      for (const tab of ["stats", "devices", "audit", "settings"]) {
-        await open(page, tab);
-        const overflow = await page.evaluate(
-          () => document.documentElement.scrollWidth
-            - document.documentElement.clientWidth,
-        );
-        expect(overflow, `${tab} overflows its viewport by ${overflow}px`)
-          .toBeLessThanOrEqual(1);
+      for (const scheme of ["light", "dark"]) {
+        await page.emulateMedia({ colorScheme: scheme });
+        for (const tab of ["stats", "devices", "audit", "settings"]) {
+          await open(page, tab);
+          await expect(page.locator("html"))
+            .toHaveAttribute("data-theme", scheme);
+          const overflow = await page.evaluate(
+            () => document.documentElement.scrollWidth
+              - document.documentElement.clientWidth,
+          );
+          expect(overflow,
+                 `${tab} (${scheme}) overflows its viewport by ${overflow}px`)
+            .toBeLessThanOrEqual(1);
+        }
       }
+      // the picker overrides the device and is remembered; "system" hands
+      // the scheme back to the device, which is then followed live
+      await page.emulateMedia({ colorScheme: "light" });
+      await open(page);
+      const picker = page.locator('[data-testid="theme-select"]');
+      await picker.selectOption("dark");
+      await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+      await page.reload();
+      await ready(page);
+      await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+      await expect(picker).toHaveValue("dark");
+      await picker.selectOption("system");
+      await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+      await page.emulateMedia({ colorScheme: "dark" });
+      await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
     });
   }
 
@@ -280,8 +318,8 @@ test.describe("the panel is readable at both ends", () => {
   });
 });
 
-test.describe("stats is the landing view", () => {
-  test("the panel opens on stats, not on the policy editor", async ({ page }) => {
+test.describe("Insights is the landing view", () => {
+  test("the panel opens on Insights, not on the policy editor", async ({ page }) => {
     // The point of the rewrite: the question an operator opens the panel with
     // is "what is my network doing".
     await open(page);
@@ -315,22 +353,23 @@ test.describe("stats is the landing view", () => {
   test("the attribution note is measured over the window on screen",
     async ({ page }) => {
       /* Attribution lives in one 7-day table, so a 30-day request cannot
-         widen it - but sending the window is what makes the server answer
-         `truncated`. Without it the panel shows a 7-day percentage beside a
-         30-day table and claims nothing is missing, which is precisely the
-         quiet inaccuracy the coverage measurement exists to prevent. */
-      const asked = [];
-      await page.route("**/v1/stats/coverage**", (route) => {
-        asked.push(route.request().url());
-        return route.continue();
-      });
+         widen it - but measuring over the window is what makes the server
+         answer `truncated`. Without it the panel shows a 7-day percentage
+         beside a 30-day table and claims nothing is missing, which is
+         precisely the quiet inaccuracy the coverage measurement exists to
+         prevent. Since #101 the coverage report rides the scoped overview
+         read, so the SERVER scopes it to the preset - checked on the real
+         answer, not on a URL. */
       await open(page);
+      const answered = page.waitForResponse((r) => r.url().includes("/v1/stats/overview?")
+        && /[?&]range=30d(&|$)/.test(r.url()));
       await page.locator('[data-testid="stats-range"]').selectOption("30d");
-      await page.waitForLoadState("networkidle");
-      expect(asked.length, "the coverage report must be fetched").toBeGreaterThan(0);
-      expect(asked[asked.length - 1],
-        `coverage must be scoped to the selected window, got ${asked}`)
-        .toMatch(/[?&]since=\d{4}-\d{2}-\d{2}T\d{2}(&|$)/);
+      const body = await (await answered).json();
+      expect(body.coverage, "the overview must carry the coverage report")
+        .not.toBeNull();
+      expect(body.coverage.window.requested_since,
+        "coverage must be measured over the selected window")
+        .toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}$/);
     });
 
   test("the stats reads name the window and let the server compute it",
@@ -339,27 +378,45 @@ test.describe("stats is the landing view", () => {
          7-day window lost the newest 48 hours (still in the minute tier)
          and a `tier=day` read of "daily" lost the last 90 days. The view
          must ask for the PRESET and let the server union the tiers - a
-         client-computed tier + since is exactly the read that was wrong. */
+         client-computed tier + since is exactly the read that was wrong.
+         Since #101 that read is ONE: the scoped overview, and no other
+         stats endpoint is asked at all. */
       const asked = [];
-      for (const path of ["devices", "timeline"]) {
-        await page.route(`**/v1/stats/${path}**`, (route) => {
-          asked.push(route.request().url());
-          return route.continue();
-        });
-      }
+      await page.route("**/v1/stats/**", (route) => {
+        asked.push(route.request().url());
+        return route.continue();
+      });
       await open(page);
       await page.locator('[data-testid="stats-range"]').selectOption("30d");
-      // Order-independent: the landing (7d) reads and the 30d reads can be
-      // intercepted interleaved on a slow runner, so wait until BOTH 30d
-      // reads have been seen instead of trusting the last two requests.
-      await expect.poll(() => ["devices", "timeline"].every((path) =>
-        asked.some((url) => url.includes(`/v1/stats/${path}?`)
-          && /[?&]range=30d(&|$)/.test(url))),
-        { message: "devices and timeline must both be read for 30d" })
-        .toBe(true);
+      for (const path of ["/v1/stats/overview?", "/v1/stats/node-delay?"]) {
+        await expect.poll(() => asked.some((url) => url.includes(path)
+            && /[?&]range=30d(&|$)/.test(url)),
+          { message: `${path} must be read for 30d` }).toBe(true);
+      }
+      // an EXACT allowlist (#103): the scoped overview and the node delay
+      // name a preset; the quota is the gateway's and takes no query; the
+      // live stream is never opened while its tile is off
       for (const url of asked) {
+        const { pathname, search } = new URL(url);
+        if (pathname === "/v1/stats/quota") {
+          expect(search, `the quota takes no query: ${url}`).toBe("");
+          continue;
+        }
+        expect(["/v1/stats/overview", "/v1/stats/node-delay"],
+               `the tab reads the overview and its widgets only: ${url}`)
+          .toContain(pathname);
+        const keys = [...new URLSearchParams(search).keys()];
+        if (pathname === "/v1/stats/node-delay") {
+          expect(keys, `the node delay takes the range and nothing else: ${url}`)
+            .toEqual(["range"]);
+        } else {
+          for (const key of keys) {
+            expect(["range", "limit", "device", "category", "host"],
+                   `the overview takes its scope keys only: ${url}`).toContain(key);
+          }
+        }
         expect(url, `every stats read must name a preset: ${url}`)
-          .toMatch(/[?&]range=(48h|7d|30d|daily)(&|$)/);
+          .toMatch(/[?&]range=(24h|48h|7d|30d|daily)(&|$)/);
         expect(url, `the client must not compute the window: ${url}`)
           .not.toMatch(/[?&](tier|since)=/);
       }
@@ -373,20 +430,15 @@ test.describe("stats is the landing view", () => {
          shows 48h numbers while the selector says daily, and nothing on
          screen says so - the quiet inaccuracy this view exists to prevent.
          AuditView spends a ref on exactly this; StatsView did not. */
-      await page.route("**/v1/stats/devices**", async (route) => {
+      await page.route("**/v1/stats/overview**", async (route) => {
         const url = route.request().url();
         if (url.includes("range=48h")) {
           await new Promise((done) => setTimeout(done, 1500));
-          return route.fulfill({
-            status: 200, contentType: "application/json",
-            body: '{"tier":"minute","rows":[{"device":"10.0.0.48","up":1,"down":1}]}',
-          });
+          return json(route, plainOverview("48h", [
+            { value: "192.0.2.48", up: 1, down: 1 }]));
         }
-        return route.fulfill({
-          status: 200, contentType: "application/json",
-          body: '{"tier":"day","rows":[{"device":"10.0.0.99","up":2,"down":2}],'
-                + '"framings":[]}',
-        });
+        return json(route, plainOverview("daily", [
+          { value: "192.0.2.99", up: 2, down: 2 }]));
       });
       await open(page);
       await page.locator('[data-testid="stats-range"]').selectOption("48h");
@@ -394,11 +446,11 @@ test.describe("stats is the landing view", () => {
       await page.waitForTimeout(2500);
       await expect(page.locator('[data-testid="stats-range"]'))
         .toHaveValue("daily");
-      await expect(page.locator('[data-testid="stats-rows"]'),
+      await expect(page.locator('[data-testid="stats-top-device"]'),
         "the rows must belong to the window the selector names")
-        .toContainText("10.0.0.99");
-      await expect(page.locator('[data-testid="stats-rows"]'))
-        .not.toContainText("10.0.0.48");
+        .toContainText("192.0.2.99");
+      await expect(page.locator('[data-testid="stats-top-device"]'))
+        .not.toContainText("192.0.2.48");
     });
 
   test("a stats store that did not answer is not reported as no traffic",
@@ -406,7 +458,7 @@ test.describe("stats is the landing view", () => {
       // `_stats_conn` answers 503 when collection is degraded while policy
       // serving is fine. "No traffic recorded in this range" would be a
       // statement about the network; this is a statement about the panel.
-      await page.route("**/v1/stats/devices**", (route) => route.fulfill({
+      await page.route("**/v1/stats/overview**", (route) => route.fulfill({
         status: 503, contentType: "application/json",
         body: '{"detail":"stats store unavailable - collection degraded"}',
       }));

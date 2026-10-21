@@ -1,6 +1,6 @@
 """Operator settings: defaults in code, the table stores only overrides.
 
-The k/v shape mirrors `stats_meta` (stats.py:61-64), the closest existing
+The k/v shape mirrors `stats_meta` (app/store/stats/schema.py), the closest existing
 idiom. What it deliberately does NOT mirror is where the default lives:
 `stats_meta` stores whatever the collector wrote, whereas here an unset key
 must resolve through code, so that shipping a new default actually reaches
@@ -223,7 +223,7 @@ def test_the_stats_range_accepts_exactly_what_the_ui_can_show(conn):
     """The setting and the view's selector are ONE list. A default naming a
     range the UI cannot render would land the operator on a blank tab with
     nothing saying why - the setting would look honoured and be unusable."""
-    assert settings.STATS_RANGES == ("48h", "7d", "30d", "daily")
+    assert settings.STATS_RANGES == ("24h", "48h", "7d", "30d", "daily")
     for value in settings.STATS_RANGES:
         settings.set_value(conn, "stats_default_range", value, requester="t")
         assert settings.get(conn, "stats_default_range") == value

@@ -6,15 +6,18 @@ import Stack from "@mui/material/Stack";
 import Tab from "@mui/material/Tab";
 import Tabs from "@mui/material/Tabs";
 import Typography from "@mui/material/Typography";
+import { useTheme } from "@mui/material/styles";
 
 import { api, registerTokenPrompt, setToken } from "./api.js";
 import { clearAll } from "./applystate.js";
 import { htmlLang, initialLang, loadDict, rememberLang, translator } from "./i18n.js";
-import { TextInput } from "./controls.jsx";
+import { SelectInput, TextInput } from "./controls.jsx";
+import { useHashRoute } from "./hooks/useHashRoute.js";
+import { CHOICES } from "./theme.js";
 import AuditView from "./views/AuditView.jsx";
 import DevicesView from "./views/DevicesView.jsx";
 import SettingsView from "./views/SettingsView.jsx";
-import StatsView from "./views/StatsView.jsx";
+import InsightsView from "./views/InsightsView.jsx";
 
 /* The panel shell.
 
@@ -31,16 +34,24 @@ const REFRESH_MS = 10000;
 const NOTICE_KEEP = 4;
 
 const TABS = [
-  { id: "stats", label: "tab_stats" },
+  { id: "stats", label: "tab_insights" },
   { id: "devices", label: "tab_devices" },
   { id: "audit", label: "tab_audit" },
   { id: "settings", label: "tab_settings" },
 ];
 
-export default function App() {
+export default function App({ choice = "system", onChoice = () => {} }) {
+  const palette = useTheme().palette;
   const [lang, setLang] = useState(initialLang);
   const [dict, setDict] = useState({});
-  const [tab, setTab] = useState("stats");
+  // which language's dictionary has SETTLED (loaded or failed - a failed
+  // load renders keys, but it is still the final answer for this language)
+  const [dictLang, setDictLang] = useState(null);
+  const [healthTried, setHealthTried] = useState(false);
+  // the tab is the route's (#101 DEC-A): a link from another tab, a reload
+  // and the back button all land where the hash says
+  const [route, navigate] = useHashRoute();
+  const tab = route.tab;
   const [health, setHealth] = useState(null);
   const [reachable, setReachable] = useState(true);
   const [notices, setNotices] = useState([]);
@@ -52,7 +63,11 @@ export default function App() {
 
   useEffect(() => {
     let live = true;
-    loadDict(lang).then((d) => { if (live) setDict(d); });
+    loadDict(lang).then((d) => {
+      if (!live) return;
+      setDict(d);
+      setDictLang(lang);
+    });
     document.documentElement.lang = htmlLang(lang);
     return () => { live = false; };
   }, [lang]);
@@ -86,6 +101,7 @@ export default function App() {
      showing - but nothing else is retracted on silence. */
   const refreshHealth = useCallback(async () => {
     const { status, data } = await api("GET", "/health");
+    setHealthTried(true);
     if (status === 200 && data) {
       setHealth(data);
       setReachable(true);
@@ -97,9 +113,10 @@ export default function App() {
   useEffect(() => { refreshHealth(); }, [refreshHealth]);
 
   useEffect(() => {
+    // the views' tick follows THIS tick's /health answer (or its failure),
+    // so a load records the newest poll rather than the previous tick's
     const id = setInterval(() => {
-      refreshHealth();
-      setTick((n) => n + 1);
+      refreshHealth().finally(() => setTick((n) => n + 1));
     }, REFRESH_MS);
     return () => clearInterval(id);
   }, [refreshHealth]);
@@ -124,7 +141,8 @@ export default function App() {
   const dotState = (!health || !reachable) ? "bad"
     : (health.db_ok && health.parity === "ok") ? "ok"
       : (health.db_ok ? "warn" : "bad");
-  const dotColor = { ok: "#16a34a", warn: "#d97706", bad: "#dc2626" }[dotState];
+  const dotColor = { ok: palette.success.main, warn: palette.warning.main,
+                     bad: palette.error.main }[dotState];
 
   const reapply = async () => {
     const result = await api("POST", "/v1/apply");
@@ -133,10 +151,17 @@ export default function App() {
     setTick((n) => n + 1);
   };
 
-  const shared = { t, notify, tick, health, refreshHealth };
+  const shared = { t, notify, tick, health, healthSettled: healthTried,
+                   refreshHealth };
 
   return (
     <Box data-testid="app-shell" sx={{ pb: 4 }}>
+      {/* Readiness (#100 DEC-C): the shell has the dictionary of the
+          language on screen and a first /health answer (either may have
+          failed - settled is not succeeded). The browser specs wait on this
+          instead of on network silence. */}
+      {dictLang === lang && healthTried
+        ? <span data-testid="app-ready" data-lang={lang} hidden /> : null}
       <Box
         component="header"
         sx={{
@@ -171,6 +196,19 @@ export default function App() {
           >
             {t("dashboard_link")}
           </Box>
+          {/* a native select with a constant name: the three choices are
+              states, not actions, and "system" hands the scheme back to
+              the device */}
+          <SelectInput
+            data-testid="theme-select"
+            aria-label={t("theme_label")}
+            value={choice}
+            onChange={(e) => onChoice(e.target.value)}
+          >
+            {CHOICES.map((c) => (
+              <option key={c} value={c}>{t(`theme_${c}`)}</option>
+            ))}
+          </SelectInput>
           <Button
             data-testid="lang-toggle"
             onClick={() => {
@@ -227,7 +265,7 @@ export default function App() {
 
       <Tabs
         value={tab}
-        onChange={(_e, next) => setTab(next)}
+        onChange={(_e, next) => navigate({ tab: next })}
         variant="scrollable"
         scrollButtons={false}
         sx={{ borderBottom: "1px solid", borderColor: "divider",
@@ -245,7 +283,8 @@ export default function App() {
       </Tabs>
 
       <Box component="main" sx={{ p: 1.5, mx: "auto", maxWidth: viewWidth(tab) }}>
-        {tab === "stats" ? <StatsView {...shared} /> : null}
+        {tab === "stats"
+          ? <InsightsView {...shared} route={route} navigate={navigate} /> : null}
         {tab === "devices" ? <DevicesView {...shared} /> : null}
         {tab === "audit" ? <AuditView {...shared} /> : null}
         {tab === "settings" ? <SettingsView {...shared} /> : null}
@@ -256,7 +295,8 @@ export default function App() {
           data-testid="token-dialog"
           sx={{
             position: "fixed", inset: 0, display: "flex", alignItems: "center",
-            justifyContent: "center", bgcolor: "rgba(0,0,0,0.4)", zIndex: 20, p: 2,
+            justifyContent: "center", bgcolor: palette.chart.overlay, zIndex: 20,
+            p: 2,
           }}
         >
           <Box sx={{ bgcolor: "background.paper", p: 2, borderRadius: 2,

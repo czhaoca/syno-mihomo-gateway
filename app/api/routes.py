@@ -12,18 +12,22 @@ version prefix and explicit owner acknowledgment (see the committed
 app/openapi.json contract gate).
 """
 
+import sqlite3
+from contextlib import contextmanager, suppress
 from datetime import UTC, datetime
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app import config
+from app.api import csv_export
 from app.api.auth import require_mutation_auth
 from app.collector.core import GAP_FACTOR, effective_interval_s
 from app.store import dayframe, identity, settings
 from app.store import stats as stats_store
 from app.store.audit import append_audit, list_audit
+from app.store.db import StoreError, open_reader
 from app.store.policy import (
     StoreConflict,
     add_device,
@@ -76,6 +80,46 @@ class SettingsUpdate(BaseModel):
     note: str = Field(
         default="",
         description="Recorded on the audit entry for this change")
+
+
+# The tables a scoped purge may name - stats_store.PURGE_TABLES, spelled out
+# so the contract lists them (a test pins the two together).
+PurgeTable = Literal[
+    "stats_minute", "stats_minute_v5", "stats_hour", "stats_day",
+    "stats_domain", "stats_coverage", "stats_gap",
+    "stats_exit_hour", "stats_exit_day", "stats_rule_hour", "stats_rule_day",
+    "stats_category_hour", "stats_category_day", "stats_country_hour",
+    "stats_country_day", "stats_sniff", "stats_asn", "stats_port",
+    "stats_app", "stats_self", "stats_node_delay"]
+
+
+class StatsPurge(BaseModel):
+    # a destructive call: a misspelt key must be refused, not ignored into
+    # "purge everything"
+    model_config = ConfigDict(extra="forbid")
+
+    device: str | None = Field(
+        default=None, min_length=1,
+        description="Only this device's rows. The gap history has no device "
+                    "and is kept")
+    tables: list[PurgeTable] | None = Field(
+        default=None, min_length=1,
+        description="Only these tables")
+    before: str | None = Field(
+        default=None, pattern=r"^\d{4}-\d{2}-\d{2}(T\d{2}(:\d{2})?)?$",
+        description="Only rows whose bucket STARTS before this UTC moment "
+                    "(`YYYY-MM-DD`, `YYYY-MM-DDTHH` or `YYYY-MM-DDTHH:MM`): "
+                    "a bucket straddling it goes too, so nothing older "
+                    "survives. A day row is compared by its date")
+
+    @field_validator("before")
+    @classmethod
+    def _real_moment(cls, value):
+        # the pattern admits 2026-13-45; the calendar does not
+        if value is not None:
+            datetime.strptime(value, {10: "%Y-%m-%d", 13: "%Y-%m-%dT%H",
+                                      16: "%Y-%m-%dT%H:%M"}[len(value)])
+        return value
 
 
 class IdentityImport(BaseModel):
@@ -145,6 +189,7 @@ def health(request: Request) -> dict:
         # this port (DEC-12: node ops stay on the dashboard; no URL
         # literal may live in the static tree)
         "dashboard_port": config.dashboard_port(),
+        **_telemetry(request, last_poll),
         # The day tier's framing (#76). FLAT keys deliberately: the doctor
         # reads /health with a sed scalar extractor (checks.sh _ph_field),
         # which cannot see into a nested object. `day_framing` is
@@ -156,6 +201,38 @@ def health(request: Request) -> dict:
         # itself faster than it could appear.
         **_day_status(request),
     }
+
+
+def _telemetry(request: Request, last_poll) -> dict:
+    """The collector's self-telemetry (#96) - FLAT keys, counts and numbers
+    only, never error text; None is "not measured yet", never 0.
+
+    `collector_interval_s` and `stats_cap_mb` are the values the app is
+    actually running with (DEC-C): the doctor and the release validator
+    judge "a poll slower than half its interval" and "90 % of the cap"
+    against these instead of re-parsing the knobs, which could drift from
+    the app's own defaults or describe an .env not yet redeployed."""
+    collector = getattr(request.app.state, "collector", None)
+    status = getattr(collector, "status", None) or {}
+    from app.collector.core import _lag_s, _now_str
+    return {
+        "collector_lag_s": _lag_s(last_poll, _now_str()),
+        "collector_poll_ms": status.get("poll_ms"),
+        "collector_conns": status.get("conns"),
+        "collector_failed_polls": status.get("failed_polls", 0),
+        "collector_interval_s": config.stats_poll_s(),
+        "stats_cap_mb": config.stats_cap_mb(),
+        "stats_db_growth_mb_day": status.get("db_growth_mb_day"),
+        "mihomo_mem_mb": status.get("mihomo_mem_mb"),
+        "mihomo_version": status.get("mihomo_version", ""),
+        # viewers holding a /v1/stats/live stream now (#102)
+        "live_viewers": _live_viewers(request),
+    }
+
+
+def _live_viewers(request: Request) -> int:
+    relay = getattr(request.app.state, "live_relay", None)
+    return relay.viewers() if relay is not None else 0
 
 
 def _day_status(request: Request) -> dict:
@@ -178,45 +255,78 @@ def _stats_conn(request: Request):
     return conn
 
 
+@contextmanager
+def _stats_reader(request: Request):
+    """A per-request READ-ONLY connection for a stats read (#93).
+
+    Reads used to take the one stats connection under the lock the collector
+    holds for its flush and its maintenance pass, so a slow rollup or cap
+    prune stalled every stats view. A reader opened here sees the last
+    committed snapshot through WAL and never touches that lock, which is
+    left to the writer (collector + purge) alone.
+
+    The whole response is read inside ONE read transaction, so a body built
+    from several queries (window rows + framings, the coverage report)
+    still describes a single moment - the guarantee the lock used to give.
+    The writer connection must be up: it is what ran the migrations, and a
+    degraded store answers the same 503 as before.
+    """
+    _stats_conn(request)
+    try:
+        conn = open_reader(config.stats_db_path())
+    except StoreError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="stats store unavailable - collection degraded; policy "
+                   "serving is unaffected (see /health)") from exc
+    try:
+        conn.execute("BEGIN")
+        yield conn
+    finally:
+        with suppress(sqlite3.Error):
+            conn.execute("ROLLBACK")  # read-only: ending the snapshot is all
+        conn.close()
+
+
 Tier = Literal["minute", "hour", "day"]
 
 # The range vocabulary (#91) - settings.STATS_RANGES is the one list; a test
 # pins this Literal and stats_store.RANGE_SPECS to it.
-StatsRange = Literal["48h", "7d", "30d", "daily"]
+StatsRange = Literal["24h", "48h", "7d", "30d", "daily"]
 
 RangeParam = Annotated[StatsRange | None, Query(
     alias="range",
     description=(
-        "A window preset: `48h` (minute resolution), `7d` and `30d` (hour "
+        "A window preset: `24h` and `48h` (minute resolution), `7d` and "
+        "`30d` (hour "
         "resolution), `daily` (local-day resolution, everything held). The "
         "server computes the window from its own clock and reads it "
-        "WINDOW-COMPLETE: the resolution's tier plus every finer tier, which "
-        "hold the newer rows not yet rolled up - so a 7-day total includes "
-        "the newest 48 hours. Coarser tiers are not read, so a window ends at "
-        "the resolution tier's retention: with the shipped retention every "
-        "preset is whole, and an explicit `tier` finer than the window (e.g. "
-        "`range=7d&tier=minute`) reaches back only as far as that tier holds. "
-        "An explicit `tier` overrides the resolution only. Mutually exclusive "
-        "with `since`/`until`, even empty ones (422). Without `range`, a read "
-        "covers the single `tier` table exactly as before."))]
+        "WINDOW-COMPLETE. The hour tier is written at every poll, so a minute "
+        "or hour read takes its own tier alone, and a day read takes the day "
+        "tier plus the hour tier, which holds the days not rolled up yet - so "
+        "a 7-day total includes the newest 48 hours and `daily` includes "
+        "today. A window ends at the resolution tier's retention: with the "
+        "shipped retention every preset is whole, and an explicit `tier` "
+        "finer than the window (e.g. `range=7d&tier=minute`) reaches back "
+        "only as far as that tier holds. An explicit `tier` overrides the "
+        "resolution only. Mutually exclusive with `since`/`until`, even empty "
+        "ones (422). Without `range`, a read covers the single `tier` table "
+        "(since v1.11 the hour table also holds the newest 48 hours)."))]
 
 
 def _utcnow() -> datetime:
     return datetime.now(UTC)
 
 
-def _range_args(request: Request, range_: str, tier: str, since: str,
-                until: str):
+def _range_args(request: Request, range_: str, tier: str):
     """(resolution, window start, frame) for a `range=` read.
 
     The day framing is resolved only for a DAY-resolution read - the only
-    one that keys anything by local day - and HERE, before the caller takes
-    the stats lock. The production source reads the timezone from policy.db
+    one that keys anything by local day - and HERE, before the caller opens
+    its reader. The production source reads the timezone from policy.db
     under the POLICY mutex, which a policy change holds across its mihomo
     controller calls: resolving it for every read would put the landing 7d
-    view behind each policy apply in flight, and resolving it inside the
-    stats lock would invent a stats->policy lock ordering (see
-    CollectorLoop) one future route away from a deadlock.
+    view behind each policy apply in flight.
     """
     # presence, not value: `since=` sent empty is still a second way of
     # naming the window, and accepting it would make the refusal depend on
@@ -237,11 +347,10 @@ def _range_args(request: Request, range_: str, tier: str, since: str,
     return resolution, start, frame
 
 
-def _range_grouped(request: Request, group_col: str, range_: str, tier: str,
-                   since: str, until: str) -> dict:
-    resolution, start, frame = _range_args(request, range_, tier, since, until)
-    with request.app.state.stats_lock:
-        conn = _stats_conn(request)
+def _range_grouped(request: Request, group_col: str, range_: str,
+                   tier: str) -> dict:
+    resolution, start, frame = _range_args(request, range_, tier)
+    with _stats_reader(request) as conn:
         body = {"tier": resolution,
                 "rows": stats_store.read_window_grouped(conn, resolution,
                                                         group_col, start,
@@ -272,9 +381,8 @@ def stats_devices(request: Request, tier: Tier = "minute",
     """Per-device totals. With `range`, window-complete across tiers; with
     only `tier`, the single tier table (unchanged since v1.8.0)."""
     if range_ is not None:
-        return _range_grouped(request, "device", range_, tier, since, until)
-    with request.app.state.stats_lock:
-        conn = _stats_conn(request)
+        return _range_grouped(request, "device", range_, tier)
+    with _stats_reader(request) as conn:
         return {"tier": tier,
                 "rows": stats_store.read_grouped(conn, tier, "device",
                                                  since, until),
@@ -288,9 +396,8 @@ def stats_chains(request: Request, tier: Tier = "minute",
     """Per-chain totals. With `range`, window-complete across tiers; with
     only `tier`, the single tier table (unchanged since v1.8.0)."""
     if range_ is not None:
-        return _range_grouped(request, "chain", range_, tier, since, until)
-    with request.app.state.stats_lock:
-        conn = _stats_conn(request)
+        return _range_grouped(request, "chain", range_, tier)
+    with _stats_reader(request) as conn:
         return {"tier": tier,
                 "rows": stats_store.read_grouped(conn, tier, "chain",
                                                  since, until),
@@ -300,33 +407,43 @@ def stats_chains(request: Request, tier: Tier = "minute",
 @router.get("/v1/stats/domains")
 def stats_domains(request: Request, since: str = "",
                   until: str = "") -> dict:
-    with request.app.state.stats_lock:
-        conn = _stats_conn(request)
+    with _stats_reader(request) as conn:
         return {"enabled": config.stats_domains(),
                 "rows": stats_store.read_domains(conn, since, until)}
 
 
-@router.get("/v1/stats/timeline")
+@router.get("/v1/stats/timeline", responses=csv_export.CSV_RESPONSES)
 def stats_timeline(request: Request, tier: Tier = "minute",
                    device: str = "", since: str = "",
-                   until: str = "", range_: RangeParam = None) -> dict:
+                   until: str = "", range_: RangeParam = None,
+                   fmt: csv_export.FormatParam = "json") -> dict:
     """Bucket rows, optionally for one device. With `range`, window-complete
     across tiers at the resolution (local days synthesised under the current
     framing for the not-yet-rolled tail, stamped like stored ones); with
-    only `tier`, the single tier table (unchanged since v1.8.0)."""
+    only `tier`, the single tier table (unchanged since v1.8.0). A bucket
+    that moved no bytes is not listed. `format=csv` (#98) exports the rows:
+    `bucket,up,down`, plus `bucket_tz,day_boundary` at day resolution."""
     if range_ is not None:
-        resolution, start, frame = _range_args(request, range_, tier, since,
-                                               until)
-        with request.app.state.stats_lock:
-            conn = _stats_conn(request)
-            return {"tier": resolution, "device": device,
+        resolution, start, frame = _range_args(request, range_, tier)
+        with _stats_reader(request) as conn:
+            body = {"tier": resolution, "device": device,
                     "rows": stats_store.read_window_timeline(
                         conn, resolution, device, start, frame)}
-    with request.app.state.stats_lock:
-        conn = _stats_conn(request)
-        return {"tier": tier, "device": device,
-                "rows": stats_store.read_timeline(conn, tier, device,
-                                                  since, until)}
+    else:
+        with _stats_reader(request) as conn:
+            body = {"tier": tier, "device": device,
+                    "rows": stats_store.read_timeline(conn, tier, device,
+                                                      since, until)}
+    if fmt == "csv":
+        day = body["tier"] == "day"
+        header = ["bucket", "up", "down"] + (
+            ["bucket_tz", "day_boundary"] if day else [])
+        rows = [[r["bucket"], r["up"], r["down"]]
+                + ([r["bucket_tz"], r["day_boundary"]] if day else [])
+                for r in body["rows"]]
+        return csv_export.response(
+            header, rows, f"stats-timeline-{range_ or tier}.csv")
+    return body
 
 
 @router.get("/v1/stats/coverage")
@@ -348,36 +465,103 @@ def stats_coverage(request: Request, since: str = "", until: str = "") -> dict:
     No hostname is stored to produce this: the counters are hostname-free
     by construction, so the report needs none of the privacy surface the
     opt-in domain table carries.
+
+    `dictionary` (#97) is a second partition of the same window: what the
+    category dictionary named - `app` (its app-level id kept, only with
+    PANEL_STATS_DOMAINS on), `coarse` (only the coarse category kept),
+    `unattributed` (no answer: no hostname, or one it does not know) and
+    `no_dictionary` (counted before v1.12, or by an older image). Each
+    partition sums to 100 on its own; `dictionary.total` is the bytes the
+    category dimension still holds per hour in the window, from
+    `dictionary.oldest_bucket` on.
     """
-    with request.app.state.stats_lock:
-        conn = _stats_conn(request)
-        return stats_store.coverage_report(conn, since, until)
+    with _stats_reader(request) as conn:
+        return stats_store.coverage_report(
+            conn, since, until, app_ids_kept=config.stats_domains())
+
+
+@router.get("/v1/stats/self")
+def stats_self(request: Request, since: str = "", until: str = "") -> dict:
+    """The collector's own gauges (#96), one row per maintenance pass
+    (about a minute), kept 7 days: poll duration (ms, the mean of the last
+    30 polls), connections in the last snapshot, failed polls since the
+    panel started, seconds since the last good poll, stats.db bytes, and
+    mihomo's in-use memory (MiB). `null` is "not measured", never 0.
+    `since`/`until` compare against the minute keys (`YYYY-MM-DDTHH:MM`, UTC)
+    as strings, like every stats read: `until=2026-10-16` ends BEFORE that
+    day; `until=2026-10-16T23:59` includes it."""
+    with _stats_reader(request) as conn:
+        return {"retention_days": stats_store.DOMAIN_RETENTION_DAYS,
+                "rows": stats_store.read_self(conn, since, until)}
 
 
 @router.get("/v1/stats/gaps")
-def stats_gaps(request: Request, limit: int = 100) -> dict:
-    with request.app.state.stats_lock:
-        conn = _stats_conn(request)
-        return {"rows": stats_store.read_gaps(conn, limit)}
+def stats_gaps(request: Request, limit: int = 100, since: str = "",
+               until: str = "") -> dict:
+    """The newest `limit` collection gaps (1-1000). With `since`/`until`
+    (#98), only the gaps that overlap that window: ended at or after
+    `since`, started at or before `until` - compared as strings with the
+    stored `YYYY-MM-DDTHH:MM:SSZ` stamps, where a shorter key names its
+    whole bucket on either side."""
+    with _stats_reader(request) as conn:
+        return {"rows": stats_store.read_gaps(conn, limit, since, until)}
 
 
 @router.post("/v1/stats/purge",
              dependencies=[Depends(require_mutation_auth)])
-def stats_purge(request: Request) -> dict:
-    """Clears every visible stats surface (tiers, domains, gap history)
-    but preserves conn_baseline + the poll stamp - dropping baselines
-    would make still-open connections re-contribute their pre-purge
-    cumulative. The POLICY audit lives in policy.db and is untouched -
-    it records this purge like any other mutation."""
+def stats_purge(request: Request,
+                scope: Annotated[StatsPurge | None, Body()] = None) -> dict:
+    """Clears every visible stats surface (tiers, dimensions, the seven-day
+    tables, gap history) but preserves conn_baseline + the poll stamp -
+    dropping baselines would make still-open connections re-contribute
+    their pre-purge cumulative. An optional body narrows it to one
+    `device`, some `tables`, rows `before` a moment, or any combination;
+    no body (or `{}`) clears everything, as it always has. `rows` counts
+    what each table lost. The POLICY audit lives in policy.db and is
+    untouched - it records this purge, with its scope, like any other
+    mutation. A purge that touches the device tier or a dimension table
+    also resets the `/metrics` byte counters (#99), so purged traffic is
+    not served on as if it were still held. The bare call (no body, or
+    `{}`) also clears the stored subscription quota (#102); every scoped
+    form leaves it."""
+    scope = scope or StatsPurge()
     with request.app.state.stats_lock:
         conn = _stats_conn(request)
-        stats_store.purge_stats(conn)
+        rows = stats_store.purge_stats(
+            conn, device=scope.device or "", tables=scope.tables,
+            before=scope.before or "")
+        collector = getattr(request.app.state, "collector", None)
+        mirrored = {"stats_minute", stats_store.MINUTE_TABLE, "stats_hour",
+                    "stats_day", *stats_store.DIMENSION_TABLES}
+        if collector is not None and (scope.tables is None
+                                      or mirrored & set(scope.tables)):
+            collector.counters.reset()
+        sampler = getattr(request.app.state, "sampler", None)
+        if sampler is not None and scope.tables is None and not scope.device \
+                and not scope.before:
+            sampler.forget_quota()
+        # the delay history has no device; any purge that took it leaves a
+        # floor, or the next sample writes mihomo's older tests straight back
+        if sampler is not None and not scope.device and (
+                scope.tables is None or stats_store.NODE_DELAY_TABLE in scope.tables):
+            sampler.forget_delays(_purge_floor(scope.before))
+    details = " ".join(
+        f"{key}={','.join(val) if isinstance(val, list) else val}"
+        for key, val in sorted(scope.model_dump(exclude_none=True).items()))
     with request.app.state.mutex:
         pconn = getattr(request.app.state, "conn", None)
         if pconn is not None:
             append_audit(pconn, action="stats-purge",
-                         requester=_requester(request))
-    return {"purged": True}
+                         requester=_requester(request), details=details)
+    return {"purged": True, "rows": rows}
+
+
+def _purge_floor(before: str) -> str:
+    """The moment a delay-history purge cleared up to, as a test stamp: its
+    `before` (a key prefix, padded to the second), else now."""
+    if before:
+        return (before + "0000-00-00T00:00:00Z"[len(before):])
+    return _utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _band_entries() -> list:

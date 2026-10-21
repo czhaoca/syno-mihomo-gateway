@@ -41,6 +41,7 @@ DSM-scheduled job keeps everything current and safely self-healing.
 | [Operations](docs/operations.md) | runbook: scheduling, dry-run, kill-switch, logs, notifications, rollback |
 | [CLI Reference](docs/cli.md) | `gateway.sh` verbs, options, guardrails, exit codes (generated from `scripts/cli/spec.yaml`) |
 | [Gateway Panel](docs/panel.md) | per-device policy (full-tunnel/full-direct/default), traffic stats, the UI/CLI/API surfaces, security model |
+| [Gateway Insights](docs/insights.md) | the panel's analytics view: scopes (overview, client, category, host), drilldowns and deep links, top lists, reading the chart, honesty notes |
 | [Panel API](docs/panel-api.md) | the panel's HTTP surface (generated from `app/openapi.json`, additive-only `/v1`) |
 | [Troubleshooting](docs/troubleshooting.md) | FAQ + exit codes + concrete failure fixes |
 | [Development](docs/development.md) | internals (scripts, renderer, CI), coding rules, how to extend |

@@ -1,6 +1,6 @@
 """Operator settings - defaults in code, the table holds only overrides.
 
-The storage shape mirrors `stats_meta` (stats.py:61-64), the existing k/v
+The storage shape mirrors `stats_meta` (app/store/stats/schema.py), the existing k/v
 idiom in this codebase. The RESOLUTION does not: `stats_meta` answers with
 whatever was written, whereas an unset key here resolves through
 `SPEC[key].default()`. That difference is the whole design. If first boot
@@ -15,6 +15,7 @@ setting is one SPEC entry rather than a new endpoint.
 import re
 import sqlite3
 import zoneinfo
+from contextlib import suppress
 from datetime import UTC, datetime
 
 from app import config
@@ -115,11 +116,15 @@ def _check_day_boundary(raw: str) -> str:
 #
 # `48h` is here rather than dropped because it is the only window the minute
 # tier covers (config.stats_minute_hours), and retiring it would have taken
-# a shipped capability out of the panel under cover of an IA change.
+# a shipped capability out of the panel under cover of an IA change. `24h`
+# (#101) is the same minute-resolution read over the last day - the window
+# Gateway Insights opens a "what just happened" question on. An older panel
+# reading a stored `24h` lands on its own default: reads never re-validate,
+# and its view normalises a range it does not know.
 # `daily` reads the day tier, whose rows carry their own framing (#76) - a
 # rolling "today" would have been a fourth spelling of a window the hour
 # tier already answers.
-STATS_RANGES = ("48h", "7d", "30d", "daily")
+STATS_RANGES = ("24h", "48h", "7d", "30d", "daily")
 DEFAULT_STATS_RANGE = "7d"
 
 
@@ -136,7 +141,7 @@ def _check_stats_range(raw: str) -> str:
 
 
 class _Setting:
-    __slots__ = ("default", "check", "description")
+    __slots__ = ("check", "default", "description")
 
     def __init__(self, default, check, description):
         self.default = default
@@ -161,7 +166,8 @@ SPEC = {
     "stats_default_range": _Setting(
         default=lambda: DEFAULT_STATS_RANGE,
         check=_check_stats_range,
-        description="Window the stats tab lands on (48h | 7d | 30d | daily). "
+        description="Window the Insights tab lands on (24h | 48h | 7d | 30d | "
+                    "daily). "
                     "The operator's own preference, not a bundle constant"),
 }
 
@@ -318,10 +324,8 @@ def apply_values(conn, values: dict, *, requester: str = "",
                 changed.append(key)
         conn.execute("COMMIT")
     except BaseException:
-        try:
+        with suppress(sqlite3.Error):
             conn.execute("ROLLBACK")
-        except sqlite3.Error:
-            pass
         raise
     return changed
 

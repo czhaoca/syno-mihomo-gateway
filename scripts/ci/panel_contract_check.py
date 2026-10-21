@@ -17,8 +17,9 @@ Live assertions (bare mode):
   * docs/panel-api.md matches a fresh render byte-for-byte;
   * the additive-only /v1 policy is stated in the spec's info.description
     (breaking = new version prefix + explicit owner acknowledgment);
-  * every path is /health or versioned under /v1 — an unversioned surface
-    could never honor the additive-only promise.
+  * every path is versioned under /v1 — an unversioned surface could never
+    honor the additive-only promise — or one of ROOT_PATHS, each admitted
+    for a stated reason.
 """
 
 import json
@@ -30,6 +31,14 @@ if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
 CONTRACT = REPO / "app" / "openapi.json"
+
+# The only unversioned paths, each with the reason it may live at the root.
+ROOT_PATHS = {
+    "/health": "the doctor and the release validator read it by this fixed "
+               "path, from every panel version",
+    "/metrics": "Prometheus scrapes the root /metrics by convention; it is "
+                "opt-in (PANEL_METRICS) and its label set is fixed by #99",
+}
 API_MD = REPO / "docs" / "panel-api.md"
 REGEN_CMD = "python3 scripts/ci/panel_contract_check.py --write"
 
@@ -54,7 +63,9 @@ def render_api_md(doc: dict) -> str:
         "",
         "Reads are open on the LAN; every mutation (POST/PATCH/DELETE) requires",
         "`Authorization: Bearer <PANEL_SECRET>` and is refused when the secret is",
-        "unset - fail closed. All responses are JSON. The base URL is",
+        "unset - fail closed. Responses are JSON unless an endpoint says",
+        "otherwise: the CSV exports (`format=csv`), the `/metrics` text",
+        "exposition and the `/v1/stats/live` event stream. The base URL is",
         "`http://<PANEL_IP>:<PANEL_PORT>` (default port 8090); prefer",
         "`gateway.sh policy` over raw calls for the policy surface.",
         "",
@@ -77,7 +88,34 @@ def render_api_md(doc: dict) -> str:
                 lines.append("Parameters: "
                              + ", ".join(f"`{p}`" for p in params))
                 lines.append("")
+            # an event stream's events are its schema, and no JSON schema
+            # can say them: such an operation carries its full description
+            if _streams(op):
+                lines.extend(_description(op))
     return "\n".join(lines).rstrip() + "\n"
+
+
+def _streams(op: dict) -> bool:
+    ok = (op.get("responses") or {}).get("200") or {}
+    return "text/event-stream" in (ok.get("content") or {})
+
+
+def _description(op: dict) -> list:
+    """The operation's description as markdown: its paragraphs, with an
+    indented line kept as code (FastAPI keeps a docstring's relative
+    indentation)."""
+    out = []
+    for line in (op.get("description") or "").strip().splitlines():
+        out.append(line.rstrip())
+    return [*out, ""] if out else []
+
+
+def path_problems(doc: dict) -> list:
+    """Every path that is neither under /v1 nor one of ROOT_PATHS."""
+    return [f"unversioned path {path!r}: every surface must live under /v1 "
+            f"(the additive-only contract) except {sorted(ROOT_PATHS)}"
+            for path in (doc.get("paths") or {})
+            if path not in ROOT_PATHS and not path.startswith("/v1/")]
 
 
 def main():
@@ -113,14 +151,12 @@ def main():
     if "additive-only" not in description:
         fail("the spec's info.description must state the additive-only /v1 "
              "policy (breaking = new version prefix + owner acknowledgment)")
-    for path in (doc.get("paths") or {}):
-        if path != "/health" and not path.startswith("/v1/"):
-            fail(f"unversioned path {path!r}: every surface except /health "
-                 f"must live under /v1 (the additive-only contract)")
+    for problem in path_problems(doc):
+        fail(problem)
 
     print("OK: panel contract is fresh - app/openapi.json + docs/panel-api.md "
           "regenerate byte-identical, the additive-only /v1 policy is stated, "
-          "and every path is /health or /v1-versioned.")
+          f"and every path is /v1-versioned or one of {sorted(ROOT_PATHS)}.")
 
 
 if __name__ == "__main__":

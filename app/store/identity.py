@@ -14,6 +14,7 @@ name to a whole subnet.
 """
 
 import sqlite3
+from contextlib import suppress
 from datetime import UTC, datetime
 
 from app.store.audit import append_audit
@@ -48,9 +49,10 @@ def check_source(raw: str) -> str:
 def host_key(raw: str) -> str:
     """The canonical /32 for RAW, or ValidationError.
 
-    Rejects everything that is not a single host - including the literal
-    `"unknown"` that `stats.py` substitutes when mihomo reports no source
-    IP, which must never become an aliasable pseudo-device.
+    Rejects everything that is not a single host - including the literals
+    `"unknown"` and `"gateway"` (mihomo's own traffic, since #95) that the
+    stats tables substitute when mihomo reports no source IP, which must
+    never become aliasable pseudo-devices.
     """
     canonical = canonicalize(raw)
     if not canonical.endswith("/32"):
@@ -85,8 +87,9 @@ def resolve(conn) -> dict:
     listing, rather than a lookup per row.
 
     The keys are /32 CIDRs, matching `devices.cidr`. They do NOT match the
-    stats tables, which key on the bare `metadata.sourceIP` (stats.py:120);
-    a stats-side join must normalize through `host_key` first. Handing back
+    stats tables, which key on the bare `metadata.sourceIP` (`flush_poll`,
+    app/store/stats/ingest.py); a stats-side join must normalize through
+    `host_key` first. Handing back
     the raw column rather than a bare IP keeps that mismatch visible at the
     call site instead of producing silent misses.
     """
@@ -140,10 +143,8 @@ def set_alias(conn, raw: str, alias: str, *, requester: str = "",
                                          alias, HAND))
         conn.execute("COMMIT")
     except BaseException:
-        try:
+        with suppress(sqlite3.Error):
             conn.execute("ROLLBACK")
-        except sqlite3.Error:
-            pass
         raise
     return {"ip": key.removesuffix("/32"), "alias": alias, "source": HAND}
 
@@ -234,10 +235,8 @@ def import_aliases(conn, entries, *, requester: str = "",
                                         alias, source))
             conn.execute("COMMIT")
         except BaseException:
-            try:
+            with suppress(sqlite3.Error):
                 conn.execute("ROLLBACK")
-            except sqlite3.Error:
-                pass
             raise
 
         row = {"ip": key.removesuffix("/32"), "outcome": outcome,
@@ -283,9 +282,7 @@ def remove_alias(conn, raw: str, *, requester: str = "",
                                              before["source"]))
         conn.execute("COMMIT")
     except BaseException:
-        try:
+        with suppress(sqlite3.Error):
             conn.execute("ROLLBACK")
-        except sqlite3.Error:
-            pass
         raise
     return removed

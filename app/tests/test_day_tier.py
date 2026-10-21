@@ -134,7 +134,7 @@ def test_a_populated_v180_database_migrates_with_every_number_intact(tmp_path,
     before_day = [tuple(r) for r in old.execute(
         "SELECT bucket, device, chain, up, down FROM stats_day ORDER BY bucket")]
     before_hour = [tuple(r) for r in old.execute(
-        "SELECT * FROM stats_hour ORDER BY bucket")]
+        "SELECT bucket, device, chain, up, down FROM stats_hour ORDER BY bucket")]
     old.commit()
     old.close()
 
@@ -150,9 +150,11 @@ def test_a_populated_v180_database_migrates_with_every_number_intact(tmp_path,
         stamps = {(r[0], r[1]) for r in new.execute(
             "SELECT bucket_tz, day_boundary FROM stats_day")}
         assert stamps == {("UTC", "00:00")}
-        # the untouched tier is untouched
+        # the untouched tier keeps every shipped number (later additive
+        # migrations may add columns beside them - v4's facts read 0)
         assert [tuple(r) for r in new.execute(
-            "SELECT * FROM stats_hour ORDER BY bucket")] == before_hour
+            "SELECT bucket, device, chain, up, down FROM stats_hour "
+            "ORDER BY bucket")] == before_hour
         # auto_vacuum must survive the rebuild or enforce_cap's
         # incremental_vacuum silently stops reclaiming pages
         assert new.execute("PRAGMA auto_vacuum").fetchone()[0] == 2
@@ -310,10 +312,13 @@ def test_minute_and_hour_stay_utc_whatever_the_day_framing(sconn):
     """DEC-4 is explicit: only the day tier is local-keyed. A change that
     localised the hour bucket would silently re-key the tier the API
     charts by default."""
-    sconn.execute(
-        "INSERT INTO stats_minute (bucket, device, chain, up, down) "
-        "VALUES ('2026-07-29T18:30', '192.0.2.20', 'X', 1, 10)")
-    # `now` is chosen so the minute row rolls (minute retention 48h) while
+    from app.tests.conftest import conn_fixture
+    stats_store.flush_poll(sconn, [conn_fixture("c1", "192.0.2.20", 1, 10)],
+                           "2026-07-29T18:30:00Z", domains_enabled=False,
+                           gap_threshold_s=30)
+    assert [r[0] for r in sconn.execute(
+        "SELECT bucket FROM stats_minute_v5")] == ["2026-07-29T18:30"]
+    # `now` is chosen so the minute row expires (minute retention 48h) while
     # the hour row is still inside its own 90-day window - otherwise the
     # hour is rolled onward and deleted, and the assertion tests nothing.
     stats_store.rollup(sconn, "2026-08-05T00:00:00Z", day=frame())

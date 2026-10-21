@@ -499,7 +499,11 @@ json_output:
     companion_health is ok|degraded|down|absent for the gateway-panel
     companion container - absent (not deployed) is silent, down/degraded
     warn only: routing is unaffected because the provider files fail
-    static, but policy edits and stats collection are unavailable;
+    static; down means policy edits and stats collection are unavailable,
+    degraded means one of them is impaired - the policy store, a broken or
+    stale collector, a poll slower than half its interval, stats.db at
+    90% or more of its cap, or mihomo memory over PANEL_MIHOMO_MEM_WARN_MB
+    (the human detail names which);
     policy_parity is ok|drift|unverified for the panel's own DB->provider-
     file->mihomo apply verification (read via the panel /health) - drift
     is an ERROR: the last policy change is saved but did NOT reach mihomo
@@ -557,7 +561,10 @@ json_output:
     providers/dyn-full-tunnel.txt 的动态全隧道来源）；
     companion_health 针对网关面板伴随容器，取值 ok|degraded|down|absent
     ——absent（未部署）为静默，down/degraded 仅告警：路由不受影响
-    （provider 文件失败即静态保持），但策略编辑与统计采集不可用；
+    （provider 文件失败即静态保持）；down 表示策略编辑与统计采集不可用，
+    degraded 表示其中之一受损——策略库、采集器故障或滞后、轮询慢于间隔的
+    一半、stats.db 达到上限的 90% 以上，或 mihomo 内存超过
+    PANEL_MIHOMO_MEM_WARN_MB（人类可读的详情会指明是哪一项）；
     policy_parity 针对面板自身的 数据库→provider 文件→mihomo 应用核对
     （经面板 /health 读取），取值 ok|drift|unverified——drift 为 ERROR：
     最近一次策略变更已保存但并未到达 mihomo（请在面板中重新应用；持久的

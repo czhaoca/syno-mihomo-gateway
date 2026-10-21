@@ -21,6 +21,7 @@ import tempfile
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -35,7 +36,12 @@ PROVIDER_FILES = {
 }
 
 _state = {"fail_puts": False, "webhooks": [], "providers_dir": None,
-          "connections": []}
+          "connections": [],
+          # #102: the /traffic frames (a stream is held open after them until
+          # /_control/traffic/end), and the /group, /proxies/<name> and
+          # /providers/proxies documents - all set through /_control
+          "traffic": [], "traffic_end": threading.Event(), "traffic_opened": 0,
+          "groups": [], "histories": {}, "proxy_providers": {}}
 
 
 class FakeController(BaseHTTPRequestHandler):
@@ -76,7 +82,47 @@ class FakeController(BaseHTTPRequestHandler):
             self._reply(200, json.dumps(
                 {"connections": _state["connections"]}).encode())
             return
+        if self.path == "/traffic":
+            self._traffic()
+            return
+        if self.path == "/group":
+            self._reply(200, json.dumps({"proxies": _state["groups"]}).encode())
+            return
+        if self.path.startswith("/proxies/"):
+            name = urllib.parse.unquote(self.path[len("/proxies/"):])
+            if name not in _state["histories"]:
+                self._reply(404, b'{"message":"resource not found"}')
+                return
+            self._reply(200, json.dumps(
+                {"name": name, "history": _state["histories"][name]}).encode())
+            return
+        if self.path == "/providers/proxies":
+            self._reply(200, json.dumps(
+                {"providers": _state["proxy_providers"]}).encode())
+            return
         self._reply(404)
+
+    def _traffic(self):
+        """mihomo's /traffic without a WebSocket upgrade: chunked JSON lines.
+        The configured frames go out at once, then the stream is HELD open -
+        no timer - until /_control/traffic/end ends it."""
+        _state["traffic_opened"] += 1
+        end = _state["traffic_end"]
+        self.protocol_version = "HTTP/1.1"
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Transfer-Encoding", "chunked")
+        self.end_headers()
+        try:
+            for frame in _state["traffic"]:
+                line = (json.dumps(frame) + "\n").encode()
+                self.wfile.write(f"{len(line):x}\r\n".encode() + line + b"\r\n")
+            self.wfile.flush()
+            end.wait()
+            self.wfile.write(b"0\r\n\r\n")
+        except OSError:
+            pass
+        self.close_connection = True
 
     def do_POST(self):
         length = int(self.headers.get("Content-Length") or 0)
@@ -101,6 +147,23 @@ class FakeController(BaseHTTPRequestHandler):
                 _state["connections"] = json.loads(body)
             except ValueError:
                 _state["connections"] = []
+            self._reply(200)
+            return
+        if self.path == "/_control/traffic":
+            _state["traffic"] = json.loads(body or b"[]")
+            self._reply(200)
+            return
+        if self.path == "/_control/traffic/end":
+            # end every open stream; later ones are held open again
+            ending, _state["traffic_end"] = _state["traffic_end"], threading.Event()
+            ending.set()
+            self._reply(200)
+            return
+        if self.path == "/_control/samples":
+            doc = json.loads(body or b"{}")
+            _state["groups"] = doc.get("groups", [])
+            _state["histories"] = doc.get("histories", {})
+            _state["proxy_providers"] = doc.get("providers", {})
             self._reply(200)
             return
         self._reply(404)
@@ -276,6 +339,71 @@ def run_scenario(app_port: int, providers: Path, marker: Path,
            f"collector health: {health}")
     expect(health["stats_db_bytes"] > 0, f"db bytes: {health}")
 
+    # 10b) the sampler (#102) read the fake controller at start: the
+    #      selected node's newest test per group, and the quota - five
+    #      fields, never the provider's URL or nodes
+    # the start-time sample runs on the collector's side thread: wait for it
+    # rather than race it
+    status, delay = 0, {"groups": []}
+    for _ in range(40):
+        status, delay = api("GET", app_port, "/v1/stats/node-delay?range=24h")
+        _qs, quota = api("GET", app_port, "/v1/stats/quota")
+        if delay.get("groups") and quota.get("state") == "ok":
+            break
+        time.sleep(0.25)
+    expect(status == 200, f"node-delay read failed: {status}")
+    auto = next((g for g in delay["groups"] if g["group"] == "Auto"), None)
+    expect(auto is not None and auto["latest"] == {
+        "node": "JP 01", "tested_at": "2026-10-16T12:00:00Z", "delay_ms": 40},
+        f"the selected node's test must be stored: {delay}")
+    expect(all(g["group"] != "GLOBAL" for g in delay["groups"]),
+           "GLOBAL is no routing group in rule mode")
+    status, quota = api("GET", app_port, "/v1/stats/quota")
+    expect(status == 200 and quota["state"] == "ok", f"quota read: {quota}")
+    expect(quota["providers"] == [{
+        "provider": "my-airport", "upload": 1024, "download": 4096,
+        "total": None, "expire": 1790000000, "updatedAt": "2026-10-16T11:30:00Z"}],
+        f"the quota must be the five fields, zero-fill as null: {quota}")
+    expect("sub.example.com" not in json.dumps(quota),
+           "the provider URL must never be served")
+
+    # 10c) the live relay: nothing reads the stream until a viewer comes,
+    #      the viewer gets the SSE events, and the last one leaving stops it
+    expect(_state["traffic_opened"] == 0,
+           "the relay must not read /traffic while nobody watches")
+    live = urllib.request.urlopen(urllib.request.Request(
+        f"http://127.0.0.1:{app_port}/v1/stats/live"), timeout=10)
+    try:
+        expect(live.headers.get("Content-Type", "").startswith("text/event-stream"),
+               "the live read must be an event stream")
+        lines = []
+        while not any(ln.startswith("data: ") for ln in lines):
+            line = live.readline()
+            expect(line != b"", f"the event stream ended early: {lines}")
+            lines.append(line.decode().strip())
+        expect(lines[0] == "retry: 5000", f"the stream must open with retry: {lines}")
+        frame = json.loads(next(ln for ln in lines if ln.startswith("data: "))[6:])
+        expect((frame["up_bps"], frame["down_bps"]) == (1200, 56000)
+               and frame["ts"].endswith("Z"), f"the relayed frame: {frame}")
+        expect(_state["traffic_opened"] == 1, "one upstream for the viewer")
+        _s, health = api("GET", app_port, "/health")
+        expect(health.get("live_viewers") == 1, f"/health live_viewers: {health}")
+    finally:
+        live.close()
+    # the viewer left: wait until the panel says so, then end the upstream
+    # stream - a relay still running would reconnect within its 1 s backoff
+    for _ in range(40):
+        _s, health = api("GET", app_port, "/health")
+        if health.get("live_viewers") == 0:
+            break
+        time.sleep(0.25)
+    expect(health.get("live_viewers") == 0, "the viewer's slot must be freed")
+    api("POST", ctl_port, "/_control/traffic/end")
+    time.sleep(2.5)
+    expect(_state["traffic_opened"] == 1,
+           f"the relay must stop after the last viewer, not reconnect "
+           f"(opened {_state['traffic_opened']}x)")
+
     # 11) purge: token-gated; clears stats but never the policy audit.
     #     The connections STAY LIVE across the purge on purpose - a
     #     preserved baseline means an unchanged open connection must NOT
@@ -294,6 +422,12 @@ def run_scenario(app_port: int, providers: Path, marker: Path,
     actions = [e["action"] for e in body["entries"]]
     expect("add" in actions and "stats-purge" in actions,
            f"policy audit survives the purge and records it: {actions}")
+
+    # 11b) the bare purge also took the node delay history and the quota
+    _status, delay = api("GET", app_port, "/v1/stats/node-delay?range=24h")
+    _status, quota = api("GET", app_port, "/v1/stats/quota")
+    expect(delay["groups"] == [] and quota["providers"] == [],
+           f"the bare purge must clear node delay and quota: {delay} {quota}")
 
     # 12) the UI (#66, React since #80) is served same-origin: root redirects
     #     into /ui/, the shell carries the A6 release marker, its assets point
@@ -338,6 +472,20 @@ def main() -> int:
         ctl_port = free_port()
         server = ThreadingHTTPServer(("127.0.0.1", ctl_port), FakeController)
         threading.Thread(target=server.serve_forever, daemon=True).start()
+        # #102: the sampler reads these at start (synthesised names only)
+        api("POST", ctl_port, "/_control/samples", {
+            "groups": [{"name": "GLOBAL", "type": "Selector", "now": "DIRECT"},
+                       {"name": "Auto", "type": "URLTest", "now": "JP 01"}],
+            "histories": {"JP 01": [{"time": "2026-10-16T20:00:00+08:00",
+                                     "delay": 40}]},
+            "providers": {"my-airport": {
+                "name": "my-airport", "vehicleType": "HTTP",
+                "updatedAt": "2026-10-16T11:30:00Z",
+                "url": "https://sub.example.com/link/planted-token",
+                "proxies": [{"name": "JP 01", "server": "192.0.2.80"}],
+                "subscriptionInfo": {"Upload": 1024, "Download": 4096,
+                                     "Total": 0, "Expire": 1790000000}}}})
+        api("POST", ctl_port, "/_control/traffic", [{"up": 1200, "down": 56000}])
 
         app_port = free_port()
         log_path = Path(td) / "app.log"
@@ -389,6 +537,7 @@ def main() -> int:
                     print(f"  {line}", file=sys.stderr)
                 return 1
             finally:
+                _state["traffic_end"].set()
                 server.shutdown()
                 if proc.poll() is None:
                     proc.terminate()
@@ -406,8 +555,12 @@ def main() -> int:
           "/v1/apply recovers to green; audit carries add/flip/remove with "
           "requester IPs; the 1s stats loop collects real /connections "
           "fixtures into device/chain rows + the opt-in domain table with "
-          "a fresh collector verdict in /health, and the token-gated purge "
-          "clears stats while the policy audit survives and records it.")
+          "a fresh collector verdict in /health; the sampler stores the "
+          "selected node's test per group and the five quota fields (never "
+          "the provider URL); the live relay reads /traffic only while a "
+          "viewer is connected, relays SSE frames and stops after the last; "
+          "and the token-gated purge clears stats, node delay and quota "
+          "while the policy audit survives and records it.")
     return 0
 
 

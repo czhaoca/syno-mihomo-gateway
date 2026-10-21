@@ -66,6 +66,9 @@ export REPO_ROOT GATEWAY_DATA_DIR ENV_FILE CONFIG_STATE_DIR SUBSCRIPTION_FILE
 # TUN_ENABLE=false to run as a plain (non-gateway) proxy.
 : "${TUN_ENABLE:=true}"
 : "${TUN_AUTO_REDIRECT:=false}"
+# doctor companion_health (#96): warn when the panel reports mihomo using
+# more than this many MB (0 = never warn). Warn-only; the panel never reads it.
+: "${PANEL_MIHOMO_MEM_WARN_MB:=512}"
 : "${LOCK_DIR:=/tmp/syno-mihomo-update.lock}"
 export TUN_ENABLE TUN_AUTO_REDIRECT
 

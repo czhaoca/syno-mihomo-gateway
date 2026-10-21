@@ -12,6 +12,7 @@ contract) — never a silent drift.
 """
 
 import os
+from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -59,19 +60,17 @@ class Reconciler:
         except OSError:
             pass  # the marker is best-effort; /health still carries the state
         if self.notifier is not None:
-            try:
+            # best-effort loud channel: a broken notifier must never kill
+            # fail-static
+            with suppress(Exception):
                 self.notifier("Gateway panel: policy apply FAILED",
                               f"{reason} - device policy on the gateway may "
                               f"be stale; see /health and the "
                               f"panel-apply-failed marker in the data dir")
-            except Exception:  # noqa: BLE001 - best-effort loud channel:
-                pass  # a broken notifier must never kill fail-static
 
     def _clear_marker(self) -> None:
-        try:
+        with suppress(OSError):
             self.marker_path.unlink(missing_ok=True)
-        except OSError:
-            pass
 
     # -- the apply loop -------------------------------------------------------
     def _write_provider(self, filename: str, content: str) -> None:
@@ -99,10 +98,11 @@ class Reconciler:
         except MihomoError as exc:
             self._fail(f"controller refresh failed: {exc}")
             return False
-        except Exception as exc:  # noqa: BLE001 - last-resort net: apply()
-            # is called unguarded at every boot and mutation; an exception
-            # class the client failed to wrap must still degrade to the
-            # loud fail-static path, never crash the lifespan.
+        except Exception as exc:
+            # last-resort net: apply() is called unguarded at every boot and
+            # mutation; an exception class the client failed to wrap must
+            # still degrade to the loud fail-static path, never crash the
+            # lifespan.
             self._fail(f"controller refresh failed "
                        f"({exc.__class__.__name__}): {exc}")
             return False
@@ -111,7 +111,7 @@ class Reconciler:
         except MihomoError as exc:
             self._fail(f"controller read-back failed: {exc}")
             return False
-        except Exception as exc:  # noqa: BLE001 - same last-resort net
+        except Exception as exc:  # the same last-resort net
             self._fail(f"controller read-back failed "
                        f"({exc.__class__.__name__}): {exc}")
             return False

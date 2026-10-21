@@ -265,16 +265,25 @@ def test_no_new_retention_knob_was_introduced(sconn):
     assert stats_store.DOMAIN_RETENTION_DAYS == 7
 
 
-def test_coverage_is_drained_late_by_the_cap_not_before_the_day_tier(sconn):
-    """`enforce_cap` prunes data-age-first and eats the DAY tier first.
-    A 7-day-bounded table belongs beside stats_domain at the END, or the
-    cap would destroy long-term history to make room for a week of
-    counters."""
-    order = [name for name, _table, _col in stats_store._CAP_TIERS]
-    assert order.index("coverage") > order.index("day")
-    # strictly after the other 7-day table too, matching the real tuple -
-    # a >= here would pass against an ordering the code does not have
-    assert order.index("coverage") > order.index("domain")
+def test_coverage_is_drained_by_age_not_before_older_history(sconn,
+                                                           monkeypatch):
+    """`enforce_cap` prunes by data age across every table (#95, DEC-C), so
+    a 7-day-bounded table never costs long-term history OLDER than it - the
+    worry this test was written for - and goes first only on an exact tie
+    (test_cap_invariant.py holds the general property)."""
+    from app.store.stats import maintain
+    monkeypatch.setattr(maintain, "_CAP_BATCH", 1)  # one age group a batch
+    sconn.execute("INSERT INTO stats_day (bucket, device, chain, up, down) "
+                  "VALUES ('2026-01-01', '192.0.2.20', 'X', 1, 1)")
+    push(sconn, [flow("1")])
+    total = lambda: sum(sconn.execute(  # noqa: E731
+        f"SELECT COUNT(*) FROM {t}").fetchone()[0]
+        for _n, t, *_ in stats_store._CAP_TIERS)
+    keep = total() - 1
+    monkeypatch.setattr(maintain, "_db_bytes",
+                        lambda _p: 2 * 1024 * 1024 if total() > keep else 0)
+    pruned = stats_store.enforce_cap(sconn, "unused", 1)
+    assert pruned["day"] == 1 and pruned["coverage"] == 0, pruned
 
 
 def test_the_token_gated_purge_clears_coverage_too(sconn, client, panel_env):
@@ -294,9 +303,12 @@ def test_the_token_gated_purge_clears_coverage_too(sconn, client, panel_env):
 
 
 def test_coverage_is_stats_migration_three(sconn):
+    # the coverage table is migration 3; later migrations (v4: the #94
+    # per-bucket facts) stack on top without renumbering it
     versions = [v for v, _ in STATS_MIGRATIONS]
-    assert versions == [1, 2, 3], versions
-    assert sconn.execute("PRAGMA user_version").fetchone()[0] == 3
+    assert versions[:3] == [1, 2, 3], versions
+    assert "CREATE TABLE stats_coverage" in STATS_MIGRATIONS[2][1]
+    assert sconn.execute("PRAGMA user_version").fetchone()[0] == versions[-1]
 
 
 def test_the_migration_leaves_every_shipped_stats_table_untouched(sconn):

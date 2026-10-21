@@ -1324,6 +1324,63 @@ if [ "$_fp_run" = 1 ]; then
     && [ "$_jrc" = 0 ] && [ "$_hrc" = 0 ] \
     && ok || fail "companion-healthy parity (json=$_jrc human=$_hrc)"
 
+  # collector telemetry (#96): the doctor judges ONLY numbers the panel
+  # reports (its interval + cap travel in /health) and warns - value
+  # `degraded`, rc 2, never the error class - on a stale collector, a mean
+  # poll slower than half the interval, stats.db >= 90 % of the cap, and
+  # mihomo memory over PANEL_MIHOMO_MEM_WARN_MB. Positive AND negative
+  # control for each; a key an older panel does not send is skipped.
+  _tel='"collector_lag_s":1,"collector_poll_ms":40,"collector_conns":12,"collector_failed_polls":0,"collector_interval_s":2,"stats_cap_mb":512,"stats_db_growth_mb_day":1.5,"mihomo_mem_mb":137,"mihomo_version":"v1.19.32"'
+  _hbase='"db_ok":true,"parity":"ok","last_apply":"2026-07-23T00:00:00Z","marker":false,"collector_last_ts":"2026-07-23T00:00:00Z","dashboard_port":8080'
+  tel_case() {  # NAME WANT_VALUE WANT_RC DETAIL_GREP HEALTH
+    FAKE_PANEL_HEALTH="$5"
+    export FAKE_PANEL_HEALTH
+    dpar
+    if jval companion_health "$2" && [ "$_jrc" = "$3" ] && [ "$_hrc" = "$3" ] \
+       && { [ -z "$4" ] || grep -q "$4" "$TMP/derr"; }; then
+      ok
+    else
+      fail "telemetry $1 (json=$_jrc human=$_hrc)"
+    fi
+  }
+  tel_case within-bounds ok 0 '' \
+    "{$_hbase,\"collector\":\"ok\",\"stats_db_bytes\":4096,$_tel}"
+  tel_case stale degraded 2 'stale - no successful poll for 90s' \
+    "{$_hbase,\"collector\":\"stale\",\"stats_db_bytes\":4096,$(printf '%s' "$_tel" | sed 's/"collector_lag_s":1/"collector_lag_s":90/')}"
+  tel_case stale-never-polled degraded 2 'since the panel started' \
+    "{$(printf '%s' "$_hbase" | sed 's/"collector_last_ts":"2026-07-23T00:00:00Z"/"collector_last_ts":null/'),\"collector\":\"stale\",\"stats_db_bytes\":4096,$(printf '%s' "$_tel" | sed 's/"collector_lag_s":1/"collector_lag_s":null/')}"
+  # an older panel sends no lag: the last poll it does send is named
+  tel_case stale-older-panel degraded 2 'no successful poll since 2026-07-23T00:00:00Z' \
+    "{$_hbase,\"collector\":\"stale\",\"stats_db_bytes\":4096}"
+  tel_case slow-poll degraded 2 '1200 ms on average' \
+    "{$_hbase,\"collector\":\"ok\",\"stats_db_bytes\":4096,$(printf '%s' "$_tel" | sed 's/"collector_poll_ms":40/"collector_poll_ms":1200/')}"
+  tel_case poll-at-half ok 0 '' \
+    "{$_hbase,\"collector\":\"ok\",\"stats_db_bytes\":4096,$(printf '%s' "$_tel" | sed 's/"collector_poll_ms":40/"collector_poll_ms":1000/')}"
+  tel_case cap-90 degraded 2 '90% of its 512 MB cap' \
+    "{$_hbase,\"collector\":\"ok\",\"stats_db_bytes\":483183821,$_tel}"
+  tel_case cap-89 ok 0 '' \
+    "{$_hbase,\"collector\":\"ok\",\"stats_db_bytes\":477815111,$_tel}"
+  tel_case cap-off ok 0 '' \
+    "{$_hbase,\"collector\":\"ok\",\"stats_db_bytes\":483183821,$(printf '%s' "$_tel" | sed 's/"stats_cap_mb":512/"stats_cap_mb":0/')}"
+  tel_case mihomo-mem degraded 2 'mihomo uses 600 MB' \
+    "{$_hbase,\"collector\":\"ok\",\"stats_db_bytes\":4096,$(printf '%s' "$_tel" | sed 's/"mihomo_mem_mb":137/"mihomo_mem_mb":600/')}"
+  PANEL_MIHOMO_MEM_WARN_MB=0; export PANEL_MIHOMO_MEM_WARN_MB
+  tel_case mihomo-mem-knob-off ok 0 '' \
+    "{$_hbase,\"collector\":\"ok\",\"stats_db_bytes\":4096,$(printf '%s' "$_tel" | sed 's/"mihomo_mem_mb":137/"mihomo_mem_mb":600/')}"
+  PANEL_MIHOMO_MEM_WARN_MB=1024; export PANEL_MIHOMO_MEM_WARN_MB
+  tel_case mihomo-mem-under-knob ok 0 '' \
+    "{$_hbase,\"collector\":\"ok\",\"stats_db_bytes\":4096,$(printf '%s' "$_tel" | sed 's/"mihomo_mem_mb":137/"mihomo_mem_mb":600/')}"
+  unset PANEL_MIHOMO_MEM_WARN_MB
+  tel_case mihomo-mem-unknown ok 0 '' \
+    "{$_hbase,\"collector\":\"ok\",\"stats_db_bytes\":4096,$(printf '%s' "$_tel" | sed 's/"mihomo_mem_mb":137/"mihomo_mem_mb":null/')}"
+  # an older panel (no telemetry keys) is judged on what it does send
+  tel_case older-panel ok 0 '' \
+    "{$_hbase,\"collector\":\"ok\",\"stats_db_bytes\":483183821}"
+  # every condition at once: ONE record, every condition in its detail
+  tel_case combined degraded 2 'stale.*ms on average.*% of its.*mihomo uses' \
+    "{$_hbase,\"collector\":\"stale\",\"stats_db_bytes\":483183821,$(printf '%s' "$_tel" | sed 's/"collector_poll_ms":40/"collector_poll_ms":1200/; s/"mihomo_mem_mb":137/"mihomo_mem_mb":600/')}"
+  unset -f tel_case
+
   # panel container present but API dead -> companion down = WARN (routing
   # unaffected - provider files fail static), rc 2 in both modes
   FAKE_PANEL_EXEC_RC=1 FAKE_PANEL_HEALTH=''

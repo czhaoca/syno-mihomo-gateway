@@ -7,7 +7,7 @@
    why. A range the panel does not know falls back to the shipped default
    rather than issuing a query for a tier that does not exist. */
 
-export const RANGES = ["48h", "7d", "30d", "daily"];
+export const RANGES = ["24h", "48h", "7d", "30d", "daily"];
 export const DEFAULT_RANGE = "7d";
 
 /* The SERVER owns the window (#91). A `range=` read is computed from the
@@ -21,33 +21,73 @@ export function normalizeRange(value) {
   return RANGES.includes(value) ? value : DEFAULT_RANGE;
 }
 
-export function statsPath(base, range, extra = {}) {
-  const params = new URLSearchParams({ range: normalizeRange(range), ...extra });
-  return `${base}?${params.toString()}`;
+/* The resolution each preset reads at (app/store/stats/window.py
+   RANGE_SPECS). A scoped read may answer at a coarser one - the dimensions
+   keep no minute tier - and the answer's own `timeline.tier` then wins. */
+const RESOLUTION = { "24h": "minute", "48h": "minute", "7d": "hour",
+                     "30d": "hour", daily: "day" };
+
+export function resolutionOf(range) {
+  return RESOLUTION[normalizeRange(range)];
 }
 
-// Hours each preset looks back over - used ONLY for the coverage report,
-// which has no `range` parameter (attribution lives in one hour-keyed
-// table), so its `since` is still sent: truncated to the 13-char hour key
-// that table writes, because bucket keys are compared as strings.
-const COVERAGE_HOURS = { "48h": 48, "7d": 24 * 7, "30d": 24 * 30, daily: null };
+// How often a view of each resolution is re-read (#101 DEC-H): a bucket
+// finer than the cadence would change between reads unseen; one coarser
+// would be re-read for nothing.
+export const CADENCE_MS = { minute: 10_000, hour: 60_000, day: 300_000 };
+// the gateway widgets' reads (#103 DEC-D): node delay is sampled every
+// 300 s and the quota hourly, so neither is re-read more often than this
+export const WIDGET_CADENCE_MS = 300_000;
 
-export function coverageSince(range, now = new Date()) {
-  const hours = COVERAGE_HOURS[normalizeRange(range)];
-  if (hours === null) return "";
-  return new Date(now.getTime() - hours * 3600 * 1000).toISOString().slice(0, 13);
+/* Whether a read ELAPSED ms after the last one is due at CADENCE ms. The
+   shell's tick fires 10 s after the previous one PLUS that tick's /health
+   round trip, so ticks drift by a few ms either way: compared exactly, a
+   tick a hair early would skip a due minute read and leave a 20 s hole.
+   Half a tick of slack makes "due" mean "this tick or later". */
+const TICK_SLACK_MS = 5_000;
+
+export function isDue(elapsed, cadence) {
+  return elapsed + TICK_SLACK_MS >= cadence;
 }
 
-/* `/v1/stats/coverage` takes since/until but NO tier - attribution lives in
-   one 7-day table. The window still has to be sent: the report is capped at
-   7 days by construction, so a 30-day request cannot widen it, but it is
-   what makes the server answer `truncated: true`. Without it the panel would
-   show a 7-day percentage beside a 30-day table and claim nothing was
-   missing. */
-export function coveragePath(range) {
-  const since = coverageSince(range);
-  return since ? `/v1/stats/coverage?since=${encodeURIComponent(since)}`
-               : "/v1/stats/coverage";
+// Hours each preset looks back over; null is "everything held".
+const WINDOW_HOURS = { "24h": 24, "48h": 48, "7d": 24 * 7, "30d": 24 * 30,
+                       daily: null };
+
+/* The window's start for the chart's axis - the SERVER computes the window
+   it reads (#91); this only says where the axis begins. */
+export function windowStart(range, now = new Date()) {
+  const hours = WINDOW_HOURS[normalizeRange(range)];
+  return hours === null ? null : new Date(now.getTime() - hours * 3600 * 1000);
+}
+
+/* The hostname class (hostnames, app-level ids, the attribution split) is
+   kept for this many days, whatever the window (app/store/stats/breakdown.py
+   DOMAIN_RETENTION_DAYS). The server says so in its answers; this is only
+   the fallback when an answer does not. */
+export const CLASS_RETENTION_DAYS = 7;
+// the ranges whose window reaches past that cap (#101 DEC-G)
+export const BEYOND_CLASS = ["30d", "daily"];
+
+// Top lists show this many values at first, and "show more" adds as many,
+// up to the server's clamp (#101 DEC-B).
+export const PAGE = 10;
+export const LIMIT_MAX = 200;
+
+// The category counted without a dictionary is "", which has no path form;
+// routes carry this reserved token instead (useHashRoute).
+export const NO_DICTIONARY = "no_dictionary";
+
+/* The scoped overview read: the range PRESET (never a client-computed
+   window), at most one device and at most one of a category or a hostname.
+   An empty category is SENT (`category=`) - it is a real value. */
+export function overviewPath(range, scope, limit) {
+  const params = new URLSearchParams({ range: normalizeRange(range) });
+  if (limit) params.set("limit", String(limit));
+  if (scope.client) params.set("device", scope.client);
+  if (scope.app !== null && scope.app !== undefined) params.set("category", scope.app);
+  else if (scope.host) params.set("host", scope.host);
+  return `/v1/stats/overview?${params.toString()}`;
 }
 
 export function fmtBytes(n) {
