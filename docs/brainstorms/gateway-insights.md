@@ -344,6 +344,24 @@ What the numbers decide:
 - `mihomo_memory_bytes` and `stats_db_bytes` were identical across both samples; the
   memory figure is whatever mihomo's `/connections` reports and is not a sampled RSS.
 
+### At the v1.14.1 NAS validation (2026-10-22 UTC)
+
+- **The collector (#96 REQ-ADD).** On mihomo v1.19.33 at 19–92 open
+  connections, `collector_poll_ms` was 4–6 ms in the per-minute gauges and at
+  most 104 ms at one live reading. That replaces #94's estimate, and the 2 s
+  default stands. Every collection gap matched a restart the validator made.
+  `stats_db_growth_mb_day` needs a day of collection, so it was not measured
+  yet. `stats_db_bytes` was about 19 MB after the v3 → v8 migration.
+- **The dictionary (#97).** Over the coverage window the coarse classes
+  carried 90–96 % of the bytes and unattributed 4–10 %. App-level ids carried
+  0 %, because the hostname class is off on this gateway. Most of the "under
+  half" attribution ceiling above was closed by sniffing and the rule-set
+  categories.
+- **Node delay (#102).** mihomo keeps a provider node's test history only in
+  `/providers/proxies`; `/proxies/<node>` answers 404. A Selector's own
+  history is empty. The v1.14.1 fix reads accordingly, and 10 of the 11
+  groups chart, the eleventh being parked on DIRECT.
+
 ## Verification gate
 
 Per slice, the repo's existing gate plus what the slice adds:
