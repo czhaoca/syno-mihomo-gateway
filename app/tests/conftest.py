@@ -42,6 +42,7 @@ class FakeMihomoClient:
         self.fail_traffic = False
         self.groups_doc: list[dict] = []
         self.histories: dict[str, list] = {}
+        self.history_asked: list[str] = []
         self.providers_doc: dict[str, dict] = {}
         self.fail_samples = False
 
@@ -58,6 +59,7 @@ class FakeMihomoClient:
     def proxy_history(self, name: str) -> list[dict]:
         if self.fail_samples:
             raise MihomoError("GET /proxies failed (fixture)")
+        self.history_asked.append(name)
         return [dict(h) for h in self.histories.get(name, [])]
 
     def proxy_providers(self) -> dict:

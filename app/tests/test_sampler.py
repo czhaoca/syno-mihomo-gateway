@@ -39,10 +39,12 @@ def fake(panel_env):
         {"name": "Fallback", "type": "Fallback", "now": "COMPATIBLE"},
         {"name": "Manual", "type": "Selector", "now": "US 01"},
     ]
+    # as real mihomo answers (the v1.14.0 NAS run): a group is a /proxies
+    # entry with its own history, a provider's node is NOT (404) - its
+    # history rides the provider listing below - and a config-defined node
+    # ("US 01") is a /proxies entry
     client.histories = {
         "Auto": [{"time": "2026-10-16T20:00:01.123456789+08:00", "delay": 41}],
-        "JP 01": [{"time": "2026-10-16T11:55:00Z", "delay": 38},
-                  {"time": "2026-10-16T12:00:00.5Z", "delay": 40}],
         "US 01": [{"time": "2026-10-16T12:00:00Z", "delay": 0}],
         "DIRECT": [{"time": "2026-10-16T12:00:00Z", "delay": 1}],
     }
@@ -51,7 +53,9 @@ def fake(panel_env):
             "name": "my-airport", "type": "Proxy", "vehicleType": "HTTP",
             "updatedAt": "2026-10-16T19:30:00.25+08:00", "url": SECRET_URL,
             "testUrl": "https://probe.example.com/generate_204",
-            "proxies": [{"name": "JP 01", "server": "192.0.2.80", "port": 443}],
+            "proxies": [{"name": "JP 01", "server": "192.0.2.80", "port": 443,
+                         "history": [{"time": "2026-10-16T11:55:00Z", "delay": 38},
+                                     {"time": "2026-10-16T12:00:00.5Z", "delay": 40}]}],
             "subscriptionInfo": {"Upload": 1024, "Download": 4096,
                                  "Total": 0, "Expire": 0}},
         "spare": {"name": "spare", "vehicleType": "HTTP",
@@ -76,6 +80,44 @@ def rows_of(conn):
 
 # --- node delay ------------------------------------------------------------------
 
+def test_a_provider_node_is_read_from_its_provider_never_from_proxies(fake, sconn):
+    # real mihomo answers GET /proxies/<provider node> with 404: asking it
+    # for JP 01 stored nothing on the v1.14.0 NAS run
+    assert sampler(fake, sconn).sample_delays("2026-10-16T12:00:05Z")
+    assert "JP 01" not in fake.history_asked
+    assert "US 01" in fake.history_asked           # a config node is a /proxies entry
+    assert ("2026-10-16T12:00:00Z", "Auto", "JP 01", 40) in rows_of(sconn)
+
+
+def test_a_selection_that_loops_or_ends_empty_stores_nothing(fake, sconn):
+    fake.groups_doc = [{"name": "A", "type": "Selector", "now": "B"},
+                       {"name": "B", "type": "Selector", "now": "A"},
+                       {"name": "C", "type": "Selector", "now": "D"},
+                       {"name": "D", "type": "Selector", "now": ""}]
+    assert sampler(fake, sconn).sample_delays("2026-10-16T12:00:05Z")
+    assert rows_of(sconn) == []
+    assert fake.history_asked == []
+
+
+def test_a_proxy_mihomo_does_not_know_has_no_history(monkeypatch):
+    from app.mihomo_client.client import MihomoClient, MihomoError
+
+    client = MihomoClient("http://127.0.0.1:9")
+
+    def not_found(path, timeout):
+        raise MihomoError(f"GET {path} -> HTTP 404", status=404)
+
+    monkeypatch.setattr(client, "_json", not_found)
+    assert client.proxy_history("JP 01") == []
+
+    def broken(path, timeout):
+        raise MihomoError(f"GET {path} -> HTTP 500", status=500)
+
+    monkeypatch.setattr(client, "_json", broken)
+    with pytest.raises(MihomoError):
+        client.proxy_history("JP 01")
+
+
 def test_the_selected_node_s_newest_test_is_stored_as_given(fake, sconn):
     assert sampler(fake, sconn).sample_delays("2026-10-16T12:00:05Z")
     assert rows_of(sconn) == [
@@ -83,8 +125,9 @@ def test_the_selected_node_s_newest_test_is_stored_as_given(fake, sconn):
         ("2026-10-16T12:00:00Z", "Auto", "JP 01", 40),
         # a failed test (delay 0) is no answer, never 0 ms
         ("2026-10-16T12:00:00Z", "Manual", "US 01", None),
-        # a group selecting a group: that group's own history, no recursion
-        ("2026-10-16T12:00:01Z", "Proxy", "Auto", 41),
+        # a Selector on a group charts the node that group selected - never
+        # the group's own history (41)
+        ("2026-10-16T12:00:00Z", "Proxy", "JP 01", 40),
     ]
     # GLOBAL is skipped; a COMPATIBLE placeholder has no history, so no row
 
@@ -94,9 +137,11 @@ def test_resampling_without_a_new_test_adds_nothing(fake, sconn):
     s.sample_delays()
     s.sample_delays()
     assert len(rows_of(sconn)) == 3
-    fake.histories["JP 01"].append({"time": "2026-10-16T12:05:00Z", "delay": 39})
+    jp = fake.providers_doc["my-airport"]["proxies"][0]
+    jp["history"].append({"time": "2026-10-16T12:05:00Z", "delay": 39})
     s.sample_delays()
-    assert len(rows_of(sconn)) == 4
+    # one new test, charted for both groups that route to JP 01
+    assert len(rows_of(sconn)) == 5
 
 
 @pytest.mark.parametrize("entry", [{"time": "yesterday", "delay": 40},
@@ -106,7 +151,7 @@ def test_resampling_without_a_new_test_adds_nothing(fake, sconn):
                                    {"delay": 40}])
 def test_a_test_without_a_readable_time_is_skipped(fake, sconn, entry):
     fake.groups_doc = [{"name": "Auto", "now": "JP 01"}]
-    fake.histories = {"JP 01": [entry]}
+    fake.providers_doc["my-airport"]["proxies"][0]["history"] = [entry]
     sampler(fake, sconn).sample_delays()
     assert rows_of(sconn) == []
 
@@ -117,6 +162,18 @@ def test_every_history_lookup_failing_is_no_sample(fake, sconn, monkeypatch):
     monkeypatch.setattr(fake, "proxy_history", broken)
     s = sampler(fake, sconn)
     assert s.sample_delays() is False and s.status["delay_state"] == "error"
+
+
+def test_an_unreadable_provider_listing_is_no_sample(fake, sconn, monkeypatch):
+    # without it every provider node would read as "no history" (/proxies
+    # 404s on them) and an empty sample would pass for an ok one
+    def broken():
+        raise RuntimeError("down")
+    monkeypatch.setattr(fake, "proxy_providers", broken)
+    s = sampler(fake, sconn)
+    assert s.sample_delays() is False
+    assert s.status["delay_state"] == "error" and s.status["delay_failures"] == 1
+    assert rows_of(sconn) == []
 
 
 def test_an_extreme_provider_time_never_aborts_the_quota(fake, sconn):

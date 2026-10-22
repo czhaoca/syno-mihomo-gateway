@@ -37,6 +37,40 @@ def _now_str() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
+# how deep a selection is followed through groups to its node (a Selector
+# on "Auto" on a node is two); a cycle stops there too
+SELECTION_DEPTH = 8
+
+
+def _provider_histories(providers) -> dict:
+    """node name -> history, for every node of every provider, from one
+    GET /providers/proxies. On real mihomo this is the only place a
+    provider's node has a history: GET /proxies/<node> answers 404."""
+    out = {}
+    for entry in (providers or {}).values():
+        for node in entry.get("proxies") or [] if isinstance(entry, dict) else []:
+            if isinstance(node, dict) and isinstance(node.get("name"), str):
+                history = node.get("history")
+                out.setdefault(node["name"], history if isinstance(history, list) else [])
+    return out
+
+
+def _selected_node(group, by_name):
+    """The node a group routes to: its selection, followed through every
+    group it names (a Selector on "Auto" routes to what "Auto" selected).
+    None when the chain ends empty, or is still on a group after
+    SELECTION_DEPTH steps - which is also how a loop ends."""
+    node = group.get("now")
+    for _ in range(SELECTION_DEPTH):
+        if not isinstance(node, str) or not node:
+            return None
+        inner = by_name.get(node)
+        if inner is None:
+            return node
+        node = inner.get("now")
+    return None
+
+
 def _latest_test(history):
     """(tested_at, delay_ms) of the newest test in HISTORY that has a time;
     delay 0 (a failed test) is None - "no answer", never 0 ms."""
@@ -110,10 +144,14 @@ class Sampler:
         return last is None or mono - last >= every
 
     def sample_delays(self, now: str | None = None) -> bool:
-        """The newest test of each group's selected node, stored as given
-        (a group whose selection is itself a group is stored with that
-        group's own history; DIRECT or a COMPATIBLE placeholder has none,
-        so adds nothing). True when /group answered."""
+        """The newest test of the node each group routes to, stored under the
+        group as given. A selection that is itself a group is followed to
+        that group's node (a Selector on "Auto" charts the node "Auto"
+        picked). A provider's node - what a URLTest group selects on real
+        mihomo - has its history in /providers/proxies, read once per
+        sample; any other node is asked for at /proxies/<name>. DIRECT or a
+        COMPATIBLE placeholder has no node to chart. True when /group
+        answered."""
         now = now or _now_str()
         started = self.clock()
         try:
@@ -122,6 +160,15 @@ class Sampler:
             self.status["delay_state"] = "error"
             self.status["delay_failures"] += 1
             return False
+        try:
+            known = _provider_histories(self.client.proxy_providers())
+        except Exception:
+            # without it a provider node reads as "no history" (/proxies
+            # 404s): never stamp that an ok sample - retry on the next pass
+            self.status["delay_state"] = "error"
+            self.status["delay_failures"] += 1
+            return False
+        by_name = {g["name"]: g for g in groups if isinstance(g.get("name"), str)}
         rows = []
         asked = failed = 0
         # nothing older than the retention or the last purge is (re)written:
@@ -132,20 +179,24 @@ class Sampler:
         order = groups[start:] + groups[:start]
         cut = None
         for index, group in enumerate(order):
-            name, node = group.get("name"), group.get("now")
+            name = group.get("name")
             if not isinstance(name, str) or not name or name in SKIP_GROUPS:
                 continue
-            if not isinstance(node, str) or not node or node in SKIP_SELECTIONS:
+            node = _selected_node(group, by_name)
+            if node is None or node in SKIP_SELECTIONS:
                 continue
             if self.clock() - started > DELAY_BUDGET_S:
                 cut = (start + index) % len(groups)
                 break
-            asked += 1
-            try:
-                test = _latest_test(self.client.proxy_history(node))
-            except Exception:
-                failed += 1
-                continue
+            if node in known:
+                test = _latest_test(known[node])
+            else:
+                asked += 1
+                try:
+                    test = _latest_test(self.client.proxy_history(node))
+                except Exception:
+                    failed += 1
+                    continue
             if test is not None and test[0] >= floor:
                 rows.append((test[0], name, node, test[1]))
         # every lookup failing is not a sample: retried on the next pass

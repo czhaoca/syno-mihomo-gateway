@@ -35,7 +35,12 @@ _VERSION_OK = re.compile(r"[^A-Za-z0-9._+-]")
 
 
 class MihomoError(RuntimeError):
-    """Controller call failed; the message never carries the secret."""
+    """Controller call failed; the message never carries the secret.
+    `status` is the HTTP status when the controller answered one."""
+
+    def __init__(self, message: str, status: int | None = None):
+        super().__init__(message)
+        self.status = status
 
 
 class MihomoClient:
@@ -59,7 +64,7 @@ class MihomoClient:
                 return resp.read()
         except urllib.error.HTTPError as exc:
             raise MihomoError(
-                f"{method} {path} -> HTTP {exc.code}") from None
+                f"{method} {path} -> HTTP {exc.code}", status=exc.code) from None
         except (urllib.error.URLError, OSError, TimeoutError, ValueError,
                 http.client.HTTPException) as exc:
             # http.client.HTTPException covers InvalidURL (a control char /
@@ -185,9 +190,16 @@ class MihomoClient:
 
     def proxy_history(self, name: str) -> list:
         """The delay history mihomo keeps for one proxy (or group), from
-        GET /proxies/<name> - its own health-check results, oldest first."""
-        doc = self._json(f"/proxies/{urllib.parse.quote(name, safe='')}",
-                         timeout=TELEMETRY_TIMEOUT_S)
+        GET /proxies/<name> - its own health-check results, oldest first.
+        A provider's node is not a /proxies entry (404): it has no history
+        here, which is not a failure - its history is in proxy_providers()."""
+        try:
+            doc = self._json(f"/proxies/{urllib.parse.quote(name, safe='')}",
+                             timeout=TELEMETRY_TIMEOUT_S)
+        except MihomoError as exc:
+            if exc.status == 404:
+                return []
+            raise
         history = doc.get("history") if isinstance(doc, dict) else None
         return [h for h in history if isinstance(h, dict)] if isinstance(
             history, list) else []

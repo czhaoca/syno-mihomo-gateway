@@ -355,7 +355,10 @@ def run_scenario(app_port: int, providers: Path, marker: Path,
     auto = next((g for g in delay["groups"] if g["group"] == "Auto"), None)
     expect(auto is not None and auto["latest"] == {
         "node": "JP 01", "tested_at": "2026-10-16T12:00:00Z", "delay_ms": 40},
-        f"the selected node's test must be stored: {delay}")
+        f"a provider node's test must be read from /providers/proxies: {delay}")
+    proxy = next((g for g in delay["groups"] if g["group"] == "Proxy"), None)
+    expect(proxy is not None and proxy["latest"] == auto["latest"],
+           f"a Selector on a group must chart the node that group selected: {delay}")
     expect(all(g["group"] != "GLOBAL" for g in delay["groups"]),
            "GLOBAL is no routing group in rule mode")
     status, quota = api("GET", app_port, "/v1/stats/quota")
@@ -474,15 +477,21 @@ def main() -> int:
         threading.Thread(target=server.serve_forever, daemon=True).start()
         # #102: the sampler reads these at start (synthesised names only)
         api("POST", ctl_port, "/_control/samples", {
+            # as real mihomo answers (the v1.14.0 NAS run): the URLTest
+            # group selects a PROVIDER node, which /proxies does not know
+            # (404) - its history rides /providers/proxies - and a Selector
+            # rides the URLTest group
             "groups": [{"name": "GLOBAL", "type": "Selector", "now": "DIRECT"},
+                       {"name": "Proxy", "type": "Selector", "now": "Auto"},
                        {"name": "Auto", "type": "URLTest", "now": "JP 01"}],
-            "histories": {"JP 01": [{"time": "2026-10-16T20:00:00+08:00",
-                                     "delay": 40}]},
+            "histories": {"Auto": []},
             "providers": {"my-airport": {
                 "name": "my-airport", "vehicleType": "HTTP",
                 "updatedAt": "2026-10-16T11:30:00Z",
                 "url": "https://sub.example.com/link/planted-token",
-                "proxies": [{"name": "JP 01", "server": "192.0.2.80"}],
+                "proxies": [{"name": "JP 01", "server": "192.0.2.80",
+                             "history": [{"time": "2026-10-16T20:00:00+08:00",
+                                          "delay": 40}]}],
                 "subscriptionInfo": {"Upload": 1024, "Download": 4096,
                                      "Total": 0, "Expire": 1790000000}}}})
         api("POST", ctl_port, "/_control/traffic", [{"up": 1200, "down": 56000}])

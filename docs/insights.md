@@ -157,8 +157,10 @@ itself (see [Panel API](panel-api.md)):
   connection open and says nothing new; a viewer shows how long it has been
   since the last frame, never a frozen number as if it were current.
 - **Node delay** (`GET /v1/stats/node-delay`): for each policy group, the
-  delay of the node it has selected, from the tests mihomo itself runs
-  (the panel never probes a node). It is sampled every 300 s and kept for
+  delay of the node it routes to, from the tests mihomo itself runs (the
+  panel never probes a node). A group whose selection is another group is
+  followed to that group's node, so a Selector on "Auto" charts the node
+  "Auto" picked. It is sampled every 300 s and kept for
   `PANEL_NODE_DELAY_DAYS` (14 days by default). A failed test is no answer,
   never 0 ms. 24h and 48h list every test; longer ranges give one value per
   hour and node, the average of the tests that answered, with how many
